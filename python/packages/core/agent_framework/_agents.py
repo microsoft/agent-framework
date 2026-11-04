@@ -885,6 +885,8 @@ class BaseAgent(SerializationMixin):
             func=_agent_wrapper,
             input_model=input_schema,
             approval_mode=approval_mode,
+            # Private link for hosts that must know which agent a tool delegates to. Serialization skips it.
+            _wrapped_agent=self,
         )
 
 

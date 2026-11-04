@@ -18,7 +18,9 @@ from agent_framework import (
     Message,
     ToolApprovalMiddleware,
     Workflow,
+    WorkflowAgent,
     WorkflowBuilder,
+    WorkflowExecutor,
     create_always_approve_tool_response,
     tool,
 )
@@ -27,12 +29,20 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.testclient import TestClient
 from sse_helpers import parse_sse_response  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
-from agent_framework_ag_ui import AGUIRequest, InMemoryAGUIThreadSnapshotStore, add_agent_framework_fastapi_endpoint
+from agent_framework_ag_ui import (
+    AgentFrameworkAgent,
+    AgentFrameworkWorkflow,
+    AGUIRequest,
+    InMemoryAGUIThreadSnapshotStore,
+    add_agent_framework_fastapi_endpoint,
+)
 
 ScopeMode = Literal["authorization", "snapshot"]
 
 REPLY_TEXT = "model-reply"
+OUTER_REPLY_TEXT = "outer-reply"
 GATED_TOOL_NAME = "gated_action"
+WORKFLOW_TOOL_NAME = "worker_tool"
 INVOKE_PREFIX = "invoke:"
 PRINCIPALS = ("alice", "bob")
 
@@ -131,6 +141,91 @@ def build_unhashable_executor_workflow(agent: Agent[Any]) -> Workflow:
     """Build a new workflow around an ``AgentExecutor`` subclass that is unhashable."""
     executor = UnhashableExecutor(agent, id="worker")
     return WorkflowBuilder(start_executor=executor, output_from=[executor]).build()
+
+
+class ToolCallingClient(StreamingChatClientStub):
+    """Stub chat client that calls one tool with the user's text, then answers once the tool result is in."""
+
+    def __init__(self, tool_name: str = WORKFLOW_TOOL_NAME) -> None:
+        super().__init__(self._respond)
+        self.tool_name = tool_name
+        self.calls = 0
+
+    async def _respond(
+        self,
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        self.calls += 1
+        last = messages[-1]
+        if last.role == "tool":
+            contents = [Content.from_text(OUTER_REPLY_TEXT)]
+        else:
+            contents = [
+                Content.from_function_call(
+                    call_id=str(uuid.uuid4()),
+                    id=str(uuid.uuid4()),
+                    name=self.tool_name,
+                    arguments={"task": last.text},
+                )
+            ]
+        yield ChatResponseUpdate(role="assistant", contents=contents, message_id=str(uuid.uuid4()))
+
+
+def build_workflow_agent(client: RecordingChatClient) -> WorkflowAgent:
+    """Build a ``WorkflowAgent`` around a new ``AgentExecutor``, which keeps its own session."""
+    return build_workflow(build_agent(client)).as_agent(name="worker_agent")
+
+
+def build_workflow_tool(client: RecordingChatClient | None = None) -> Any:
+    """Build the tool that ``WorkflowAgent.as_tool()`` returns for a new workflow."""
+    return build_workflow_agent(client or RecordingChatClient()).as_tool(name=WORKFLOW_TOOL_NAME)
+
+
+def build_agent_with_tools(*tools: Any, name: str = "outer", tool_name: str = WORKFLOW_TOOL_NAME) -> Agent[Any]:
+    """Build an ordinary agent that exposes ``tools``. Its model calls the tool called ``tool_name``, then answers."""
+    return Agent(client=ToolCallingClient(tool_name), name=name, tools=list(tools))
+
+
+def build_workflow_whose_agent_has_tools(*tools: Any) -> Workflow:
+    """Build a workflow with one ``AgentExecutor`` whose agent exposes ``tools``."""
+    executor = AgentExecutor(build_agent_with_tools(*tools, name="holder"), id="holder")
+    return WorkflowBuilder(start_executor=executor, output_from=[executor]).build()
+
+
+RUNNER_FORMS_WITH_A_WORKFLOW_TOOL = [
+    "agent",
+    "wrapped_agent",
+    "sub_agent",
+    "executor_agent",
+    "workflow_runner",
+    "workflow_agent_runner",
+    "nested_workflow",
+]
+
+
+def build_runner_with_a_workflow_tool(form: str) -> Any:
+    """Build something that an endpoint can serve and that exposes a ``WorkflowAgent`` as a tool, in a given form."""
+    tool_wrapping_a_workflow = build_workflow_tool()
+    outer = build_agent_with_tools(tool_wrapping_a_workflow)
+    if form == "agent":
+        return outer
+    if form == "wrapped_agent":
+        return AgentFrameworkAgent(agent=outer)
+    if form == "sub_agent":
+        return build_agent_with_tools(outer.as_tool(name="outer_tool"), name="coordinator")
+    holder = build_workflow_whose_agent_has_tools(tool_wrapping_a_workflow)
+    if form == "executor_agent":
+        return holder
+    if form == "workflow_runner":
+        return AgentFrameworkWorkflow(workflow=holder)
+    if form == "workflow_agent_runner":
+        return holder.as_agent()
+    if form == "nested_workflow":
+        return WorkflowBuilder(start_executor=WorkflowExecutor(holder, id="inner")).build()
+    raise ValueError(f"Unknown form: {form}")
 
 
 async def _authenticated_scope(authorization: str = Header(default="")) -> str:

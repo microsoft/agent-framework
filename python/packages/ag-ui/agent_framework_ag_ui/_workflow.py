@@ -53,7 +53,11 @@ from ._session_ownership import (
     SCOPE_CONFLICT_CODE,
     SCOPE_CONFLICT_LOG_MESSAGE,
     SCOPE_CONFLICT_MESSAGE,
+    WORKFLOW_AGENT_TOOL_CODE,
+    WORKFLOW_AGENT_TOOL_MESSAGE,
     claim_agent_executors,
+    workflow_agent_tool_error,
+    workflow_agent_tools,
 )
 from ._snapshot_session import ThreadSnapshotSession, _event_messages_to_snapshot_dicts
 from ._snapshots import (
@@ -894,6 +898,12 @@ class AgentFrameworkWorkflow:
             return
 
         # A replay above starts no workflow, so only a run that reaches the executors decides who owns them.
+        unsupported_tools = workflow_agent_tools(workflow)
+        if unsupported_tools:
+            logger.error(workflow_agent_tool_error(self.name, unsupported_tools))
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield RunErrorEvent(message=WORKFLOW_AGENT_TOOL_MESSAGE, code=WORKFLOW_AGENT_TOOL_CODE)
+            return
         if not claim_agent_executors(workflow, snapshot_scope):
             logger.error(SCOPE_CONFLICT_LOG_MESSAGE, self.name)
             yield RunStartedEvent(run_id=run_id, thread_id=thread_id)

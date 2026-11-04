@@ -10,13 +10,16 @@ refuses every other scope. A run without a scope is an owner of its own, so a wo
 handed to an authorization scope later, and the reverse.
 
 The binding follows live objects. It does not see state that an application loads from storage into a new object.
+
+AG-UI also refuses an agent that exposes a ``WorkflowAgent`` as a tool (``WorkflowAgent.as_tool()``). The tool
+reaches the executors of one shared workflow, and no scope owns them. ``workflow_agent_tools`` finds those tools.
 """
 
 from __future__ import annotations
 
 import threading
 import weakref
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Final
 
 from agent_framework import AgentExecutor, AgentSession, Workflow, WorkflowAgent, WorkflowExecutor
@@ -30,6 +33,8 @@ SCOPE_CONFLICT_LOG_MESSAGE = (
     "builds a new Workflow, including new AgentExecutor and AgentSession instances, for every call, or register "
     "the endpoint with single_user=True when every caller is the same principal."
 )
+WORKFLOW_AGENT_TOOL_CODE = "WORKFLOW_AGENT_TOOL_UNSUPPORTED"
+WORKFLOW_AGENT_TOOL_MESSAGE = "This agent exposes a workflow as a tool, which AG-UI does not support."
 
 # The owner of runs that carry no authorization scope. It never equals a scope string.
 _UNSCOPED: Final = object()
@@ -158,3 +163,69 @@ def claim_workflow_agent(agent: Any, scope: str | None) -> bool:
     """
     workflow = _workflow_behind(agent)
     return workflow is None or claim_agent_executors(workflow, scope)
+
+
+def _tool_delegates(agent: Any) -> Iterator[tuple[str, Any]]:
+    """Yield the name of each tool of ``agent`` that ``as_tool()`` made, with the agent that tool delegates to."""
+    options = getattr(agent, "default_options", None)
+    tools = options.get("tools") if isinstance(options, Mapping) else None
+    if not isinstance(tools, (list, tuple)):
+        return
+    for tool in tools:
+        delegate = getattr(tool, "_wrapped_agent", None)
+        if delegate is not None:
+            yield str(getattr(tool, "name", "")), delegate
+
+
+def workflow_agent_tools(subject: object) -> list[str]:
+    """Return the names of the tools that wrap a ``WorkflowAgent`` and that ``subject`` can reach.
+
+    The search follows the tools that ``as_tool()`` made into the agents they delegate to, and the agents of every
+    ``AgentExecutor`` of a workflow, and it looks through A2UI runners. It stops at a workflow tool, because AG-UI
+    refuses that tool whatever the workflow holds. It reads the tools that an agent lists in its default options. It
+    does not see a tool that a context provider adds while a run is prepared, or a tool function that calls a workflow
+    from custom code.
+
+    Args:
+        subject: An agent or a workflow. Any other object has no tools to search.
+
+    Returns:
+        The tool names, without duplicates, in the order that the search found them.
+    """
+    found: list[str] = []
+    seen: set[int] = set()
+
+    def visit_workflow(workflow: object) -> None:
+        for executor in _agent_executors(workflow):
+            visit_agent(executor.agent)
+
+    def visit_agent(agent: Any) -> None:
+        agent = _unwrap_a2ui_runners(agent)
+        if id(agent) in seen:
+            return
+        seen.add(id(agent))
+        workflow = _workflow_behind(agent)
+        if workflow is not None:
+            visit_workflow(workflow)
+        for tool_name, delegate in _tool_delegates(agent):
+            if _workflow_behind(delegate) is not None:
+                found.append(tool_name)
+            else:
+                visit_agent(delegate)
+
+    if isinstance(subject, Workflow):
+        visit_workflow(subject)
+    else:
+        visit_agent(subject)
+    return list(dict.fromkeys(found))
+
+
+def workflow_agent_tool_error(runner_name: object, tool_names: Sequence[str]) -> str:
+    """Explain why AG-UI refuses ``runner_name``, which exposes a ``WorkflowAgent`` through the tools ``tool_names``."""
+    tools = ", ".join(repr(name) for name in tool_names)
+    return (
+        "AG-UI does not support an agent that exposes a WorkflowAgent as a tool (WorkflowAgent.as_tool()), because "
+        f"every caller of {runner_name!r} would share the state of that workflow. Remove the tool: {tools}. "
+        "Serve the workflow with AgentFrameworkWorkflow(workflow_factory=...), or build the workflow inside the tool "
+        "function for every call."
+    )

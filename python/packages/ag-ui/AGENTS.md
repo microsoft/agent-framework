@@ -147,7 +147,6 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   - state that a factory loads from storage into a new object (`AgentSession.from_dict()`, `SessionStore.get()`, a
     history provider that keys data by `session_id`);
   - sessions that alias state outside the session object (a shared `state` mapping or `service_session_id`);
-  - workflows that another agent calls as a tool (`WorkflowAgent.as_tool()`);
   - executors that are not `AgentExecutor` but keep a session or cache (custom executors, the group chat
     orchestrator);
   - workflows without an `AgentExecutor`;
@@ -159,6 +158,19 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   conflict; the factory builds new executors and sessions. The factory receives only the thread id, so it must not
   restore session state that is keyed by the thread id alone; use `checkpoint_storage`, which AG-UI loads only for the
   scope and thread that saved it.
+- AG-UI does not support a `WorkflowAgent` that an agent exposes as a tool (`WorkflowAgent.as_tool()`): every caller
+  of the agent would reach one workflow and its executor sessions, and the ownership claim cannot see that path.
+  `BaseAgent.as_tool()` keeps the agent it wraps in the private `_wrapped_agent` attribute of the tool, and
+  `_session_ownership.workflow_agent_tools` follows those links through the tools of an agent, the sub-agents they
+  delegate to, and the agents of every `AgentExecutor`, also through A2UI runners and nested workflows, with a cycle
+  guard. `add_agent_framework_fastapi_endpoint` raises `ValueError` (`_reject_workflow_agent_tools`) for what it can
+  see at registration. `AgentFrameworkWorkflow.run` and `run_agent_stream` end the run with `RUN_ERROR`
+  `WORKFLOW_AGENT_TOOL_UNSUPPORTED` before the ownership claim, which covers workflow factories and tools added after
+  registration. The rejection applies with `single_user=True` as well. A tool function that calls a workflow from
+  custom code, and a tool that a context provider adds while a run is prepared, are not detected. The search needs a
+  core whose `as_tool()` records `_wrapped_agent`; with an older core it finds nothing, so raise this package's
+  `agent-framework-core` floor to the first release that has it when you prepare a release. Remove this check together
+  with `WorkflowAgent.as_tool()`.
 - Request `state` is client-owned Shared State and is merged into `AgentSession.state`, minus a protected set:
   tool-approval state, history/context-provider namespaces, message-injection state, standalone FIDES security
   state, and provider-owned keys.

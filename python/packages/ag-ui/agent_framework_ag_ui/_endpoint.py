@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from ._agent import AgentFrameworkAgent
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY
 from ._run_common import _is_snapshot_hydration_request
+from ._session_ownership import workflow_agent_tool_error, workflow_agent_tools
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
     _SNAPSHOT_SCOPE_INPUT_KEY,
@@ -120,6 +121,20 @@ def _single_user_scope() -> str:
     return f"{_SINGLE_USER_SCOPE_PREFIX}{uuid.uuid4().hex}"
 
 
+def _reject_workflow_agent_tools(protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow) -> None:
+    """Refuse a runner that exposes a ``WorkflowAgent`` as a tool, so that the mistake shows at startup."""
+    # A runner subclass that skips the base constructor has nothing to inspect, and a workflow factory builds its
+    # workflow for each request, so a run checks what the factory built.
+    if isinstance(protocol_runner, AgentFrameworkAgent):
+        subject = getattr(protocol_runner, "agent", None)
+    else:
+        subject = getattr(protocol_runner, "workflow", None)
+    tool_names = workflow_agent_tools(subject)
+    if tool_names:
+        runner_name = getattr(protocol_runner, "name", None) or type(protocol_runner).__name__
+        raise ValueError(workflow_agent_tool_error(runner_name, tool_names))
+
+
 def add_agent_framework_fastapi_endpoint(
     app: FastAPI,
     agent: SupportsAgentRun | AgentFrameworkAgent | Workflow | AgentFrameworkWorkflow,
@@ -145,7 +160,9 @@ def add_agent_framework_fastapi_endpoint(
 
     Args:
         app: The FastAPI application
-        agent: The agent to expose (can be raw SupportsAgentRun or wrapped)
+        agent: The agent to expose (can be raw SupportsAgentRun or wrapped). The endpoint raises ``ValueError`` for an
+            agent, or a workflow, that exposes a ``WorkflowAgent`` as a tool (``WorkflowAgent.as_tool()``), and a run
+            ends with a ``WORKFLOW_AGENT_TOOL_UNSUPPORTED`` ``RUN_ERROR`` when a workflow factory builds one.
         path: The endpoint path
         state_schema: Optional state schema for shared state management; accepts dict or Pydantic model/class
         predict_state_config: Optional predictive state update configuration.
@@ -223,6 +240,8 @@ def add_agent_framework_fastapi_endpoint(
         )
     else:
         raise TypeError("agent must be SupportsAgentRun, Workflow, AgentFrameworkAgent, or AgentFrameworkWorkflow.")
+
+    _reject_workflow_agent_tools(protocol_runner)
 
     _validate_authorization_scope_configuration(
         authorization_scope_resolver=authorization_scope_resolver,
