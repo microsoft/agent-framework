@@ -12,6 +12,8 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FoundryToolboxOptions
 {
+    internal const string DefaultTokenScope = "https://ai.azure.com/.default";
+
     /// <summary>
     /// Gets the list of toolbox names to connect to at startup.
     /// Each name corresponds to a toolbox registered in the Foundry project.
@@ -25,6 +27,16 @@ public sealed class FoundryToolboxOptions
     /// Gets or sets the Toolboxes API version to use when constructing proxy URLs.
     /// </summary>
     public string ApiVersion { get; set; } = "v1";
+
+    /// <summary>
+    /// Gets or sets the Azure token scope used to authenticate requests to the Foundry Toolboxes MCP proxy.
+    /// </summary>
+    /// <remarks>
+    /// The default is <c>https://ai.azure.com/.default</c> for the Azure public cloud.
+    /// Set this property to the matching scope for a national cloud and configure the supplied
+    /// credential for that cloud's Microsoft Entra authority.
+    /// </remarks>
+    public string TokenScope { get; set; } = DefaultTokenScope;
 
     /// <summary>
     /// Gets or sets a value indicating whether per-request toolbox markers (referenced via

@@ -51,6 +51,11 @@ already resident in that session. Enforce authorization at the MCP service/tool 
 `service_session_id` or reusing its SDK `session_id`. See the
 [Copilot session-lifetime guidance](https://github.com/microsoft/agent-framework/blob/main/python/packages/github_copilot/README.md#mcp-configuration-and-session-lifetime).
 
+For Purview, all prompt content uses the `UploadText` activity (`Activity.UPLOAD_TEXT`) and all response
+content uses `DownloadText` (`Activity.DOWNLOAD_TEXT`), including binary content. The middleware cannot
+reliably distinguish file attachments from inline binary content. Configure DLP policies for these text
+activities; `UploadFile`-only or `DownloadFile`-only rules do not block binary content through this integration.
+
 ## Code execution
 
 Monty and Hyperlight redact host tool exception diagnostics by default. Enable

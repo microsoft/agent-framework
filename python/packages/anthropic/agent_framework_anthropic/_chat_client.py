@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, cast
+from typing import Any, ClassVar, Final, Generic, Literal, TypeAlias, TypedDict, cast
 
 from agent_framework import (
     Annotation,
@@ -30,6 +31,7 @@ from agent_framework import (
     add_usage_details,
     get_namespaced_value,
     tool,
+    with_namespaced_value,
 )
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
@@ -97,6 +99,7 @@ BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04"]
 UNSUPPORTED_SAMPLING_OPTIONS: Final[tuple[str, ...]] = ("temperature", "top_p", "top_k")
 _ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE: Final[str] = "anthropic"
 _SERVER_TOOL_BLOCK_KEY: Final[str] = "server_tool_block"
+_MCP_TOOL_RESULT_IS_ERROR_KEY: Final[str] = "mcp_tool_result_is_error"
 _SERVER_TOOL_USE_ID_PREFIX: Final[str] = "srvtoolu_"
 _SERVER_TOOL_RESULT_TYPES: Final[frozenset[str]] = frozenset({
     "web_fetch_tool_result",
@@ -107,6 +110,8 @@ _PAUSE_TURN_REPLAYABLE_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
     "text",
     "text_reasoning",
 })
+
+McpToolResultOutput: TypeAlias = str | Mapping[str, Any] | Sequence[Content | Mapping[str, Any]] | None
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
@@ -1191,6 +1196,60 @@ class RawAnthropicClient(
             result["caller"] = dict(cast(Mapping[str, Any], caller))
         return result
 
+    @staticmethod
+    def _prepare_mcp_tool_result_content(
+        output: McpToolResultOutput,
+    ) -> str | list[dict[str, Any]]:
+        """Render MCP tool result output as Anthropic ``mcp_tool_result`` content.
+
+        Anthropic accepts either a string or a list of text blocks here. Parsed MCP
+        results are stored as ``list[Content]``, so replaying them directly would put
+        non-serializable ``Content`` objects into the request body. A top-level text
+        block mapping is normalized to a one-item list; other mappings are JSON-encoded.
+        """
+        if output is None:
+            return ""
+        if isinstance(output, str):
+            return output
+        if isinstance(output, Mapping):
+            mapping_output = output
+            if mapping_output.get("type") == "text" and isinstance(mapping_output.get("text"), str):
+                return [{"type": "text", "text": mapping_output["text"]}]
+            try:
+                return json.dumps(dict(mapping_output))
+            except (TypeError, ValueError) as exc:
+                raise ContentError("MCP tool result mapping is not JSON serializable.") from exc
+        if isinstance(output, Sequence) and not isinstance(output, (bytes, bytearray)):
+            text_blocks: list[dict[str, Any]] = []
+            for item in output:
+                if isinstance(item, Content):
+                    if item.type == "text":
+                        text_blocks.append({"type": "text", "text": item.text or ""})
+                    else:
+                        logger.debug(
+                            "Ignoring unsupported MCP tool result content type for Anthropic replay: %s",
+                            item.type,
+                        )
+                    continue
+                if isinstance(item, Mapping):
+                    mapping_item = item
+                    text = mapping_item.get("text")
+                    if mapping_item.get("type") == "text" and isinstance(text, str):
+                        text_blocks.append({"type": "text", "text": text})
+                    else:
+                        logger.debug(
+                            "Ignoring unsupported MCP tool result content type for Anthropic replay: %s",
+                            mapping_item.get("type", type(mapping_item).__name__),
+                        )
+                    continue
+                logger.debug(
+                    "Ignoring unsupported MCP tool result content type for Anthropic replay: %s",
+                    type(item).__name__,
+                )
+            return text_blocks or ""
+
+        raise ContentError(f"Unsupported MCP tool result output type for Anthropic replay: {type(output).__name__}")
+
     def _prepare_message_for_anthropic(self, message: Message) -> dict[str, Any]:
         """Prepare a Message for the Anthropic client.
 
@@ -1293,8 +1352,15 @@ class RawAnthropicClient(
                     mcp_result: dict[str, Any] = {
                         "type": "mcp_tool_result",
                         "tool_use_id": content.call_id,
-                        "content": content.output if content.output is not None else "",
+                        "content": self._prepare_mcp_tool_result_content(content.output),
                     }
+                    is_error = get_namespaced_value(
+                        content.additional_properties,
+                        _ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE,
+                        _MCP_TOOL_RESULT_IS_ERROR_KEY,
+                    )
+                    if isinstance(is_error, bool):
+                        mcp_result["is_error"] = is_error
                     a_content.append(mcp_result)
                 case "text_reasoning":
                     if content.text is None:
@@ -1510,9 +1576,7 @@ class RawAnthropicClient(
             case "message_start":
                 usage_details: list[Content] = []
                 if event.message.usage and (
-                    details := self._parse_usage_from_anthropic(
-                        event.message.usage, raw_usage_carry=raw_usage_carry
-                    )
+                    details := self._parse_usage_from_anthropic(event.message.usage, raw_usage_carry=raw_usage_carry)
                 ):
                     usage_details.append(
                         Content.from_usage(
@@ -1776,10 +1840,22 @@ class RawAnthropicClient(
                                 request_state,
                                 streaming=streaming,
                             )
+                    is_error = getattr(content_block, "is_error", None)
+                    additional_properties = (
+                        with_namespaced_value(
+                            None,
+                            _ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE,
+                            _MCP_TOOL_RESULT_IS_ERROR_KEY,
+                            is_error,
+                        )
+                        if isinstance(is_error, bool)
+                        else None
+                    )
                     contents.append(
                         Content.from_mcp_server_tool_result(
                             call_id=content_block.tool_use_id,
                             output=parsed_output,
+                            additional_properties=additional_properties,
                             raw_representation=content_block,
                         )
                     )

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import inspect
 import logging
 import sys
@@ -37,6 +39,10 @@ from ._types import (
 from .exceptions import MiddlewareException
 
 logger = logging.getLogger(__name__)
+
+_ACTIVE_FUNCTION_MIDDLEWARE_CONTEXT: contextvars.ContextVar[tuple[Any, asyncio.Task[Any] | None] | None] = (
+    contextvars.ContextVar("agent_framework_core_active_function_middleware_context", default=None)
+)
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -1570,9 +1576,20 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
             if index >= len(self._middleware):
 
                 async def final_wrapper() -> None:
-                    context.result = final_handler(context)
-                    if inspect.isawaitable(context.result):
-                        context.result = await context.result
+                    from ._tools import (
+                        _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT,  # pyright: ignore[reportPrivateUsage]
+                        _suspend_security_argument_materialization,  # pyright: ignore[reportPrivateUsage]
+                    )
+
+                    security_materialization = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.get()
+                    if security_materialization is not None:
+                        active_context, materialize, origin_task = security_materialization
+                        if context is active_context and asyncio.current_task() is origin_task:
+                            materialize(context)
+                    with _suspend_security_argument_materialization():
+                        context.result = final_handler(context)
+                        if inspect.isawaitable(context.result):
+                            context.result = await context.result
 
                 return final_wrapper
 
@@ -1584,7 +1601,11 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
 
         first_handler = create_next_handler(0)
         # Don't suppress MiddlewareTermination - let it propagate to signal loop termination
-        await first_handler()
+        pipeline_token = _ACTIVE_FUNCTION_MIDDLEWARE_CONTEXT.set((context, asyncio.current_task()))
+        try:
+            await first_handler()
+        finally:
+            _ACTIVE_FUNCTION_MIDDLEWARE_CONTEXT.reset(pipeline_token)
 
         return context.result
 
