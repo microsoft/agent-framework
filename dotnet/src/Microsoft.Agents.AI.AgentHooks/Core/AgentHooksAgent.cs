@@ -208,25 +208,44 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
             framework: FrameworkName,
             sessionId: Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture),
             agentName: this.Name);
-        var emitter = new InterceptionEmitter(configuration.Mode, configuration.Resolver, configuration.Timeout);
-        if (configuration.Composition is not null)
+        InterceptionEmitter emitter;
+        if (configuration is { Declaration: not null, Registry: not null })
         {
-            _ = emitter.SetComposition(configuration.Composition);
+            // Declaration path (spec §7.7): the document states the mode, composition,
+            // identity provider, approval references, timeouts and bindings, and the
+            // core resolves it against this package's surface. The emitter is sealed;
+            // only the record sink, which the contract leaves to the host, is attached.
+            // The document was accepted when the options were built, so a refusal here
+            // means a kind resolver changed its mind between runs: it propagates to the
+            // caller before any point is emitted (fail closed).
+            emitter = InterceptionEmitter.FromDeclaration(configuration.Declaration, configuration.Registry);
+            if (configuration.RecordSink is not null)
+            {
+                _ = emitter.SetRecordSink(configuration.RecordSink);
+            }
         }
-
-        if (configuration.IdentityProvider is not null)
+        else
         {
-            _ = emitter.SetIdentityProvider(configuration.IdentityProvider);
-        }
+            emitter = new InterceptionEmitter(configuration.Mode, configuration.Resolver, configuration.Timeout);
+            if (configuration.Composition is not null)
+            {
+                _ = emitter.SetComposition(configuration.Composition);
+            }
 
-        if (configuration.RecordSink is not null)
-        {
-            _ = emitter.SetRecordSink(configuration.RecordSink);
-        }
+            if (configuration.IdentityProvider is not null)
+            {
+                _ = emitter.SetIdentityProvider(configuration.IdentityProvider);
+            }
 
-        foreach (var (name, interceptor) in configuration.Interceptors)
-        {
-            _ = emitter.Register(interceptor, name);
+            if (configuration.RecordSink is not null)
+            {
+                _ = emitter.SetRecordSink(configuration.RecordSink);
+            }
+
+            foreach (var (name, interceptor) in configuration.Interceptors)
+            {
+                _ = emitter.Register(interceptor, name);
+            }
         }
 
         // Not session-scoped: the default scoping is one agent-hooks session per run.
