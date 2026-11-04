@@ -44,6 +44,11 @@ client when its lifetime must extend beyond any one agent context. Do not assume
 For AG-UI, remember that thread and run IDs are correlation identifiers, not authentication boundaries. The
 application owns authorization, durable snapshots, scaling, and rendering policy.
 
+For Purview, all prompt content uses the `UploadText` activity (`Activity.UPLOAD_TEXT`) and all response
+content uses `DownloadText` (`Activity.DOWNLOAD_TEXT`), including binary content. The middleware cannot
+reliably distinguish file attachments from inline binary content. Configure DLP policies for these text
+activities; `UploadFile`-only or `DownloadFile`-only rules do not block binary content through this integration.
+
 ## Code execution
 
 Monty and Hyperlight redact host tool exception diagnostics by default. Enable
