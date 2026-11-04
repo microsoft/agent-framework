@@ -207,6 +207,10 @@ public sealed class LoopAgent : DelegatingAIAgent
                 return capResult;
             }
 
+            // Clear any exit reason stamped in the previous evaluator pass so a signal from
+            // iteration N cannot leak into the result of a later iteration.
+            context.AdditionalProperties.Remove(LoopExitReason.AdditionalPropertiesKey);
+
             // Ask the evaluators whether to continue; stop when none of them request a re-invocation.
             LoopNextStep step = await this.EvaluateAndBuildNextAsync(context, feedbackLog, initialSessionSnapshot, cancellationToken).ConfigureAwait(false);
             if (!step.ShouldContinue)
@@ -321,6 +325,10 @@ public sealed class LoopAgent : DelegatingAIAgent
                 this.LogMaxIterationsReached(iteration);
                 yield break;
             }
+
+            // Clear any exit reason stamped in the previous evaluator pass so a signal from
+            // iteration N cannot leak into the result of a later iteration.
+            context.AdditionalProperties.Remove(LoopExitReason.AdditionalPropertiesKey);
 
             // Ask the evaluators whether to continue; stop when none of them request a re-invocation.
             LoopNextStep step = await this.EvaluateAndBuildNextAsync(context, feedbackLog, initialSessionSnapshot, cancellationToken).ConfigureAwait(false);
