@@ -44,6 +44,13 @@ client when its lifetime must extend beyond any one agent context. Do not assume
 For AG-UI, remember that thread and run IDs are correlation identifiers, not authentication boundaries. The
 application owns authorization, durable snapshots, scaling, and rendering policy.
 
+For GitHub Copilot, construction defaults and per-run MCP options configure SDK requests; resuming an `AgentSession`
+continues SDK/CLI-owned service state. Forwarding narrower options does not guarantee revocation of capabilities
+already resident in that session. Enforce authorization at the MCP service/tool boundary and use
+`agent.create_session()` with the narrowed options to start a fresh service session, without copying the previous
+`service_session_id` or reusing its SDK `session_id`. See the
+[Copilot session-lifetime guidance](https://github.com/microsoft/agent-framework/blob/main/python/packages/github_copilot/README.md#mcp-configuration-and-session-lifetime).
+
 ## Code execution
 
 Monty and Hyperlight redact host tool exception diagnostics by default. Enable
