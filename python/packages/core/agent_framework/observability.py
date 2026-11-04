@@ -1355,7 +1355,7 @@ class ObservabilitySettings:
             logger_provider = LoggerProvider(resource=resource)
             for log_exporter in log_exporters:
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
-            # Attach a handler with the provider to the root logger
+            # Attach a handler with the provider to the agent_framework logger
             handler = LoggingHandler(logger_provider=logger_provider)
             logger.addHandler(handler)
             set_logger_provider(logger_provider)
@@ -1646,6 +1646,17 @@ def configure_otel_providers(
         you can choose to use this method and take the exporter and provider that we created.
         Alternatively, you can setup the providers yourself, or through another library
         (e.g., Azure Monitor) and just call `enable_sensitive_telemetry()` to opt-in to sensitive data capture.
+
+    Note:
+        This is a convenience setup for Agent Framework telemetry. It attaches an OpenTelemetry
+        `LoggingHandler` to the `agent_framework` logger only, and it does not inspect, coordinate with,
+        or make assumptions about the application's other logging handlers. For example, if the
+        application also attaches its own `LoggingHandler` to the root logger, `agent_framework` records
+        propagate to it and are exported by both handlers. Applications that combine this function with
+        their own logging configuration own that composition and should use manual OpenTelemetry setup
+        when they need custom providers, filters, propagation, or exporters. See
+        `python/samples/02-agents/observability/advanced_manual_setup_console_output.py` for a manual
+        setup example.
 
     Note:
         By default, the Agent Framework emits metrics with the prefixes `agent_framework`

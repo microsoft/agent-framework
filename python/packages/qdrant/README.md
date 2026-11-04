@@ -23,9 +23,9 @@ then an optional `env_file_path`, then environment variables. API keys accept
 `str` or AF `SecretString` and are unwrapped only when creating the SDK client.
 
 You can instead pass a configured `AsyncQdrantClient` as `async_client` for
-advanced SDK options. Supplied clients bypass settings loading and remain
-caller-owned unless `managed_client=True`; connector-created clients are closed
-on async context exit.
+advanced SDK options. An injected client takes precedence over URL, API-key,
+and `.env` settings and always remains caller-owned. Connector-created clients
+are closed on async context exit.
 
 ## Usage
 

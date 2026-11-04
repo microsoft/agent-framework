@@ -33,6 +33,19 @@ def _validate_hosted_tool_payload(sanitized: Mapping[str, Any]) -> None:
         )
 
 
+def _to_plain_dict(value: Any) -> Any:
+    """Recursively convert Azure SDK models and mappings into plain dictionaries."""
+    if isinstance(value, Mapping):
+        mapping = cast("Mapping[str, Any]", value)
+        return {k: _to_plain_dict(v) for k, v in mapping.items()}
+    if hasattr(value, "as_dict") and callable(value.as_dict):
+        return _to_plain_dict(value.as_dict())
+    if isinstance(value, (list, tuple)):
+        items = cast("list[Any] | tuple[Any, ...]", value)
+        return [_to_plain_dict(v) for v in items]
+    return value
+
+
 def _sanitize_foundry_response_tool(tool_item: Any) -> Any:  # pyright: ignore[reportUnusedFunction]
     """Return a Responses-API-safe tool payload for Foundry hosted tools.
 
@@ -50,9 +63,12 @@ def _sanitize_foundry_response_tool(tool_item: Any) -> Any:  # pyright: ignore[r
        defaulted (``file_search`` without ``vector_store_ids``, ``mcp`` without
        either ``server_url`` or ``project_connection_id``) raise ``ValueError``
        with a message that points at the tool definition.
+    4. Nested Azure SDK models (such as ``BingCustomSearchToolParameters`` or
+       ``AutoCodeInterpreterToolParam``) are recursively converted into plain
+       dictionaries so the resulting payload is JSON serializable.
     """
     if isinstance(tool_item, FoundryMCPTool):
-        sanitized: dict[str, Any] = dict(cast("Mapping[str, Any]", tool_item))
+        sanitized: dict[str, Any] = _to_plain_dict(tool_item)
         sanitized.pop("name", None)
         sanitized.pop("description", None)
         _validate_hosted_tool_payload(sanitized)
@@ -61,7 +77,7 @@ def _sanitize_foundry_response_tool(tool_item: Any) -> Any:  # pyright: ignore[r
     if isinstance(tool_item, Mapping):
         mapping = cast("Mapping[str, Any]", tool_item)
         if "type" in mapping and mapping.get("type") not in {"function", "custom"}:
-            sanitized = dict(mapping)
+            sanitized = _to_plain_dict(mapping)
             sanitized.pop("name", None)
             sanitized.pop("description", None)
             if sanitized.get("type") == "code_interpreter" and "container" not in sanitized:
