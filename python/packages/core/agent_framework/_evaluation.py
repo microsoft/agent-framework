@@ -24,7 +24,7 @@ Local evaluator example:
 
 .. code-block:: python
 
-    from agent_framework import LocalEvaluator, keyword_check, evaluate_agent
+    from agent_framework import LocalEvaluator, evaluate_agent, keyword_check, tool_called_check
 
     local = LocalEvaluator(
         keyword_check("weather", "temperature"),
@@ -1498,7 +1498,7 @@ class LocalEvaluator:
 
         .. code-block:: python
 
-            from agent_framework import LocalEvaluator, keyword_check, evaluate_agent
+            from agent_framework import LocalEvaluator, evaluate_agent, keyword_check, tool_called_check
 
             local = LocalEvaluator(
                 keyword_check("weather"),

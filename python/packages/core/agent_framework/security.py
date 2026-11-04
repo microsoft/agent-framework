@@ -1359,7 +1359,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             agent = Agent(client=client, name="assistant", tools=[get_weather], middleware=[middleware])
 
             # Run agent - untrusted tool results are automatically hidden
-            response = await agent.run(messages=[{"role": "user", "content": "What's the weather?"}])
+            response = await agent.run("What's the weather?")
     """
 
     _requires_session_state = True
