@@ -619,6 +619,13 @@ class DeclarativeWorkflowBuilder:
         # Create then branch
         then_actions = action_def.get("then", action_def.get("actions", []))
         then_entry = self._create_executors_for_actions(then_actions, builder, branch_context)
+        then_passthrough = None
+        if then_entry is None:
+            # Empty then branch - create a passthrough for continuation when condition is true
+            then_passthrough = JoinExecutor(
+                {"kind": "ThenPassthrough"}, id=self._allocate_generated_id(f"{action_id}_then_pass")
+            )
+            self._executors[then_passthrough.id] = then_passthrough
 
         # Create else branch
         else_actions = action_def.get("else", [])
@@ -641,6 +648,12 @@ class DeclarativeWorkflowBuilder:
                 target=then_target,
                 condition=lambda msg: isinstance(msg, ConditionResult) and msg.branch_index == 0,
             )
+        elif then_passthrough:
+            builder.add_edge(
+                source=evaluator,
+                target=then_passthrough,
+                condition=lambda msg: isinstance(msg, ConditionResult) and msg.branch_index == 0,
+            )
         if else_entry:
             else_target = self._get_structure_entry(else_entry)
             builder.add_edge(
@@ -656,7 +669,7 @@ class DeclarativeWorkflowBuilder:
             )
 
         # Get branch exit executors for later wiring to successor
-        then_exit = self._get_branch_exit(then_entry)
+        then_exit = self._get_branch_exit(then_entry) if then_entry else then_passthrough
         else_exit = self._get_branch_exit(else_entry) if else_entry else else_passthrough
 
         # Collect all branch exits (for wiring to successor)
@@ -672,6 +685,7 @@ class DeclarativeWorkflowBuilder:
                 self.id = action_id
                 self.evaluator = evaluator  # The entry point for this structure
                 self.then_entry = then_entry
+                self.then_passthrough = then_passthrough
                 self.else_entry = else_entry
                 self.else_passthrough = else_passthrough
                 self.branch_exits = branch_exits  # All exits that need wiring to successor
