@@ -8,7 +8,7 @@ import hashlib
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Any, ClassVar, Generic, cast
+from typing import Any, ClassVar, Generic, Self, cast
 
 from agent_framework import (
     BaseVectorCollection,
@@ -31,7 +31,7 @@ from pymongo import AsyncMongoClient, ReplaceOne
 from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import CollectionInvalid, OperationFailure, PyMongoError
-from typing_extensions import Self, TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeVar
 
 KeyT = TypeVar("KeyT", default=Any)
 ModelT = TypeVar("ModelT", default=Any)

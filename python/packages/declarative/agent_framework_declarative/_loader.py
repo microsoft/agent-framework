@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 import yaml
 from agent_framework import (
@@ -43,11 +42,6 @@ from ._models import (
     _safe_mode_context,  # type: ignore[reportPrivateUsage]
     agent_schema_dispatch,
 )
-
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 
 @experimental(feature_id=ExperimentalFeature.DECLARATIVE_AGENTS)

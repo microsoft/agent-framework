@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from typing import Never
+
 import pytest
-from typing_extensions import Never
 
 from agent_framework import (
     WorkflowBuilder,

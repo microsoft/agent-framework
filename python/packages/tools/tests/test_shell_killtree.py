@@ -138,7 +138,7 @@ async def test_kill_via_stdlib_posix_escalates_to_sigkill(monkeypatch) -> None:
         calls["count"] += 1
         if calls["count"] == 1:
             awaitable.close()
-            raise asyncio.TimeoutError
+            raise TimeoutError
         await awaitable
 
     proc = cast(asyncio.subprocess.Process, _FakeAsyncProcess(pid=12, returncode=None))

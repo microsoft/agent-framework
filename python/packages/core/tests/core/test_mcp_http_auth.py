@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import sys
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextvars import ContextVar
 from typing import Any, Literal, TypeAlias, cast
@@ -302,7 +301,7 @@ async def test_transport_failure_cleans_up_hooks_and_owned_client(
         raise RuntimeError("transport entry failed")
         yield ()
 
-    error = asyncio.CancelledError if failure == "cancellation" and sys.version_info >= (3, 11) else ToolException
+    error = asyncio.CancelledError if failure == "cancellation" else ToolException
     transport_patch = (
         contextlib.nullcontext()
         if failure == "initialize"
