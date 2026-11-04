@@ -72,13 +72,13 @@ agent_tool = AgentMCPTool(
     },
 )
 
-@server.list_tools()
-async def list_tools():
+async def list_tools(ctx, params):
     return await agent_tool.list_tools()
 
-@server.call_tool()
-async def call_tool(name, arguments):
-    return await agent_tool.call_tool(name, arguments)
+async def call_tool(ctx, params):
+    return await agent_tool.call_tool(params.name, params.arguments)
+
+server = Server("my-agent-server", on_list_tools=list_tools, on_call_tool=call_tool)
 ```
 
 `AgentMCPTool` uses the agent's name and description unless overridden.
