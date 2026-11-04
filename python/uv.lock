@@ -960,7 +960,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "pydantic-monty", specifier = ">=0.0.23,<1.5" },
+    { name = "pydantic-monty", specifier = ">=1.0,<1.5" },
 ]
 
 [[package]]

@@ -53,6 +53,9 @@ outer redaction cannot repair a diagnostic already caught and returned by genera
 
 For Monty, distinguish interpreter `resource_limits` from host-side attachment capture. Capture has per-call
 file-count and raw-byte limits shared across read-write mounts. Omitted attachments do not undo filesystem writes.
+Monty requires `pydantic-monty>=1.0`. Use `max_feed_duration_secs` for the total sandbox execution budget or
+`max_turn_duration_secs` for the budget between host round trips. The legacy `max_duration_secs` option aliases
+`max_feed_duration_secs`; do not specify both.
 Check the [Monty file-mount and resource-limit guidance](https://github.com/microsoft/agent-framework/blob/main/python/packages/monty/README.md#file-mounts-and-resource-limits)
 before relying on output attachments or treating interpreter limits as host resource limits.
 
