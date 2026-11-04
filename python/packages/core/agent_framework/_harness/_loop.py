@@ -677,6 +677,10 @@ class AgentLoopMiddleware(AgentMiddleware):
                         f"got {type(result).__name__}."
                     )
 
+                # Clear any loop_exit_reason stamped by an inner agent or nested loop so budget
+                # and cap reasons are not masked by stale inner values.
+                result.additional_properties.pop("loop_exit_reason", None)
+
                 final_result = result
                 aggregated.extend(result.messages)
                 if result.usage_details is not None:
@@ -756,7 +760,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         if cap_fired:
             final_result.additional_properties.setdefault("loop_exit_reason", "iteration_cap_reached")
         if budget_exit is not None:
-            final_result.additional_properties.setdefault("loop_exit_reason", budget_exit)
+            final_result.additional_properties["loop_exit_reason"] = budget_exit
 
         if not self.return_final_only:
             context.result = self._aggregate_response(final_result, aggregated, aggregated_usage)
@@ -815,6 +819,8 @@ class AgentLoopMiddleware(AgentMiddleware):
                             yield update
 
                         holder["final"] = await inner.get_final_response()
+                        # Clear stale inner/nested loop_exit_reason (see non-streaming path).
+                        holder["final"].additional_properties.pop("loop_exit_reason", None)
                     except MiddlewareTermination:
                         # The pipeline's MiddlewareTermination suppression is no longer active once
                         # process() has returned (the stream is consumed lazily), so a termination
