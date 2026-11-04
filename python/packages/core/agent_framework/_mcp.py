@@ -71,7 +71,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_MCPListResultT = TypeVar("_MCPListResultT")
+_MCPListResultT = TypeVar(
+    "_MCPListResultT",
+    "types.ListToolsResult",
+    "types.ListPromptsResult",
+)
 
 
 def _mcp_exception_log_level() -> Literal[10] | None:
@@ -3060,7 +3064,11 @@ class MCPTool:
                 prompt_functions.append(func)
                 new_functions.append(func)
 
-        prompt_list = await self._try_list_prompts_page_with_recovery(None)
+        prompt_list = await self._try_list_page_with_recovery(
+            None,
+            kind="prompt",
+            request_page=lambda page_params: self._require_connection().list_prompts_page(page_params),
+        )
         if prompt_list is None:
             return
         pages_loaded = 1
@@ -3075,7 +3083,11 @@ class MCPTool:
                     "Increase max_discovery_pages, or set it to None only for a trusted MCP server."
                 )
 
-            prompt_list = await self._try_list_prompts_page_with_recovery(types.PaginatedRequestParams(cursor=cursor))
+            prompt_list = await self._try_list_page_with_recovery(
+                types.PaginatedRequestParams(cursor=cursor),
+                kind="prompt",
+                request_page=lambda page_params: self._require_connection().list_prompts_page(page_params),
+            )
             if prompt_list is None:
                 return
             pages_loaded += 1
@@ -3098,7 +3110,6 @@ class MCPTool:
         params: types.PaginatedRequestParams | None,
         *,
         kind: Literal["tool", "prompt"],
-        is_supported: Callable[[], bool],
         request_page: Callable[[types.PaginatedRequestParams | None], Awaitable[_MCPListResultT]],
     ) -> _MCPListResultT | None:
         """Fetch one catalog page, retrying after connection loss."""
@@ -3130,7 +3141,9 @@ class MCPTool:
         async def request_page_with_retry() -> _MCPListResultT | None:
             await self._ensure_connected()
 
-            if not is_supported():
+            # on reconnect we may have different capabilities.
+            is_supported = self._supports_tools if kind == "tool" else self._supports_prompts
+            if not is_supported:
                 logger.debug(
                     "Skipping MCP %s loading because the server did not advertise %s support.",
                     kind,
@@ -3163,17 +3176,6 @@ class MCPTool:
                 f"Failed to load {catalog_name} - connection lost.",
                 inner_exception=exc,
             ) from exc
-
-    async def _try_list_prompts_page_with_recovery(
-        self, params: types.PaginatedRequestParams | None
-    ) -> types.ListPromptsResult | None:
-        """Fetch a page of prompts, retrying after connection loss."""
-        return await self._try_list_page_with_recovery(
-            params,
-            kind="prompt",
-            is_supported=lambda: self._supports_prompts,
-            request_page=lambda page_params: self._require_connection().list_prompts_page(page_params),
-        )
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
@@ -3300,7 +3302,11 @@ class MCPTool:
                 )
                 new_functions.append(func)
 
-        tool_list = await self._try_list_tools_page_with_recovery(None)
+        tool_list = await self._try_list_page_with_recovery(
+            None,
+            kind="tool",
+            request_page=lambda page_params: self._require_connection().list_tools_page(page_params),
+        )
         if tool_list is None:
             return
         pages_loaded = 1
@@ -3315,7 +3321,11 @@ class MCPTool:
                     "Increase max_discovery_pages, or set it to None only for a trusted MCP server."
                 )
 
-            tool_list = await self._try_list_tools_page_with_recovery(types.PaginatedRequestParams(cursor=cursor))
+            tool_list = await self._try_list_page_with_recovery(
+                types.PaginatedRequestParams(cursor=cursor),
+                kind="tool",
+                request_page=lambda page_params: self._require_connection().list_tools_page(page_params),
+            )
             if tool_list is None:
                 return
             pages_loaded += 1
@@ -3345,17 +3355,6 @@ class MCPTool:
         self._tool_param_names_by_name = tool_param_names_by_name
         self._tool_annotations_by_name = tool_annotations_by_name
         self._progressive_loaded_tool_names.difference_update(existing_tools.keys() - reused_tool_names)
-
-    async def _try_list_tools_page_with_recovery(
-        self, params: types.PaginatedRequestParams | None
-    ) -> types.ListToolsResult | None:
-        """Fetch a page of tools, retrying after connection loss."""
-        return await self._try_list_page_with_recovery(
-            params,
-            kind="tool",
-            is_supported=lambda: self._supports_tools,
-            request_page=lambda page_params: self._require_connection().list_tools_page(page_params),
-        )
 
     async def _cancel_pending_reload_tasks(self) -> None:
         """Cancel session-bound discovery reloads and wait for them to finish."""
