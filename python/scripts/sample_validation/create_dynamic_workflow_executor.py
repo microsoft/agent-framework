@@ -4,6 +4,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Never
 
 from agent_framework import (
     Executor,
@@ -35,7 +36,6 @@ from sample_validation.playbook import (
     compute_sample_hash,
     sample_files,
 )
-from typing_extensions import Never
 
 logger = logging.getLogger(__name__)
 

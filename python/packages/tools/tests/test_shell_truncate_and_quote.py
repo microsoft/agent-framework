@@ -7,7 +7,36 @@ from __future__ import annotations
 import pytest
 
 from agent_framework_tools.shell._tool import _quote_posix, _quote_powershell
-from agent_framework_tools.shell._truncate import truncate_head_tail, truncate_text_head_tail
+from agent_framework_tools.shell._truncate import (
+    _OutputBuffer,
+    _TextOutputBuffer,
+    truncate_head_tail,
+    truncate_text_head_tail,
+)
+
+
+@pytest.mark.parametrize("cap", [1, 2, 5, 64])
+@pytest.mark.parametrize("chunk_size", [1, 7, 1024])
+def test_streaming_capture_matches_truncation_with_bounded_storage(cap: int, chunk_size: int) -> None:
+    data = bytes(range(128)) * 32
+    output = _OutputBuffer(cap)
+    for offset in range(0, len(data), chunk_size):
+        output.append(data[offset : offset + chunk_size])
+        assert len(output._head) + len(output._tail) <= cap
+    assert output.format() == truncate_head_tail(data, cap)
+
+
+@pytest.mark.parametrize("cap", [1, 5, 64])
+def test_text_capture_preserves_decoding_and_strips_unbounded_trailing_newlines(cap: int) -> None:
+    data = b"head\n" + "caf\u00e9".encode() + b"\xff" + b"\r\n" * 100 + b"tail" + b"\r\n" * 100
+    output = _TextOutputBuffer(cap, strip_newlines=True)
+    for value in data:
+        output.append(bytes([value]))
+        for buffer in (output._output, output._pending_newlines):
+            assert len(buffer._head) + len(buffer._tail) <= cap
+    output.append(b"", final=True)
+    expected = data.decode("utf-8", errors="replace").rstrip("\r\n")
+    assert output.format() == truncate_text_head_tail(expected, cap)
 
 
 def test_truncate_under_cap_returns_original() -> None:

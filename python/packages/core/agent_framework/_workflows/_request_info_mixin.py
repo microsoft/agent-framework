@@ -4,12 +4,11 @@ import contextlib
 import functools
 import inspect
 import logging
-import sys
 import types
 from builtins import type as builtin_type
 from collections.abc import Awaitable, Callable
 from types import UnionType
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
 
 from ._typing_utils import (
     _resolve_function_annotations,  # pyright: ignore[reportPrivateUsage]
@@ -20,11 +19,6 @@ from ._typing_utils import (
     resolve_type_annotation,
 )
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
-
-if sys.version_info >= (3, 11):
-    from typing import overload  # pragma: no cover
-else:
-    from typing_extensions import overload  # pragma: no cover
 
 if TYPE_CHECKING:
     from ._executor import Executor

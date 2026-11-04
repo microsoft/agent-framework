@@ -60,6 +60,12 @@ class MongoDBSettings(TypedDict, total=False):
     app_name: str | None
 
 
+class _MongoDBDatabaseSettings(TypedDict, total=False):
+    """Resolve the database selector independently of client connection settings."""
+
+    database_name: str | None
+
+
 _BSON_MAX_DOCUMENT_SIZE = 16 * 1024 * 1024
 _BSON_INT64_MIN = -(2**63)
 _BSON_INT64_MAX = 2**63 - 1
@@ -104,8 +110,8 @@ def _create_client(
     env_file_encoding: str | None,
 ) -> tuple[MongoClient, MongoDatabase, str, bool]:
     if async_client is not None:
-        if any(value is not None for value in (uri, app_name, env_file_path, env_file_encoding)):
-            raise ValueError("async_client cannot be combined with uri, app_name, env_file_path, or env_file_encoding.")
+        if database_name is None:
+            database_name = load_settings(_MongoDBDatabaseSettings, env_prefix="MONGODB_").get("database_name")
         resolved_database_name = _validate_non_empty_string(database_name, "database_name")
         return (
             async_client,
@@ -606,9 +612,10 @@ class MongoDBCollection(
         Args:
             record_type: Registered application model, or dict with an explicit definition.
             uri: MongoDB URI override; otherwise loaded from ``MONGODB_URI``.
-            database_name: Database name, or ``MONGODB_DATABASE_NAME`` for a connector-created client.
+            database_name: Database name, or ``MONGODB_DATABASE_NAME`` when omitted.
             app_name: Optional driver app name, or ``MONGODB_APP_NAME``.
-            async_client: Existing PyMongo async client. It bypasses settings and remains caller-owned.
+            async_client: Existing PyMongo async client. When supplied, URI, app-name,
+                and .env options are ignored. The client remains caller-owned.
             definition: Explicit dictionary schema.
             collection_name: Collection name, overriding the model definition.
             embedding_generator: Default local embedding client.
@@ -1140,9 +1147,10 @@ class MongoDBStore(BaseVectorStore):
 
         Args:
             uri: MongoDB URI override; otherwise loaded from ``MONGODB_URI``.
-            database_name: Database name, or ``MONGODB_DATABASE_NAME`` for a connector-created client.
+            database_name: Database name, or ``MONGODB_DATABASE_NAME`` when omitted.
             app_name: Optional driver app name, or ``MONGODB_APP_NAME``.
-            async_client: Existing PyMongo async client. It bypasses settings and remains caller-owned.
+            async_client: Existing PyMongo async client. When supplied, URI, app-name,
+                and .env options are ignored. The client remains caller-owned.
             embedding_generator: Default embedding client inherited by collections.
             env_file_path: Optional .env file selected explicitly.
             env_file_encoding: Encoding for the selected .env file.

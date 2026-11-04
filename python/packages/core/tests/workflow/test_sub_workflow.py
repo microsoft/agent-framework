@@ -4,11 +4,10 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Never
 from uuid import uuid4
 
 import pytest
-from typing_extensions import Never
 
 from agent_framework import (
     Executor,

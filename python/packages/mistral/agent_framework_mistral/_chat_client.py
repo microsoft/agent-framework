@@ -10,7 +10,7 @@ import sys
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Generic, Literal, NoReturn, cast
+from typing import Any, ClassVar, Generic, Literal, NoReturn, TypedDict, cast
 
 import httpx
 from agent_framework import (
@@ -68,10 +68,6 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # pragma: no cover
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.mistral")
 
@@ -401,6 +397,7 @@ class RawMistralChatClient(
         self.model = mistral_settings.get("chat_model")
         self.server_url = mistral_settings.get("server_url")
         self._owns_client = not isinstance(client, Mistral)
+        self._client_closed = False
 
         if isinstance(client, Mistral):
             self.client = client
@@ -421,11 +418,15 @@ class RawMistralChatClient(
 
         super().__init__(additional_properties=additional_properties)
 
+    @override
     async def close(self) -> None:
         """Close the internally created Mistral SDK client."""
-        if self._owns_client:
-            await self.client.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
-            self.client.__exit__(None, None, None)  # type: ignore[no-untyped-call]
+        if self._owns_client and not self._client_closed:
+            try:
+                await self.client.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
+            finally:
+                self.client.__exit__(None, None, None)  # type: ignore[no-untyped-call]
+            self._client_closed = True
 
     @override
     def service_url(self) -> str:

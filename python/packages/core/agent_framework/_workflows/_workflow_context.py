@@ -7,11 +7,11 @@ import inspect
 import logging
 import uuid
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Generic, Union, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Generic, Never, Union, cast, get_args, get_origin
 
 from opentelemetry.propagate import inject
 from opentelemetry.trace import SpanKind
-from typing_extensions import Never, TypeVar
+from typing_extensions import TypeVar
 
 from .._tools import ToolTypes
 from ..observability import OtelAttr, create_workflow_span

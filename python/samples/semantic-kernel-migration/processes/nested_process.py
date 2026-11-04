@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = [
 #     "agent-framework-core",
 #     "python-dotenv",
@@ -18,7 +18,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar, cast
+from typing import ClassVar, Never, cast
 
 ######################################################################
 # region Agent Framework imports
@@ -46,7 +46,6 @@ from semantic_kernel.processes.kernel_process.kernel_process_step_context import
 from semantic_kernel.processes.kernel_process.kernel_process_step_state import KernelProcessStepState
 from semantic_kernel.processes.local_runtime.local_kernel_process import start
 from semantic_kernel.processes.process_builder import ProcessBuilder
-from typing_extensions import Never
 
 ######################################################################
 # endregion

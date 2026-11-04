@@ -229,6 +229,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             builtin_type[Any] | types.UnionType, Callable[[Any, WorkflowContext[Any, Any]], Awaitable[None]]
         ] = {}
         self._handler_specs: list[dict[str, Any]] = []
+        self._response_handler_specs: list[dict[str, Any]] = []
         if not defer_discovery:
             self._discover_handlers()
 
@@ -474,7 +475,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         output_types: set[type[Any] | types.UnionType] = set()
 
         # Collect output types from all handlers
-        for handler_spec in self._handler_specs + self._response_handler_specs:
+        for handler_spec in self._handler_specs + getattr(self, "_response_handler_specs", []):
             handler_output_types = handler_spec.get("output_types", [])
             output_types.update(handler_output_types)
 
@@ -490,7 +491,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         output_types: set[type[Any] | types.UnionType] = set()
 
         # Collect workflow output types from all handlers
-        for handler_spec in self._handler_specs + self._response_handler_specs:
+        for handler_spec in self._handler_specs + getattr(self, "_response_handler_specs", []):
             handler_workflow_output_types = handler_spec.get("workflow_output_types", [])
             output_types.update(handler_workflow_output_types)
 

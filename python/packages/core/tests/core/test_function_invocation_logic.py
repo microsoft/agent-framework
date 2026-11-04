@@ -6753,7 +6753,9 @@ async def test_approval_detects_changes_to_converted_values(
         (
             UUID,
             "12345678-1234-5678-1234-567812345678",
-            lambda value: UUID(str(value), is_safe=SafeUUID.safe),
+            lambda value: UUID(
+                str(value), is_safe=SafeUUID.safe if value.is_safe is not SafeUUID.safe else SafeUUID.unsafe
+            ),
         ),
     ],
     ids=[
@@ -7956,6 +7958,7 @@ def test_replace_approval_contents_with_results_correlates_reused_call_id_pendin
 def test_replace_approval_contents_with_results_resolves_rejected_request() -> None:
     """A rejected pending call produces one terminal result."""
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+    from agent_framework._types import APPROVAL_REJECTION_RESULT_KEY
 
     function_call, request, _ = _build_approved_tool_roundtrip(
         call_id="call_rejected",
@@ -7977,6 +7980,7 @@ def test_replace_approval_contents_with_results_resolves_rejected_request() -> N
     results = [content for message in messages for content in message.contents if content.type == "function_result"]
     assert len(results) == 1
     assert results[0].result == "Error: Tool call invocation was rejected by user."
+    assert results[0].additional_properties[APPROVAL_REJECTION_RESULT_KEY] is True
     assert resolved_contents == results
 
 

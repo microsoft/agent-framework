@@ -329,6 +329,10 @@ class DefaultMCPToolHandler:
             client. If every slot is busy, new scopes receive a capacity error;
             existing scopes can still reuse their cached client. Defaults to
             ``32``. Does not limit provider-backed or unscoped invocations.
+        max_discovery_pages: Maximum pages accepted independently for each tool catalog fetch.
+            Defaults to 100; ``None`` disables the limit.
+        max_discovery_items: Maximum tools accepted across each tool catalog fetch.
+            Defaults to 1,000; ``None`` disables the limit.
     """
 
     LIST_TOOLS_TOOL_NAME: ClassVar[str] = "tools/list"
@@ -351,11 +355,19 @@ class DefaultMCPToolHandler:
         *,
         client_provider: ClientProvider | None = None,
         cache_max_size: int = _DEFAULT_CACHE_MAX_SIZE,
+        max_discovery_pages: int | None = 100,
+        max_discovery_items: int | None = 1_000,
     ) -> None:
         if cache_max_size <= 0:
             raise ValueError(f"cache_max_size must be positive, got {cache_max_size}")
+        if max_discovery_pages is not None and max_discovery_pages <= 0:
+            raise ValueError("max_discovery_pages must be positive or None.")
+        if max_discovery_items is not None and max_discovery_items <= 0:
+            raise ValueError("max_discovery_items must be positive or None.")
         self._client_provider = client_provider
         self._cache_max_size = cache_max_size
+        self._max_discovery_pages = max_discovery_pages
+        self._max_discovery_items = max_discovery_items
         self._cache: OrderedDict[tuple[str, str, str, str, str], _CacheEntry] = OrderedDict()
         self._retired: dict[int, _CacheEntry] = {}
         # Outer lock guards the cache + in-flight-future map only — never
@@ -923,6 +935,8 @@ class DefaultMCPToolHandler:
             load_prompts=False,
             http_client=provided_client,
             header_provider=_header_provider if captured_headers else None,
+            max_discovery_pages=self._max_discovery_pages,
+            max_discovery_items=self._max_discovery_items,
         )
         try:
             await tool.connect()

@@ -10,7 +10,7 @@ collection clients, and `QdrantSettings` handles connection configuration.
 pip install agent-framework-qdrant --pre
 ```
 
-Requires Python 3.10+ and Qdrant server 1.16.2+. The official async
+Supports Python 3.11–3.15. Requires Qdrant server 1.16.2+. The official async
 `qdrant-client` SDK is installed automatically.
 
 ## Connection settings
@@ -23,9 +23,9 @@ then an optional `env_file_path`, then environment variables. API keys accept
 `str` or AF `SecretString` and are unwrapped only when creating the SDK client.
 
 You can instead pass a configured `AsyncQdrantClient` as `async_client` for
-advanced SDK options. Supplied clients bypass settings loading and remain
-caller-owned unless `managed_client=True`; connector-created clients are closed
-on async context exit.
+advanced SDK options. An injected client takes precedence over URL, API-key,
+and `.env` settings and always remains caller-owned. Connector-created clients
+are closed on async context exit.
 
 ## Usage
 
