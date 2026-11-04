@@ -158,11 +158,12 @@ class _FakeSession:
     ("region", "env_region", "session_region", "expected_region"),
     [
         (None, None, "eu-west-1", "eu-west-1"),
-        ("us-west-2", None, "eu-west-1", "us-west-2"),
-        (None, "ap-south-1", "eu-west-1", "ap-south-1"),
+        ("us-west-2", "ap-south-1", "eu-west-1", "us-west-2"),
+        (None, "ap-south-1", "eu-west-1", "eu-west-1"),
+        (None, "ap-south-1", None, "ap-south-1"),
         (None, None, None, "us-east-1"),
     ],
-    ids=["session-region", "region-argument-wins", "env-region-wins", "default-region"],
+    ids=["session-region", "region-argument-wins", "session-region-beats-env", "env-region", "default-region"],
 )
 async def test_bedrock_embedding_resolves_region_with_boto3_session(
     monkeypatch: pytest.MonkeyPatch,
@@ -171,7 +172,7 @@ async def test_bedrock_embedding_resolves_region_with_boto3_session(
     session_region: str | None,
     expected_region: str,
 ) -> None:
-    """A configured region wins, then the provided session's region, then the default region."""
+    """The region argument wins, then the provided session's region, then BEDROCK_REGION, then the default."""
     if env_region:
         monkeypatch.setenv("BEDROCK_REGION", env_region)
     else:
@@ -212,6 +213,20 @@ async def test_bedrock_embedding_ignores_boto3_session_when_runtime_client_suppl
 
     assert session.calls == []
     assert client.region == "us-east-1"
+
+
+async def test_bedrock_embedding_reports_region_of_supplied_runtime_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A preconfigured runtime client defines the region, so BEDROCK_REGION should not change it."""
+    monkeypatch.setenv("BEDROCK_REGION", "ap-south-1")
+    runtime = _StubBedrockEmbeddingRuntime()
+    runtime.meta.region_name = "eu-west-1"
+
+    client = BedrockEmbeddingClient(
+        model="amazon.titan-embed-text-v2:0",
+        client=runtime,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    assert client.region == "eu-west-1"
 
 
 # region: Integration Tests
