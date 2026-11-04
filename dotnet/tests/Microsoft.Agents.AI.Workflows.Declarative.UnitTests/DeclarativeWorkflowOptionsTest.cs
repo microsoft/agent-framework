@@ -29,7 +29,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
     // These constants mirror Microsoft.Agents.AI.Workflows.Observability.ActivityNames
     // which is internal and not accessible from this test project.
     private const string WorkflowBuildActivityName = "workflow.build";
-    private const string WorkflowRunActivityName = "workflow_invoke";
+    private const string WorkflowRunActivityName = "invoke_workflow";
 
     // The default activity source name used by the workflow telemetry context.
     private const string DefaultTelemetrySourceName = "Microsoft.Agents.AI.Workflows";

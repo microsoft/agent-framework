@@ -1599,7 +1599,10 @@ async def test_context_provider_receives_full_agent_response_non_streaming(
     assert response.usage_details == {"input_token_count": 3, "output_token_count": 2, "total_token_count": 5}
     assert response.value == {"answer": "ok"}
     assert response.continuation_token == {"token": "next"}
-    assert response.additional_properties == {"provider": "test"}
+    assert response.additional_properties == {
+        "provider": "test",
+        "agent_framework.evaluation": {},
+    }
     assert response.raw_representation is raw_response
 
 
@@ -1688,7 +1691,10 @@ async def test_context_provider_receives_full_agent_response_streaming(
     assert response.usage_details == {"input_token_count": 4, "output_token_count": 3, "total_token_count": 7}
     assert response.value == {"answer": "ok"}
     assert response.continuation_token == {"token": "stream-next"}
-    assert response.additional_properties == {"provider": "stream-test"}
+    assert response.additional_properties == {
+        "provider": "stream-test",
+        "agent_framework.evaluation": {},
+    }
     assert response.raw_representation == [raw_update]
 
 
@@ -4600,17 +4606,17 @@ async def test_shared_local_storage_cross_provider_responses_history_does_not_le
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from agent_framework._sessions import InMemoryHistoryProvider
-    from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
+    from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient, OpenAIChatOptions
 
     @tool(approval_mode="never_require")
     def search_hotels(city: str) -> str:
         return f"Found 3 hotels in {city}"
 
     responses_client = OpenAIChatClient(model="test-model", api_key="test-key")
-    responses_agent = Agent(
+    responses_agent = Agent[OpenAIChatOptions](
         client=responses_client,  # ty: ignore[invalid-argument-type]
         tools=[search_hotels],
-        default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+        default_options={"store": False},
     )
     session = responses_agent.create_session()
 

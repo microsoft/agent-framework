@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+from typing import Never
 
 from agent_framework import (
     Executor,
@@ -10,7 +11,6 @@ from agent_framework import (
     executor,
     handler,
 )
-from typing_extensions import Never
 
 """
 Step 1: Foundational patterns: Executors and edges

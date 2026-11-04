@@ -27,6 +27,8 @@ series because response caching and default-header integration use its internals
 With a provider, every invocation (including `tools/list`) gets a fresh tool/session,
 even if the provider returns `None` or a shared HTTP client. Invocation cleanup closes
 the session and any internally owned fallback client, never caller-owned HTTP clients.
+The handler forwards its configurable `max_discovery_pages` and `max_discovery_items`
+limits to every internally created `MCPStreamableHTTPTool`.
 Shutdown waits for active provider-backed invocations to clean up. Calling `aclose()`
 from an active invocation's context (including inherited child tasks and cleanup)
 raises `RuntimeError` before changing handler state; shutdown must run outside that

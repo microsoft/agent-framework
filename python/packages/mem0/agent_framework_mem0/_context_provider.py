@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from collections.abc import Awaitable
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypeAlias, TypedDict
 
 from agent_framework import Message, SecretString
 from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
@@ -21,11 +20,6 @@ from agent_framework._telemetry import mark_feature_used
 from mem0 import AsyncMemory, AsyncMemoryClient
 
 from ._feature_usage import FeatureIndex
-
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun

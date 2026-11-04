@@ -17,6 +17,12 @@ runtime evidence; it does not determine whether output is correct.
 Inspect run boundaries, model calls, tool and MCP calls, workflow transitions, checkpoints, approvals, retries, usage,
 and hosted-service continuations. Use stable agent, workflow, and service identifiers.
 
+Workflow invocation spans are named `invoke_workflow {gen_ai.workflow.name}` when the workflow-name attribute is
+non-empty, or `invoke_workflow` otherwise. Their `gen_ai.operation.name` is always `invoke_workflow`; supplied
+conversation identifiers remain available as `gen_ai.conversation.id`.
+Graph workflows without an application-provided name retain their generated runtime/checkpoint name, but omit it
+from `gen_ai.workflow.name` and use the bare invocation span name. Functional workflows default to their function name.
+
 ## Learn more
 
 - [Agent observability](https://learn.microsoft.com/agent-framework/agents/observability)

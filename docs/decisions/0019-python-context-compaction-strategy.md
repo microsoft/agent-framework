@@ -646,7 +646,7 @@ agent = client.create_agent(
 
 There are two ways we can do this:
 1. Before writing to storage in `after_run`, compaction is called on the new messages,
-    combined with: a new `compact` method, that reads the full history, calls the compaction strategy with the full history, then writes the compacted result back to storage (also requires a `overwrite` flag on the `save_messages` method). This makes removing old messages from storage a explicit action that the user initiaties instead of being implicitly triggered by `after_run` writes, but it also means compaction strategies only see new messages instead of the full history (unless they read it themselves), the `compact` method could then also have a override for the strategy to use (and/or the tokenizer in case of Variant E1/E2/F1/F2).
+    combined with: a new `compact` method, that reads the full history, calls the compaction strategy with the full history, then writes the compacted result back to storage (also requires a `overwrite` flag on the `save_messages` method). This makes removing old messages from storage a explicit action that the user initiates instead of being implicitly triggered by `after_run` writes, but it also means compaction strategies only see new messages instead of the full history (unless they read it themselves), the `compact` method could then also have a override for the strategy to use (and/or the tokenizer in case of Variant E1/E2/F1/F2).
 
     ```python
     class HistoryProvider(ContextProvider):

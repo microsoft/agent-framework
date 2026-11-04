@@ -3,6 +3,7 @@
 import asyncio
 import os
 from dataclasses import dataclass
+from typing import Never
 
 from agent_framework import (
     Agent,
@@ -19,7 +20,6 @@ from agent_framework import (
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-from typing_extensions import Never
 
 # Load environment variables from .env file
 load_dotenv()

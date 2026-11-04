@@ -18,6 +18,7 @@ using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
 using Moq;
 using OpenAI.Responses;
+using AgentReference = Azure.AI.Extensions.OpenAI.AgentReference;
 
 namespace Microsoft.Agents.AI.Foundry.UnitTests;
 

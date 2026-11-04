@@ -10,7 +10,7 @@ import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -52,10 +52,6 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from claude_agent_sdk import (
@@ -339,7 +335,8 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         Keyword Args:
             client: Optional pre-configured ClaudeSDKClient instance. If not provided,
-                a new client will be created using the other parameters.
+                a new client will be created using the other parameters. An injected
+                client remains caller-owned and bypasses client settings and .env loading.
             id: Unique identifier for the agent.
             name: Name of the agent.
             description: Description of the agent.
@@ -379,19 +376,21 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         self._mcp_servers: dict[str, Any] = opts.pop("mcp_servers", None) or {}
         self._function_approval_handler: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
 
-        # Load settings from environment and options
-        self._settings = load_settings(
-            ClaudeAgentSettings,
-            env_prefix="CLAUDE_AGENT_",
-            cli_path=cli_path,
-            model=model,
-            cwd=cwd,
-            permission_mode=permission_mode,
-            max_turns=max_turns,
-            max_budget_usd=max_budget_usd,
-            env_file_path=env_file_path,
-            env_file_encoding=env_file_encoding,
-        )
+        # Resolve client configuration only for clients created by the framework.
+        self._settings: ClaudeAgentSettings = {}
+        if self._owns_client:
+            self._settings = load_settings(
+                ClaudeAgentSettings,
+                env_prefix="CLAUDE_AGENT_",
+                cli_path=cli_path,
+                model=model,
+                cwd=cwd,
+                permission_mode=permission_mode,
+                max_turns=max_turns,
+                max_budget_usd=max_budget_usd,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
 
         # Separate built-in tools (strings) from custom tools (callables/FunctionTool)
         self._builtin_tools: list[str] = []
