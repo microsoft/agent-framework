@@ -11,11 +11,13 @@ from __future__ import annotations
 import json
 import warnings
 from collections.abc import Awaitable, Sequence
+from copy import copy
 from inspect import isawaitable
 from typing import Any, ClassVar, Literal, TypeVar, cast
 
 import redis.asyncio as redis
 from agent_framework import Message
+from agent_framework._compaction import group_messages
 from agent_framework._filesystem import _storage_key_segment  # pyright: ignore[reportPrivateUsage]
 from agent_framework._sessions import HistoryProvider, filter_new_messages
 from agent_framework._telemetry import mark_feature_used
@@ -30,127 +32,39 @@ _T = TypeVar("_T")
 # trim boundary against the key state after a competing writer modified it (WATCH conflict).
 _SAVE_WATCH_RETRIES = 8
 
-# Content types that carry a tool output and therefore require a matching earlier call (or
-# approval request) in the same history. A message holding only such a content cannot start a
-# retained window: its source would already have been trimmed away, leaving a dangling output the
-# model rejects (``role='tool'`` without a preceding ``tool_calls``, or a function-call output
-# without its call).
-_DEFERRED_OUTPUT_SUFFIX = "_result"
-_DEFERRED_OUTPUT_TYPES = frozenset({"function_approval_response"})
-
-
-def _is_deferred_output_content(content_type: str) -> bool:
-    return content_type.endswith(_DEFERRED_OUTPUT_SUFFIX) or content_type in _DEFERRED_OUTPUT_TYPES
-
-
-def _is_source_content(content_type: str) -> bool:
-    return content_type.endswith("_call") or content_type == "function_approval_request"
-
-
-def _content_pair_id(content: Any) -> str | None:
-    """Return the identifier a content pairs with, when it carries one.
-
-    Tool calls and their results pair on ``call_id``. Approval request and
-    response wrappers carry no ``call_id`` at all: they pair through ``Content.id``
-    and the embedded function call, and by convention the wrapper's own id is the
-    function call's id. Without the fallback every approval wrapper looked
-    unpairable, which made a window holding only a valid approval sequence look
-    orphaned and let the trim discard it.
-    """
-    call_id = getattr(content, "call_id", None)
-    if isinstance(call_id, str) and call_id:
-        return call_id
-    function_call = getattr(content, "function_call", None)
-    if function_call is not None:
-        nested = getattr(function_call, "call_id", None) or getattr(function_call, "id", None)
-        if isinstance(nested, str) and nested:
-            return nested
-    content_id = getattr(content, "id", None)
-    return content_id if isinstance(content_id, str) and content_id else None
-
-
-def _pair_outputs_to_sources(messages: Sequence[Message]) -> list[tuple[int, int]]:
-    """Pair each deferred output with the source it belongs to, by occurrence.
-
-    Pairing runs over the whole transcript, not over the candidate window, so an
-    output is joined to *its own* source: a provider that reuses a ``call_id`` must
-    not have an earlier result legitimized by a later call that happens to still be
-    in the window after the earlier call was trimmed.
-
-    Returns ``(output_position, source_position)`` pairs in content order, where the
-    positions count every source and output content in the transcript.
-    """
-    unmatched: dict[str, list[int]] = {}
-    pairs: list[tuple[int, int]] = []
-    position = 0
-    sources_at: list[int] = []
-    for message in messages:
-        for content in message.contents:
-            is_source = _is_source_content(content.type)
-            is_output = _is_deferred_output_content(content.type)
-            if not is_source and not is_output:
-                continue
-            pair_id = _content_pair_id(content)
-            if is_source:
-                sources_at.append(position)
-                if pair_id is not None:
-                    unmatched.setdefault(pair_id, []).append(position)
-            elif pair_id is not None:
-                queue = unmatched.get(pair_id)
-                if queue:
-                    pairs.append((position, queue.pop(0)))
-                else:
-                    pairs.append((position, -1))
-            else:
-                pairs.append((position, -1))
-            position += 1
-    return pairs
-
-
-def _window_is_self_contained(window: Sequence[Message], start: int) -> bool:
-    """Return True when every deferred output kept from ``start`` has its source kept too.
-
-    ``start`` is an index into ``window``, which is the full message list. A model replay
-    rejects an output whose call/request was trimmed away, so the retained window must keep
-    each output paired with its own source, not merely contain some source somewhere.
-    Non-adjacent pairs count: a result is only safe when its own call survives.
-
-    A pair the transcript cannot resolve has no source to keep. Trimming cannot repair
-    that, and holding the boundary back for it would walk the cut to the end of the list
-    and delete the session, so an unresolvable pair does not stop a cut. Only a source
-    that exists and was trimmed away orphans its output here.
-    """
-    kept_from = 0
-    for index in range(start):
-        kept_from += sum(
-            1
-            for content in window[index].contents
-            if _is_source_content(content.type) or _is_deferred_output_content(content.type)
-        )
-    for output_position, source_position in _pair_outputs_to_sources(window):
-        if output_position < kept_from:
-            # The output is trimmed away along with everything older than the window.
-            continue
-        if 0 <= source_position < kept_from:
-            # Its own source exists but is outside the window, so keeping the output
-            # would hand the model a result with no call.
-            return False
-    return True
-
 
 def _trim_start_index(messages: Sequence[Message], max_messages: int) -> int:
-    """Return the index to keep from so the retained window is self-contained and bounded.
+    """Return the oldest index whose retained suffix contains only complete core groups.
 
-    The window keeps the most recent ``max_messages`` messages, then advances while the candidate
-    still holds a deferred output whose source lies outside it. Advancing drops those dangling
-    outputs along with older messages, so the retained history never splits a call/result group.
+    The raw count boundary advances past every group that crosses it, including linked
+    non-contiguous spans. Advancing can cross another linked group, so repeat until the
+    boundary is stable. A group larger than the limit is dropped rather than split.
     """
     count = len(messages)
     if count <= max_messages:
         return 0
+
+    # group_messages assigns missing message ids to form stable group ids. Shallow
+    # copies isolate that top-level mutation without copying the message contents.
+    spans = group_messages([copy(message) for message in messages])
+    group_bounds: dict[str, list[int]] = {}
+    for span in spans:
+        group_id = str(span["group_id"])
+        start_index = int(span["start_index"])
+        end_index = int(span["end_index"])
+        bounds = group_bounds.setdefault(group_id, [start_index, end_index])
+        bounds[0] = min(bounds[0], start_index)
+        bounds[1] = max(bounds[1], end_index)
+
     start = count - max_messages
-    while start < count and not _window_is_self_contained(messages, start):
-        start += 1
+    while start < count:
+        next_start = start
+        for group_start, group_end in group_bounds.values():
+            if group_start < start <= group_end:
+                next_start = max(next_start, group_end + 1)
+        if next_start == start:
+            break
+        start = next_start
     return start
 
 
