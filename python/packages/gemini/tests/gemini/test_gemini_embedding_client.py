@@ -249,7 +249,9 @@ def test_injected_sdk_client_without_mode_uses_explicit_mode(
     sdk = _make_sdk_client()
     sdk._api_client.vertexai = None
 
-    client = RawGeminiEmbeddingClient(client=sdk, model="gemini-embedding-2-preview", **{mode_arg: True})
+    client = RawGeminiEmbeddingClient(
+        client=sdk, model="gemini-embedding-2-preview", **cast(dict[str, Any], {mode_arg: True})
+    )
 
     assert client._genai_client is sdk
     assert client._vertexai is True
@@ -262,7 +264,9 @@ def test_injected_sdk_client_rejects_non_bool_explicit_mode(mode_arg: str) -> No
     sdk._api_client.vertexai = None
 
     with pytest.raises(ValueError, match=f"genai_use_{mode_arg}"):
-        RawGeminiEmbeddingClient(client=sdk, model="gemini-embedding-2-preview", **{mode_arg: "false"})
+        RawGeminiEmbeddingClient(
+            client=sdk, model="gemini-embedding-2-preview", **cast(dict[str, Any], {mode_arg: "false"})
+        )
 
 
 async def test_close_only_closes_owned_sdk_client(clear_google_env: None) -> None:

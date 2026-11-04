@@ -3034,7 +3034,7 @@ def test_injected_sdk_client_without_mode_uses_explicit_mode(
     sdk._api_client.vertexai = None
     sdk._api_client._http_options.base_url = None
 
-    client = client_type(client=sdk, model="gemini-2.5-flash", **{mode_arg: True})
+    client = client_type(client=sdk, model="gemini-2.5-flash", **cast(dict[str, Any], {mode_arg: True}))
 
     assert client._genai_client is sdk
     assert client._vertexai is True
@@ -3048,7 +3048,7 @@ def test_injected_sdk_client_rejects_non_bool_explicit_mode(mode_arg: str) -> No
     sdk._api_client.vertexai = None
 
     with pytest.raises(ValueError, match=f"genai_use_{mode_arg}"):
-        RawGeminiChatClient(client=sdk, model="gemini-2.5-flash", **{mode_arg: "false"})
+        RawGeminiChatClient(client=sdk, model="gemini-2.5-flash", **cast(dict[str, Any], {mode_arg: "false"}))
 
 
 def test_owned_client_still_validates_connection_settings(monkeypatch: pytest.MonkeyPatch) -> None:
