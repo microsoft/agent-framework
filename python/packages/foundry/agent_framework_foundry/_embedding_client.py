@@ -215,6 +215,8 @@ class RawFoundryEmbeddingClient(
         self._openai_client: AsyncOpenAI | None = None
         self._text_client: EmbeddingsClient | None = None
         self._image_client: ImageEmbeddingsClient | None = None
+        self._owns_text_client = False
+        self._owns_image_client = False
         self.default_headers = (
             {key: value for key, value in default_headers.items() if key != USER_AGENT_KEY} if default_headers else None
         )
@@ -281,33 +283,49 @@ class RawFoundryEmbeddingClient(
             }
             if IS_TELEMETRY_ENABLED:
                 client_kwargs["user_agent"] = get_user_agent()
+            self._owns_text_client = text_client is None
+            self._owns_image_client = image_client is None
             self._text_client = text_client
             self._image_client = image_client
             if credential is not None:
-                self._text_client = text_client or EmbeddingsClient(
-                    **client_kwargs,
-                    per_retry_policies=[create_feature_usage_policy()],
-                )
-                self._image_client = image_client or ImageEmbeddingsClient(
-                    **client_kwargs,
-                    per_retry_policies=[create_feature_usage_policy()],
-                )
+                if text_client is None:
+                    self._text_client = EmbeddingsClient(
+                        **client_kwargs,
+                        per_retry_policies=[create_feature_usage_policy()],
+                    )
+                    self._owns_text_client = True
+                else:
+                    self._text_client = text_client
+                    self._owns_text_client = False
+                if image_client is None:
+                    self._image_client = ImageEmbeddingsClient(
+                        **client_kwargs,
+                        per_retry_policies=[create_feature_usage_policy()],
+                    )
+                    self._owns_image_client = True
+                else:
+                    self._image_client = image_client
+                    self._owns_image_client = False
             self._endpoint = resolved_models_endpoint
 
         super().__init__(additional_properties=additional_properties)
 
     async def close(self) -> None:
-        """Close the underlying SDK clients and release resources."""
+        """Close owned SDK clients and release resources.
+
+        Injected ``text_client``, ``image_client``, and ``project_client``
+        instances remain caller-owned and are not closed here.
+        """
         if self._openai_client is not None:
             with suppress(Exception):
                 await self._openai_client.close()
         if self._owns_project_client and self.project_client is not None:
             with suppress(Exception):
                 await self.project_client.close()
-        if self._text_client is not None:
+        if self._owns_text_client and self._text_client is not None:
             with suppress(Exception):
                 await self._text_client.close()
-        if self._image_client is not None:
+        if self._owns_image_client and self._image_client is not None:
             with suppress(Exception):
                 await self._image_client.close()
 

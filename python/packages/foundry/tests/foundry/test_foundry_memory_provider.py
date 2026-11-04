@@ -473,23 +473,31 @@ async def test_handles_update_exception_gracefully(mock_project_client: AsyncMoc
 # -- Context manager tests -----------------------------------------------------
 
 
-async def test_aenter_delegates_to_client(mock_project_client: AsyncMock) -> None:
-    provider = FoundryMemoryProvider(
-        project_client=mock_project_client,
-        memory_store_name="test_store",
-        scope="user_123",
-    )
+async def test_aenter_delegates_to_client(mock_project_client: AsyncMock, mock_credential: Mock) -> None:
+    with patch("azure.ai.projects.aio.AIProjectClient") as mock_ai_project_client:
+        mock_ai_project_client.return_value = mock_project_client
+        provider = FoundryMemoryProvider(
+            project_endpoint="https://test.project.endpoint",
+            credential=mock_credential,  # type: ignore[arg-type]
+            memory_store_name="test_store",
+            scope="user_123",
+        )
+    assert provider._owns_project_client is True
     result = await provider.__aenter__()
     assert result is provider
     mock_project_client.__aenter__.assert_awaited_once()
 
 
-async def test_aexit_delegates_to_client(mock_project_client: AsyncMock) -> None:
-    provider = FoundryMemoryProvider(
-        project_client=mock_project_client,
-        memory_store_name="test_store",
-        scope="user_123",
-    )
+async def test_aexit_delegates_to_client(mock_project_client: AsyncMock, mock_credential: Mock) -> None:
+    with patch("azure.ai.projects.aio.AIProjectClient") as mock_ai_project_client:
+        mock_ai_project_client.return_value = mock_project_client
+        provider = FoundryMemoryProvider(
+            project_endpoint="https://test.project.endpoint",
+            credential=mock_credential,  # type: ignore[arg-type]
+            memory_store_name="test_store",
+            scope="user_123",
+        )
+    assert provider._owns_project_client is True
     await provider.__aexit__(None, None, None)
     mock_project_client.__aexit__.assert_awaited_once()
 

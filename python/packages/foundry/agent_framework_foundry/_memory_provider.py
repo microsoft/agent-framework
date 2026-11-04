@@ -80,7 +80,8 @@ class FoundryMemoryProvider(ContextProvider):
 
         Args:
             source_id: Unique identifier for this provider instance.
-            project_client: Azure AI Project client for memory operations.
+            project_client: Azure AI Project client for memory operations. Injected
+                clients remain caller-owned and are not entered/exited by this provider.
             project_endpoint: Foundry project endpoint URL. Used when project_client is not provided.
             credential: Azure credential for authentication. Accepts a TokenCredential,
                 AsyncTokenCredential, or a callable token provider.
@@ -103,6 +104,7 @@ class FoundryMemoryProvider(ContextProvider):
             env_file_encoding=env_file_encoding,
         )
 
+        owns_project_client = False
         if project_client is None:
             from azure.ai.projects.aio import AIProjectClient
 
@@ -124,6 +126,7 @@ class FoundryMemoryProvider(ContextProvider):
             if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview
             project_client = AIProjectClient(**project_client_kwargs)
+            owns_project_client = True
 
         if not memory_store_name:
             raise ValueError("memory_store_name is required")
@@ -131,20 +134,37 @@ class FoundryMemoryProvider(ContextProvider):
             raise ValueError("scope is required")
 
         self.project_client = project_client
+        self._owns_project_client = owns_project_client
         self.memory_store_name = memory_store_name
         self.scope = scope
         self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
         self.update_delay = update_delay
 
     async def __aenter__(self) -> Self:
-        """Async context manager entry."""
-        if self.project_client and isinstance(self.project_client, AbstractAsyncContextManager):
+        """Async context manager entry.
+
+        Only enters a ``project_client`` that this provider created. Injected
+        clients remain caller-owned.
+        """
+        if (
+            self._owns_project_client
+            and self.project_client
+            and isinstance(self.project_client, AbstractAsyncContextManager)
+        ):
             await self.project_client.__aenter__()
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
-        """Async context manager exit."""
-        if self.project_client and isinstance(self.project_client, AbstractAsyncContextManager):
+        """Async context manager exit.
+
+        Only exits a ``project_client`` that this provider created. Injected
+        clients remain caller-owned.
+        """
+        if (
+            self._owns_project_client
+            and self.project_client
+            and isinstance(self.project_client, AbstractAsyncContextManager)
+        ):
             await self.project_client.__aexit__(exc_type, exc_val, exc_tb)
 
     # -- Hooks pattern ---------------------------------------------------------
