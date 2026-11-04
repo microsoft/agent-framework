@@ -381,13 +381,14 @@ id alone. To continue a conversation, use `checkpoint_storage`: AG-UI restores a
 thread that saved it. The rule does not cover executors that are not `AgentExecutor`, or state that sessions share
 outside the session object, for example a `state` dictionary or a `service_session_id`.
 
-AG-UI does not support an agent that exposes a `WorkflowAgent` as a tool (`WorkflowAgent.as_tool()`), because every
-caller of that agent would reach the same workflow and its executor sessions. `add_agent_framework_fastapi_endpoint`
-raises `ValueError` for an agent or workflow that exposes one, with `single_user=True` as well. When a workflow factory
-builds one, the run ends with a `WORKFLOW_AGENT_TOOL_UNSUPPORTED` `RUN_ERROR` before it reaches the model. Serve the
-workflow with `AgentFrameworkWorkflow(workflow_factory=...)`, or build the workflow inside the tool function for every
-call. AG-UI cannot detect a tool function of your own that calls a workflow, or a workflow tool that a context provider
-adds while a run is prepared.
+AG-UI does not support an agent that exposes a `WorkflowAgent` as a tool (`WorkflowAgent.as_tool()`), however the tool
+gets into the agent, because every caller of that agent would reach the same workflow and its executor sessions. AG-UI
+rejects what it can see. `add_agent_framework_fastapi_endpoint` raises `ValueError` for an agent or workflow that lists
+one, with `single_user=True` as well. When a workflow factory builds one, the run ends with a
+`WORKFLOW_AGENT_TOOL_UNSUPPORTED` `RUN_ERROR` before it reaches the model. AG-UI cannot see a workflow tool that a
+context provider adds while a run is prepared, or a tool function of your own that calls a workflow. Those stay
+unsupported, and AG-UI does not isolate their callers. Serve the workflow with
+`AgentFrameworkWorkflow(workflow_factory=...)`, or build the workflow inside the tool function for every call.
 
 ### Stable Single-User Scope
 

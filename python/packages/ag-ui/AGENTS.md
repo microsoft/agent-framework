@@ -167,10 +167,11 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   see at registration. `AgentFrameworkWorkflow.run` and `run_agent_stream` end the run with `RUN_ERROR`
   `WORKFLOW_AGENT_TOOL_UNSUPPORTED` before the ownership claim, which covers workflow factories and tools added after
   registration. The rejection applies with `single_user=True` as well. A tool function that calls a workflow from
-  custom code, and a tool that a context provider adds while a run is prepared, are not detected. The search needs a
-  core whose `as_tool()` records `_wrapped_agent`; with an older core it finds nothing, so raise this package's
-  `agent-framework-core` floor to the first release that has it when you prepare a release. Remove this check together
-  with `WorkflowAgent.as_tool()`.
+  custom code, and a tool that a context provider adds while a run is prepared, are not detected. They are unsupported
+  all the same: exposing a `WorkflowAgent` as a tool is not supported in any form, and AG-UI gives no isolation to its
+  callers. The search needs a core whose `as_tool()` records `_wrapped_agent`; with an older core it finds nothing, so
+  raise this package's `agent-framework-core` floor to the first release that has it when you prepare a release.
+  Remove this check together with `WorkflowAgent.as_tool()`.
 - Request `state` is client-owned Shared State and is merged into `AgentSession.state`, minus a protected set:
   tool-approval state, history/context-provider namespaces, message-injection state, standalone FIDES security
   state, and provider-owned keys.

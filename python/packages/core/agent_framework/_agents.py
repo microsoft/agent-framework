@@ -704,6 +704,9 @@ class BaseAgent(SerializationMixin):
             :attr:`FunctionInvocationContext.parent_service_session_state_keys` when
             the parent session is non-empty. Automatic function calling supplies it.
 
+            ``WorkflowAgent.as_tool()`` is not supported, because every caller of
+            the tool would share the state of one workflow.
+
         Examples:
             .. code-block:: python
 

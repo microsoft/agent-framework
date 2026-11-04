@@ -11,8 +11,9 @@ handed to an authorization scope later, and the reverse.
 
 The binding follows live objects. It does not see state that an application loads from storage into a new object.
 
-AG-UI also refuses an agent that exposes a ``WorkflowAgent`` as a tool (``WorkflowAgent.as_tool()``). The tool
-reaches the executors of one shared workflow, and no scope owns them. ``workflow_agent_tools`` finds those tools.
+AG-UI also refuses an agent that exposes a ``WorkflowAgent`` as a tool (``WorkflowAgent.as_tool()``), which is not
+supported in any form. The tool reaches the executors of one shared workflow, and no scope owns them.
+``workflow_agent_tools`` finds the tools that AG-UI can see. The others stay unsupported.
 """
 
 from __future__ import annotations

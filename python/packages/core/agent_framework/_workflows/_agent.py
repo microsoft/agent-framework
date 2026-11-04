@@ -117,7 +117,9 @@ class WorkflowAgent(BaseAgent):
     wrapper only. It is not passed to the executors inside the workflow, and an ``AgentExecutor`` keeps its
     own session between runs. One instance must therefore not serve callers that need independent
     state, and while one caller's request is pending, other runs of the same instance fail until it is
-    resolved. Create a new workflow and ``WorkflowAgent`` for each caller or conversation.
+    resolved. Create a new workflow and ``WorkflowAgent`` for each caller or conversation. Exposing a
+    ``WorkflowAgent`` as a tool with ``as_tool()`` is not supported, because every caller of the tool would share
+    this workflow.
     """
 
     # Class variable for the request info function name
