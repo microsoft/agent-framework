@@ -324,7 +324,7 @@ public string? ModelId { get; set; }
 ```
 
 - **PROS**: Agent response types can evolve separately. Types can still resemble MEAI response types to ensure a fimilar experience for developers.
-- **CONS**: No automatic inheritence of new properties from MEAI. (this might also be a pro)
+- **CONS**: No automatic inheritance of new properties from MEAI. (this might also be a pro)
 
 ## Long Running Processes Options
 
@@ -355,7 +355,7 @@ public class ChatFinishReason
 ```
 
 - **PROS**: Fits well into existing `ChatResponse` design.
-- **CONS**: More complex for users to extract the required long running result (can be mitigated with extenion methods)
+- **CONS**: More complex for users to extract the required long running result (can be mitigated with extension methods)
 
 ### Option 2: Add another property on responses for AgentRun
 
