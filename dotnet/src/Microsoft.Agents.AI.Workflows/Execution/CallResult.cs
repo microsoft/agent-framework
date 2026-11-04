@@ -33,6 +33,11 @@ internal sealed class CallResult
     public bool IsCancelled { get; init; }
 
     /// <summary>
+    /// Gets the original cancellation exception, including the token observed by the handler.
+    /// </summary>
+    public OperationCanceledException? CancellationException { get; init; }
+
+    /// <summary>
     /// Indicates whether the call was successful. A call is considered successful if it returned
     /// without throwing an exception.
     /// </summary>
@@ -64,7 +69,8 @@ internal sealed class CallResult
     /// <param name="wasVoid">A boolean specifying whether the call was void (was not expected to return
     /// a value).</param>
     /// <returns>A <see cref="CallResult"/> indicating the result of the call.</returns>
-    public static CallResult Cancelled(bool wasVoid) => new(wasVoid, isCancelled: true);
+    /// <param name="exception">The original cancellation exception from the handler.</param>
+    public static CallResult Cancelled(bool wasVoid, OperationCanceledException exception) => new(wasVoid, isCancelled: true) { CancellationException = exception };
 
     /// <summary>
     /// Create a <see cref="CallResult"/> indicating that an exception was raised during the call.
