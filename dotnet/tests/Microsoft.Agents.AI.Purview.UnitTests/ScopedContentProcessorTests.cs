@@ -742,13 +742,14 @@ public sealed class ScopedContentProcessorTests
     }
 
     [Fact]
-    public async Task ProcessMessagesAsync_WithDifferentMessageUserIds_UsesEachMessagesUserIdAsync()
+    public async Task ProcessMessagesAsync_WithAppTokenHistory_InheritsAndUpdatesMessageUserIdsAsync()
     {
         // Arrange
         string firstUserId = Guid.NewGuid().ToString();
         string secondUserId = Guid.NewGuid().ToString();
         List<ChatMessage> messages =
         [
+            new(ChatRole.System, "System context"),
             new(ChatRole.User, "First user's message")
             {
                 AdditionalProperties = new AdditionalPropertiesDictionary
@@ -756,13 +757,16 @@ public sealed class ScopedContentProcessorTests
                     { "userId", firstUserId }
                 }
             },
+            new(ChatRole.Assistant, "Assistant response"),
+            new(ChatRole.Tool, "Tool response"),
             new(ChatRole.User, "Second user's message")
             {
                 AdditionalProperties = new AdditionalPropertiesDictionary
                 {
                     { "userId", secondUserId }
                 }
-            }
+            },
+            new(ChatRole.Assistant, "Second assistant response")
         ];
         PurviewSettings settings = CreateValidPurviewSettings();
         TokenInfo tokenInfo = new() { TenantId = "tenant-123", ClientId = "client-123" };
@@ -783,7 +787,7 @@ public sealed class ScopedContentProcessorTests
             messages, "session-123", Activity.UploadText, settings, null, CancellationToken.None);
 
         // Assert
-        Assert.Equal([firstUserId, secondUserId], capturedUserIds);
+        Assert.Equal([firstUserId, firstUserId, firstUserId, firstUserId, secondUserId, secondUserId], capturedUserIds);
         Assert.Equal(secondUserId, result.userId);
     }
 

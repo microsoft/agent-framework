@@ -181,16 +181,37 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     private async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, string? sessionId, Activity activity, PurviewSettings settings, string? userId, CancellationToken cancellationToken)
     {
         List<ProcessContentRequest> pcRequests = [];
+        List<ChatMessage> messageList = [.. messages];
         TokenInfo? tokenInfo = await this._purviewClient.GetUserInfoFromTokenAsync(cancellationToken, settings.TenantId).ConfigureAwait(false);
         string tenantId = tokenInfo?.TenantId ?? settings.TenantId ?? throw new PurviewRequestException("No tenant id provided or inferred for Purview request. Please provide a tenant id in PurviewSettings or configure the TokenCredential to authenticate to a tenant.");
         string? authenticatedUserId = !string.IsNullOrEmpty(tokenInfo?.UserId) ? tokenInfo.UserId : userId;
+        string? inheritedUserId = authenticatedUserId;
 
-        foreach (ChatMessage message in messages)
+        // Use the first explicit identity for any leading system or generated messages that have no user id.
+        if (string.IsNullOrEmpty(inheritedUserId))
+        {
+            foreach (ChatMessage message in messageList)
+            {
+                if (TryGetUserIdFromMessage(message, out inheritedUserId))
+                {
+                    break;
+                }
+            }
+        }
+
+        foreach (ChatMessage message in messageList)
         {
             string? resolvedUserId = authenticatedUserId;
             if (string.IsNullOrEmpty(resolvedUserId))
             {
-                TryGetUserIdFromMessage(message, out resolvedUserId);
+                if (TryGetUserIdFromMessage(message, out string? messageUserId))
+                {
+                    inheritedUserId = messageUserId;
+                }
+
+                // Generated assistant and tool messages normally have no user id. Attribute them to
+                // the latest explicitly identified user without overriding later explicit identities.
+                resolvedUserId = inheritedUserId;
             }
 
             string messageId = message.MessageId ?? Guid.NewGuid().ToString();
