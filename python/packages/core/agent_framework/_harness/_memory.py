@@ -889,6 +889,11 @@ class MemoryFileStore(MemoryStore):
     def read_state(self, session: AgentSession, *, source_id: str) -> dict[str, Any]:
         """Return the maintenance state for the current owner.
 
+        File-backed maintenance state is single-process/single-writer. Quarantine
+        is best-effort when another process or editor replaces the file
+        concurrently. Cross-process or independently hosted shared-memory
+        scenarios should use a service-backed ``MemoryStore`` instead.
+
         An unreadable state file (interrupted editor, partial external write)
         must not fail every later turn's memory bookkeeping: quarantine it
         next to the original, mirroring the session store's corrupt-snapshot
