@@ -52,10 +52,7 @@ Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.McpToolHand
 Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.TelemetryActivitySource.get -> System.Diagnostics.ActivitySource?
 Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.TelemetryActivitySource.init -> void
 Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler
-Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler() -> void
-Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler(System.Func<Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo!, System.Threading.CancellationToken, System.Threading.Tasks.Task<System.Net.Http.HttpClient?>!>? httpClientProvider) -> void
-Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler(System.Net.Http.HttpClient! httpClient) -> void
-Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler(System.Collections.Generic.IEnumerable<string!>! allowedHosts, System.Net.Http.IHttpMessageHandlerFactory! httpMessageHandlerFactory, string? httpClientName = null) -> void
 Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.SendAsync(Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.Workflows.Declarative.HttpRequestResult!>!
 Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputRequest
 Microsoft.Agents.AI.Workflows.Declarative.Events.ExternalInputRequest.AgentResponse.get -> Microsoft.Agents.AI.AgentResponse!
