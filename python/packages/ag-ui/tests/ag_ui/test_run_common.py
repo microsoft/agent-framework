@@ -13,6 +13,7 @@ from ag_ui.core.events import (
     ReasoningMessageContentEvent,
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
+    ToolCallStartEvent,
 )
 from agent_framework import Content, Message
 
@@ -27,8 +28,8 @@ from agent_framework_ag_ui._predictive_state import PredictiveStateHandler
 from agent_framework_ag_ui._run_common import (
     FlowState,
     _build_run_finished_event,
-    _emit_content,
     _close_reasoning_block,
+    _emit_content,
     _emit_mcp_tool_result,
     _emit_text_reasoning,
     _emit_tool_result,
@@ -1126,7 +1127,7 @@ def test_replayed_declaration_only_calls_start_each_tool_call_once() -> None:
     for content in [*streamed, *replayed]:
         events.extend(_emit_content(content, flow))
 
-    starts = [e for e in events if e.type == EventType.TOOL_CALL_START]
+    starts = [e for e in events if isinstance(e, ToolCallStartEvent)]
     assert sorted(e.tool_call_id for e in starts) == ["call_a", "call_b"]
     ids = [entry["id"] for entry in flow.pending_tool_calls]
     assert sorted(ids) == ["call_a", "call_b"]
@@ -1148,7 +1149,10 @@ def test_reused_provider_call_id_starts_a_new_occurrence() -> None:
     for content in second:
         events.extend(_emit_content(content, flow))
 
-    starts = [e for e in events if e.type == EventType.TOOL_CALL_START]
+    starts = [e for e in events if isinstance(e, ToolCallStartEvent)]
     assert [e.tool_call_id for e in starts] == ["call_x"]
     assert flow.tool_calls_by_id["call_x"]["function"]["arguments"] == '{"city": "LA"}'
     assert "call_x" not in flow.tool_calls_ended
+    # The first occurrence already ended; only the reused, still-open one may
+    # receive an END from the end-of-run loop.
+    assert [tc["id"] for tc in flow.get_pending_without_end()] == ["call_x"]

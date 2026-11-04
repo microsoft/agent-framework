@@ -562,8 +562,14 @@ class FlowState:
         return str(name) if name else None
 
     def get_pending_without_end(self) -> list[dict[str, Any]]:
-        """Get tool calls that started but never received an end event (declaration-only)."""
-        return [tc for tc in self.pending_tool_calls if tc.get("id") not in self.tool_calls_ended]
+        """Get tool calls that started but never received an end event (declaration-only).
+
+        Read from ``tool_calls_by_id`` so a reused provider call id counts once:
+        an earlier occurrence that already ended must not be re-endable just
+        because a later occurrence reused the id, and the latest occurrence is
+        the entry end-of-run needs to close.
+        """
+        return [tc for call_id, tc in self.tool_calls_by_id.items() if call_id not in self.tool_calls_ended]
 
 
 def _open_text_segment(flow: FlowState, message_id: str) -> dict[str, Any]:
