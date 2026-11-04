@@ -131,20 +131,34 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   `single_user=True` assigns one opaque authorization scope for the lifetime of that endpoint registration and must not
   be used for callers with distinct authorization. Use an explicit resolver when snapshots, checkpoints, or provider
   state must retain the same scope across process restarts.
-- An `AgentExecutor` owns one `AgentSession` (history, pending approvals, standing approval rules) that is not tied to a
-  caller. `_session_ownership.claim_agent_executors` binds every `AgentExecutor` of a workflow, and the `AgentSession`
-  each one holds, to the first Snapshot Scope that runs it. It looks into nested `WorkflowExecutor` workflows and into
-  the workflow behind a `WorkflowAgent` that an `AgentExecutor` wraps. A run without a scope is an owner of its own, so
-  a workflow that ran without a scope refuses a later scope and the reverse. The claim is one process-wide locked
-  check-and-bind. `AgentFrameworkWorkflow.run` and the `WorkflowAgent` branch of `run_agent_stream` (through
-  `claim_workflow_agent`, which also looks through A2UI runners) call it after a snapshot replay has returned and
-  before any workflow runs, so a replay never takes ownership. Another scope receives `RUN_STARTED` and `RUN_ERROR` with
-  `WORKFLOW_SCOPE_CONFLICT` and never reaches the model. It covers a shared `Workflow` or `WorkflowAgent`, and a
-  `workflow_factory` that returns shared workflows, executors, or an injected `AgentSession`. It does not apply to
-  workflows without an `AgentExecutor` or to custom executors that keep their own state, and it does not partition the
-  threads of one scope: `single_user=True` or a constant resolver shares one conversation state across the threads of a
-  shared workflow. Never reset sessions or clone executors to resolve a conflict; the factory builds new executors and
-  sessions.
+- An `AgentExecutor` keeps one `AgentSession` (history, pending approvals, standing approval rules) between runs, and
+  that session is not tied to a caller. `_session_ownership.claim_agent_executors` binds every `AgentExecutor` of a
+  workflow, and the `AgentSession` each one holds when the run starts, to the first Snapshot Scope that runs it. It
+  looks into nested `WorkflowExecutor` workflows and into the workflow behind a `WorkflowAgent` that an
+  `AgentExecutor` wraps. A run without a scope is an owner of its own, so a workflow that ran without a scope refuses
+  a later scope and the reverse. The registry (`IdentityOwners`) keys objects by `id()` with a weak reference and
+  never calls their `__hash__` or `__eq__`, so unhashable subclasses work and equal objects stay apart. The claim is
+  one process-wide locked check-and-bind. `AgentFrameworkWorkflow.run` and the `WorkflowAgent` branch of
+  `run_agent_stream` (through `claim_workflow_agent`, which also looks through A2UI runners) call it after a snapshot
+  replay has returned and before any workflow runs, so a replay never takes ownership. Another scope receives
+  `RUN_STARTED` and `RUN_ERROR` with `WORKFLOW_SCOPE_CONFLICT` and never reaches the model. It covers a shared
+  `Workflow` or `WorkflowAgent`, and a `workflow_factory` that returns shared workflows, executors, or an injected
+  `AgentSession`. It follows live objects only and does not cover:
+  - state that a factory loads from storage into a new object (`AgentSession.from_dict()`, `SessionStore.get()`, a
+    history provider that keys data by `session_id`);
+  - sessions that alias state outside the session object (a shared `state` mapping or `service_session_id`);
+  - workflows that another agent calls as a tool (`WorkflowAgent.as_tool()`);
+  - executors that are not `AgentExecutor` but keep a session or cache (custom executors, the group chat
+    orchestrator);
+  - workflows without an `AgentExecutor`;
+  - a session that an executor creates during a checkpoint restore (it stays reachable only through the bound
+    executor, and the next run of the same scope binds it).
+
+  The rule does not partition the threads of one scope: `single_user=True` or a constant resolver shares one
+  conversation state across the threads of a shared workflow. Never reset sessions or clone executors to resolve a
+  conflict; the factory builds new executors and sessions. The factory receives only the thread id, so it must not
+  restore session state that is keyed by the thread id alone; use `checkpoint_storage`, which AG-UI loads only for the
+  scope and thread that saved it.
 - Request `state` is client-owned Shared State and is merged into `AgentSession.state`, minus a protected set:
   tool-approval state, history/context-provider namespaces, message-injection state, standalone FIDES security
   state, and provider-owned keys.

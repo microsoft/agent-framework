@@ -358,7 +358,7 @@ callers can reach the endpoint.
 
 ### Workflows That Hold Agent Sessions
 
-An `AgentExecutor` owns one `AgentSession` for its whole lifetime. Conversation history, pending approval requests, and
+An `AgentExecutor` keeps one `AgentSession` between runs. Conversation history, pending approval requests, and
 standing "always approve" rules live there, and the session is not tied to a caller. An endpoint therefore binds each
 `AgentExecutor`, and the session it holds, to the first authorization scope that runs it. A shared `Workflow` or
 `WorkflowAgent` that holds one serves only that scope. A run in another scope ends with a `WORKFLOW_SCOPE_CONFLICT`
@@ -371,6 +371,16 @@ scope; their pending interrupts stay fenced to the scope and thread that raised 
 
 With `single_user=True`, or with a resolver that returns one constant scope, a shared workflow keeps one conversation
 state for every thread. Use `workflow_factory` when threads must stay independent.
+
+The endpoint follows live `AgentExecutor` and `AgentSession` objects. It cannot see state that a factory loads from
+storage into a new object. For example, `AgentSession.from_dict()` and `SessionStore.get()` return new objects with the
+same session id and state, so two scopes that load one stored session share its history. The factory receives only the
+thread id, and it runs once for each scope and thread. AG-UI does not pass it the authorization scope. A factory must
+therefore start every session with fresh, independent state. Do not restore session state that is keyed by the thread
+id alone. To continue a conversation, use `checkpoint_storage`: AG-UI restores a checkpoint only for the scope and
+thread that saved it. The rule does not cover executors that are not `AgentExecutor`, workflows that another agent
+calls as a tool (`WorkflowAgent.as_tool()`), or state that sessions share outside the session object, for example a
+`state` dictionary or a `service_session_id`.
 
 ### Stable Single-User Scope
 

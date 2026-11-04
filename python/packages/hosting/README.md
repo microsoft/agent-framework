@@ -127,7 +127,7 @@ latest = await storage.get_latest(workflow_name=(await state.get_target()).name)
 
 A `Workflow` instance allows only one active run, and it keeps its state between
 runs. An `AgentExecutor` keeps one `AgentSession` (history, pending approvals,
-and standing approval rules) for its whole lifetime. Hosts that need
+and standing approval rules) between runs. Hosts that need
 simultaneous or independent runs should pass a factory that creates the
 workflow and its executors on every call, and set `cache_target=False`:
 

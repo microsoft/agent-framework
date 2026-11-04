@@ -209,7 +209,7 @@ client = FoundryChatClient(credential=DefaultAzureCredential())
 def create_workflow() -> Workflow:
     """Build the workflow and its executors for one request.
 
-    An ``AgentExecutor`` keeps one ``AgentSession`` for its whole lifetime, so every
+    An ``AgentExecutor`` keeps one ``AgentSession`` between runs, so every
     request needs its own executors. The workflow name and the executor ids stay
     stable, which lets a checkpoint restore into the next request's new workflow.
     """

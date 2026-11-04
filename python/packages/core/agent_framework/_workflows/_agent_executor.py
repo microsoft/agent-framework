@@ -305,7 +305,7 @@ class AgentExecutor(Executor):
 
     The executor automatically detects the mode via WorkflowContext.is_streaming().
 
-    Each executor owns one ``AgentSession`` for its whole lifetime, together with its cached messages and
+    Each executor keeps one ``AgentSession`` between runs, together with its cached messages and
     pending user-input requests. Conversation history, pending approvals, and standing approval rules live in
     that session, and the session is not tied to a caller. Do not let one executor, or a workflow that holds
     it, serve callers that need independent state. Create the workflow and its executors for each caller or

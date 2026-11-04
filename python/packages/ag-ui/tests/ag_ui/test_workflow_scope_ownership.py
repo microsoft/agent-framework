@@ -24,11 +24,14 @@ from fastapi.testclient import TestClient
 from workflow_scope_helpers import (  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
     INVOKE_PREFIX,
     REPLY_TEXT,
+    EqualSession,
     RecordingChatClient,
+    UnhashableSession,
     always_approve_resume,
     assistant_text,
     build_agent,
     build_app,
+    build_unhashable_executor_workflow,
     build_workflow,
     event_types,
     interrupts,
@@ -175,6 +178,35 @@ def test_factory_that_shares_one_agent_session_between_scopes_is_refused(scope_m
     _assert_scope_conflict(bob)
     assert len(client.calls) == 1
     assert not any("ALICE_ONLY" in text for call in client.calls[1:] for _, text in call)
+
+
+@pytest.mark.parametrize("scope_mode", SCOPE_MODES)
+def test_shared_workflow_with_an_unhashable_session_serves_only_the_first_authorization_scope(scope_mode: Any) -> None:
+    client = RecordingChatClient()
+    app = build_app(build_workflow(build_agent(client), session=UnhashableSession()), scope_mode)
+
+    with TestClient(app) as http:
+        alice = post_run(http, "alice", "thread-a", "ALICE_ONLY")
+        bob = post_run(http, "bob", "thread-b", "BOB_ONLY")
+
+    # Ownership never hashes a session, so a session class that defines __eq__ alone still runs.
+    _assert_completed(alice)
+    _assert_scope_conflict(bob)
+    assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize("scope_mode", SCOPE_MODES)
+def test_shared_workflow_with_an_unhashable_executor_serves_only_the_first_authorization_scope(scope_mode: Any) -> None:
+    client = RecordingChatClient()
+    app = build_app(build_unhashable_executor_workflow(build_agent(client)), scope_mode)
+
+    with TestClient(app) as http:
+        alice = post_run(http, "alice", "thread-a", "ALICE_ONLY")
+        bob = post_run(http, "bob", "thread-b", "BOB_ONLY")
+
+    _assert_completed(alice)
+    _assert_scope_conflict(bob)
+    assert len(client.calls) == 1
 
 
 # endregion
@@ -371,6 +403,25 @@ def test_claim_allows_executors_of_one_workflow_to_share_a_session() -> None:
     assert claim_agent_executors(workflow, "scope-a")
     assert claim_agent_executors(workflow, "scope-a")
     assert not claim_agent_executors(workflow, "scope-b")
+
+
+def test_claim_binds_an_agent_executor_subclass_that_is_unhashable() -> None:
+    workflow = build_unhashable_executor_workflow(build_agent(RecordingChatClient()))
+
+    assert claim_agent_executors(workflow, "scope-a")
+    assert not claim_agent_executors(workflow, "scope-b")
+
+
+def test_claim_keeps_distinct_sessions_that_compare_equal_apart() -> None:
+    agent = build_agent(RecordingChatClient())
+    first = build_workflow(agent, session=EqualSession())
+    second = build_workflow(agent, session=EqualSession())
+
+    assert claim_agent_executors(first, "scope-a")
+    # Equality and hash of a session never decide who owns it, so the second session is not the first one.
+    assert claim_agent_executors(second, "scope-b")
+    assert not claim_agent_executors(first, "scope-b")
+    assert not claim_agent_executors(second, "scope-a")
 
 
 def test_claim_covers_agent_executors_inside_nested_workflows() -> None:

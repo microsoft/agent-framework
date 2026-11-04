@@ -683,7 +683,9 @@ class AgentFrameworkWorkflow:
                 with a ``WORKFLOW_SCOPE_CONFLICT`` ``RUN_ERROR``.
             workflow_factory: Optional factory for thread-scoped workflow instances. Build a new workflow, including
                 new ``AgentExecutor`` and ``AgentSession`` instances, on every call. Each authorization scope and
-                thread then keeps its own executor sessions.
+                thread then keeps its own executor sessions. The factory receives only the thread id and runs once
+                for each scope and thread. Start every session with fresh state, and do not restore session state
+                that is keyed by the thread id alone. Use ``checkpoint_storage`` to continue a conversation.
             name: Optional workflow name.
             description: Optional workflow description.
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless

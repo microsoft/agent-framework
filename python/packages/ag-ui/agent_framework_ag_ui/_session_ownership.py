@@ -2,12 +2,14 @@
 
 """Authorization-scope ownership of the agent sessions that a workflow holds.
 
-An ``AgentExecutor`` owns one ``AgentSession`` for its whole lifetime. Conversation history, pending approval
-requests, and standing approval rules live in that session, and the session is not tied to a caller. An executor,
-or a session, that serves two authorization scopes would therefore expose the conversation and approval state of
-one scope to the other. AG-UI binds each executor, and the session it holds, to the first authorization scope that
-runs it and refuses every other scope. A run without a scope is an owner of its own, so a workflow that ran
-locally is not handed to an authorization scope later, and the reverse.
+An ``AgentExecutor`` keeps one ``AgentSession`` between runs. Conversation history, pending approval requests, and
+standing approval rules live in that session, and the session is not tied to a caller. An executor, or a session,
+that serves two authorization scopes would therefore expose the conversation and approval state of one scope to the
+other. AG-UI binds each executor, and the session it holds, to the first authorization scope that runs it and
+refuses every other scope. A run without a scope is an owner of its own, so a workflow that ran locally is not
+handed to an authorization scope later, and the reverse.
+
+The binding follows live objects. It does not see state that an application loads from storage into a new object.
 """
 
 from __future__ import annotations
@@ -32,7 +34,46 @@ SCOPE_CONFLICT_LOG_MESSAGE = (
 # The owner of runs that carry no authorization scope. It never equals a scope string.
 _UNSCOPED: Final = object()
 
-_OWNERS: weakref.WeakKeyDictionary[AgentExecutor | AgentSession, object] = weakref.WeakKeyDictionary()
+
+class IdentityOwners:
+    """Owners of objects, keyed by object identity.
+
+    The registry never calls ``__hash__`` or ``__eq__`` of the objects it tracks. An unhashable object works, and two
+    distinct objects that compare equal stay apart. It holds weak references only, and an entry disappears when its
+    object is collected. Callers serialize ``bind`` and ``owner_of`` themselves. The cleanup callback takes no lock,
+    because it can run at any time, including while a caller holds one.
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[int, tuple[weakref.ref[Any], object]] = {}
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def owner_of(self, subject: object, default: object) -> object:
+        """Return the owner of ``subject``, or ``default`` when it has none."""
+        entry = self._entries.get(id(subject))
+        # A dead or different referent means the identity was reused after the original object was collected.
+        return entry[1] if entry is not None and entry[0]() is subject else default
+
+    def bind(self, subject: object, owner: object) -> None:
+        """Bind ``subject`` to ``owner`` and replace any previous owner."""
+        key = id(subject)
+        entries = self._entries
+        entry = entries.get(key)
+        if entry is not None and entry[0]() is subject:
+            entries[key] = (entry[0], owner)
+            return
+
+        def forget(reference: weakref.ref[Any]) -> None:
+            current = entries.get(key)
+            if current is not None and current[0] is reference:
+                entries.pop(key, None)
+
+        entries[key] = (weakref.ref(subject, forget), owner)
+
+
+_OWNERS = IdentityOwners()
 _CLAIM_LOCK = threading.Lock()
 
 
@@ -102,10 +143,10 @@ def claim_agent_executors(workflow: Workflow, scope: str | None) -> bool:
     owner: object = _UNSCOPED if scope is None else scope
     holders = list(_state_holders(workflow))
     with _CLAIM_LOCK:
-        if any(_OWNERS.get(holder, owner) != owner for holder in holders):
+        if any(_OWNERS.owner_of(holder, owner) != owner for holder in holders):
             return False
         for holder in holders:
-            _OWNERS[holder] = owner
+            _OWNERS.bind(holder, owner)
     return True
 
 

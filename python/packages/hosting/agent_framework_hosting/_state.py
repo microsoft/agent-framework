@@ -199,7 +199,7 @@ class WorkflowState(Generic[WorkflowT]):
     web frameworks and workflow/app code keep those concerns.
 
     A ``Workflow`` keeps its state between runs, and an ``AgentExecutor`` keeps
-    one ``AgentSession`` for its whole lifetime, so one target must not serve
+    one ``AgentSession`` between runs, so one target must not serve
     callers that need independent state. For independent requests, pass a
     factory that creates the workflow and its executors on every call and set
     ``cache_target=False``. A builder target returns a new ``Workflow`` per

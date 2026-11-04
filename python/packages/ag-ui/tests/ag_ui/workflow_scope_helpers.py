@@ -103,6 +103,36 @@ def build_workflow(agent: Agent[Any], *, session: AgentSession | None = None) ->
     return WorkflowBuilder(start_executor=executor, output_from=[executor]).build()
 
 
+class UnhashableSession(AgentSession):
+    """Session that compares by value. A class that defines ``__eq__`` alone is unhashable."""
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, UnhashableSession) and self.session_id == other.session_id
+
+
+class EqualSession(AgentSession):
+    """Session whose instances all compare equal and share one hash, whatever their state."""
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, EqualSession)
+
+    def __hash__(self) -> int:
+        return 0
+
+
+class UnhashableExecutor(AgentExecutor):
+    """Executor that compares by id. A class that defines ``__eq__`` alone is unhashable."""
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, UnhashableExecutor) and self.id == other.id
+
+
+def build_unhashable_executor_workflow(agent: Agent[Any]) -> Workflow:
+    """Build a new workflow around an ``AgentExecutor`` subclass that is unhashable."""
+    executor = UnhashableExecutor(agent, id="worker")
+    return WorkflowBuilder(start_executor=executor, output_from=[executor]).build()
+
+
 async def _authenticated_scope(authorization: str = Header(default="")) -> str:
     principal = authorization.removeprefix("token-")
     if principal not in PRINCIPALS:
