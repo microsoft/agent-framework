@@ -737,8 +737,9 @@ class AgentFactory:
         additional_properties = options.additionalProperties.copy()
         if (chat_tool_mode := additional_properties.pop("chatToolMode", None)) is not None:
             chat_options["tool_choice"] = chat_tool_mode
-        if additional_properties:
-            chat_options["additional_chat_options"] = additional_properties
+        # Pass the rest through as regular options; the typed fields above win on conflicts.
+        for key, value in additional_properties.items():
+            chat_options.setdefault(key, value)
         return chat_options
 
     def _parse_tools(self, tools: list[Tool] | None) -> list[AFFunctionTool | dict[str, Any]] | None:
