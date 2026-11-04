@@ -200,7 +200,7 @@ internal static class AgentResponseExtensions
             Function = new()
             {
                 Name = functionCall.Name,
-                Arguments = JsonSerializer.Serialize(functionCall.Arguments, ChatCompletionsJsonContext.Default.DictionaryStringObject)
+                Arguments = JsonSerializer.Serialize(functionCall.Arguments, OpenAIHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(IDictionary<string, object?>)))
             }
         };
     }

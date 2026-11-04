@@ -11,6 +11,7 @@ from typing import Any, Generic, TypeVar, cast
 from agent_framework import AgentResponse, Message, SupportsAgentRun
 from agent_framework._telemetry import mark_feature_used
 from agent_framework_hosting import AgentRunArgs, AgentState
+from jsonschema import ValidationError, validate
 from mcp import MCPError, types
 
 from ._conversion import mcp_from_run, mcp_to_run
@@ -22,10 +23,10 @@ AgentT = TypeVar("AgentT", bound=SupportsAgentRun)
 class AgentMCPTool(Generic[AgentT]):
     """Expose one Agent Framework agent through an app-owned MCP server.
 
-    The adapter generates the native MCP tool definition and keeps its argument
-    parsing aligned with agent execution. It does not create an MCP server,
-    register handlers, derive trusted session identifiers, or choose a
-    transport.
+    The adapter generates the native MCP tool definition and validates its
+    arguments before agent execution or session-store access. It does not
+    create an MCP server, register handlers, derive trusted session identifiers,
+    or choose a transport.
     """
 
     def __init__(
@@ -146,13 +147,19 @@ class AgentMCPTool(Generic[AgentT]):
             Native MCP ``CallToolResult`` for the completed tool result.
 
         Raises:
-            MCPError: If the tool name or configured session id is invalid.
+            MCPError: If the tool name or arguments are invalid.
+            jsonschema.SchemaError: If the configured input schema is invalid.
         """
         mark_feature_used(FeatureIndex.HOSTING_MCP)
         target = await self.state.get_target()
         tool = self._tool_for_target(target)
         if name != tool.name:
             raise MCPError(types.INVALID_PARAMS, f"Unknown MCP tool: {name}")
+
+        try:
+            validate(instance=dict(arguments or {}), schema=tool.input_schema)
+        except ValidationError as exc:
+            raise MCPError(types.INVALID_PARAMS, f"Invalid MCP tool arguments: {exc.message}") from exc
 
         run = self.mcp_to_run(arguments)
         if self.session_id_parameter is None:

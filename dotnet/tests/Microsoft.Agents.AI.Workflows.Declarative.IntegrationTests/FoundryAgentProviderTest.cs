@@ -8,13 +8,13 @@ using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 
-public sealed class AzureAgentProviderTest(ITestOutputHelper output) : IntegrationTest(output)
+public sealed class FoundryAgentProviderTest(ITestOutputHelper output) : IntegrationTest(output)
 {
     [Fact]
     public async Task ConversationTestAsync()
     {
         // Arrange
-        AzureAgentProvider provider = new(this.TestEndpoint, TestAzureCliCredentials.CreateAzureCliCredential());
+        FoundryAgentProvider provider = new(this.TestEndpoint, TestAzureCliCredentials.CreateAzureCliCredential());
         // Act
         string conversationId = await provider.CreateConversationAsync();
         // Assert

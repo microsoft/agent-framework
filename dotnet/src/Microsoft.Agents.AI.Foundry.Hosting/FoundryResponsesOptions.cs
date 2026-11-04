@@ -40,6 +40,18 @@ public sealed class FoundryResponsesOptions
     public bool AllowStoredOutputEnabled { get; set; }
 
     /// <summary>
+    /// Gets or sets the function result returned for calls that are not executed because another call
+    /// in the same batch requires OAuth consent.
+    /// </summary>
+    /// <remarks>
+    /// This result can be sent to the inference service when
+    /// <see cref="AllowStoredOutputEnabled"/> is enabled, so phrase it as context for the model rather
+    /// than as an instruction to the end user. It is also recorded in the Hosted Agent response for
+    /// sequential calls skipped by the consent handoff.
+    /// </remarks>
+    public string OAuthConsentInterruptedToolResult { get; set; } = McpConsentResults.NotExecuted;
+
+    /// <summary>
     /// Gets or sets a value indicating whether to include an encrypted version of reasoning tokens in
     /// reasoning item outputs.
     /// </summary>
