@@ -39,6 +39,12 @@ See the README.md for each sample for the prerequisites for that sample.
 | [Azure OpenAI Responses](./azure/Agent_With_AzureOpenAIResponses/) | Create an AIAgent using Azure OpenAI Responses |
 | [Microsoft Foundry Responses computer use](./azure/Agent_With_AzureOpenAIResponses_ComputerUse/) | Use the GA computer tool with a Microsoft Foundry project Responses agent |
 
+### [Copilot Studio](./copilot-studio/)
+
+| Sample | Description |
+| --- | --- |
+| [Copilot Studio agent](./copilot-studio/Agent_With_CopilotStudio/) | Call a published agent with user authentication, streaming, and reusable sessions |
+
 ### [Custom](./custom/)
 
 | Sample | Description |
