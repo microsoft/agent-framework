@@ -166,14 +166,17 @@ while (true)
                 Console.Write($"Approve tool call '{name}'? [Y/N] ");
                 Console.ResetColor();
                 bool approved = Console.ReadLine()?.Trim().Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false;
-                ToolApprovalResponseContent decision = approval.CreateResponse(approved);
-                if (approval.RequestId.StartsWith("mcpr_", StringComparison.Ordinal))
-                {
-                    // Keep the framework response so the pending approval is settled exactly once,
-                    // while the raw representation preserves the native hosted MCP wire contract.
-                    decision.RawRepresentation = new McpToolCallApprovalResponseItem(approval.RequestId, approved);
-                }
-
+                // Hosted MCP approval IDs use the mcpr_ wire prefix. They need the native OpenAI
+                // response item; CreateResponse produces the Agent Framework function-tool shape.
+                // When rejecting a function tool, tell the model not to retry the call.
+                AIContent decision = approval.RequestId.StartsWith("mcpr_", StringComparison.Ordinal)
+                    ? new AIContent
+                    {
+                        RawRepresentation = new McpToolCallApprovalResponseItem(approval.RequestId, approved),
+                    }
+                    : approved
+                        ? approval.CreateResponse(approved: true)
+                        : approval.CreateResponse(approved: false, reason: "The user rejected this tool call. Do not retry it.");
                 return new ChatMessage(ChatRole.User, [decision]);
             });
 

@@ -941,7 +941,62 @@ def test_loopback_bind_rejects_non_allowlisted_host_header(monkeypatch):
         assert ok_localhost.status_code == 200
 
 
-def test_serve_defaults_to_auth_enabled():
+@pytest.mark.parametrize(
+    ("host_header", "expected_hostname"),
+    [
+        pytest.param("127.0.0.1", "127.0.0.1", id="ipv4"),
+        pytest.param("127.0.0.1:8080", "127.0.0.1", id="ipv4-with-port"),
+        pytest.param("localhost:8080", "localhost", id="hostname-with-port"),
+        pytest.param("LOCALHOST:8080", "localhost", id="hostname-is-lowercased"),
+        pytest.param("[::1]", "[::1]", id="ipv6-literal"),
+        pytest.param("[::1]:8080", "[::1]", id="ipv6-literal-with-port"),
+        pytest.param("[::FFFF:127.0.0.1]:8080", "[::ffff:127.0.0.1]", id="ipv6-mapped-ipv4"),
+        pytest.param("::1", "::1", id="bare-ipv6-has-no-port-to-strip"),
+        pytest.param("", "", id="empty"),
+        # Malformed bracketed hosts: anything after "]" that is not a numeric port must
+        # not collapse to the bracketed literal, or it would silently pass the allowlist.
+        pytest.param("[::1]evil.example", "[::1]evil.example", id="bracketed-host-with-trailing-garbage"),
+        pytest.param("[::1]:notaport", "[::1]:notaport", id="bracketed-host-with-non-numeric-port"),
+        pytest.param("[::1]]:8080", "[::1]]:8080", id="bracketed-host-with-extra-bracket"),
+    ],
+)
+def test_hostname_from_host_header(host_header: str, expected_hostname: str) -> None:
+    """The Host header parser strips a port only when the host is not an IPv6 literal."""
+    assert DevServer._hostname_from_host_header(host_header) == expected_hostname
+
+
+@pytest.mark.parametrize("bind", ["127.0.0.1", "::1", "[::1]"])
+def test_loopback_bind_accepts_ipv6_loopback_host_header(monkeypatch, bind: str) -> None:
+    """A browser addresses an IPv6 loopback bind as `[::1]` or `[::1]:<port>`.
+
+    Those two forms used to be reduced to `"["` by a split on the first colon, so every
+    request to an IPv6 loopback bind was answered with `host_not_allowed`.
+    """
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    server = DevServer(host=bind, auth_token="s3cret")
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        for host_header in ("[::1]", "[::1]:8080"):
+            response = client.get("/health", headers={"Host": host_header})
+            assert response.status_code == 200, f"bind {bind} rejected Host {host_header!r}"
+
+        rebound = client.get("/health", headers={"Host": "evil.example:8080"})
+        assert rebound.status_code == 400
+
+
+def test_loopback_bind_rejects_malformed_bracketed_host(monkeypatch):
+    """A bracketed Host with trailing garbage must not collapse to the loopback literal."""
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    server = DevServer(host="127.0.0.1", auth_token="s3cret")
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        for host_header in ("[::1]evil.example", "[::1]:notaport", "[::1]]:8080"):
+            response = client.get("/health", headers={"Host": host_header})
+            assert response.status_code == 400, f"Host {host_header!r} was not rejected"
     """`serve()`'s public signature must default to auth_enabled=True."""
     sig = inspect.signature(agent_framework_devui.serve)
     assert sig.parameters["auth_enabled"].default is True, (

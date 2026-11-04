@@ -4412,7 +4412,8 @@ def _apply_mcp_security_label_to_function(
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
-async def apply_mcp_security_labels(
+# Keep this async for public API compatibility now that annotations come from the retained catalog snapshot.
+async def apply_mcp_security_labels(  # ruff: ignore[unused-async]
     mcp_tool: Any,
     *,
     default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
@@ -4478,19 +4479,7 @@ async def apply_mcp_security_labels(
             "MCPTool is not connected. Call connect() or use 'async with' before applying security labels."
         )
 
-    connection = mcp_tool._require_connection()
-
-    from mcp import types as mcp_types
-
-    annotation_map: dict[str, Any] = {}
-    params: mcp_types.PaginatedRequestParams | None = None
-    while True:
-        tool_list = await connection.list_tools_page(params)
-        for remote_tool in tool_list.tools:
-            annotation_map[remote_tool.name] = remote_tool.annotations
-        if not tool_list.next_cursor:
-            break
-        params = mcp_types.PaginatedRequestParams(cursor=tool_list.next_cursor)
+    annotation_map = dict(mcp_tool._tool_annotations_by_name)
 
     loaded_functions = getattr(mcp_tool, "_functions", None)
     if not isinstance(loaded_functions, list):
@@ -4681,6 +4670,10 @@ class SecureMCPToolProxy:
         name: Tool name used when creating the internal
             ``MCPStreamableHTTPTool`` (defaults to ``"mcp"``).
         description: Tool description for the internal tool.
+        max_discovery_pages: Maximum pages accepted independently for each tool or prompt catalog fetch in
+            *url* mode. Defaults to 100; ``None`` disables the limit.
+        max_discovery_items: Maximum entries accepted independently for each tool or prompt catalog fetch in
+            *url* mode. Defaults to 1,000; ``None`` disables the limit.
         default_integrity: Default integrity for tools without annotations.
         annotation_overrides: Per-tool-name label overrides (keyed by remote
             MCP tool name), applied only to this proxy's MCP connection.
@@ -4702,6 +4695,8 @@ class SecureMCPToolProxy:
         headers: dict[str, str] | None = None,
         name: str | None = None,
         description: str | None = None,
+        max_discovery_pages: int | None = 100,
+        max_discovery_items: int | None = 1_000,
         default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
         annotation_overrides: dict[str, tuple[IntegrityLabel, ConfidentialityLabel | None]] | None = None,
         mark_write_tools_as_sinks: bool = True,
@@ -4722,6 +4717,10 @@ class SecureMCPToolProxy:
             name: Tool name used when creating the internal ``MCPStreamableHTTPTool``
                 (defaults to ``"mcp"``).
             description: Tool description for the internal tool.
+            max_discovery_pages: Maximum pages accepted independently for each tool or prompt catalog fetch in
+                ``url`` mode. Defaults to 100; ``None`` disables the limit.
+            max_discovery_items: Maximum entries accepted independently for each tool or prompt catalog fetch in
+                ``url`` mode. Defaults to 1,000; ``None`` disables the limit.
             default_integrity: Default integrity for tools without annotations.
                 Defaults to ``IntegrityLabel.UNTRUSTED``.
             annotation_overrides: Per-tool-name label overrides keyed by remote MCP tool name,
@@ -4752,6 +4751,8 @@ class SecureMCPToolProxy:
                 url=url,
                 description=description,
                 static_headers=static_headers,
+                max_discovery_pages=max_discovery_pages,
+                max_discovery_items=max_discovery_items,
             )
 
         # The validation above guarantees a tool is set (passed directly or built
@@ -4819,15 +4820,17 @@ class SecureMCPToolProxy:
             self._unbind_function_load_callback()
 
     async def refresh_labels(self) -> None:
-        """Re-apply labels and wrappers to all currently discovered functions.
+        """Refresh enabled tool discovery, then re-apply labels to discovered functions.
 
-        Later-discovered functions are labeled automatically while the proxy
-        is active.
+        When tool loading is disabled, this only reapplies labels to the existing catalog snapshot.
+        Later-discovered functions are labeled automatically while the proxy is active.
         """
         if not self.is_connected:
             raise RuntimeError("MCPTool is not connected. Connect before refreshing labels.")
         callback_bound = self._bind_function_load_callback()
         try:
+            if self._mcp_tool.load_tools_flag:
+                await self._mcp_tool.load_tools()
             await self._apply_labels()
         except BaseException:
             if callback_bound:
