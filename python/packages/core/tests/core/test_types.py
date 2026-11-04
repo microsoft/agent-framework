@@ -1545,7 +1545,7 @@ def test_agent_response_value_parses_final_message_with_response_format() -> Non
         response_format=OutputModel,
     )
 
-    assert response.text == '{"skill_name": "building-permit-compliance"}{"response": "Hello"}'
+    assert response.text == '{"skill_name": "building-permit-compliance"}\n{"response": "Hello"}'
     assert response.value is not None
     assert response.value.response == "Hello"
 
@@ -2254,7 +2254,19 @@ def test_agent_run_response_init_none_messages() -> None:
 
 def test_agent_run_response_text_property(chat_message: Message) -> None:
     response = AgentResponse(messages=[chat_message, chat_message])
-    assert response.text == "HelloHello"
+    assert response.text == "Hello\nHello"
+
+
+def test_agent_run_response_text_separates_messages_around_tool_calls() -> None:
+    # A preamble before a tool call and the final answer are separate messages and must not run together
+    response = AgentResponse(
+        messages=[
+            Message("assistant", [Content.from_text("Let me check."), Content.from_function_call("c1", "get_weather")]),
+            Message("tool", [Content.from_function_result("c1", result="sunny")]),
+            Message("assistant", ["It is sunny."]),
+        ]
+    )
+    assert response.text == "Let me check.\nIt is sunny."
 
 
 def test_agent_run_response_text_property_empty() -> None:
