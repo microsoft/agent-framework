@@ -137,16 +137,21 @@ class RedisHistoryProvider(HistoryProvider):
         Args:
             source_id: Unique identifier for this provider instance.
             redis_url: Redis connection URL (e.g., "redis://localhost:6379").
-                Mutually exclusive with credential_provider and redis_client.
+                Ignored when redis_client is supplied. Mutually exclusive with credential_provider.
             credential_provider: Redis credential provider for Azure AD authentication.
-                Requires host parameter. Mutually exclusive with redis_url and redis_client.
-            host: Redis host name. Required when using credential_provider.
-            port: Redis port number. Defaults to 6380 (Azure Redis SSL port).
-            ssl: Enable SSL/TLS connection. Defaults to True.
-            username: Redis username.
+                Requires host parameter. Ignored when redis_client is supplied.
+                Mutually exclusive with redis_url.
+            host: Redis host name. Required when credential_provider is used to build a client.
+            port: Redis port number. Defaults to 6380 (Azure Redis SSL port). Used only when
+                the provider builds a client.
+            ssl: Enable SSL/TLS connection. Defaults to True. Used only when the provider
+                builds a client.
+            username: Redis username. Used only when the provider builds a client.
             redis_client: Borrowed standalone async Redis client configured with
-                ``decode_responses=True``. The caller owns its lifetime. Mutually exclusive
-                with redis_url and credential_provider.
+                ``decode_responses=True``. The caller owns its lifetime and ``aclose`` leaves
+                it open. It takes precedence over redis_url, credential_provider and the
+                individual connection settings, which are ignored rather than treated as a
+                conflict, matching the Redis vector stores.
             key_prefix: Base prefix for Redis keys. Scoped mode appends independently encoded
                 tenant, application, agent, provider source, and session segments.
                 Defaults to 'chat_messages'.
@@ -172,7 +177,7 @@ class RedisHistoryProvider(HistoryProvider):
         Raises:
             TypeError: If redis_client is not a standalone async Redis client.
             ValueError: If no Redis connection source is provided.
-            ValueError: If more than one Redis connection source is provided.
+            ValueError: If both redis_url and credential_provider are provided.
             ValueError: If credential_provider is used without host parameter.
             ValueError: If redis_client does not use decoded string responses.
             ValueError: If max_messages is negative.
@@ -187,19 +192,26 @@ class RedisHistoryProvider(HistoryProvider):
             store_context_from=store_context_from,
         )
 
-        connection_sources = sum(source is not None for source in (redis_client, redis_url, credential_provider))
-        if connection_sources == 0:
-            raise ValueError("Either redis_client, redis_url, or credential_provider must be provided")
-        if connection_sources > 1:
-            raise ValueError("redis_client, redis_url, and credential_provider are mutually exclusive")
-        if credential_provider is not None and host is None:
-            raise ValueError("host is required when using credential_provider")
         if redis_client is not None:
+            # A caller-owned client is the connection. redis_url, credential_provider and the
+            # individual connection settings describe how to build one, so supplying them
+            # alongside it is redundant rather than conflicting, and none of them is
+            # validated. Only what the provider needs of the client itself still has to
+            # hold; its lifetime stays with the caller. This is the precedence the Redis
+            # vector stores already apply in _create_client.
             if not isinstance(redis_client, redis.Redis):
                 raise TypeError("Redis history providers require a standalone redis.asyncio.Redis client")
             connection_kwargs = cast(dict[str, Any], redis_client.connection_pool.connection_kwargs)  # pyright: ignore[reportUnknownMemberType]
             if not connection_kwargs.get("decode_responses", False):
                 raise ValueError("Redis history providers require decode_responses=True")
+        else:
+            connection_sources = sum(source is not None for source in (redis_url, credential_provider))
+            if connection_sources == 0:
+                raise ValueError("Either redis_client, redis_url, or credential_provider must be provided")
+            if connection_sources > 1:
+                raise ValueError("redis_url and credential_provider are mutually exclusive")
+            if credential_provider is not None and host is None:
+                raise ValueError("host is required when using credential_provider")
         if max_messages is not None and max_messages < 0:
             raise ValueError("max_messages must be None (unlimited) or a non-negative integer")
         if key_format not in ("scoped", "legacy"):
@@ -227,7 +239,9 @@ class RedisHistoryProvider(HistoryProvider):
         self.agent_id = agent_id
         self.key_format = key_format
         self.max_messages = max_messages
-        self.redis_url = redis_url
+        # Recorded as the source the provider actually used: a URL passed alongside an
+        # injected client is ignored, so reporting it would claim a connection never made.
+        self.redis_url = redis_url if redis_client is None else None
         self._owns_client = redis_client is None
 
         if redis_client is not None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import inspect
 import json
 import logging
@@ -1814,6 +1815,25 @@ async def test_chat_agent_as_tool_basic(client: SupportsChatGetResponse) -> None
     assert tool.approval_mode == "never_require"
     assert hasattr(tool, "func")
     assert tool.input_model is None
+
+
+async def test_chat_agent_as_tool_records_the_agent_it_delegates_to(client: SupportsChatGetResponse) -> None:
+    """Hosts that refuse some delegates read a private link, and serialization leaves it out."""
+    agent = Agent(client=client, name="TestAgent", description="Test agent for as_tool")
+
+    tool = agent.as_tool()
+
+    assert getattr(tool, "_wrapped_agent", None) is agent
+    assert "_wrapped_agent" not in tool.to_dict()
+
+
+async def test_chat_agent_as_tool_copies_keep_pointing_at_the_wrapped_agent(client: SupportsChatGetResponse) -> None:
+    """A copy of the tool must not copy the agent it delegates to, just as the tool function does not."""
+    agent = Agent(client=client, name="TestAgent", description="Test agent for as_tool")
+    tool = agent.as_tool()
+
+    assert getattr(copy.copy(tool), "_wrapped_agent", None) is agent
+    assert getattr(copy.deepcopy(tool), "_wrapped_agent", None) is agent
 
 
 async def test_chat_agent_as_tool_custom_parameters(

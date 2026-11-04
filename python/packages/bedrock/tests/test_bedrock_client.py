@@ -668,11 +668,12 @@ def test_init_uses_boto3_session_when_runtime_client_not_supplied() -> None:
     ("region", "env_region", "session_region", "expected_region"),
     [
         (None, None, "eu-west-1", "eu-west-1"),
-        ("us-west-2", None, "eu-west-1", "us-west-2"),
-        (None, "ap-south-1", "eu-west-1", "ap-south-1"),
+        ("us-west-2", "ap-south-1", "eu-west-1", "us-west-2"),
+        (None, "ap-south-1", "eu-west-1", "eu-west-1"),
+        (None, "ap-south-1", None, "ap-south-1"),
         (None, None, None, "us-east-1"),
     ],
-    ids=["session-region", "region-argument-wins", "env-region-wins", "default-region"],
+    ids=["session-region", "region-argument-wins", "session-region-beats-env", "env-region", "default-region"],
 )
 def test_init_resolves_region_with_boto3_session(
     monkeypatch: pytest.MonkeyPatch,
@@ -681,7 +682,7 @@ def test_init_resolves_region_with_boto3_session(
     session_region: str | None,
     expected_region: str,
 ) -> None:
-    """A configured region wins, then the provided session's region, then the default region."""
+    """The region argument wins, then the provided session's region, then BEDROCK_REGION, then the default."""
     if env_region:
         monkeypatch.setenv("BEDROCK_REGION", env_region)
     else:
@@ -709,6 +710,18 @@ def test_init_ignores_boto3_session_region_when_runtime_client_supplied(monkeypa
     assert session.calls == []
     assert client.region == "us-east-1"
     assert client.service_url() == "https://bedrock-runtime.us-east-1.amazonaws.com"
+
+
+def test_init_reports_region_of_supplied_runtime_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A preconfigured runtime client defines the region, so BEDROCK_REGION should not change it."""
+    monkeypatch.setenv("BEDROCK_REGION", "ap-south-1")
+    runtime = _StubBedrockRuntime()
+    setattr(runtime, "meta", MagicMock(region_name="eu-west-1"))  # noqa: B010
+
+    client = BedrockChatClient(model="amazon.titan-text", client=cast(BaseClient, runtime))
+
+    assert client.region == "eu-west-1"
+    assert client.service_url() == "https://bedrock-runtime.eu-west-1.amazonaws.com"
 
 
 @pytest.mark.parametrize("secret_type", [str, SecretString], ids=["str", "secret"])

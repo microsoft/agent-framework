@@ -1564,3 +1564,27 @@ async def test_chat_client_instructions_handling(chat_client_base: SupportsChatG
         assert appended_messages[0].text == "You are a helpful assistant."
         assert appended_messages[1].role == "user"
         assert appended_messages[1].text == "hello"
+
+
+def test_base_chat_client_to_dict_respects_exclude_and_exclude_none() -> None:
+    class DummyClient(BaseChatClient):
+        def _inner_get_response(self, *, messages, stream, options, **kwargs):
+            raise NotImplementedError
+
+    client = DummyClient(additional_properties={"kept": 1, "empty": None, "extra": "val"})
+
+    # By default, exclude_none=True excludes None values from additional_properties
+    d_default = client.to_dict()
+    assert d_default == {"type": "dummy_client", "kept": 1, "extra": "val"}
+
+    # exclude_none=False preserves None values
+    d_with_none = client.to_dict(exclude_none=False)
+    assert d_with_none == {"type": "dummy_client", "kept": 1, "empty": None, "extra": "val"}
+
+    # exclude={'additional_properties'} excludes all additional_properties
+    d_exclude_all = client.to_dict(exclude={"additional_properties"})
+    assert d_exclude_all == {"type": "dummy_client"}
+
+    # exclude={'extra'} excludes only the specified additional property key
+    d_exclude_key = client.to_dict(exclude={"extra"})
+    assert d_exclude_key == {"type": "dummy_client", "kept": 1}

@@ -631,7 +631,7 @@ class TestStreaming:
         assert follow_up.get_outputs() == [7]
 
     async def test_nested_processing_span_parents_under_workflow_run(self, span_exporter: Any) -> None:
-        """Spans opened during ``_execute`` must parent under the unattached ``workflow.run`` span."""
+        """Spans opened during ``_execute`` must parent under the unattached ``invoke_workflow`` span."""
         from agent_framework.observability import OtelAttr, create_processing_span
 
         @step
@@ -648,7 +648,7 @@ class TestStreaming:
         assert result.get_outputs() == [6]
 
         spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
-        run_spans = [s for s in spans if s.name == OtelAttr.WORKFLOW_RUN_SPAN]
+        run_spans = [s for s in spans if s.name == f"invoke_workflow {pipeline.name}"]
         process_spans = [s for s in spans if s.name == f"{OtelAttr.EXECUTOR_PROCESS_SPAN} traced_add"]
         assert len(run_spans) == 1
         assert len(process_spans) == 1
