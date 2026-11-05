@@ -1734,6 +1734,86 @@ async def test_exhausted_aggregate_budget_preserves_ifc_security_label() -> None
     assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
 
 
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.usefixtures("span_exporter")
+async def test_function_result_parser_preserves_exhausted_budget_ifc_label() -> None:
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private result")],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(name="helper", max_host_payload_size_bytes=128)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    budget = _FunctionResultPayloadBudget()
+    assert budget.reserve(128, 128)
+    tracker = LabelTrackingFunctionMiddleware()
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        result_parser=lambda items: items[0].text,
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        host_payload_budget=budget,
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+    )
+
+    assert function_result.result == "private result"
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"] == {
+        "integrity": "trusted",
+        "confidentiality": "private",
+    }
+    assert tracker.get_context_label().confidentiality.value == "private"
+    assert "_security_label_authoritative" not in function_result.items[0].additional_properties
+    json.dumps(function_result.to_dict())
+
+
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.usefixtures("span_exporter")
+async def test_function_result_parser_failure_preserves_exhausted_budget_ifc_label() -> None:
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private parser detail")],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(name="helper", max_host_payload_size_bytes=128)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    budget = _FunctionResultPayloadBudget()
+    assert budget.reserve(128, 128)
+    tracker = LabelTrackingFunctionMiddleware()
+
+    def fail_with_result(items: list[Content]) -> str:
+        raise ValueError(f"parser rejected {items[0].text}")
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        result_parser=fail_with_result,
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        host_payload_budget=budget,
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+        include_detailed_errors=True,
+    )
+
+    assert "private parser detail" in function_result.result
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"] == {
+        "integrity": "trusted",
+        "confidentiality": "private",
+    }
+    assert tracker.get_context_label().confidentiality.value == "private"
+    assert "_security_label_authoritative" not in function_result.items[0].additional_properties
+    json.dumps(function_result.to_dict())
+
+
 @pytest.mark.parametrize(
     ("server_ifc", "expected_integrity", "expected_confidentiality"),
     [
@@ -2111,10 +2191,22 @@ async def test_oversized_identity_ifc_fails_closed_without_confidentiality_downg
         "confidentiality": "user_identity",
         "metadata": {"source": "invalid_mcp_ifc"},
     }
+    assert "_security_label_authoritative" not in function_result.items[0].additional_properties
     assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
+    json.dumps(function_result.to_dict())
 
 
-async def test_invalid_identity_ifc_cannot_inherit_local_principals() -> None:
+@pytest.mark.parametrize(
+    "server_principals",
+    [
+        pytest.param(None, id="missing"),
+        pytest.param([], id="empty"),
+        pytest.param([{"tenant_id": "tenant-a"}], id="missing-user"),
+        pytest.param([{"tenant_id": "", "user_id": "user-a"}], id="empty-tenant"),
+        pytest.param("tenant-a/user-a", id="not-a-sequence-of-mappings"),
+    ],
+)
+async def test_invalid_identity_ifc_cannot_inherit_local_principals(server_principals: Any) -> None:
     from agent_framework.security import (
         PRINCIPAL_METADATA_KEY,
         ConfidentialityLabel,
@@ -2125,15 +2217,15 @@ async def test_invalid_identity_ifc_cannot_inherit_local_principals() -> None:
     )
 
     principals = [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+    server_ifc: dict[str, Any] = {
+        "integrity": "trusted",
+        "confidentiality": "user_identity",
+    }
+    if server_principals is not None:
+        server_ifc["principals"] = server_principals
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="identity-scoped result")],
-        _meta={
-            "ifc": {
-                "integrity": "trusted",
-                "confidentiality": "user_identity",
-                "principals": [{"tenant_id": "tenant-a", "user_id": "x" * 5000}],
-            }
-        },
+        _meta={"ifc": server_ifc},
     )
     tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     mock_session = Mock()
