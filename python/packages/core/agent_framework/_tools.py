@@ -14,6 +14,7 @@ import typing
 import warnings
 from collections import Counter, deque
 from collections.abc import (
+    AsyncGenerator,
     AsyncIterable,
     Awaitable,
     Callable,
@@ -22,7 +23,7 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import contextmanager, suppress
+from contextlib import aclosing, contextmanager, suppress
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from datetime import time as datetime_time
@@ -85,6 +86,7 @@ if TYPE_CHECKING:
         MiddlewareTypes,
     )
     from ._sessions import AgentSession
+    from ._tool_recovery import BackgroundToolRecovery
     from ._types import (
         ChatOptions,
         ChatResponse,
@@ -2646,6 +2648,7 @@ async def _try_execute_function_call_groups(
     approval_session_is_authoritative: bool = True,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
+    recovery: BackgroundToolRecovery | None = None,
 ) -> tuple[list[list[Content]], bool]:
     """Execute multiple function calls concurrently while preserving per-call result groups.
 
@@ -2658,6 +2661,7 @@ async def _try_execute_function_call_groups(
         approval_session_is_authoritative: Whether the invocation session owns persistent approval state.
         middleware_pipeline: Optional middleware pipeline to apply during execution.
         host_payload_budget: Shared request budget for retained Host-only function result payloads.
+        recovery: Optional session-owned background execution and delivery evidence.
 
     Returns:
         A tuple of:
@@ -2725,19 +2729,26 @@ async def _try_execute_function_call_groups(
 
     # Each locally executable call gets its own task so context changes made by
     # one tool cannot leak into another.
+    async def execute_call(function_call: Content) -> tuple[list[Content], bool]:
+        claimed = recovery is not None and recovery.start_call(_underlying_function_call(function_call))
+        result = await _execute_single_function_call(
+            function_call,
+            custom_args=custom_args,
+            config=config,
+            tool_map=tool_map,
+            invocation_session=invocation_session,
+            middleware_pipeline=middleware_pipeline,
+            live_tools=live_tools,
+            host_payload_budget=host_payload_budget,
+        )
+        if claimed and recovery is not None:
+            recovery.complete_call(_underlying_function_call(function_call), result[0])
+        return result
+
     def create_execution_task(function_call: Content) -> asyncio.Task[tuple[list[Content], bool]]:
         return contextvars.copy_context().run(
             asyncio.create_task,
-            _execute_single_function_call(
-                function_call,
-                custom_args=custom_args,
-                config=config,
-                tool_map=tool_map,
-                invocation_session=invocation_session,
-                middleware_pipeline=middleware_pipeline,
-                live_tools=live_tools,
-                host_payload_budget=host_payload_budget,
-            ),
+            execute_call(function_call),
         )
 
     async def execute_local_calls(function_calls_to_execute: Sequence[Content]) -> list[tuple[list[Content], bool]]:
@@ -2916,6 +2927,7 @@ async def _execute_function_calls(
     approval_session_is_authoritative: bool = True,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
+    recovery: BackgroundToolRecovery | None = None,
 ) -> _FunctionExecutionBatch:
     tools = _extract_tools(options)
     if not tools:
@@ -2929,6 +2941,7 @@ async def _execute_function_calls(
         middleware_pipeline=middleware_pipeline,
         config=config,
         host_payload_budget=host_payload_budget,
+        recovery=recovery,
     )
     return _FunctionExecutionBatch(
         result_groups=result_groups,
@@ -5810,20 +5823,28 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         budget_state: dict[str, Any],
         max_errors: int,
         middleware_pipeline: FunctionMiddlewarePipeline | None = None,
+        recovery: BackgroundToolRecovery | None = None,
     ) -> ChatResponse[Any]:
         """Run the non-streaming function invocation loop."""
         from ._compaction import _reconcile_compaction_summaries  # pyright: ignore[reportPrivateUsage]
         from ._middleware import MiddlewareFailure
-        from ._types import ChatResponse, add_usage_details
+        from ._types import ChatResponse, Message, add_usage_details
 
-        errors_in_a_row = 0
+        pending = recovery.restore(options, request_kwargs, budget_state) if recovery is not None else None
+        errors_in_a_row = pending.errors_in_a_row if pending is not None else 0
         total_function_calls = int(budget_state.get("total_function_calls", 0) or 0)
         max_function_calls = self.function_invocation_configuration.get("max_function_calls")
         max_duration_seconds = self.function_invocation_configuration.get("max_duration_seconds")
-        prepared_messages = _copy_messages_for_function_invocation(messages)
-        function_call_messages: list[Message] = []
+        prepared_messages = (
+            [Message.from_json(message) for message in pending.prepared_messages]
+            if pending is not None
+            else _copy_messages_for_function_invocation(messages)
+        )
+        function_call_messages: list[Message] = (
+            [Message.from_json(message) for message in pending.transcript] if pending is not None else []
+        )
         response: ChatResponse[Any] | None = None
-        aggregated_usage: UsageDetails | None = None
+        aggregated_usage = cast("UsageDetails | None", pending.usage) if pending is not None else None
         max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
         attempt_start = int(budget_state.get("attempt_count", 0) or 0)
 
@@ -5923,6 +5944,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 session=invocation_session,
                 options=options,
             )
+            if recovery is not None:
+                recovery.observe_response(response)
 
             terminal_prefix_length = len(function_call_messages)
             try:
@@ -5978,6 +6001,15 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             errors_in_a_row = function_processing.errors_in_a_row
             _reset_required_tool_choice(options)
             _prepare_messages_for_next_iteration(prepared_messages, response)
+            if recovery is not None:
+                recovery.checkpoint(
+                    prepared_messages=prepared_messages,
+                    transcript=function_call_messages,
+                    budget=_portable_budget_snapshot(budget_state),
+                    errors_in_a_row=errors_in_a_row,
+                    usage=aggregated_usage,
+                    options=options,
+                )
 
         # Phase 3: the iteration budget is exhausted, so request one final response with tools disabled.
         if response is not None:
@@ -6015,6 +6047,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             session=invocation_session,
             options=options,
         )
+        if recovery is not None:
+            recovery.observe_response(response)
         response.usage_details = aggregated_usage
         _prepend_function_call_messages(response, function_call_messages)
         _clear_budget_state_from_session(invocation_session, budget_state)
@@ -6036,22 +6070,34 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_errors: int,
         middleware_pipeline: FunctionMiddlewarePipeline | None = None,
         invalidation_error: list[ResponseInvalidatedException],
-    ) -> AsyncIterable[ChatResponseUpdate]:
+        recovery: BackgroundToolRecovery | None = None,
+    ) -> AsyncGenerator[ChatResponseUpdate]:
         """Run the streaming function invocation loop."""
         from ._middleware import MiddlewareFailure
-        from ._types import ChatResponseUpdate, Content, add_usage_details
+        from ._types import ChatResponse, ChatResponseUpdate, Content, Message, add_usage_details
 
-        errors_in_a_row = 0
+        pending = recovery.restore(options, request_kwargs, budget_state) if recovery is not None else None
+        errors_in_a_row = pending.errors_in_a_row if pending is not None else 0
         total_function_calls = int(budget_state.get("total_function_calls", 0) or 0)
         max_function_calls = self.function_invocation_configuration.get("max_function_calls")
         max_duration_seconds = self.function_invocation_configuration.get("max_duration_seconds")
-        prepared_messages = _copy_messages_for_function_invocation(messages)
+        prepared_messages = (
+            [Message.from_json(message) for message in pending.prepared_messages]
+            if pending is not None
+            else _copy_messages_for_function_invocation(messages)
+        )
+        function_call_messages = (
+            [Message.from_json(message) for message in pending.transcript] if pending is not None else []
+        )
         response: ChatResponse[Any] | None = None
-        completed_usage: UsageDetails | None = None
+        completed_usage = cast("UsageDetails | None", pending.usage) if pending is not None else None
         turn_usage: UsageDetails | None = None
         last_projected_usage: UsageDetails | None = None
         max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
         attempt_start = int(budget_state.get("attempt_count", 0) or 0)
+        if pending is not None:
+            for update in ChatResponse(messages=function_call_messages, usage_details=completed_usage).to_updates():
+                yield update
 
         def project_cumulative_usage(update: ChatResponseUpdate) -> ChatResponseUpdate:
             """Project one provider turn's usage as a cumulative outer-stream snapshot."""
@@ -6189,6 +6235,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             warned_empty_call_ids: set[str] = set()
             async with inner_stream:
                 async for update in _iterate_provider_stream(inner_stream, on_invalidated):
+                    if recovery is not None:
+                        recovery.observe_update(update)
                     for content in update.contents:
                         if content.type != "function_call":
                             continue
@@ -6257,6 +6305,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 session=invocation_session,
                 options=options,
             )
+            if recovery is not None:
+                recovery.observe_response(response)
 
             if not any(
                 item.type == "function_approval_request" or _is_actionable_function_call(item)
@@ -6321,6 +6371,16 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             )
             _reset_required_tool_choice(options)
             _prepare_messages_for_next_iteration(prepared_messages, response)
+            if recovery is not None:
+                function_call_messages.extend(response.messages)
+                recovery.checkpoint(
+                    prepared_messages=prepared_messages,
+                    transcript=function_call_messages,
+                    budget=_portable_budget_snapshot(budget_state),
+                    errors_in_a_row=errors_in_a_row,
+                    usage=completed_usage,
+                    options=options,
+                )
 
         # Phase 3: the iteration budget is exhausted, so stream one final response with tools disabled.
         if response is not None:
@@ -6347,6 +6407,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         last_projected_usage = None
         async with final_inner_stream:
             async for update in _iterate_provider_stream(final_inner_stream, on_invalidated):
+                if recovery is not None:
+                    recovery.observe_update(update)
                 update = _drop_unexecutable_tool_contents_from_update(update)
                 if update is None:
                     continue
@@ -6361,6 +6423,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             session=invocation_session,
             options=options,
         )
+        if recovery is not None:
+            recovery.observe_response(final_response)
         if fallback_added:
             yield _function_invocation_limit_fallback_update()
         _clear_budget_state_from_session(invocation_session, budget_state)
@@ -6491,6 +6555,33 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             "max_consecutive_errors_per_request", DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST
         )
 
+        recovery: BackgroundToolRecovery | None = None
+        recovery_scope = getattr(self, "_background_tool_recovery_scope", None)
+        if recovery_scope is not None and self.function_invocation_configuration.get("enabled", True):
+            from ._tool_recovery import BACKGROUND_TOOL_RECOVERY_KEY, BackgroundToolRecovery
+
+            stored_recovery = (
+                invocation_session.state.get(BACKGROUND_TOOL_RECOVERY_KEY) if invocation_session is not None else None
+            )
+            has_pending_recovery = (
+                isinstance(stored_recovery, dict) and cast(dict[str, Any], stored_recovery).get("pending") is not None
+            )
+            if (options and (options.get("background") or options.get("continuation_token"))) or has_pending_recovery:
+                recovery = BackgroundToolRecovery(
+                    scope=recovery_scope(options or {}),
+                    session=invocation_session,
+                    authoritative=approval_session_is_authoritative,
+                    options=options or {},
+                    messages=messages,
+                )
+                provider_get_response = super_get_response
+
+                async def recoverable_provider_call(**kwargs: Any) -> Any:
+                    recovery.before_request()
+                    return await provider_get_response(**kwargs)
+
+                super_get_response = recoverable_provider_call
+
         # Bind one executor with the run's custom arguments, middleware, configuration, and session.
         execute_function_calls = partial(
             _execute_function_calls,
@@ -6500,6 +6591,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             approval_session_is_authoritative=approval_session_is_authoritative,
             middleware_pipeline=function_middleware_pipeline,
             host_payload_budget=host_payload_budget,
+            recovery=recovery,
         )
 
         # Give the loop private mutable options and one shared run-local tool list for progressive tool changes.
@@ -6528,7 +6620,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
         # Dispatch to the shape-specific loop; both loops follow the same approval -> model -> execution phases.
         if not stream:
-            return self._get_response_with_function_invocation(
+            invoke_response = partial(
+                self._get_response_with_function_invocation,
                 super_get_response=super_get_response,
                 messages=messages,
                 options=mutable_options,
@@ -6541,7 +6634,16 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 budget_state=budget_state,
                 max_errors=max_errors,
                 middleware_pipeline=function_middleware_pipeline,
+                recovery=recovery,
             )
+            if recovery is None:
+                return invoke_response()
+
+            async def run_response() -> ChatResponse[Any]:
+                with recovery:
+                    return await invoke_response()
+
+            return run_response()
 
         response_format = mutable_options.get("response_format")
         invalidation_error: list[ResponseInvalidatedException] = []
@@ -6551,24 +6653,32 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 raise invalidation_error[0]
             return ChatResponse.from_updates(updates, output_format_type=response_format)
 
-        return ResponseStream(
-            self._stream_response_with_function_invocation(
-                super_get_response=super_get_response,
-                messages=messages,
-                options=mutable_options,
-                request_kwargs=request_kwargs,
-                compaction_strategy=compaction_strategy,
-                tokenizer=tokenizer,
-                execute_function_calls=execute_function_calls,
-                invocation_session=invocation_session,
-                approval_session_is_authoritative=approval_session_is_authoritative,
-                budget_state=budget_state,
-                max_errors=max_errors,
-                middleware_pipeline=function_middleware_pipeline,
-                invalidation_error=invalidation_error,
-            ),
-            finalizer=finalize_stream,
+        updates = self._stream_response_with_function_invocation(
+            super_get_response=super_get_response,
+            messages=messages,
+            options=mutable_options,
+            request_kwargs=request_kwargs,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            execute_function_calls=execute_function_calls,
+            invocation_session=invocation_session,
+            approval_session_is_authoritative=approval_session_is_authoritative,
+            budget_state=budget_state,
+            max_errors=max_errors,
+            middleware_pipeline=function_middleware_pipeline,
+            invalidation_error=invalidation_error,
+            recovery=recovery,
         )
+        if recovery is None:
+            return ResponseStream(updates, finalizer=finalize_stream)
+
+        async def run_stream() -> AsyncIterable[ChatResponseUpdate]:
+            with recovery:
+                async with aclosing(updates):
+                    async for update in updates:
+                        yield update
+
+        return ResponseStream(run_stream(), finalizer=finalize_stream)
 
 
 # Alias for the @tool decorator, used by security tools and samples

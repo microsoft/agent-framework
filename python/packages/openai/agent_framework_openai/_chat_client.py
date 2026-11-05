@@ -628,7 +628,20 @@ class RawOpenAIChatClient(
         "conversation",
     )
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
+    service_session_state_keys: ClassVar[frozenset[str]] = frozenset({"_background_tool_recovery"})
     _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.OPENAI
+
+    def _background_tool_recovery_scope(self, options: Mapping[str, Any]) -> str:
+        from hashlib import sha256
+
+        scope = (
+            self.OTEL_PROVIDER_NAME,
+            str(self.client.base_url),
+            options.get("model", self.model),
+            self.client.organization,
+            self.client.project,
+        )
+        return sha256(repr(scope).encode()).hexdigest()
 
     # Azure OpenAI Responses API may include this header in responses naming the actual model that
     # served the request (e.g. ``gpt-5-nano-2025-08-07``), which can differ from the deployment alias

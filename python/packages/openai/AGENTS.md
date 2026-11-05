@@ -24,6 +24,13 @@ agent_framework_openai/
 
 All clients follow the Raw + Full-Featured pattern (e.g., `RawOpenAIChatClient` + `OpenAIChatClient`).
 
+The shared Responses adapter supplies the scope for session-backed background tool-result recovery and declares
+`_background_tool_recovery` as provider-owned session state. The core function loop records execution separately
+from result delivery, including for inherited Azure OpenAI and Foundry clients. Automatic background tools require an
+explicit reusable `AgentSession`; an ephemeral agent session is insufficient. Supported delivery retries reuse
+completed results, never function middleware or tool bodies. Ambiguous execution/delivery fails closed. See
+[ADR 0049](../../../docs/decisions/0049-python-background-tool-result-recovery.md) for boundaries and persistence duties.
+
 For Responses API continuation with service-side storage, a prior hosted
 `function_approval_request` is server-issued and must not be replayed inline, while the new hosted
 `function_approval_response` is serialized as `mcp_approval_response` so the user's approved or rejected decision
