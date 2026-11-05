@@ -1041,7 +1041,7 @@ public sealed partial class ChatClientAgent : AIAgent
         try
         {
             var requestMessagesList = requestMessages as IReadOnlyCollection<ChatMessage> ?? requestMessages.ToList();
-            var partialResponseMessages = CreatePartialResponseMessages(requestMessagesList, responseUpdates);
+            var partialResponseMessages = CreatePartialResponseMessages(responseUpdates);
 
             await this.NotifyProvidersOfNewMessagesAsync(session, requestMessagesList, partialResponseMessages, chatOptions, CancellationToken.None).ConfigureAwait(false);
 
@@ -1082,16 +1082,18 @@ public sealed partial class ChatClientAgent : AIAgent
     /// </summary>
     /// <remarks>
     /// Incomplete content is removed so that the stored history remains valid for the next service call:
-    /// tool calls without a matching tool result in the partial response, tool results without a matching tool call,
+    /// tool calls and tool results without a matching counterpart in the partial response,
     /// pending input requests (for example, <see cref="ToolApprovalRequestContent"/>), and empty text.
+    /// Tool calls and results are only matched within the partial response, because the request messages are expected
+    /// to contain settled history only, so the response never contains results for tool calls from the request.
     /// Messages left without content are dropped, and every remaining message is marked with
     /// <see cref="PartialResponseMarkerKey"/>.
     /// </remarks>
-    internal static List<ChatMessage> CreatePartialResponseMessages(IEnumerable<ChatMessage> requestMessages, IEnumerable<ChatResponseUpdate> responseUpdates)
+    internal static List<ChatMessage> CreatePartialResponseMessages(IEnumerable<ChatResponseUpdate> responseUpdates)
     {
         IList<ChatMessage> responseMessages = responseUpdates.ToChatResponse().Messages;
 
-        HashSet<string> toolCallIds = new(requestMessages.SelectMany(m => m.Contents).OfType<ToolCallContent>().Select(x => x.CallId), StringComparer.Ordinal);
+        HashSet<string> toolCallIds = new(StringComparer.Ordinal);
         HashSet<string> toolResultIds = new(StringComparer.Ordinal);
 
         foreach (var content in responseMessages.SelectMany(m => m.Contents))

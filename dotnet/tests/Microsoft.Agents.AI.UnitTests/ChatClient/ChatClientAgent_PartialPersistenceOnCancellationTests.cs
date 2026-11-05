@@ -162,6 +162,26 @@ public class ChatClientAgent_PartialPersistenceOnCancellationTests
     }
 
     [Fact]
+    public void CreatePartialResponseMessages_RemovesFunctionResultWithoutMatchingCallInResponse()
+    {
+        // Arrange
+        ChatResponseUpdate[] updates =
+        [
+            new(ChatRole.Assistant, [new FunctionCallContent("call1", "GetWeather")]) { MessageId = "m1" },
+            new(ChatRole.Tool, [new FunctionResultContent("call1", "Sunny"), new FunctionResultContent("call2", "Rainy")]) { MessageId = "m2" },
+        ];
+
+        // Act
+        var messages = ChatClientAgent.CreatePartialResponseMessages(updates);
+
+        // Assert
+        var contents = messages.SelectMany(m => m.Contents).ToList();
+        Assert.Contains(contents, c => c is FunctionCallContent { CallId: "call1" });
+        Assert.Contains(contents, c => c is FunctionResultContent { CallId: "call1" });
+        Assert.DoesNotContain(contents, c => c is FunctionResultContent { CallId: "call2" });
+    }
+
+    [Fact]
     public async Task RunStreamingAsync_FlagEnabled_NonCallerCancellation_DoesNotPersistAsync()
     {
         // Arrange
