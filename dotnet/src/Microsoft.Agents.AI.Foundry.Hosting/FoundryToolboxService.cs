@@ -55,7 +55,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
+internal sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
 {
     private readonly FoundryToolboxOptions _options;
     private readonly TokenCredential _credential;

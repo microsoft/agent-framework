@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// connections are confirmed open (per <c>container-image-spec.md</c> §3.1).
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public enum FoundryToolboxStartupStatus
+internal enum FoundryToolboxStartupStatus
 {
     /// <summary>
     /// <see cref="FoundryToolboxService.StartAsync"/> has not run yet. The health-check
