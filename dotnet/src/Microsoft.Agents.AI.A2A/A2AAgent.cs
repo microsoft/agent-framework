@@ -122,25 +122,23 @@ public sealed class A2AAgent : AIAgent
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
 
-        if (a2aResponse.PayloadCase == SendMessageResponseCase.Message)
+        if (a2aResponse.PayloadCase == SendMessageResponseCase.Message &&
+            a2aResponse.Message is { } message)
         {
-            var message = a2aResponse.Message!;
-
             UpdateSession(typedSession, message.ContextId);
 
             return this.ConvertToAgentResponse(message);
         }
 
-        if (a2aResponse.PayloadCase == SendMessageResponseCase.Task)
+        if (a2aResponse.PayloadCase == SendMessageResponseCase.Task &&
+            a2aResponse.Task is { } task)
         {
-            var agentTask = a2aResponse.Task!;
+            UpdateSession(typedSession, task.ContextId, task.Id, task.Status.State);
 
-            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id, agentTask.Status.State);
-
-            return this.ConvertToAgentResponse(agentTask);
+            return this.ConvertToAgentResponse(task);
         }
 
-        throw new NotSupportedException($"Only Message and AgentTask responses are supported from A2A agents. Received: {a2aResponse.PayloadCase}");
+        throw new NotSupportedException($"Unsupported A2A response or missing payload. Received: {a2aResponse.PayloadCase}");
     }
 
     /// <inheritdoc/>
@@ -180,15 +178,13 @@ public sealed class A2AAgent : AIAgent
         {
             switch (streamResponse.PayloadCase)
             {
-                case StreamResponseCase.Message:
-                    var message = streamResponse.Message!;
+                case StreamResponseCase.Message when streamResponse.Message is { } message:
                     contextId = message.ContextId;
                     ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(message);
                     break;
 
-                case StreamResponseCase.Task:
-                    var task = streamResponse.Task!;
+                case StreamResponseCase.Task when streamResponse.Task is { } task:
                     contextId = task.ContextId;
                     taskId = task.Id;
                     taskState = task.Status.State;
@@ -196,8 +192,7 @@ public sealed class A2AAgent : AIAgent
                     yield return this.ConvertToAgentResponseUpdate(task);
                     break;
 
-                case StreamResponseCase.StatusUpdate:
-                    var statusUpdate = streamResponse.StatusUpdate!;
+                case StreamResponseCase.StatusUpdate when streamResponse.StatusUpdate is { } statusUpdate:
                     contextId = statusUpdate.ContextId;
                     taskId = statusUpdate.TaskId;
                     taskState = statusUpdate.Status.State;
@@ -205,8 +200,7 @@ public sealed class A2AAgent : AIAgent
                     yield return this.ConvertToAgentResponseUpdate(statusUpdate);
                     break;
 
-                case StreamResponseCase.ArtifactUpdate:
-                    var artifactUpdate = streamResponse.ArtifactUpdate!;
+                case StreamResponseCase.ArtifactUpdate when streamResponse.ArtifactUpdate is { } artifactUpdate:
                     contextId = artifactUpdate.ContextId;
                     taskId = artifactUpdate.TaskId;
                     ValidateContext(typedSession, contextId);
@@ -214,7 +208,7 @@ public sealed class A2AAgent : AIAgent
                     break;
 
                 default:
-                    throw new NotSupportedException($"Only message, task, task update events are supported from A2A agents. Received: {streamResponse.PayloadCase}");
+                    throw new NotSupportedException($"Unsupported A2A stream response or missing payload. Received: {streamResponse.PayloadCase}");
             }
         }
 
