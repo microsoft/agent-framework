@@ -179,6 +179,7 @@ Example:
 | OpenAI | OAuth consent request server | `server_label` | `openai["server_label"]` | Read indefinitely; dual-write through the writer package's next major version. |
 | Foundry | reasoning content | `__foundry_reasoning_replay_item__` | `foundry["reasoning_item"]` | Read indefinitely; dual-write through the Foundry package's next major version. |
 | Bedrock | redacted reasoning marker | `bedrock.redacted_reasoning` | `bedrock["redacted_reasoning"]` | Read indefinitely; dual-write through the Bedrock package's next major version. |
+| Anthropic | native reasoning block type | N/A | `anthropic["reasoning_block"]` | New metadata; values are the Anthropic block types `thinking` and `redacted_thinking`, and a redacted payload uses `Content.protected_data`. |
 | Mistral | response service tier | `service_tier` | `mistral["service_tier"]` | Read indefinitely; dual-write through the Mistral package's next major version. |
 | A2A | response/update/message metadata | `a2a_metadata` | `a2a` | Read indefinitely with a warning for legacy-only input; dual-write through the A2A package's next major version. |
 | all | data/URI/hosted-file display name | `filename` | `Content.name` | Read indefinitely where accepted; dual-write where older adapters require it. |
@@ -242,7 +243,7 @@ merge_additional_properties(existing, incoming, *, incoming_wins=True)
 | AG-UI stream merge modes, hosted/local ownership, and approval replay | `python/packages/ag-ui/tests/ag_ui/test_event_converters.py`, `test_run.py`, `test_workflow_run.py`, and `test_endpoint.py` |
 | A2A stream merge modes and namespaced metadata round trip | `python/packages/a2a/tests/test_a2a_agent.py` |
 | Hosting A2A message metadata conversion | `python/packages/hosting-a2a/tests/hosting_a2a/test_conversion.py` |
-| Anthropic streamed merge modes and provider-hosted tool routing | `python/packages/anthropic/tests/test_anthropic_client.py` |
+| Anthropic streamed merge modes, provider-hosted tool routing, and redacted-thinking replay metadata | `python/packages/anthropic/tests/test_anthropic_client.py` |
 | Bedrock streamed merge modes and redacted-reasoning replay metadata | `python/packages/bedrock/tests/test_bedrock_client.py` |
 | Gemini streamed merge modes and persisted provider-hosted tool replay | `python/packages/gemini/tests/test_gemini_client.py` |
 | Mistral streamed merge modes and response metadata | `python/packages/mistral/tests/mistral/test_mistral_chat_client.py` |
