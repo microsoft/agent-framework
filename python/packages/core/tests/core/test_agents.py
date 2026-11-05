@@ -5229,6 +5229,13 @@ class _PscSpyChatClient(MockBaseChatClient):
     conversation, so the framework propagates ``session.service_session_id``.
     """
 
+    SERVICE_CONTINUATION_OPTION_NAMES = (
+        "conversation_id",
+        "previous_response_id",
+        "conversation",
+        "custom_continuation",
+    )
+
     def __init__(
         self,
         *,
@@ -5324,7 +5331,7 @@ def _psc_build_agent(
     )
 
 
-async def _psc_run(agent: Agent, text: str, session: AgentSession, *, stream: bool) -> str:
+async def _psc_run(agent: Agent[Any], text: str, session: AgentSession, *, stream: bool) -> str:
     if stream:
         chunks: list[str] = []
         async for update in agent.run(text, session=session, stream=True):
@@ -5400,6 +5407,86 @@ async def test_psc_history_load_precedes_fides_replay_reconstruction(stream: boo
 
     assert executed is False
     assert any(entry["type"] == "untrusted_context" for entry in security.get_audit_log(session))
+
+
+@_psc_stream_params
+async def test_psc_reuses_fides_prepared_history_for_first_service_call(stream: bool) -> None:
+    """The first service call receives the exact history snapshot that FIDES evaluated."""
+
+    class AdvancingHistoryProvider(_PscSpyHistoryProvider):
+        async def get_messages(
+            self,
+            session_id: str | None,
+            *,
+            state: dict[str, Any] | None = None,
+            **kwargs: Any,
+        ) -> list[Message]:
+            del session_id, state, kwargs
+            self.get_calls += 1
+            return [Message(role="assistant", contents=[f"history-snapshot-{self.get_calls}"])]
+
+    provider = AdvancingHistoryProvider()
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=False,
+        script=[("text", "done")],
+    )
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        context_providers=[SecureAgentConfig(), provider],
+        require_per_service_call_history_persistence=True,
+    )
+    session = agent.create_session()
+
+    assert await _psc_run(agent, "Continue", session, stream=stream) == "done"
+
+    assert provider.get_calls == 1
+    assert any(message.text == "history-snapshot-1" for message in client.received_messages[0])
+    assert all(message.text != "history-snapshot-2" for message in client.received_messages[0])
+
+
+@_psc_stream_params
+async def test_psc_persists_provider_finalized_outbound_messages(stream: bool) -> None:
+    """Per-call persistence captures messages after provider middleware rewrites the request."""
+
+    @chat_middleware
+    async def replace_outbound_messages(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        context.messages = [Message(role="user", contents=["provider-finalized"])]
+        await call_next()
+
+    class RewritingContextProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__("rewriting-context")
+
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session, state
+            context.extend_middleware(self.source_id, replace_outbound_messages)
+
+    provider = _PscSpyHistoryProvider()
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=False,
+        script=[("text", "done")],
+    )
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        context_providers=[provider, RewritingContextProvider()],
+        require_per_service_call_history_persistence=True,
+    )
+    session = agent.create_session()
+
+    assert await _psc_run(agent, "caller-original", session, stream=stream) == "done"
+
+    stored_text = [message.text for batch in provider.saved_batches for message in batch]
+    assert "provider-finalized" in stored_text
+    assert "caller-original" not in stored_text
 
 
 @pytest.mark.parametrize("state_shape", ["missing", "marker-without-label"])
@@ -5638,6 +5725,200 @@ async def test_fides_service_history_without_loadable_provider_fails_closed(
 
     assert provider.get_calls == 0
     assert client.call_count == 0
+
+
+@pytest.mark.parametrize("option_name", ["previous_response_id", "conversation", "custom_continuation"])
+@_psc_stream_params
+async def test_fides_client_declared_continuation_without_authoritative_state_fails_closed(
+    stream: bool,
+    option_name: str,
+) -> None:
+    """Every client-declared continuation carrier is visible to FIDES."""
+    provider = _PscSpyHistoryProvider(load_messages=False)
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=False,
+        script=[("text", "must not run")],
+    )
+    default_options: ChatOptions = {"store": True}
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        context_providers=[SecureAgentConfig(), provider],
+        default_options=default_options,
+    )
+    session = agent.create_session()
+    options = cast(ChatOptions, {option_name: f"{option_name}-history"})
+
+    with pytest.raises(RuntimeError, match="authoritative FIDES context label"):
+        if stream:
+            await agent.run("Continue", session=session, stream=True, options=options).get_final_response()
+        else:
+            await agent.run("Continue", session=session, options=options)
+
+    assert client.call_count == 0
+
+
+@_psc_stream_params
+async def test_fides_continuation_state_is_bound_to_effective_identity(stream: bool) -> None:
+    """Authoritative FIDES state can resume only the continuation that produced it."""
+    provider = _PscSpyHistoryProvider(load_messages=False)
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=True,
+        script=[("text", "first"), ("text", "second"), ("text", "must not run")],
+    )
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        context_providers=[security, provider],
+    )
+    session = agent.create_session()
+
+    assert await _psc_run(agent, "Start", session, stream=stream) == "first"
+    assert session.service_session_id == _PSC_SERVICE_CONVERSATION_ID
+    assert await _psc_run(agent, "Continue", session, stream=stream) == "second"
+
+    session.service_session_id = "different-service-history"
+    with pytest.raises(RuntimeError, match="authoritative FIDES context label"):
+        await _psc_run(agent, "Continue elsewhere", session, stream=stream)
+
+    assert client.call_count == 2
+
+
+@_psc_stream_params
+async def test_fides_complete_local_history_can_reconstruct_bound_service_state(stream: bool) -> None:
+    """A full local transcript bound to the continuation can restore missing FIDES state."""
+    provider = _PscSpyHistoryProvider()
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=True,
+        script=[("text", "first"), ("text", "second")],
+    )
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        context_providers=[security, provider],
+    )
+    session = agent.create_session()
+
+    assert await _psc_run(agent, "Start", session, stream=stream) == "first"
+    session.state.pop(security.source_id)
+
+    assert await _psc_run(agent, "Continue", session, stream=stream) == "second"
+    assert provider.get_calls == 2
+    assert client.call_count == 2
+
+
+@pytest.mark.parametrize("incomplete_mode", ["outputs-disabled", "snapshot-tampered"])
+@_psc_stream_params
+async def test_fides_partial_local_history_cannot_cover_service_continuation(
+    stream: bool,
+    incomplete_mode: str,
+) -> None:
+    """Local messages must prove complete coverage of the active service continuation."""
+    provider = _PscSpyHistoryProvider(store_outputs=incomplete_mode != "outputs-disabled")
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=True,
+        script=[("text", "first"), ("text", "must not run")],
+    )
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        context_providers=[security, provider],
+    )
+    session = agent.create_session()
+
+    assert await _psc_run(agent, "Start", session, stream=stream) == "first"
+    session.state.pop(security.source_id)
+    if incomplete_mode == "snapshot-tampered":
+        provider._messages.pop()  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(RuntimeError, match="authoritative FIDES context label"):
+        await _psc_run(agent, "Continue", session, stream=stream)
+
+    assert client.call_count == 1
+
+
+@_psc_stream_params
+async def test_fides_rejected_continuation_clears_stale_reconstruction_marker(stream: bool) -> None:
+    """Retrying a rejected opaque continuation remains fail-closed in the same session."""
+    provider = _PscSpyHistoryProvider(load_messages=False)
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=True,
+        script=[("text", "must not run")],
+    )
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        context_providers=[security, provider],
+    )
+    session = agent.create_session()
+    session.service_session_id = "opaque-service-history"
+    session.state[security.source_id] = {
+        "scope_id": session.session_id,
+        "history_reconstruction_complete": True,
+    }
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="authoritative FIDES context label"):
+            await _psc_run(agent, "Continue", session, stream=stream)
+        assert session.state[security.source_id].get("history_reconstruction_complete") is not True
+
+    assert client.call_count == 0
+
+
+@_psc_stream_params
+async def test_session_conversation_id_precedence_is_shared_by_providers_and_model(stream: bool) -> None:
+    """Provider preparation and model dispatch use one resolved conversation ID."""
+
+    class ConversationCaptureProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__("conversation-capture")
+            self.seen: list[str | None] = []
+
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session, state
+            self.seen.append(cast(str | None, context.options.get("conversation_id")))
+
+    history = _PscSpyHistoryProvider(load_messages=False)
+    client = _PscSpyChatClient(
+        provider=history,
+        stores_by_default=True,
+        script=[("text", "done")],
+    )
+    capture = ConversationCaptureProvider()
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        context_providers=[capture],
+    )
+    session = agent.create_session()
+    session.service_session_id = "session-history"
+
+    if stream:
+        await agent.run(
+            "Continue",
+            session=session,
+            stream=True,
+            options={"conversation_id": "runtime-history"},
+        ).get_final_response()
+    else:
+        await agent.run(
+            "Continue",
+            session=session,
+            options={"conversation_id": "runtime-history"},
+        )
+
+    assert capture.seen == ["session-history"]
+    assert client.received_options[0]["conversation_id"] == "session-history"
 
 
 @pytest.mark.parametrize("conversation_source", ["runtime", "default"])
