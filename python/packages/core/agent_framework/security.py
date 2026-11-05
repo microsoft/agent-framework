@@ -5868,12 +5868,11 @@ def _label_from_mcp_meta(meta: Any) -> ContentLabel | None:
     """Best-effort parse of an MCP server ``_meta`` payload into a ``ContentLabel``.
 
     Looks under ``meta["ifc"]`` for an ``integrity`` and ``confidentiality``
-    pair using the wire vocabulary advertised by IFC-aware MCP servers
-    (e.g. the GitHub MCP server's ``ifc`` schema: integrity is one of
-    ``"trusted" | "untrusted"`` and confidentiality is one of
-    ``"public" | "private"``).  Returns ``None`` when the payload is missing,
-    not a dict, or contains values outside the known vocabularies, which lets
-    callers fall back to a statically derived label.
+    pair using the wire vocabulary advertised by IFC-aware MCP servers.
+    ``user_identity`` confidentiality also requires a complete, valid
+    ``principals`` set. Returns ``None`` when the payload is missing, malformed,
+    or contains values outside the known vocabularies, which lets callers fail
+    closed when IFC was supplied.
     """
     if not isinstance(meta, dict):
         return None
@@ -5887,13 +5886,21 @@ def _label_from_mcp_meta(meta: Any) -> ContentLabel | None:
     try:
         integrity = IntegrityLabel(integ_raw) if integ_raw is not None else None
         confidentiality = ConfidentialityLabel(conf_raw) if conf_raw is not None else None
-    except ValueError:
+    except (TypeError, ValueError):
         logger.debug("MCP _meta.ifc had unknown label values: %r", ifc_map)
         return None
     if integrity is None or confidentiality is None:
         logger.debug("MCP _meta.ifc missing integrity/confidentiality: %r", ifc_map)
         return None
-    return ContentLabel(integrity=integrity, confidentiality=confidentiality)
+    metadata: dict[str, Any] | None = None
+    if confidentiality == ConfidentialityLabel.USER_IDENTITY:
+        try:
+            principals = _canonical_principals(ifc_map.get("principals"), source="MCP _meta.ifc")
+        except ValueError:
+            logger.debug("MCP _meta.ifc had invalid user-identity principals: %r", ifc_map)
+            return None
+        metadata = {PRINCIPAL_METADATA_KEY: _principal_list(principals)}
+    return ContentLabel(integrity=integrity, confidentiality=confidentiality, metadata=metadata)
 
 
 def _stamp_mcp_content_labels(
@@ -5961,6 +5968,54 @@ def _stamp_mcp_content_labels(
     return contents_list
 
 
+def _strip_mcp_authority_markers(contents: str | list[Content]) -> str | list[Content]:
+    """Remove private authority markers when no tracking middleware can consume them."""
+    if not isinstance(contents, list):
+        return contents
+    for item in contents:
+        props = item.additional_properties or {}
+        props.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
+        props.pop(_LEGACY_AUTHORITATIVE_CONFIDENTIALITY, None)
+        item.additional_properties = props
+    return contents
+
+
+def _stamp_parsed_mcp_content_labels(
+    context: FunctionInvocationContext,
+    contents: list[Content],
+    local_label: ContentLabel,
+    *,
+    trust_server_ifc: bool,
+    retain_authority: bool,
+) -> list[Content]:
+    """Reapply retained MCP IFC after a function-level result parser."""
+    raw_carrier = context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
+    if not isinstance(raw_carrier, _FunctionResultCarrier):
+        return contents
+
+    security_meta = raw_carrier.private_metadata.get(_MCP_RESULT_SECURITY_META_KEY)
+    prepared: list[Content] = []
+    for item in contents:
+        updated_item = copy(item)
+        props = dict(updated_item.additional_properties)
+        props.pop(_MCP_RESULT_META_KEY, None)
+        props.pop(_MCP_RESULT_SECURITY_META_KEY, None)
+        props.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
+        props.pop(_LEGACY_AUTHORITATIVE_CONFIDENTIALITY, None)
+        if security_meta is not None:
+            props[_MCP_RESULT_SECURITY_META_KEY] = security_meta
+        updated_item.additional_properties = props
+        prepared.append(updated_item)
+
+    stamped = cast(
+        list[Content],
+        _stamp_mcp_content_labels(prepared, local_label, trust_server_ifc=trust_server_ifc),
+    )
+    if not retain_authority:
+        _strip_mcp_authority_markers(stamped)
+    return stamped
+
+
 def _stamp_mcp_error_carrier_label(
     context: FunctionInvocationContext,
     local_label: ContentLabel,
@@ -5973,7 +6028,7 @@ def _stamp_mcp_error_carrier_label(
     if not isinstance(raw_carrier, _FunctionResultCarrier):
         return None
 
-    security_meta = raw_carrier.private_metadata.pop(_MCP_RESULT_SECURITY_META_KEY, None)
+    security_meta = raw_carrier.private_metadata.get(_MCP_RESULT_SECURITY_META_KEY)
     probe = Content.from_text("")
     valid_server_ifc = False
     if security_meta is not None:
@@ -6044,40 +6099,68 @@ def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: Integ
             (value for value in kwargs.values() if isinstance(value, FunctionInvocationContext)),
             None,
         )
+
+        def prepare_error_label() -> None:
+            if invocation_context is None:
+                return
+            active_context = invocation_context
+            raw_fallback_label = active_context.metadata.get(_SECURITY_RESULT_FALLBACK_LABEL_CONTEXT_KEY)
+            fallback_label = raw_fallback_label if isinstance(raw_fallback_label, ContentLabel) else local_label
+            error_label = _stamp_mcp_error_carrier_label(
+                active_context,
+                local_label,
+                fallback_label,
+                trust_server_ifc=trust_server_ifc,
+            )
+            active_middleware = _current_middleware.get()
+            if error_label is None or active_middleware is None or _current_context.get() is not active_context:
+                return
+            raw_carrier = active_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
+            if not isinstance(raw_carrier, _FunctionResultCarrier):
+                return
+            active_scope = active_middleware._scope  # pyright: ignore[reportPrivateUsage]
+
+            def commit_error_label() -> None:
+                active_context.metadata["result_label"] = error_label
+                active_middleware._update_context_label(  # pyright: ignore[reportPrivateUsage]
+                    error_label,
+                    scope=active_scope,
+                )
+
+            raw_carrier.error_result_finalizer = commit_error_label
+
         try:
             res = original(*args, **kwargs)
             if _inspect.isawaitable(res):
                 res = await res
         except Exception:
-            if invocation_context is not None:
-                raw_fallback_label = invocation_context.metadata.get(_SECURITY_RESULT_FALLBACK_LABEL_CONTEXT_KEY)
-                fallback_label = raw_fallback_label if isinstance(raw_fallback_label, ContentLabel) else local_label
-                error_label = _stamp_mcp_error_carrier_label(
-                    invocation_context,
-                    local_label,
-                    fallback_label,
-                    trust_server_ifc=trust_server_ifc,
-                )
-                active_middleware = _current_middleware.get()
-                if (
-                    error_label is not None
-                    and active_middleware is not None
-                    and _current_context.get() is invocation_context
-                ):
-                    raw_carrier = invocation_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
-                    if isinstance(raw_carrier, _FunctionResultCarrier):
-                        active_scope = active_middleware._scope  # pyright: ignore[reportPrivateUsage]
-
-                        def commit_error_label() -> None:
-                            invocation_context.metadata["result_label"] = error_label
-                            active_middleware._update_context_label(  # pyright: ignore[reportPrivateUsage]
-                                error_label,
-                                scope=active_scope,
-                            )
-
-                        raw_carrier.error_result_finalizer = commit_error_label
+            prepare_error_label()
             raise
-        return _stamp_mcp_content_labels(res, local_label, trust_server_ifc=trust_server_ifc)
+
+        retain_authority = _current_middleware.get() is not None
+        if invocation_context is not None:
+            raw_carrier = invocation_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
+            if isinstance(raw_carrier, _FunctionResultCarrier):
+
+                def postprocess_parsed_result(contents: list[Content]) -> list[Content]:
+                    return _stamp_parsed_mcp_content_labels(
+                        invocation_context,
+                        contents,
+                        local_label,
+                        trust_server_ifc=trust_server_ifc,
+                        retain_authority=retain_authority,
+                    )
+
+                raw_carrier.parsed_result_postprocessor = postprocess_parsed_result
+                raw_carrier.parser_exception_handler = prepare_error_label
+
+        stamped = cast(
+            str | list[Content],
+            _stamp_mcp_content_labels(res, local_label, trust_server_ifc=trust_server_ifc),
+        )
+        if not retain_authority:
+            _strip_mcp_authority_markers(stamped)
+        return stamped
 
     _wrapped._ifc_wrapped = True  # type: ignore[attr-defined]
     func_tool.func = _wrapped

@@ -8362,6 +8362,22 @@ class TestMCPIFCMetaLabels:
         assert label.integrity == IntegrityLabel.TRUSTED
         assert label.confidentiality == ConfidentialityLabel.PUBLIC
 
+    def test_label_from_meta_user_identity_requires_and_preserves_principals(self) -> None:
+        from agent_framework.security import _label_from_mcp_meta
+
+        principals = [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+        label = _label_from_mcp_meta({
+            "ifc": {
+                "integrity": "trusted",
+                "confidentiality": "user_identity",
+                "principals": principals,
+            }
+        })
+
+        assert label is not None
+        assert label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert label.metadata[_PRINCIPALS_KEY] == principals
+
     @pytest.mark.parametrize(
         "meta",
         [
@@ -8373,6 +8389,15 @@ class TestMCPIFCMetaLabels:
             {"ifc": {"integrity": "trusted"}},  # missing confidentiality
             {"ifc": {"integrity": "garbage", "confidentiality": "public"}},
             {"ifc": {"integrity": "trusted", "confidentiality": "garbage"}},
+            {"ifc": {"integrity": "trusted", "confidentiality": "user_identity"}},
+            {"ifc": {"integrity": "trusted", "confidentiality": "user_identity", "principals": []}},
+            {
+                "ifc": {
+                    "integrity": "trusted",
+                    "confidentiality": "user_identity",
+                    "principals": [{"tenant_id": "tenant-a"}],
+                }
+            },
             {"other_key": {"integrity": "trusted", "confidentiality": "public"}},  # non-ifc key
         ],
     )
@@ -8440,36 +8465,45 @@ class TestMCPIFCMetaLabels:
             ConfidentialityLabel.PRIVATE: 1,
             ConfidentialityLabel.USER_IDENTITY: 2,
         }
+        local_principals = [{"tenant_id": "tenant-local", "user_id": "user-local"}]
+        remote_principals = [{"tenant_id": "tenant-remote", "user_id": "user-remote"}]
         for local_integrity in integrity_labels:
             for local_confidentiality in confidentiality_labels:
                 for remote_integrity in integrity_labels:
                     for remote_confidentiality in confidentiality_labels:
+                        local_metadata: dict[str, Any] = {"source": "local_mcp_policy"}
+                        if local_confidentiality == ConfidentialityLabel.USER_IDENTITY:
+                            local_metadata[_PRINCIPALS_KEY] = local_principals
                         static = ContentLabel(
                             integrity=local_integrity,
                             confidentiality=local_confidentiality,
-                            metadata={"source": "local_mcp_policy"},
+                            metadata=local_metadata,
                         )
+                        remote_ifc: dict[str, Any] = {
+                            "integrity": remote_integrity.value,
+                            "confidentiality": remote_confidentiality.value,
+                            "metadata": {"source": "forged_remote_policy"},
+                        }
+                        if remote_confidentiality == ConfidentialityLabel.USER_IDENTITY:
+                            remote_ifc["principals"] = remote_principals
                         contents = [
                             Content.from_text(
                                 "x",
-                                additional_properties={
-                                    "_meta": {
-                                        "ifc": {
-                                            "integrity": remote_integrity.value,
-                                            "confidentiality": remote_confidentiality.value,
-                                            "metadata": {"source": "forged_remote_policy"},
-                                        }
-                                    }
-                                },
+                                additional_properties={"_meta": {"ifc": remote_ifc}},
                             )
                         ]
 
                         _stamp_mcp_content_labels(contents, static, trust_server_ifc=trust_server_ifc)
 
+                        expected_metadata: dict[str, Any] | None
                         if trust_server_ifc:
                             expected_integrity = remote_integrity
                             expected_confidentiality = remote_confidentiality
-                            expected_metadata: dict[str, Any] | None = None
+                            expected_metadata = (
+                                {_PRINCIPALS_KEY: remote_principals}
+                                if remote_confidentiality == ConfidentialityLabel.USER_IDENTITY
+                                else None
+                            )
                         else:
                             expected_integrity = (
                                 IntegrityLabel.UNTRUSTED
@@ -8480,6 +8514,19 @@ class TestMCPIFCMetaLabels:
                                 (local_confidentiality, remote_confidentiality), key=confidentiality_rank.__getitem__
                             )
                             expected_metadata = {"source": "local_mcp_policy"}
+                            if expected_confidentiality == ConfidentialityLabel.USER_IDENTITY:
+                                expected_metadata[_PRINCIPALS_KEY] = [
+                                    *(
+                                        local_principals
+                                        if local_confidentiality == ConfidentialityLabel.USER_IDENTITY
+                                        else []
+                                    ),
+                                    *(
+                                        remote_principals
+                                        if remote_confidentiality == ConfidentialityLabel.USER_IDENTITY
+                                        else []
+                                    ),
+                                ]
                         assert contents[0].additional_properties["security_label"] == {
                             "integrity": expected_integrity.value,
                             "confidentiality": expected_confidentiality.value,
@@ -8552,6 +8599,40 @@ class TestMCPIFCMetaLabels:
             "metadata": {"source": "invalid_mcp_ifc"},
         }
         assert "_mcp_tool_result_security_meta" not in contents[0].additional_properties
+
+    async def test_wrap_mcp_function_invalid_meta_is_serializable_without_tracking(self) -> None:
+        from agent_framework.security import _wrap_mcp_function_for_ifc
+
+        async def fake_call(**kwargs: Any) -> list[Content]:
+            return [
+                Content.from_text(
+                    "payload",
+                    additional_properties={"_meta": {"ifc": {"integrity": "trusted"}}},
+                )
+            ]
+
+        function = FunctionTool(
+            func=fake_call,
+            name="remote_tool",
+            description="",
+            additional_properties={
+                "source_integrity": "trusted",
+                "confidentiality": "public",
+                "_mcp_remote_name": "remote_tool",
+            },
+        )
+        _wrap_mcp_function_for_ifc(function, IntegrityLabel.TRUSTED)
+        assert function.func is not None
+
+        result = await function.func()
+
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "user_identity",
+            "metadata": {"source": "invalid_mcp_ifc"},
+        }
+        assert _AUTHORITY_MARKER_KEY not in result[0].additional_properties
+        json.dumps(result[0].to_dict())
 
     def test_stamp_contents_non_ifc_meta_falls_back_to_static(self):
         """Generic ``_meta`` keys unrelated to IFC don't accidentally produce a label."""
@@ -8870,13 +8951,13 @@ class TestMCPIFCMetaLabels:
             server_meta=server_meta,
         )
         await apply_mcp_security_labels(mcp_tool, trust_server_ifc=True)
-        assert function.func is not None
-        stamped_result = await function.func()
+        wrapped = function.func
+        assert wrapped is not None
         tracker = LabelTrackingFunctionMiddleware()
         context = FunctionInvocationContext(function=function, arguments={})
 
         async def next_fn() -> None:
-            context.result = stamped_result
+            context.result = await wrapped()
 
         await tracker.process(context, next_fn)
 

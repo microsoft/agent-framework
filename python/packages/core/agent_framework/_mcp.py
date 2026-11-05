@@ -394,7 +394,12 @@ class _MCPHostPayloadCapture:
                 {_MCP_TOOL_RESULT_SECURITY_META_KEY: self.security_meta} if self.security_meta is not None else {}
             ),
             exclusive_outer_keys=frozenset({_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY}),
-            exclusive_item_keys=frozenset({"_meta", _MCP_TOOL_RESULT_SECURITY_META_KEY}),
+            exclusive_item_keys=frozenset({
+                "_meta",
+                "_security_label_authoritative",
+                "_security_label_authoritative_confidentiality",
+                _MCP_TOOL_RESULT_SECURITY_META_KEY,
+            }),
             result_already_parsed=True,
         )
 

@@ -325,6 +325,8 @@ class _FunctionResultCarrier:
     additional_properties: dict[str, Any]
     item_additional_properties: dict[str, Any]
     private_metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    parsed_result_postprocessor: Callable[[list[Content]], list[Content]] | None = None
+    parser_exception_handler: Callable[[], None] | None = None
     error_result_finalizer: Callable[[], None] | None = None
     exclusive_outer_keys: frozenset[str] = frozenset()
     exclusive_item_keys: frozenset[str] = frozenset()
@@ -1266,7 +1268,13 @@ class FunctionTool(SerializationMixin):
             elif callable(configured_parser):
                 try:
                     parsed = configured_parser(result)
+                    if isinstance(parsed, str):
+                        parsed = [Content.from_text(parsed)]
+                    if isinstance(carrier, _FunctionResultCarrier) and carrier.parsed_result_postprocessor is not None:
+                        parsed = carrier.parsed_result_postprocessor(parsed)
                 except Exception as exception:
+                    if isinstance(carrier, _FunctionResultCarrier) and carrier.parser_exception_handler is not None:
+                        carrier.parser_exception_handler()
                     self.invocation_exception_count += 1
                     if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                         logger.error(f"Function {self.name}: result parser failed. Error: {exception}")
@@ -1361,7 +1369,16 @@ class FunctionTool(SerializationMixin):
                 elif callable(configured_parser):
                     try:
                         parsed = configured_parser(result)
+                        if isinstance(parsed, str):
+                            parsed = [Content.from_text(parsed)]
+                        if (
+                            isinstance(carrier, _FunctionResultCarrier)
+                            and carrier.parsed_result_postprocessor is not None
+                        ):
+                            parsed = carrier.parsed_result_postprocessor(parsed)
                     except Exception as exception:
+                        if isinstance(carrier, _FunctionResultCarrier) and carrier.parser_exception_handler is not None:
+                            carrier.parser_exception_handler()
                         self.invocation_exception_count += 1
                         metric_attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
