@@ -150,7 +150,7 @@ class DefaultMCPToolHandler:
                     url=invocation.server_url,
                     load_prompts=False,
                     http_client=client,
-                    headers=dict(invocation.headers),
+                    static_headers=dict(invocation.headers),
                     max_discovery_pages=self._max_discovery_pages,
                     max_discovery_items=self._max_discovery_items,
                 )
