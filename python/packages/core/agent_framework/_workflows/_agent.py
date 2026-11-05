@@ -593,28 +593,21 @@ class WorkflowAgent(BaseAgent):
                 for event in await response_result:
                     yield event
         elif final_state == WorkflowRunState.IDLE:
+            response_stream = self.workflow._run_stream(  # pyright: ignore[reportPrivateUsage]
+                message=input_messages,
+                streaming=streaming,
+                checkpoint_storage=checkpoint_storage,
+                tools=tools,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=client_kwargs,
+                is_agent_run=True,
+                agent_session_id=agent_session_id,
+            )
             if streaming:
-                response_stream = self.workflow.run(
-                    message=input_messages,
-                    stream=True,
-                    checkpoint_storage=checkpoint_storage,
-                    tools=tools,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=client_kwargs,
-                )
-                self.workflow._set_agent_run_context(agent_session_id)  # pyright: ignore[reportPrivateUsage]
                 async for event in response_stream:
                     yield event
             else:
-                response_result = self.workflow.run(
-                    message=input_messages,
-                    checkpoint_storage=checkpoint_storage,
-                    tools=tools,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=client_kwargs,
-                )
-                self.workflow._set_agent_run_context(agent_session_id)  # pyright: ignore[reportPrivateUsage]
-                for event in await response_result:
+                for event in await response_stream.get_final_response():
                     yield event
         else:
             raise AgentException(f"The underlying workflow is in an invalid state to restart: {final_state}.")

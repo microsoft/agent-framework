@@ -23,15 +23,22 @@ from unittest.mock import AsyncMock, patch
 import httpx2 as httpx
 import pytest
 from agent_framework import Content
+from agent_framework._workflows._const import (
+    WORKFLOW_AGENT_RUN_KEY,
+    WORKFLOW_AGENT_SESSION_ID_KEY,
+    WORKFLOW_AGENT_SESSION_NAMESPACE_KEY,
+)
+from agent_framework._workflows._request_context import (
+    get_or_create_workflow_session_id,
+    initialize_workflow_session_id,
+    restore_workflow_session_id,
+)
 from agent_framework._workflows._state import State
 from agent_framework.exceptions import ToolExecutionException
 
 from agent_framework_declarative._workflows._mcp_handler import (
     DefaultMCPToolHandler,
     MCPToolInvocation,
-    activate_workflow_session_id,
-    get_or_create_workflow_session_id,
-    restore_workflow_session_id,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -955,22 +962,27 @@ class TestWorkflowSessionId:
         state = State()
         direct_scope = get_or_create_workflow_session_id(state)
 
-        activate_workflow_session_id(state, reset_unscoped=False, is_agent_run=True)
+        state.set(WORKFLOW_AGENT_RUN_KEY, True)
+        initialize_workflow_session_id(state)
         sessionless_scope = get_or_create_workflow_session_id(state)
         assert sessionless_scope != direct_scope
 
-        activate_workflow_session_id(state, reset_unscoped=True)
+        state.set(WORKFLOW_AGENT_RUN_KEY, False)
+        initialize_workflow_session_id(state)
         assert get_or_create_workflow_session_id(state) not in (direct_scope, sessionless_scope)
         state.commit()
 
-        activate_workflow_session_id(state, reset_unscoped=False, is_agent_run=True)
+        state.set(WORKFLOW_AGENT_RUN_KEY, True)
+        initialize_workflow_session_id(state)
         assert get_or_create_workflow_session_id(state) == sessionless_scope
 
     def test_approval_restoration_preserves_sessionless_scope(self) -> None:
         state = State()
-        activate_workflow_session_id(state, reset_unscoped=True, is_agent_run=True)
+        state.set(WORKFLOW_AGENT_RUN_KEY, True)
+        initialize_workflow_session_id(state)
         sessionless_scope = get_or_create_workflow_session_id(state)
-        state.set("_workflow_agent_session_id", "session-a")
+        state.set(WORKFLOW_AGENT_SESSION_ID_KEY, "session-a")
+        initialize_workflow_session_id(state)
         explicit_scope = get_or_create_workflow_session_id(state)
 
         restore_workflow_session_id(state, explicit_scope)
@@ -978,23 +990,26 @@ class TestWorkflowSessionId:
         assert get_or_create_workflow_session_id(state) == explicit_scope
         assert explicit_scope != sessionless_scope
 
-        activate_workflow_session_id(state, reset_unscoped=False, is_agent_run=True)
+        initialize_workflow_session_id(state)
         assert get_or_create_workflow_session_id(state) == sessionless_scope
 
     @pytest.mark.parametrize("scope", ["", 42, False])
-    def test_invalid_sessionless_scope_preserves_current_scope(self, scope: Any) -> None:
+    def test_invalid_agent_namespace_preserves_current_scope(self, scope: Any) -> None:
         state = State()
         current_scope = get_or_create_workflow_session_id(state)
-        state.set("_declarative_mcp_sessionless_agent_workflow_session_id", scope)
+        state.set(WORKFLOW_AGENT_RUN_KEY, True)
+        state.set(WORKFLOW_AGENT_SESSION_NAMESPACE_KEY, scope)
 
-        with pytest.raises(ValueError, match="Invalid MCP sessionless agent workflow session state"):
-            activate_workflow_session_id(state, reset_unscoped=True, is_agent_run=True)
+        with pytest.raises(ValueError):
+            initialize_workflow_session_id(state)
 
         assert get_or_create_workflow_session_id(state) == current_scope
 
     def test_restored_approval_scope_overrides_current_agent_session(self) -> None:
         state = State()
-        state.set("_workflow_agent_session_id", "session-b")
+        state.set(WORKFLOW_AGENT_RUN_KEY, True)
+        state.set(WORKFLOW_AGENT_SESSION_ID_KEY, "session-b")
+        initialize_workflow_session_id(state)
         agent_scope = get_or_create_workflow_session_id(state)
 
         restore_workflow_session_id(state, "approval-scope-a")
@@ -1008,7 +1023,7 @@ class TestWorkflowSessionId:
         state = State()
         current_scope = get_or_create_workflow_session_id(state)
 
-        with pytest.raises(ValueError, match="Invalid MCP approval workflow session state"):
+        with pytest.raises(ValueError, match="Invalid originating workflow session scope"):
             restore_workflow_session_id(state, workflow_session_id)
 
         assert get_or_create_workflow_session_id(state) == current_scope
@@ -1161,17 +1176,20 @@ class TestCache:
         state = State()
         with _patch_tool():
             async with DefaultMCPToolHandler() as handler:
-                activate_workflow_session_id(state, reset_unscoped=True, is_agent_run=True)
+                state.set(WORKFLOW_AGENT_RUN_KEY, True)
+                initialize_workflow_session_id(state)
                 await handler.invoke_tool(_invocation(workflow_session_id=get_or_create_workflow_session_id(state)))
                 FakeTool.instances[0].call_handler = lambda **_: [Content.from_text("sessionless client")]
 
                 if explicit_session:
-                    state.set("_workflow_agent_session_id", "session-a")
-                activate_workflow_session_id(state, reset_unscoped=True, is_agent_run=explicit_session)
+                    state.set(WORKFLOW_AGENT_SESSION_ID_KEY, "session-a")
+                state.set(WORKFLOW_AGENT_RUN_KEY, explicit_session)
+                initialize_workflow_session_id(state)
                 await handler.invoke_tool(_invocation(workflow_session_id=get_or_create_workflow_session_id(state)))
 
-                state.set("_workflow_agent_session_id", None)
-                activate_workflow_session_id(state, reset_unscoped=False, is_agent_run=True)
+                state.set(WORKFLOW_AGENT_SESSION_ID_KEY, None)
+                state.set(WORKFLOW_AGENT_RUN_KEY, True)
+                initialize_workflow_session_id(state)
                 result = await handler.invoke_tool(
                     _invocation(workflow_session_id=get_or_create_workflow_session_id(state))
                 )

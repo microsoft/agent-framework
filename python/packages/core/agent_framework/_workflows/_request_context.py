@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections.abc import Collection, Mapping, Sequence
@@ -10,6 +11,7 @@ from typing import Any, cast
 from ._const import (
     WORKFLOW_AGENT_RUN_KEY,
     WORKFLOW_AGENT_SESSION_ID_KEY,
+    WORKFLOW_AGENT_SESSION_NAMESPACE_KEY,
     WORKFLOW_PARENT_SESSION_ID_KEY,
     WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY,
     WORKFLOW_RESPONSE_SCOPE_KEY,
@@ -27,6 +29,44 @@ _RUN_CONTEXT_KEYS = (
     WORKFLOW_AGENT_SESSION_ID_KEY,
 )
 _MISSING_ORIGIN = object()
+
+
+def get_or_create_workflow_session_id(state: State) -> str:
+    """Read the active scope, assigning an isolated scope for standalone executor use."""
+    scope = state.get(WORKFLOW_SESSION_ID_KEY)
+    if scope is None:
+        scope = uuid.uuid4().hex
+        state.set(WORKFLOW_SESSION_ID_KEY, scope)
+    if not isinstance(scope, str) or not scope:
+        raise ValueError("Invalid workflow session scope.")
+    return scope
+
+
+def initialize_workflow_session_id(state: State) -> None:
+    """Select a fresh, agent-session, or inherited scope before the entry checkpoint."""
+    scope = state.get(WORKFLOW_PARENT_SESSION_ID_KEY)
+    if scope is None:
+        if state.get(WORKFLOW_AGENT_RUN_KEY) is True:
+            namespace = state.get(WORKFLOW_AGENT_SESSION_NAMESPACE_KEY)
+            if namespace is None:
+                namespace = uuid.uuid4().hex
+                state.set(WORKFLOW_AGENT_SESSION_NAMESPACE_KEY, namespace)
+            if not isinstance(namespace, str):
+                raise ValueError("Invalid workflow agent session namespace.")
+            scope = uuid.uuid5(uuid.UUID(namespace), json.dumps([state.get(WORKFLOW_AGENT_SESSION_ID_KEY)])).hex
+        else:
+            scope = uuid.uuid4().hex
+    if not isinstance(scope, str) or not scope:
+        raise ValueError("Invalid workflow session scope.")
+    state.set(WORKFLOW_SESSION_ID_KEY, scope)
+
+
+def restore_workflow_session_id(state: State, scope: str) -> None:
+    """Resume an operation's originating scope instead of the latest agent turn's scope."""
+    if not isinstance(scope, str) or not scope:
+        raise ValueError("Invalid originating workflow session scope.")
+    state.set(WORKFLOW_AGENT_SESSION_ID_KEY, None)
+    state.set(WORKFLOW_SESSION_ID_KEY, scope)
 
 
 def get_response_scopes(state: State | Mapping[str, Any]) -> set[str]:

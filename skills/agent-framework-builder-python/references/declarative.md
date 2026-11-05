@@ -29,7 +29,8 @@ maturity. Check current package status and public docstrings before making compa
 - Declarative children wrapped in `WorkflowExecutor` retain MCP session continuity across parent agent turns.
   Each binding must own a unique child workflow instance; its MCP scope remains isolated from sibling bindings.
   Replaying a parent entry checkpoint also retains child scopes when rebuilding the same workflow graph.
-  Declarative executors manually composed with Core `WorkflowBuilder` also follow Core's active run and inherited scopes.
+  Factory-built and manually composed declarative executors use Core's active run scope and agent-session namespace;
+  they do not generate a separate declarative identity. Direct fresh runs and sessionless agent turns remain distinct.
   Child responses restore the originating parent scope before invoking downstream bindings, including after
   checkpoint restoration. Submit responses from different parent scopes in separate runs.
   The same origin recovery applies to ordinary Core `ctx.request_info()` pauses before invoking a child.

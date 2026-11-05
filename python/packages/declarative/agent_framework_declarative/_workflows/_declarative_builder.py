@@ -23,8 +23,6 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowEvent,
 )
-from agent_framework._workflows._const import WORKFLOW_AGENT_RUN_KEY
-from agent_framework._workflows._state import State
 
 from ._declarative_base import (
     ConditionResult,
@@ -56,7 +54,7 @@ from ._executors_mcp import (
 )
 from ._executors_tools import TOOL_ACTION_EXECUTORS, InvokeFunctionToolExecutor, ToolApprovalRequest
 from ._http_handler import HttpRequestHandler
-from ._mcp_handler import MCPToolHandler, activate_workflow_session_id, get_request_workflow_session_id
+from ._mcp_handler import MCPToolHandler, get_request_workflow_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -148,10 +146,6 @@ def _validate_response_batch(
                 data.workflow_session_id = scope
 
     return apply_migration
-
-
-def _initialize_mcp_run_state(state: State) -> None:
-    activate_workflow_session_id(state, reset_unscoped=True, is_agent_run=state.get(WORKFLOW_AGENT_RUN_KEY) is True)
 
 
 class DeclarativeWorkflowBuilder:
@@ -294,7 +288,6 @@ class DeclarativeWorkflowBuilder:
         workflow._response_batch_validator = partial(  # pyright: ignore[reportPrivateUsage]
             _validate_response_batch, migrate_legacy_request_scopes=self._migrate_legacy_request_scopes
         )
-        workflow._initial_state_initializer = _initialize_mcp_run_state  # pyright: ignore[reportPrivateUsage]
         return workflow
 
     def _collect_explicit_ids(self, actions: list[dict[str, Any]] | None) -> None:

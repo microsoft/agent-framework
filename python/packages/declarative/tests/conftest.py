@@ -21,6 +21,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from tests.workflow.mcp_helpers import StatefulMCPServer
 
 # Skip all tests in this directory on Python 3.14+ because powerfx doesn't support it yet
 if sys.version_info >= (3, 14):
@@ -34,6 +35,11 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         for item in items:
             if "declarative" in str(item.fspath):
                 item.add_marker(skip_marker)
+
+
+@pytest.fixture
+def stateful_mcp_server() -> StatefulMCPServer:
+    return StatefulMCPServer()
 
 
 @pytest.fixture

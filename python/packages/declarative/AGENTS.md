@@ -31,8 +31,9 @@ endpoint, label, connection, and headers, so separate fresh runs do not share a
 stateful MCP protocol session while continuations and checkpoint restores do.
 Direct fresh runs reset this scope even for message-list inputs; only
 framework-marked WorkflowAgent turns retain the agent continuation scope.
-Executors manually composed with Core `WorkflowBuilder` use Core's active run scope,
-including inherited child scopes, rather than a cached declarative scope.
+Factory-built and manually composed executors use Core's active run scope and
+agent-session namespace, including inherited child scopes. There is no separate
+declarative scope generator or run-state initializer.
 Run scopes are selected before the initial entry checkpoint and preserved when
 Entry replays. Sessionless WorkflowAgent turns select their own checkpointed scope,
 independent of explicit agent sessions, direct runs, and restored approval scopes.

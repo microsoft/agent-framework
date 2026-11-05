@@ -40,6 +40,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from agent_framework._workflows._request_context import get_or_create_workflow_session_id, restore_workflow_session_id
 from agent_framework.exceptions import ToolExecutionException
 
 from ._declarative_base import (
@@ -52,9 +53,7 @@ from ._mcp_handler import (
     MCPToolHandler,
     MCPToolInvocation,
     MCPToolResult,
-    get_or_create_workflow_session_id,
     get_request_workflow_session_id,
-    restore_workflow_session_id,
 )
 
 __all__ = [
@@ -330,6 +329,7 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
         state = self._get_state(ctx.state)
 
         tool_name = original_request.tool_name
+        # Older in-memory approvals can lack these optional routing fields.
         metadata: dict[str, Any] = getattr(original_request, "metadata", None) or {}
         raw_conversation_id = metadata.get("conversation_id")
         conversation_id = raw_conversation_id if isinstance(raw_conversation_id, str) and raw_conversation_id else None

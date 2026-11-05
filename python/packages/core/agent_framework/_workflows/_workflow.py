@@ -37,7 +37,6 @@ from ._const import (
     ROUTED_WORKFLOW_RUN_KWARGS_KEY,
     WORKFLOW_AGENT_RUN_KEY,
     WORKFLOW_AGENT_SESSION_ID_KEY,
-    WORKFLOW_AGENT_SESSION_NAMESPACE_KEY,
     WORKFLOW_PARENT_SESSION_ID_KEY,
     WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY,
     WORKFLOW_RESPONSE_SCOPE_KEY,
@@ -63,6 +62,7 @@ from ._executor import (
 from ._model_utils import DictConvertible
 from ._request_context import (
     get_response_scopes,
+    initialize_workflow_session_id,
     request_context_state_key,
     restore_request_context,
     validate_request_contexts,
@@ -441,7 +441,6 @@ class Workflow(DictConvertible):
         self._runner._wrapped_response_validator = (  # pyright: ignore[reportPrivateUsage]
             lambda wrapped, scopes: self._validate_response_requests((), wrapped_requests=wrapped, scopes=scopes)
         )
-        self._initial_state_initializer: Callable[[State], None] | None = None
 
         # Run-scoped pause checkpoint bookkeeping (owned by Workflow, not callers).
         # Captured at the start of each ``_run_core`` so ``resolve_pause_checkpoint_id``
@@ -459,28 +458,6 @@ class Workflow(DictConvertible):
         CPython GIL, so no locking is required.
         """
         return self._status
-
-    def _set_agent_run_context(self, session_id: str | None) -> None:
-        self._runner.state.set(WORKFLOW_AGENT_RUN_KEY, True)
-        self._runner.state.set(WORKFLOW_AGENT_SESSION_ID_KEY, session_id)
-
-    def _initialize_workflow_session_id(self) -> None:
-        state = self._runner.state
-        scope = state.get(WORKFLOW_PARENT_SESSION_ID_KEY)
-        if scope is None:
-            if state.get(WORKFLOW_AGENT_RUN_KEY) is True:
-                namespace = state.get(WORKFLOW_AGENT_SESSION_NAMESPACE_KEY)
-                if namespace is None:
-                    namespace = uuid.uuid4().hex
-                    state.set(WORKFLOW_AGENT_SESSION_NAMESPACE_KEY, namespace)
-                if not isinstance(namespace, str):
-                    raise ValueError("Invalid workflow agent session namespace.")
-                scope = uuid.uuid5(uuid.UUID(namespace), json.dumps([state.get(WORKFLOW_AGENT_SESSION_ID_KEY)])).hex
-            else:
-                scope = uuid.uuid4().hex
-        if not isinstance(scope, str) or not scope:
-            raise ValueError("Invalid workflow session scope.")
-        state.set(WORKFLOW_SESSION_ID_KEY, scope)
 
     def _set_parent_run_context(self, parent_state: State, binding_id: str) -> None:
         parent_scope = parent_state.get(WORKFLOW_SESSION_ID_KEY)
@@ -830,9 +807,7 @@ class Workflow(DictConvertible):
                     f"Expected input types: {start_executor.input_types}."
                 )
 
-            self._initialize_workflow_session_id()
-            if self._initial_state_initializer is not None:
-                self._initial_state_initializer(self._runner.state)
+            initialize_workflow_session_id(self._runner.state)
 
             await self._runner.context.send_message(entry_message)
             # Record the entry checkpoint capturing the seeded input before any
@@ -927,6 +902,39 @@ class Workflow(DictConvertible):
         Raises:
             ValueError: If parameter combination is invalid.
         """
+        response_stream = self._run_stream(
+            message,
+            streaming=stream,
+            responses=responses,
+            checkpoint_id=checkpoint_id,
+            checkpoint_storage=checkpoint_storage,
+            include_status_events=include_status_events,
+            tools=tools,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
+        )
+        return response_stream if stream else response_stream.get_final_response()
+
+    def _run_stream(
+        self,
+        message: Any | None = None,
+        *,
+        streaming: bool = False,
+        responses: Mapping[str, Any] | None = None,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        include_status_events: bool = False,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        is_agent_run: bool = False,
+        agent_session_id: str | None = None,
+        parent_context: tuple[State, str] | None = None,
+    ) -> ResponseStream[WorkflowEvent, WorkflowRunResult]:
+        """Admit a run with its framework-owned context before constructing the stream."""
         # Validate parameters first so misuse fails before we touch any run state.
         self._validate_run_params(message, responses, checkpoint_id)
 
@@ -945,9 +953,11 @@ class Workflow(DictConvertible):
             )
 
         if message is not None:
-            self._runner.state.set(WORKFLOW_AGENT_RUN_KEY, False)
-            self._runner.state.set(WORKFLOW_AGENT_SESSION_ID_KEY, None)
+            self._runner.state.set(WORKFLOW_AGENT_RUN_KEY, is_agent_run)
+            self._runner.state.set(WORKFLOW_AGENT_SESSION_ID_KEY, agent_session_id)
             self._runner.state.set(WORKFLOW_PARENT_SESSION_ID_KEY, None)
+            if parent_context is not None:
+                self._set_parent_run_context(*parent_context)
 
         # No run is active, so any runtime checkpoint storage override still set on the
         # context is stale - left over from a prior run whose stream was dropped before
@@ -963,7 +973,7 @@ class Workflow(DictConvertible):
                 responses=responses,
                 checkpoint_id=checkpoint_id,
                 checkpoint_storage=checkpoint_storage,
-                streaming=stream,
+                streaming=streaming,
                 tools=tools,
                 function_invocation_kwargs=function_invocation_kwargs,
                 client_kwargs=client_kwargs,
@@ -972,9 +982,7 @@ class Workflow(DictConvertible):
         )
         self._active_run = weakref.ref(response_stream)
 
-        if stream:
-            return response_stream
-        return response_stream.get_final_response()
+        return response_stream
 
     async def _run_core(
         self,

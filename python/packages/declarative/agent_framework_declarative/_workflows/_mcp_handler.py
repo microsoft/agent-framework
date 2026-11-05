@@ -31,7 +31,6 @@ import contextlib
 import hashlib
 import json
 import logging
-import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -40,17 +39,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, runtime_checkable
 
 import httpx2 as httpx
-from agent_framework._workflows._const import (
-    WORKFLOW_AGENT_RUN_KEY,
-    WORKFLOW_PARENT_SESSION_ID_KEY,
-    WORKFLOW_SESSION_ID_KEY,
-)
 
 from ._errors import DeclarativeWorkflowError
 
 if TYPE_CHECKING:
     from agent_framework import Content
-    from agent_framework._workflows._state import State
 
 __all__ = [
     "ClientProvider",
@@ -63,80 +56,6 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CACHE_MAX_SIZE = 32
-_WORKFLOW_SESSION_ID_KEY = "_declarative_mcp_workflow_session_id"
-_AGENT_WORKFLOW_SESSION_NAMESPACE_KEY = "_declarative_mcp_agent_workflow_session_namespace"
-_SESSIONLESS_AGENT_WORKFLOW_SESSION_ID_KEY = "_declarative_mcp_sessionless_agent_workflow_session_id"
-_WORKFLOW_AGENT_SESSION_ID_KEY = "_workflow_agent_session_id"
-
-
-def get_or_create_workflow_session_id(state: State) -> str:
-    # Core runs own the active scope even without the declarative factory initializer.
-    if state.has(WORKFLOW_AGENT_RUN_KEY):
-        workflow_session_id = state.get(WORKFLOW_SESSION_ID_KEY)
-        if workflow_session_id is not None:
-            if not isinstance(workflow_session_id, str) or not workflow_session_id:
-                raise ValueError("Invalid MCP workflow session state.")
-            state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
-            return workflow_session_id
-    return _get_or_create_declarative_session_id(state)
-
-
-def _get_or_create_declarative_session_id(state: State) -> str:
-    agent_session_id = state.get(_WORKFLOW_AGENT_SESSION_ID_KEY)
-    if agent_session_id is not None and state.get(WORKFLOW_PARENT_SESSION_ID_KEY) is None:
-        if not isinstance(agent_session_id, str) or not agent_session_id:
-            raise ValueError("Invalid agent session state.")
-        namespace_value = state.get(_AGENT_WORKFLOW_SESSION_NAMESPACE_KEY)
-        if namespace_value is None:
-            namespace_value = uuid.uuid4().hex
-            state.set(_AGENT_WORKFLOW_SESSION_NAMESPACE_KEY, namespace_value)
-        if not isinstance(namespace_value, str):
-            raise ValueError("Invalid MCP agent workflow session state.")
-        try:
-            namespace = uuid.UUID(namespace_value)
-        except ValueError as exc:
-            raise ValueError("Invalid MCP agent workflow session state.") from exc
-        workflow_session_id = uuid.uuid5(namespace, agent_session_id).hex
-        state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
-        return workflow_session_id
-
-    workflow_session_id = state.get(_WORKFLOW_SESSION_ID_KEY)
-    if workflow_session_id is None:
-        workflow_session_id = uuid.uuid4().hex
-        state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
-    if not isinstance(workflow_session_id, str) or not workflow_session_id:
-        raise ValueError("Invalid MCP workflow session state.")
-    return workflow_session_id
-
-
-def activate_workflow_session_id(state: State, *, reset_unscoped: bool, is_agent_run: bool = False) -> None:
-    parent_scope = state.get(WORKFLOW_PARENT_SESSION_ID_KEY)
-    if parent_scope is not None:
-        if not isinstance(parent_scope, str) or not parent_scope:
-            raise ValueError("Invalid parent workflow session scope.")
-        state.set(_WORKFLOW_SESSION_ID_KEY, parent_scope)
-    elif state.get(_WORKFLOW_AGENT_SESSION_ID_KEY) is not None:
-        _get_or_create_declarative_session_id(state)
-    elif is_agent_run:
-        workflow_session_id = state.get(_SESSIONLESS_AGENT_WORKFLOW_SESSION_ID_KEY)
-        if workflow_session_id is None:
-            workflow_session_id = uuid.uuid4().hex
-            state.set(_SESSIONLESS_AGENT_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
-        if not isinstance(workflow_session_id, str) or not workflow_session_id:
-            raise ValueError("Invalid MCP sessionless agent workflow session state.")
-        state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
-    elif reset_unscoped:
-        state.set(_WORKFLOW_SESSION_ID_KEY, uuid.uuid4().hex)
-    state.set(WORKFLOW_SESSION_ID_KEY, _get_or_create_declarative_session_id(state))
-
-
-def restore_workflow_session_id(state: State, workflow_session_id: str) -> None:
-    if not isinstance(workflow_session_id, str) or not workflow_session_id:
-        raise ValueError("Invalid MCP approval workflow session state.")
-    # A response resumes its originating scope, not the latest agent turn's scope.
-    state.set(_WORKFLOW_AGENT_SESSION_ID_KEY, None)
-    state.set(_WORKFLOW_SESSION_ID_KEY, workflow_session_id)
-    state.set(WORKFLOW_SESSION_ID_KEY, workflow_session_id)
 
 
 def get_request_workflow_session_id(workflow_session_id: str | None) -> str:

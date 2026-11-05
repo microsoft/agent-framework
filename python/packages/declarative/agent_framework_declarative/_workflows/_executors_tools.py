@@ -27,6 +27,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from agent_framework._workflows._request_context import get_or_create_workflow_session_id, restore_workflow_session_id
 
 from ._declarative_base import (
     ActionComplete,
@@ -34,11 +35,7 @@ from ._declarative_base import (
     DeclarativeWorkflowState,
 )
 from ._executors_agents import TOOL_REGISTRY_KEY
-from ._mcp_handler import (
-    get_or_create_workflow_session_id,
-    get_request_workflow_session_id,
-    restore_workflow_session_id,
-)
+from ._mcp_handler import get_request_workflow_session_id
 
 logger = logging.getLogger(__name__)
 

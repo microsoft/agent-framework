@@ -391,6 +391,8 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   `WorkflowRunResult`. Cancelling a computer request also cancels the other pending requests in that agent's batch,
   retains already resolved sibling evidence in terminal output, and resets its session before new input.
 - **Nested workflow scopes** - Fresh runs select a checkpoint-backed scope before the entry snapshot.
+  Core owns the scope and agent-session namespace; declarative executors use the same state and helpers.
+  Agent and child runs pass their context through private run admission, not post-`run()` state mutation.
   `WorkflowExecutor` derives a child scope from the parent scope and binding ID after the child run is accepted.
   Agent turns retain their session scope; direct fresh runs select a new scope. Entry replay therefore preserves
   child scopes even when child execution had not started at the snapshot. Response-only continuations restore

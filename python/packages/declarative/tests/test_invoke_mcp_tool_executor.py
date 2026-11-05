@@ -8,6 +8,7 @@ No real MCP server or network is exercised. See
 ``DefaultMCPToolHandler`` against a mocked ``MCPStreamableHTTPTool``.
 """
 
+import asyncio
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -16,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx2 as httpx
 import pytest
+from tests.workflow.mcp_helpers import StatefulMCPServer
 
 try:
     import powerfx  # noqa: F401
@@ -31,6 +33,7 @@ pytestmark = pytest.mark.skipif(
 
 from agent_framework import AgentSession, CheckpointStorage, Content, Message, Workflow  # noqa: E402
 from agent_framework.exceptions import ToolExecutionException  # noqa: E402
+
 from agent_framework_declarative._workflows import (  # noqa: E402
     DECLARATIVE_STATE_KEY,
     DeclarativeWorkflowError,
@@ -121,6 +124,7 @@ def _build_manual_mcp_workflow(
     mcp_handler: MCPToolHandler, *, depth: int, require_approval: bool = False
 ) -> tuple[Workflow, Workflow]:
     from agent_framework import WorkflowBuilder, WorkflowExecutor
+
     from agent_framework_declarative._workflows._executors_mcp import InvokeMcpToolActionExecutor
 
     leaf = WorkflowBuilder(
@@ -174,6 +178,61 @@ class TestBuilderEnforcement:
 
 
 class TestFieldForwarding:
+    @pytest.mark.parametrize("streaming", [False, True])
+    async def test_shared_handler_isolates_real_protocol_sessions(
+        self, stateful_mcp_server: StatefulMCPServer, monkeypatch: pytest.MonkeyPatch, streaming: bool
+    ) -> None:
+        from agent_framework import InMemoryCheckpointStorage
+        from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
+
+        from agent_framework_declarative._workflows import DefaultMCPToolHandler
+
+        monkeypatch.setattr(httpx, "AsyncClient", stateful_mcp_server.create_client)
+        storage = InMemoryCheckpointStorage()
+        definition = _yaml(
+            _action(server_url="http://127.0.0.1:8000/mcp", tool_name="remember", headers={"X-Test": "same-config"})
+        )
+        async with stateful_mcp_server.server.session_manager.run(), DefaultMCPToolHandler() as mcp_handler:
+            factory = WorkflowFactory(mcp_tool_handler=mcp_handler)
+            workflows = [factory.create_workflow_from_definition(definition) for _ in range(2)]
+            session = AgentSession()
+            agents = [workflow.as_agent() for workflow in workflows]
+            await asyncio.gather(
+                *(
+                    agent.run(
+                        "first turn", session=session, stream=streaming, checkpoint_storage=storage
+                    ).get_final_response()
+                    if streaming
+                    else agent.run("first turn", session=session, checkpoint_storage=storage)
+                    for agent in agents
+                )
+            )
+            assert sorted(map(len, stateful_mcp_server.histories.values())) == [1, 1]
+            assert len({workflow._runner.state.get(WORKFLOW_SESSION_ID_KEY) for workflow in workflows}) == 2
+            assert all(
+                not any(key.startswith("_declarative_mcp_") for key in workflow._runner.state.export_state())
+                for workflow in workflows
+            )
+
+            if streaming:
+                await agents[0].run("next turn", session=session, stream=True).get_final_response()
+            else:
+                await agents[0].run("next turn", session=session)
+            assert sorted(map(len, stateful_mcp_server.histories.values())) == [1, 2]
+
+            entry = next(
+                checkpoint
+                for checkpoint in await storage.list_checkpoints(workflow_name=workflows[0].name)
+                if checkpoint.iteration_count == 0
+                and checkpoint.state[WORKFLOW_SESSION_ID_KEY] == workflows[0]._runner.state.get(WORKFLOW_SESSION_ID_KEY)
+            )
+            rebuilt = factory.create_workflow_from_definition(definition)
+            await rebuilt.run(checkpoint_id=entry.checkpoint_id, checkpoint_storage=storage)
+            assert sorted(map(len, stateful_mcp_server.histories.values())) == [1, 3]
+            await rebuilt.run({})
+            assert sorted(map(len, stateful_mcp_server.histories.values())) == [1, 1, 3]
+        assert all(client.is_closed for client in stateful_mcp_server.clients)
+
     @pytest.mark.parametrize("streaming", [False, True])
     @pytest.mark.parametrize("depth", [0, 1, 2])
     async def test_manual_workflow_scopes_follow_core_run_context(self, streaming: bool, depth: int) -> None:
@@ -229,6 +288,7 @@ class TestFieldForwarding:
     async def test_manual_approval_continuations_restore_core_scopes(self, streaming: bool, restore: bool) -> None:
         from agent_framework import InMemoryCheckpointStorage, WorkflowEvent
         from agent_framework._workflows._const import WORKFLOW_SESSION_ID_KEY
+
         from agent_framework_declarative._workflows import ToolApprovalResponse
 
         mcp_handler = StubMcpHandler(_ok())
@@ -470,6 +530,7 @@ class TestFieldForwarding:
         self, pause_kind: str, streaming: bool
     ) -> None:
         from agent_framework import InMemoryCheckpointStorage
+
         from agent_framework_declarative._workflows import ExternalInputResponse
 
         storage = InMemoryCheckpointStorage()
@@ -544,6 +605,7 @@ class TestFieldForwarding:
         self, pause_kind: str, streaming: bool, restore: bool
     ) -> None:
         from agent_framework import InMemoryCheckpointStorage, WorkflowEvent
+
         from agent_framework_declarative._workflows import ExternalInputResponse
 
         storage = InMemoryCheckpointStorage()
@@ -603,6 +665,7 @@ class TestFieldForwarding:
         self, mixed_approval: bool, streaming: bool, restore: bool
     ) -> None:
         from agent_framework import InMemoryCheckpointStorage
+
         from agent_framework_declarative._workflows import ExternalInputResponse, ToolApprovalResponse
 
         storage = InMemoryCheckpointStorage()
@@ -817,6 +880,7 @@ class TestFieldForwarding:
         self, streaming: bool, approved: bool, restore: bool
     ) -> None:
         from agent_framework import InMemoryCheckpointStorage
+
         from agent_framework_declarative._workflows import ToolApprovalResponse
 
         storage = InMemoryCheckpointStorage()
@@ -1121,8 +1185,9 @@ class TestFieldForwarding:
 
     @pytest.mark.asyncio
     async def test_continuation_reuses_workflow_session_id(self) -> None:
+        from agent_framework._workflows._request_context import get_or_create_workflow_session_id
+
         from agent_framework_declarative._workflows import ToolApprovalResponse
-        from agent_framework_declarative._workflows._mcp_handler import get_or_create_workflow_session_id
 
         handler = StubMcpHandler(_ok())
         factory = WorkflowFactory(mcp_tool_handler=handler)
@@ -1145,6 +1210,7 @@ class TestFieldForwarding:
         self, restore: bool, agent_sessions: bool, streaming: bool, approved: bool, second_approved: bool
     ) -> None:
         from agent_framework import InMemoryCheckpointStorage
+
         from agent_framework_declarative._workflows import ToolApprovalResponse
 
         storage = InMemoryCheckpointStorage()
@@ -1220,6 +1286,7 @@ class TestFieldForwarding:
     @pytest.mark.parametrize("approved", [False, True])
     async def test_same_scope_approval_batch_is_supported(self, streaming: bool, approved: bool) -> None:
         from agent_framework import WorkflowBuilder
+
         from agent_framework_declarative._workflows import InvokeMcpToolActionExecutor, ToolApprovalResponse
         from agent_framework_declarative._workflows._declarative_builder import _validate_response_batch
         from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
@@ -1427,7 +1494,7 @@ class TestRequestScopeContinuations:
 
     @pytest.mark.parametrize("streaming", [False, True])
     async def test_repeated_agent_input_retains_its_own_loop_state(self, tmp_path: Path, streaming: bool) -> None:
-        from agent_framework_declarative._workflows._mcp_handler import get_or_create_workflow_session_id
+        from agent_framework._workflows._request_context import get_or_create_workflow_session_id
 
         storage = _scope_checkpoint_storage(tmp_path)
         handler = StubMcpHandler(_ok())
@@ -2491,6 +2558,7 @@ class TestApprovalFlow:
     @pytest.mark.asyncio
     async def test_auth_context_binding_survives_workflow_resume(self, restore: bool, change_context: bool) -> None:
         from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
+
         from agent_framework_declarative._workflows import (
             ActionTrigger,
             ExternalInputResponse,

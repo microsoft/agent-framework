@@ -490,14 +490,14 @@ class WorkflowExecutor(Executor):
         fi_kwargs, ci_kwargs = self._get_child_invocation_kwargs(ctx)
 
         # Run the sub-workflow and collect all events, passing parent kwargs
-        child_run = self.workflow.run(
+        child_run = self.workflow._run_stream(  # pyright: ignore[reportPrivateUsage]
             input_data,
             tools=ctx.get_runtime_tools(),
             function_invocation_kwargs=fi_kwargs,
             client_kwargs=ci_kwargs,
+            parent_context=(ctx.state, self.id),
         )
-        self.workflow._set_parent_run_context(ctx.state, self.id)  # pyright: ignore[reportPrivateUsage]
-        result = await child_run
+        result = await child_run.get_final_response()
         self._remove_reemitted_pending_requests(result, pending_requests)
 
         logger.debug(f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} completed with {len(result)} events")

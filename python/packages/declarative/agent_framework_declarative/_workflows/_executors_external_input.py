@@ -16,16 +16,13 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from agent_framework._workflows._request_context import get_or_create_workflow_session_id, restore_workflow_session_id
 
 from ._declarative_base import (
     ActionComplete,
     DeclarativeActionExecutor,
 )
-from ._mcp_handler import (
-    get_or_create_workflow_session_id,
-    get_request_workflow_session_id,
-    restore_workflow_session_id,
-)
+from ._mcp_handler import get_request_workflow_session_id
 
 
 def _get_prompt_text(action_def: dict[str, Any], primary_key: str, fallback_key: str) -> Any:

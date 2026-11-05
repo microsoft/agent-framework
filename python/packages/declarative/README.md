@@ -76,6 +76,9 @@ on HTTPX internals. Compatibility tests cover HTTPX 0.27.0 and 0.28.1.
 when the invocation has a non-empty `workflow_session_id`. Direct calls with a
 missing or empty ID instead create and close a fresh session per invocation,
 including `tools/list`; concurrent unscoped calls never share a connection.
+Factory-built and manually composed declarative executors use the same Core-owned,
+checkpoint-backed scope. Fresh direct runs select new scopes; agent turns retain
+their session scope, including a distinct scope for sessionless agent turns.
 When configured with `client_provider`, it instead invokes the provider and
 creates a fresh MCP tool/session for every invocation, including `tools/list`.
 Sessions are never reused in this mode, even if the provider returns `None`
