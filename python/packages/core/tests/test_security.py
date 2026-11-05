@@ -3713,6 +3713,28 @@ class TestSecureAgentSessionIsolation:
         assert label.confidentiality == ConfidentialityLabel.PUBLIC
         assert "_agent_framework_fides_replay_state_covered" not in restored_message.additional_properties
 
+    def test_transport_fold_rejects_missing_label_for_incomplete_service_history(self) -> None:
+        """Snapshot replay cannot stand in for unavailable service-owned history."""
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="incomplete-service-history", service_session_id="remote-conversation")
+        replayed = Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="external-call", result="snapshot-visible result")],
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="Cannot reconstruct service-managed history without an authoritative FIDES context label",
+        ):
+            config._fold_uncovered_replay_messages(
+                session,
+                [replayed],
+                complete_replay_messages=[replayed],
+                replay_history_complete=False,
+            )
+
+        assert "context_label" not in session.state[config.source_id]
+
     async def test_modified_hidden_placeholder_is_not_authenticated_by_client_flag(self) -> None:
         """A real variable ID does not authenticate a client-modified placeholder."""
         config = SecureAgentConfig()

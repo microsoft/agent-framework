@@ -59,6 +59,11 @@ def _mark_backend_snapshot_origin(message: Message) -> None:
     message.additional_properties[_BACKEND_SNAPSHOT_ORIGIN_KEY] = _BACKEND_SNAPSHOT_ORIGIN_MARKER
 
 
+def _clear_backend_snapshot_origin(message: Message) -> None:
+    """Invalidate backend-snapshot provenance after client-controlled mutation."""
+    message.additional_properties.pop(_BACKEND_SNAPSHOT_ORIGIN_KEY, None)
+
+
 def _copy_backend_snapshot_origin(source: Message, target: Message) -> None:
     """Preserve private backend-snapshot provenance on a derived provider message."""
     if source.additional_properties.get(_BACKEND_SNAPSHOT_ORIGIN_KEY) is _BACKEND_SNAPSHOT_ORIGIN_MARKER:
@@ -789,14 +794,14 @@ def agui_messages_to_agent_framework(
                     function_payload["arguments"] = modified_args
                 return
 
-    def _find_matching_func_call(call_id: str) -> Content | None:
+    def _find_matching_func_call(call_id: str) -> tuple[Message, Content] | None:
         for prev_msg in result:
             role_val = prev_msg.role if hasattr(prev_msg.role, "value") else str(prev_msg.role)
             if role_val != "assistant":
                 continue
             for content in prev_msg.contents or []:
                 if content.type == "function_call" and content.call_id == call_id and content.name != "confirm_changes":
-                    return content
+                    return prev_msg, content
         return None
 
     def _parse_arguments(arguments: Any) -> dict[str, Any] | None:
@@ -946,9 +951,10 @@ def agui_messages_to_agent_framework(
                 resolved_call_id = _resolve_approval_call_id(tool_call_id, parsed)
                 if resolved_call_id:
                     approval_call_id = resolved_call_id
-                matching_func_call = _find_matching_func_call(approval_call_id)
+                matching_call = _find_matching_func_call(approval_call_id)
 
-                if matching_func_call:
+                if matching_call:
+                    matching_message, matching_func_call = matching_call
                     # Remove any existing tool result for this call_id since the framework
                     # will re-execute the tool after approval. Keeping old results causes
                     # OpenAI API errors ("tool message must follow assistant with tool_calls").
@@ -971,6 +977,7 @@ def agui_messages_to_agent_framework(
                     filtered_args = _filter_modified_args(modified_args, original_args)
                     state_args: dict[str, Any] | None = None
                     if filtered_args:
+                        _clear_backend_snapshot_origin(matching_message)
                         original_args = original_args or {}
                         merged_args: dict[str, Any]
                         if isinstance(original_args, dict) and original_args:

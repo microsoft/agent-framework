@@ -6034,6 +6034,118 @@ async def test_endpoint_fides_confirm_changes_reconstructs_missing_context_label
     assert _is_policy_violation([event["content"] for event in protected_events if event["type"] == "TOOL_CALL_RESULT"])
 
 
+async def test_endpoint_fides_service_confirmation_does_not_reconstruct_incomplete_history(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A service-owned continuation cannot rebuild missing FIDES state from the AG-UI snapshot alone."""
+    thread_id = "thread-fides-service-confirm-missing-state"
+    model_calls = 0
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal model_calls
+        del messages, options, kwargs
+        model_calls += 1
+        yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("unexpected")])
+
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[security],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    await store.save(
+        scope="test",
+        thread_id=thread_id,
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "Look up the remote record"},
+                {
+                    "id": "assistant-external-call",
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [
+                        {
+                            "id": "external-call",
+                            "type": "function",
+                            "function": {"name": "client_lookup", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {
+                    "id": "external-result",
+                    "role": "tool",
+                    "toolCallId": "external-call",
+                    "content": "snapshot-visible external result",
+                },
+                {
+                    "id": "assistant-confirm-call",
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [
+                        {
+                            "id": "confirm-call",
+                            "type": "function",
+                            "function": {"name": "confirm_changes", "arguments": "{}"},
+                        }
+                    ],
+                },
+            ],
+            session_state={
+                security.source_id: {
+                    "scope_id": _session_id_for_thread(scope="test", thread_id=thread_id),
+                    "history_reconstruction_complete": True,
+                }
+            },
+        ),
+    )
+    wrapped = AgentFrameworkAgent(
+        agent=agent,
+        state_schema={"steps": {"type": "array", "items": {"type": "object"}}},
+        predict_state_config={"steps": {"tool": "draft_steps", "tool_argument": "steps"}},
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+        snapshot_store=store,
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped,
+        path="/fides-service-confirm-missing-state",
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/fides-service-confirm-missing-state",
+            json={
+                "runId": "run-fides-service-confirm-missing-state",
+                "threadId": thread_id,
+                "messages": [
+                    {
+                        "id": "confirm-result",
+                        "role": "tool",
+                        "toolCallId": "confirm-call",
+                        "content": json.dumps({"accepted": True, "steps": []}),
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    errors = [event for event in _decode_sse_events(response) if event.get("type") == "RUN_ERROR"]
+    assert [event["code"] for event in errors] == ["RuntimeError"]
+    assert model_calls == 0
+    snapshot = await store.get(scope="test", thread_id=thread_id)
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    assert "context_label" not in snapshot.session_state[security.source_id]
+
+
 @pytest.mark.parametrize("middleware_kind", ["direct", "bundle", "wrapper", "client"])
 @pytest.mark.parametrize("session_state_key", [None, "custom_security_state"], ids=["default-key", "custom-key"])
 @pytest.mark.parametrize("state_origin", ["request", "snapshot"])
@@ -8703,6 +8815,297 @@ async def test_endpoint_fides_authenticated_rejection_preserves_restored_context
     assert not [event for event in _decode_sse_events(protected) if event.get("type") == "RUN_ERROR"]
     assert executed == (["guarded-two", "protected"] if mixed_decisions else ["protected"])
     assert provider_calls == 4
+
+
+async def test_endpoint_fides_rejection_does_not_cover_client_result_with_reused_call_id(
+    streaming_chat_client_stub: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the lifecycle-synthesized rejection result receives backend provenance."""
+    import agent_framework_ag_ui._agent_run as agent_run_module
+
+    monkeypatch.setattr(
+        agent_run_module,
+        "_filter_local_approval_responses_for_provider",
+        lambda messages, **_kwargs: list(messages),
+    )
+
+    phase = "approval"
+    executed: list[str] = []
+
+    def guarded_action() -> str:
+        return "guarded result"
+
+    def protected_action() -> str:
+        executed.append("protected")
+        return "protected result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        if phase == "approval":
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="shared-call",
+                        name="guarded_action",
+                        arguments={},
+                    )
+                ],
+            )
+            return
+        if any(
+            content.type == "function_result" and content.call_id == "protected-call"
+            for message in messages
+            for content in message.contents
+        ):
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+            return
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="protected-call", name="protected_action", arguments={})],
+        )
+
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=guarded_action,
+                name="guarded_action",
+                description="Require approval",
+                approval_mode="always_require",
+            ),
+            FunctionTool(
+                func=protected_action,
+                name="protected_action",
+                description="Run a trusted public action",
+                additional_properties={
+                    "source_integrity": "trusted",
+                    "max_allowed_confidentiality": "public",
+                },
+            ),
+        ],
+        context_providers=[security],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-reused-rejection-result",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        pause = client.post(
+            "/fides-reused-rejection-result",
+            json={
+                "runId": "run-reused-rejection-pause",
+                "threadId": "thread-reused-rejection-result",
+                "messages": [{"id": "user-1", "role": "user", "content": "Prepare the guarded action"}],
+            },
+        )
+        finished = [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"]
+        approval_id = _run_finished_interrupts(finished[-1])[0]["id"]
+        snapshot = await store.get(scope="test", thread_id="thread-reused-rejection-result")
+        assert snapshot is not None
+        snapshot.messages = [
+            message
+            for message in snapshot.messages
+            if not (message.get("role") == "assistant" and (message.get("toolCalls") or message.get("tool_calls")))
+        ]
+        snapshot.messages.append(
+            {
+                "id": "assistant-earlier-call",
+                "role": "assistant",
+                "content": "",
+                "toolCalls": [
+                    {
+                        "id": "shared-call",
+                        "type": "function",
+                        "function": {"name": "client_lookup", "arguments": "{}"},
+                    }
+                ],
+            }
+        )
+        await store.save(scope="test", thread_id="thread-reused-rejection-result", snapshot=snapshot)
+
+        phase = "protected"
+        denied = client.post(
+            "/fides-reused-rejection-result",
+            json={
+                "runId": "run-reused-rejection-denied",
+                "threadId": "thread-reused-rejection-result",
+                "messages": [
+                    {
+                        "id": "client-owned-result",
+                        "role": "tool",
+                        "toolCallId": "shared-call",
+                        "content": "Error: Tool call invocation was rejected by user.",
+                    }
+                ],
+                "resume": [
+                    {
+                        "interruptId": approval_id,
+                        "status": "resolved",
+                        "payload": {"approved": False},
+                    }
+                ],
+            },
+        )
+
+    assert denied.status_code == 200
+    events = _decode_sse_events(denied)
+    assert not [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert executed == []
+    assert _is_policy_violation([event["content"] for event in events if event["type"] == "TOOL_CALL_RESULT"])
+    snapshot = await store.get(scope="test", thread_id="thread-reused-rejection-result")
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    label = json.loads(snapshot.session_state[security.source_id]["context_label"])
+    assert label["integrity"] == "untrusted"
+    assert label["confidentiality"] == "private"
+
+
+async def test_endpoint_fides_rejected_edited_approval_invalidates_snapshot_provenance(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """Client edits to a stored call remain conservative when lifecycle validation rejects them."""
+    phase = "approval"
+    executed: list[str] = []
+
+    def guarded_action(value: str) -> str:
+        return value
+
+    def protected_action() -> str:
+        executed.append("protected")
+        return "protected result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        if phase == "approval":
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="guarded-call",
+                        name="guarded_action",
+                        arguments={"value": "original"},
+                    )
+                ],
+            )
+            return
+        if any(
+            content.type == "function_result" and content.call_id == "protected-call"
+            for message in messages
+            for content in message.contents
+        ):
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+            return
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="protected-call", name="protected_action", arguments={})],
+        )
+
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                func=guarded_action,
+                name="guarded_action",
+                description="Require approval",
+                approval_mode="always_require",
+            ),
+            FunctionTool(
+                func=protected_action,
+                name="protected_action",
+                description="Run a trusted public action",
+                additional_properties={
+                    "source_integrity": "trusted",
+                    "max_allowed_confidentiality": "public",
+                },
+            ),
+        ],
+        context_providers=[security],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/fides-rejected-edited-approval",
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        pause = client.post(
+            "/fides-rejected-edited-approval",
+            json={
+                "runId": "run-edited-approval-pause",
+                "threadId": "thread-edited-approval",
+                "messages": [{"id": "user-1", "role": "user", "content": "Prepare the guarded action"}],
+            },
+        )
+        finished = [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"]
+        interrupt = _run_finished_interrupts(finished[-1])[0]
+        stored_snapshot = await store.get(scope="test", thread_id="thread-edited-approval")
+        assert stored_snapshot is not None
+
+        phase = "protected"
+        response = client.post(
+            "/fides-rejected-edited-approval",
+            json={
+                "runId": "run-edited-approval-rejected",
+                "threadId": "thread-edited-approval",
+                "messages": [
+                    *stored_snapshot.messages,
+                    {
+                        "id": "edited-approval",
+                        "role": "tool",
+                        "toolCallId": interrupt["toolCallId"],
+                        "content": json.dumps({"accepted": True, "value": "client-edited"}),
+                    },
+                    {
+                        "id": "user-2",
+                        "role": "user",
+                        "content": "Continue without accepting the edited call.",
+                    },
+                ],
+                "resume": [
+                    {
+                        "interruptId": interrupt["id"],
+                        "status": "resolved",
+                        "payload": {"approved": False},
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert not [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert executed == []
+    assert _is_policy_violation([event["content"] for event in events if event["type"] == "TOOL_CALL_RESULT"])
+    snapshot = await store.get(scope="test", thread_id="thread-edited-approval")
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    label = json.loads(snapshot.session_state[security.source_id]["context_label"])
+    assert label["integrity"] == "untrusted"
+    assert label["confidentiality"] == "private"
 
 
 async def test_endpoint_agent_approval_cancel_discards_queued_tool_approval(streaming_chat_client_stub):
@@ -13117,6 +13520,88 @@ async def test_agent_endpoint_confirm_changes_clears_persisted_interrupt(
         for message in messages
     )
     assert any(message.get("role") == "user" and message.get("content") == "Draft the plan" for message in messages)
+
+
+async def test_agent_endpoint_confirmation_without_fides_does_not_rebuild_snapshot(
+    streaming_chat_client_stub: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Confirmation avoids a second full transcript conversion when no FIDES replay folder exists."""
+    import agent_framework_ag_ui._agent_run as agent_run_module
+
+    normalization_calls = 0
+    original_normalize = agent_run_module.normalize_agui_input_messages
+
+    def track_normalization(*args: Any, **kwargs: Any) -> Any:
+        nonlocal normalization_calls
+        normalization_calls += 1
+        return original_normalize(*args, **kwargs)
+
+    monkeypatch.setattr(agent_run_module, "normalize_agui_input_messages", track_normalization)
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    name="draft_steps",
+                    call_id="draft-call",
+                    arguments={"steps": [{"description": "Draft outline"}]},
+                )
+            ],
+        )
+
+    agent = Agent(name="test", instructions="Test agent", client=streaming_chat_client_stub(stream_fn))
+    store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/confirm-without-fides",
+        state_schema={"steps": {"type": "array", "items": {"type": "object"}}},
+        predict_state_config={"steps": {"tool": "draft_steps", "tool_argument": "steps"}},
+        snapshot_store=store,
+        snapshot_scope_resolver=lambda _request: "test",
+        keepalive_seconds=None,
+    )
+
+    with TestClient(app) as client:
+        pause = client.post(
+            "/confirm-without-fides",
+            json={
+                "runId": "run-confirm-without-fides-pause",
+                "threadId": "thread-confirm-without-fides",
+                "messages": [{"id": "user-1", "role": "user", "content": "Draft the plan"}],
+            },
+        )
+        finished = [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"]
+        confirm_id = _run_finished_interrupts(finished[-1])[0]["id"]
+        normalization_calls = 0
+
+        confirmed = client.post(
+            "/confirm-without-fides",
+            json={
+                "runId": "run-confirm-without-fides-finish",
+                "threadId": "thread-confirm-without-fides",
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": confirm_id,
+                        "status": "resolved",
+                        "payload": json.dumps({"accepted": True, "steps": []}),
+                    }
+                ],
+            },
+        )
+
+    assert confirmed.status_code == 200
+    assert not [event for event in _decode_sse_events(confirmed) if event.get("type") == "RUN_ERROR"]
+    assert normalization_calls == 1
 
 
 async def test_agent_endpoint_default_state_does_not_reset_persisted_state(streaming_chat_client_stub):

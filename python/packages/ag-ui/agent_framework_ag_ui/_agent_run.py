@@ -8,7 +8,7 @@ import copy
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterable, Awaitable, Collection, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
@@ -61,7 +61,7 @@ from agent_framework._tools import (
     _try_execute_function_call_groups,  # type: ignore
     normalize_function_invocation_configuration,
 )
-from agent_framework._types import ResponseStream
+from agent_framework._types import APPROVAL_REJECTION_RESULT_KEY, ResponseStream
 from agent_framework.exceptions import AgentInvalidResponseException
 from agent_framework.observability import (
     _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
@@ -92,6 +92,7 @@ from ._approval_execution import (
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, InMemoryAGUIApprovalStateStore, approval_state_thread_id
 from ._message_adapters import (
     _APPROVAL_DECISION_IS_BOOLEAN_KEY,
+    _copy_backend_snapshot_origin,
     _mark_backend_snapshot_origin,
     _take_backend_snapshot_messages,
     normalize_agui_input_messages,
@@ -1779,7 +1780,7 @@ async def _resolve_approval_responses(
     pending_response_groups: dict[object, tuple[ApprovalOccurrence, list[Content]]] = {}
     intents_by_response_content_id: dict[int, AuthorizedExecution] = {}
     authenticated_non_grants: list[Content] = []
-    authenticated_rejection_call_ids: set[str] = set()
+    authenticated_rejection_occurrence_ids: set[str] = set()
     for response in approval_responses:
         resp_id = response.id
         function_call_id = response.function_call.call_id if response.function_call else None
@@ -1877,7 +1878,7 @@ async def _resolve_approval_responses(
                 )
         if decision_is_boolean and primary_response.approved is False and not server_label:
             authenticated_non_grants.append(_approval_observer_response(pending_entry))
-            authenticated_rejection_call_ids.add(pending_entry.identity.call_id)
+            authenticated_rejection_occurrence_ids.add(pending_entry.function_call_id)
         if (
             (primary_response.approved is True or pending_entry.owner is ApprovalExecutionOwner.DEFERRED)
             and lifecycle is not None
@@ -2094,7 +2095,14 @@ async def _resolve_approval_responses(
             if id(response) in deferred_response_content_ids
         }
     )
-    _replace_approval_contents_with_results(messages, normalization_responses, replacement_groups)
+    resolved_contents = _replace_approval_contents_with_results(messages, normalization_responses, replacement_groups)
+    authenticated_rejection_result_ids = {
+        id(content)
+        for content in resolved_contents
+        if content.type == "function_result"
+        and content.id in authenticated_rejection_occurrence_ids
+        and content.additional_properties.get(APPROVAL_REJECTION_RESULT_KEY) is True
+    }
 
     # Post-process: Convert user messages with function_result content to proper tool messages.
     # After _replace_approval_contents_with_results, approved tool calls have their results
@@ -2102,7 +2110,7 @@ async def _resolve_approval_responses(
     # This transformation ensures the message history is valid for the LLM provider.
     _convert_approval_results_to_tool_messages(
         messages,
-        authenticated_rejection_call_ids=authenticated_rejection_call_ids,
+        backend_result_content_ids=authenticated_rejection_result_ids,
     )
 
     return approved_results
@@ -2111,7 +2119,7 @@ async def _resolve_approval_responses(
 def _convert_approval_results_to_tool_messages(
     messages: list[Message],
     *,
-    authenticated_rejection_call_ids: set[str] | None = None,
+    backend_result_content_ids: set[int] | None = None,
 ) -> None:
     """Convert function_result content in user messages to proper tool messages.
 
@@ -2123,18 +2131,25 @@ def _convert_approval_results_to_tool_messages(
 
     Args:
         messages: List of Message objects to process
+        backend_result_content_ids: Object identities of exact backend-synthesized
+            results whose derived tool messages retain snapshot provenance.
     """
     result: list[Message] = []
+    backend_result_ids = backend_result_content_ids or set()
 
     for msg in messages:
-        if authenticated_rejection_call_ids and any(
-            content.type == "function_result"
-            and content.call_id in authenticated_rejection_call_ids
-            and content.result == "Error: Tool call invocation was rejected by user."
-            for content in msg.contents
-        ):
-            _mark_backend_snapshot_origin(msg)
         if get_role_value(msg) != "user":
+            backend_contents = [content for content in msg.contents if id(content) in backend_result_ids]
+            if backend_contents and len(backend_contents) == len(msg.contents):
+                _mark_backend_snapshot_origin(msg)
+            elif backend_contents and get_role_value(msg) == "tool":
+                for content in msg.contents:
+                    split_message = Message(role="tool", contents=[content])
+                    _copy_backend_snapshot_origin(msg, split_message)
+                    if id(content) in backend_result_ids:
+                        _mark_backend_snapshot_origin(split_message)
+                    result.append(split_message)
+                continue
             result.append(msg)
             continue
 
@@ -2153,11 +2168,16 @@ def _convert_approval_results_to_tool_messages(
         # Tool messages first (right after the preceding assistant message per OpenAI requirements)
         for func_result in function_results:
             tool_message = Message(role="tool", contents=[func_result])
+            _copy_backend_snapshot_origin(msg, tool_message)
+            if id(func_result) in backend_result_ids:
+                _mark_backend_snapshot_origin(tool_message)
             result.append(tool_message)
 
         # Then user message with remaining content (if any)
         if other_contents:
-            result.append(Message(role="user", contents=other_contents))
+            user_message = Message(role="user", contents=other_contents)
+            _copy_backend_snapshot_origin(msg, user_message)
+            result.append(user_message)
 
     messages[:] = result
 
@@ -2854,18 +2874,32 @@ def _mark_fides_state_covered_messages(
             marker(messages)
 
 
+def _collect_fides_replay_folders(agent: SupportsAgentRun) -> list[Callable[..., None]]:
+    """Return replay-folding hooks exposed by FIDES context providers."""
+    folders: list[Callable[..., None]] = []
+    for provider in getattr(agent, "context_providers", ()):
+        fold = getattr(provider, "_fold_uncovered_replay_messages", None)
+        if callable(fold):
+            folders.append(cast(Callable[..., None], fold))
+    return folders
+
+
 def _fold_fides_uncovered_replay_messages(
-    agent: SupportsAgentRun,
+    folders: Sequence[Callable[..., None]],
     session: AgentSession,
     messages: Sequence[Message],
     *,
     complete_replay_messages: Sequence[Message] | None = None,
+    replay_history_complete: bool,
 ) -> None:
     """Fold uncovered replay into FIDES state before a snapshot-only return."""
-    for provider in getattr(agent, "context_providers", ()):
-        fold = getattr(provider, "_fold_uncovered_replay_messages", None)
-        if callable(fold):
-            fold(session, messages, complete_replay_messages=complete_replay_messages)
+    for fold in folders:
+        fold(
+            session,
+            messages,
+            complete_replay_messages=complete_replay_messages,
+            replay_history_complete=replay_history_complete,
+        )
 
 
 def _legacy_tool_message_approval_resume(
@@ -3446,20 +3480,26 @@ async def _run_agent_stream(
             ),
         )
 
+    fides_replay_folders = _collect_fides_replay_folders(agent)
+
     def fold_fides_replay_before_snapshot_save() -> None:
-        complete_replay_snapshot = snapshot_messages
-        if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
-            complete_replay_snapshot = snapshot_session.resume_seeded_messages(complete_replay_snapshot)
-        complete_replay_messages, _ = normalize_agui_input_messages(
-            complete_replay_snapshot,
-            sanitize_tool_history=not (config.use_service_session and stored_snapshot is not None),
-            protected_tool_call_ids=protected_tool_call_ids,
-        )
+        if not fides_replay_folders:
+            return
+        complete_replay_messages: Sequence[Message] | None = None
+        if not config.use_service_session:
+            complete_replay_snapshot = snapshot_messages
+            if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
+                complete_replay_snapshot = snapshot_session.resume_seeded_messages(complete_replay_snapshot)
+            complete_replay_messages, _ = normalize_agui_input_messages(
+                complete_replay_snapshot,
+                protected_tool_call_ids=protected_tool_call_ids,
+            )
         _fold_fides_uncovered_replay_messages(
-            agent,
+            fides_replay_folders,
             session,
             messages,
             complete_replay_messages=complete_replay_messages,
+            replay_history_complete=not config.use_service_session,
         )
         _mark_fides_state_covered_messages(agent, messages)
 
