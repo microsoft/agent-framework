@@ -11,6 +11,11 @@ informed: []
 
 Supersedes [ADR-0026](0026-hosted-session-identity-context.md).
 
+> **Update (2026-11-05):** `HostedFoundryMemoryProviderScopes` was removed during pre-stable
+> API cleanup. Hosted memory samples now read `session.GetHostedContext().UserId` directly when
+> constructing `FoundryMemoryProvider.State`, keeping the trusted identity-to-memory-scope mapping
+> visible without a memory-specific hosting helper.
+
 ## Context and Problem Statement
 
 [ADR-0026](0026-hosted-session-identity-context.md) sourced the hosted-agent end-user identity from `ResponseContext.Isolation` (an `IsolationContext` typed `UserIsolationKey` / `ChatIsolationKey`), injected by the platform as the `x-agent-user-isolation-key` and `x-agent-chat-isolation-key` headers.

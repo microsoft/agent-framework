@@ -324,7 +324,7 @@ static async Task<AIAgent> CreateMemoryAgentAsync(AIProjectClient client, string
     var memoryProvider = new FoundryMemoryProvider(
         client,
         memoryStoreName,
-        stateInitializer: HostedFoundryMemoryProviderScopes.PerUser());
+        stateInitializer: CreatePerUserMemoryState);
 
     await memoryProvider.EnsureMemoryStoreCreatedAsync(deployment, embedding, "Memory store for hosted-memory IT scenario.").ConfigureAwait(false);
 
@@ -338,6 +338,17 @@ static async Task<AIAgent> CreateMemoryAgentAsync(AIProjectClient client, string
         },
         AIContextProviders = [memoryProvider]
     });
+}
+
+static FoundryMemoryProvider.State CreatePerUserMemoryState(AgentSession? session)
+{
+    HostedSessionContext hostedContext =
+        session?.GetHostedContext()
+        ?? throw new InvalidOperationException(
+            "Foundry hosted user identity is required to scope memories.");
+
+    return new FoundryMemoryProvider.State(
+        new FoundryMemoryProviderScope(hostedContext.UserId));
 }
 
 // Agent skills scenario. Uses AgentSkillsProvider with two bundled Contoso Outdoors skills

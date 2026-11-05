@@ -50,13 +50,12 @@ var credential = new DefaultAzureCredential();
 
 AIProjectClient projectClient = new(projectEndpoint, credential);
 
-// FoundryMemoryProvider partitions memories per end user via a built-in HostedFoundryMemoryProviderScopes
-// helper that reads the platform-injected user isolation key from the HostedSessionContext that the
-// hosting layer placed on the session.
+// FoundryMemoryProvider partitions memories per end user by reading the trusted user identity that
+// the hosting layer placed on the session.
 FoundryMemoryProvider memoryProvider = new(
     projectClient,
     memoryStoreName,
-    stateInitializer: HostedFoundryMemoryProviderScopes.PerUser());
+    stateInitializer: CreatePerUserMemoryState);
 
 // Provision the memory store on startup if it does not already exist. EnsureMemoryStoreCreatedAsync
 // is idempotent. Doing this once at start avoids per-request latency.
@@ -82,8 +81,8 @@ ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions()
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 //
 // Per-user memory isolation comes from the platform-injected x-agent-user-id header, resolved by the
-// default HostedSessionIsolationKeyProvider into the session's HostedSessionContext. This sample scopes
-// memory per user via HostedFoundryMemoryProviderScopes.PerUser(), which REQUIRES that context: a
+// default HostedSessionIsolationKeyProvider into the session's HostedSessionContext. This sample reads
+// that context directly to scope memory per user. A
 // request with no resolved user identity throws. So locally you must send an x-agent-user-id request
 // header (see scripts/smoke.ps1); vary it to simulate distinct users. On the Foundry platform the
 // header is always present, so no local provider registration is needed.
@@ -95,6 +94,17 @@ app.MapFoundryResponses();
 
 
 app.Run();
+
+static FoundryMemoryProvider.State CreatePerUserMemoryState(AgentSession? session)
+{
+    HostedSessionContext hostedContext =
+        session?.GetHostedContext()
+        ?? throw new InvalidOperationException(
+            "Foundry hosted user identity is required to scope memories.");
+
+    return new FoundryMemoryProvider.State(
+        new FoundryMemoryProviderScope(hostedContext.UserId));
+}
 
 static string? FirstNonBlank(params string?[] candidates) =>
     Array.Find(candidates, candidate => !string.IsNullOrWhiteSpace(candidate));
