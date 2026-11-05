@@ -1102,10 +1102,12 @@ def keyword_check(*keywords: str, case_sensitive: bool = False) -> EvalCheck:
 
 @experimental(feature_id=ExperimentalFeature.EVALS)
 def tool_called_check(*tool_names: str, mode: Literal["all", "any"] = "all") -> EvalCheck:
-    """Check that specific tools were called during the conversation.
+    """Check that specific tools were called in the agent's response.
 
-    Inspects the conversation history for ``tool_calls`` entries matching
-    the expected tool names.
+    Inspects the response side of the item's conversation split (see
+    ``EvalItem.split_messages``) for function calls matching the expected
+    tool names.  Tool calls on the query side, such as calls made in
+    earlier turns, are not counted.
 
     Args:
         *tool_names: Names of tools that should have been called.
@@ -1125,7 +1127,8 @@ def tool_called_check(*tool_names: str, mode: Literal["all", "any"] = "all") -> 
     def _check(item: EvalItem) -> CheckResult:
         expected = set(tool_names)
         called: set[str] = set()
-        for msg in item.conversation:
+        _, response_msgs = item.split_messages()
+        for msg in response_msgs:
             for c in msg.contents or []:
                 if c.type == "function_call" and c.name:
                     called.add(c.name)
@@ -1164,9 +1167,10 @@ def tool_called_check(*tool_names: str, mode: Literal["all", "any"] = "all") -> 
 
 
 def _extract_tool_calls(item: EvalItem) -> list[tuple[str, dict[str, Any] | None]]:
-    """Extract (name, arguments) pairs from the conversation's function calls."""
+    """Extract (name, arguments) pairs from function calls on the response side of the split."""
     calls: list[tuple[str, dict[str, Any] | None]] = []
-    for msg in item.conversation:
+    _, response_msgs = item.split_messages()
+    for msg in response_msgs:
         for c in msg.contents or []:
             if c.type == "function_call" and c.name:
                 args: dict[str, Any] | None = None
@@ -1194,8 +1198,9 @@ def tool_calls_present(item: EvalItem) -> CheckResult:
     """Check that all expected tool calls were made (unordered, extras OK).
 
     Uses ``item.expected_tool_calls`` — checks that every expected tool name
-    appears at least once in the conversation.  Does not check arguments or
-    ordering.  Extra (unexpected) tool calls are not penalized.
+    appears at least once in the response side of the item's conversation
+    split.  Does not check arguments or ordering.  Extra (unexpected) tool
+    calls are not penalized.
 
     Example:
 
@@ -1235,10 +1240,11 @@ def tool_calls_present(item: EvalItem) -> CheckResult:
 def tool_call_args_match(item: EvalItem) -> CheckResult:
     """Check that expected tool calls match on name and arguments.
 
-    For each expected tool call, finds matching calls in the conversation
-    by name.  If ``ExpectedToolCall.arguments`` is provided, checks that
-    the actual arguments contain all expected key-value pairs (subset
-    match — extra actual arguments are OK).
+    For each expected tool call, finds matching calls by name in the
+    response side of the item's conversation split.  If
+    ``ExpectedToolCall.arguments`` is provided, checks that the actual
+    arguments contain all expected key-value pairs (subset match — extra
+    actual arguments are OK).
 
     Example:
 

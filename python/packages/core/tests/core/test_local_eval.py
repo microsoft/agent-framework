@@ -12,6 +12,7 @@ import pytest
 
 from agent_framework._evaluation import (
     CheckResult,
+    ConversationSplit,
     EvalItem,
     EvalItemResult,
     EvalNotPassedError,
@@ -971,6 +972,48 @@ class TestToolCalledCheckModeAny:
         result = check(item)
         assert result.passed is False  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         assert "None of expected tools" in result.reason  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+
+class TestToolChecksUseConversationSplit:
+    """Tool checks inspect the response side of the split, not the whole conversation."""
+
+    @staticmethod
+    def _two_turn_conversation() -> list[Message]:
+        # Only turn 1 calls get_weather; turn 2 makes no tool call.
+        return [
+            Message("user", ["Weather in NYC?"]),
+            Message("assistant", [Content.from_function_call("c1", "get_weather", arguments={"location": "NYC"})]),
+            Message("tool", [Content.from_function_result("c1", result="Sunny")]),
+            Message("assistant", ["Sunny."]),
+            Message("user", ["And tomorrow?"]),
+            Message("assistant", ["No idea."]),
+        ]
+
+    def test_per_turn_tool_checks_ignore_calls_from_prior_turn(self):
+        first, second = EvalItem.per_turn_items(self._two_turn_conversation())
+        expected = [ExpectedToolCall("get_weather", {"location": "NYC"})]
+        first.expected_tool_calls = expected
+        second.expected_tool_calls = expected
+
+        assert tool_called_check("get_weather")(first).passed is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert tool_calls_present(first).passed is True
+        assert tool_call_args_match(first).passed is True
+
+        assert tool_called_check("get_weather")(second).passed is False  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert tool_called_check("get_weather", mode="any")(second).passed is False  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert tool_calls_present(second).passed is False
+        assert tool_call_args_match(second).passed is False
+
+    def test_full_split_counts_whole_trajectory(self):
+        item = EvalItem(
+            conversation=self._two_turn_conversation(),
+            expected_tool_calls=[ExpectedToolCall("get_weather", {"location": "NYC"})],
+            split_strategy=ConversationSplit.FULL,
+        )
+
+        assert tool_called_check("get_weather")(item).passed is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert tool_calls_present(item).passed is True
+        assert tool_call_args_match(item).passed is True
 
 
 class TestCoerceResultScoreError:
