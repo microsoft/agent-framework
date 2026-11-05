@@ -657,23 +657,16 @@ class BaseAgent(SerializationMixin):
                 state=provider_session.state.setdefault(provider.source_id, {}),
             )
 
-        history_coverage_consumers = [
-            (provider, finalize)
-            for provider in self.context_providers
-            if callable(finalize := getattr(provider, "_finalize_history_coverage", None))
-        ]
-        if history_coverage_consumers:
+        if self.context_providers:
             if provider_session is None:
-                raise RuntimeError("Provider session must be available when history coverage is finalized.")
-            for provider, finalize in history_coverage_consumers:
-                finalized = finalize(
-                    agent=self,
+                raise RuntimeError("Provider session must be available when provider state is finalized.")
+            for provider in self.context_providers:
+                await provider.after_run_complete(
+                    agent=self,  # type: ignore[arg-type]
                     session=provider_session,
                     context=context,
                     state=provider_session.state.setdefault(provider.source_id, {}),
                 )
-                if isawaitable(finalized):
-                    _ = await finalized
 
     def as_tool(
         self,
@@ -1659,6 +1652,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session=active_session,
             input_messages=input_messages,
             options=opts,
+            service_stores_history=bool(service_stores_history),
         )
         default_additional_args = chat_options.pop("additional_function_arguments", None)
         if isinstance(default_additional_args, Mapping):
@@ -1770,24 +1764,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             effective_client_kwargs[_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY] = not framework_created_session
         per_service_call_history_middleware: PerServiceCallHistoryPersistingMiddleware | None = None
         if per_service_call_history_providers and active_session is not None:
-            history_persisted_callbacks: list[
-                Callable[[Mapping[str, Sequence[Message]]], Awaitable[None]]
-            ] = []
-            for provider in self.context_providers:
-                callback = getattr(provider, "_update_per_service_history_coverage", None)
-                if callable(callback):
-                    history_persisted_callbacks.append(
-                        cast(
-                            Callable[[Mapping[str, Sequence[Message]]], Awaitable[None]],
-                            partial(callback, context=session_context),
-                        )
-                    )
             per_service_call_history_middleware = PerServiceCallHistoryPersistingMiddleware(
                 agent=self,
                 session=active_session,
                 providers=per_service_call_history_providers,
+                context_providers=self.context_providers,
+                run_context=session_context,
                 service_stores_history=service_stores_history,
-                after_persist_callbacks=history_persisted_callbacks,
             )
         if per_service_call_history_middleware is not None:
             existing_middleware = cast(
@@ -1844,6 +1827,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         session: AgentSession | None,
         input_messages: list[Message] | None = None,
         options: dict[str, Any] | None = None,
+        service_stores_history: bool = False,
     ) -> tuple[SessionContext, dict[str, Any]]:
         """Prepare the session context and messages for agent execution.
 
@@ -1854,6 +1838,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session: The conversation session (None for stateless invocation).
             input_messages: Messages to process.
             options: Runtime options dict (already copied, safe to mutate).
+            service_stores_history: Whether the service owns history for this run.
 
         Returns:
             A tuple containing:
@@ -1905,23 +1890,39 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 state=provider_session.state.setdefault(provider.source_id, {}),
             )
 
-        approval_history_consumers = [
-            (provider, prepare)
-            for provider in self.context_providers
-            if callable(prepare := getattr(provider, "_prepare_approval_history", None))
-        ]
-        if approval_history_consumers and not per_service_call_history_required:
+        loaded_context = session_context
+        requires_loaded_context = any(
+            provider.requires_loaded_context_before_invocation for provider in self.context_providers
+        )
+        if per_service_call_history_required and not service_stores_history and requires_loaded_context:
             if provider_session is None:
-                raise RuntimeError("Provider session must be available when approval history is prepared.")
-            for provider, prepare in approval_history_consumers:
-                prepared = prepare(
+                raise RuntimeError("Provider session must be available when per-service history is classified.")
+            loaded_context = SessionContext(
+                session_id=provider_session.session_id,
+                service_session_id=provider_session.service_session_id,
+                input_messages=list(session_context.input_messages),
+                options=dict(session_context.options),
+                metadata=session_context.metadata,
+            )
+            for provider in self.context_providers:
+                if isinstance(provider, HistoryProvider) and provider.load_messages:
+                    await provider.before_run(
+                        agent=self,
+                        session=provider_session,
+                        context=loaded_context,
+                        state=provider_session.state.setdefault(provider.source_id, {}),
+                    )
+
+        if self.context_providers:
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when loaded context is finalized.")
+            for provider in self.context_providers:
+                await provider.after_context_loaded(
                     agent=self,
                     session=provider_session,
-                    context=session_context,
+                    context=loaded_context,
                     state=provider_session.state.setdefault(provider.source_id, {}),
                 )
-                if isawaitable(prepared):
-                    _ = await prepared
 
         # Merge provider-contributed tools into chat_options
         if session_context.tools:

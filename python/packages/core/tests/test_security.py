@@ -3341,7 +3341,7 @@ class TestSecureAgentSessionIsolation:
             context=initial_context,
             state=state,
         )
-        await config._finalize_history_coverage(  # pyright: ignore[reportPrivateUsage]
+        await config.after_run_complete(
             agent=agent,
             session=session,
             context=initial_context,
@@ -4110,7 +4110,7 @@ class TestSecureAgentSessionIsolation:
             context=initial_context,
             state=session.state.setdefault(config.source_id, {}),
         )
-        await config._prepare_approval_history(  # pyright: ignore[reportPrivateUsage]
+        await config.after_context_loaded(
             agent=SimpleNamespace(context_providers=[config, history]),
             session=session,
             context=initial_context,
@@ -4281,6 +4281,160 @@ class TestSecureAgentSessionIsolation:
         restored = AgentSession.from_dict(session.to_dict())
         restored_coverage = json.loads(restored.state[config.source_id]["history_reconstruction_coverage"])
         assert restored_coverage == coverage
+
+    async def test_final_history_coverage_excludes_external_append_during_save(self) -> None:
+        """Finalization covers only the exact framework-owned messages persisted by the base provider path."""
+
+        class AppendDuringSaveHistoryProvider(HistoryProvider):
+            def __init__(self) -> None:
+                super().__init__("append-during-save")
+                self.messages: list[Message] = []
+                self.appended_external = False
+
+            async def get_messages(
+                self,
+                session_id: str | None,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> list[Message]:
+                del session_id, state, kwargs
+                return list(self.messages)
+
+            async def save_messages(
+                self,
+                session_id: str | None,
+                messages: Any,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> None:
+                del session_id, state, kwargs
+                self.messages.extend(cast(Sequence[Message], messages))
+                if not self.appended_external:
+                    self.appended_external = True
+                    self.messages.append(Message(role="assistant", contents=["Externally appended after save"]))
+
+        class NoopClient:
+            async def get_response(self, *args: Any, **kwargs: Any) -> ChatResponse:
+                del args, kwargs
+                return ChatResponse(messages=[Message(role="assistant", contents=["done"])])
+
+        history = AppendDuringSaveHistoryProvider()
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="external-append-after-save")
+        agent = Agent(
+            client=cast(SupportsChatGetResponse, NoopClient()),
+            context_providers=[history, config],
+        )
+
+        await agent.run("First turn", session=session)
+        coverage = json.loads(session.state[config.source_id]["history_reconstruction_coverage"])
+        assert coverage[history.source_id]["count"] == len(history.messages) - 1
+
+        changed_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+            session=session,
+            input_messages=[],
+            options={},
+        )
+
+        tracker = changed_context.get_middleware()[0]
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+    async def test_history_coverage_binds_nested_function_result_labels(self) -> None:
+        """Changing a nested result-item label invalidates history coverage."""
+
+        class MutableHistoryProvider(HistoryProvider):
+            def __init__(self, message: Message) -> None:
+                super().__init__("nested-label-history")
+                self.messages = [message]
+
+            async def get_messages(
+                self,
+                session_id: str | None,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> list[Message]:
+                del session_id, state, kwargs
+                return list(self.messages)
+
+            async def save_messages(
+                self,
+                session_id: str | None,
+                messages: Any,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> None:
+                del session_id, messages, state, kwargs
+
+        nested = Content.from_text(
+            "identity-scoped result",
+            additional_properties={
+                "security_label": {
+                    "integrity": "untrusted",
+                    "confidentiality": "private",
+                }
+            },
+        )
+        result = Content.from_function_result("nested-label-call", result=[nested])
+        history = MutableHistoryProvider(Message(role="tool", contents=[result]))
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="nested-label-coverage")
+        agent = cast(Any, SimpleNamespace(context_providers=[history, config]))
+        first_context = SessionContext(session_id=session.session_id, input_messages=[])
+        await history.before_run(
+            agent=agent,
+            session=session,
+            context=first_context,
+            state=session.state.setdefault(history.source_id, {}),
+        )
+        await config.before_run(
+            agent=agent,
+            session=session,
+            context=first_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+        await config.after_context_loaded(
+            agent=agent,
+            session=session,
+            context=first_context,
+            state=session.state[config.source_id],
+        )
+        assert config._scope_for_session(session).context_label.confidentiality == ConfidentialityLabel.PRIVATE
+
+        nested.additional_properties["security_label"] = {
+            "integrity": "untrusted",
+            "confidentiality": "user_identity",
+            "metadata": _principal_metadata("user-a"),
+        }
+        second_context = SessionContext(session_id=session.session_id, input_messages=[])
+        await history.before_run(
+            agent=agent,
+            session=session,
+            context=second_context,
+            state=session.state[history.source_id],
+        )
+        await config.before_run(
+            agent=agent,
+            session=session,
+            context=second_context,
+            state=session.state[config.source_id],
+        )
+        await config.after_context_loaded(
+            agent=agent,
+            session=session,
+            context=second_context,
+            state=session.state[config.source_id],
+        )
+
+        label = config._scope_for_session(session).context_label
+        assert label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert label.metadata[_PRINCIPALS_KEY] == _principal_metadata("user-a")[_PRINCIPALS_KEY]
 
     @pytest.mark.parametrize("provider_order", ["history-first", "security-first"])
     async def test_history_is_folded_once_regardless_of_provider_order(
@@ -4535,6 +4689,117 @@ class TestSecureAgentSessionIsolation:
         assert any(message.text == "Unstamped stored instructions" for message in messages_received[0])
         assert "Policy violation" in str([message.to_dict() for message in response.messages])
         context_label = json.loads(session.state[config.source_id]["context_label"])
+        assert context_label["integrity"] == "untrusted"
+        assert context_label["confidentiality"] == "private"
+
+    async def test_per_service_history_is_restored_before_approved_tool_execution(self) -> None:
+        """A restored approval cannot execute before per-service history taints FIDES."""
+        executed: list[str] = []
+        responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="approved-protected-call",
+                                name="approved_protected_action",
+                                arguments={},
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["done"])]),
+        ]
+
+        class MutableHistoryProvider(HistoryProvider):
+            def __init__(self) -> None:
+                super().__init__("approval-per-service-history")
+                self.messages: list[Message] = []
+
+            async def get_messages(
+                self,
+                session_id: str | None,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> list[Message]:
+                del session_id, state, kwargs
+                return list(self.messages)
+
+            async def save_messages(
+                self,
+                session_id: str | None,
+                messages: Any,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> None:
+                del session_id, state, kwargs
+                self.messages.extend(cast(Sequence[Message], messages))
+
+        class ScriptedClient:
+            STORES_BY_DEFAULT = False
+
+            def __init__(self) -> None:
+                self.responses = list(responses)
+
+            async def get_response(
+                self,
+                messages: list[Message],
+                *,
+                stream: bool = False,
+                options: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> ChatResponse:
+                del messages, options, kwargs
+                assert stream is False
+                return self.responses.pop(0)
+
+        client_type = type(
+            "PerServiceApprovalClient",
+            (FunctionInvocationLayer, ChatMiddlewareLayer, ScriptedClient),
+            {},
+        )
+        client = client_type()
+
+        def approved_protected_action() -> str:
+            executed.append("protected")
+            return "must not run"
+
+        protected_tool = FunctionTool(
+            func=approved_protected_action,
+            name="approved_protected_action",
+            approval_mode="always_require",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "private",
+            },
+        )
+        history = MutableHistoryProvider()
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="restored-per-service-approval")
+        agent = Agent(
+            client=cast(Any, client),
+            tools=[protected_tool],
+            context_providers=[config, history],
+            require_per_service_call_history_persistence=True,
+        )
+
+        paused = await agent.run("Request protected action", session=session)
+        approval_request = paused.user_input_requests[0]
+        history.messages.append(Message(role="assistant", contents=["Externally appended stored instructions"]))
+        restored = AgentSession.from_dict(session.to_dict())
+
+        result = await agent.run(
+            approval_request.to_function_approval_response(approved=True),
+            session=restored,
+        )
+
+        assert executed == []
+        assert "Policy violation" in str([message.to_dict() for message in result.messages])
+        context_label = json.loads(restored.state[config.source_id]["context_label"])
         assert context_label["integrity"] == "untrusted"
         assert context_label["confidentiality"] == "private"
 

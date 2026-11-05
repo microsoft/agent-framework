@@ -47,7 +47,13 @@ from ._middleware import (
     MiddlewareTermination,
 )
 from ._serialization import SerializationMixin
-from ._sessions import AgentSession, ContextProvider, HistoryProvider, SessionContext
+from ._sessions import (
+    _PERSISTED_HISTORY_MESSAGES_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
+    AgentSession,
+    ContextProvider,
+    HistoryProvider,
+    SessionContext,
+)
 from ._tools import (
     _APPROVAL_REQUEST_ID_KEY,  # pyright: ignore[reportPrivateUsage]
     _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -1525,23 +1531,35 @@ def _replayed_message_label(
     return combine_labels(*labels)
 
 
-def _coverage_content_payload(content: Content) -> dict[str, Any]:
-    """Return the transport-stable semantic projection of one content item."""
+def _coverage_content_payload(content: Content, *, include_security_labels: bool) -> dict[str, Any]:
+    """Return a canonical semantic projection of one content item."""
     payload = content.to_dict(exclude={"raw_representation", "additional_properties", "id"})
+    if include_security_labels:
+        label_data = content.additional_properties.get("security_label")
+        if isinstance(label_data, Mapping):
+            payload["security_label"] = dict(cast(Mapping[str, Any], label_data))
     if content.type == "function_call":
         payload["arguments"] = _parse_replay_function_call_arguments(content)
     if content.items is not None:
-        payload["items"] = [_coverage_content_payload(item) for item in content.items]
+        payload["items"] = [
+            _coverage_content_payload(item, include_security_labels=include_security_labels)
+            for item in content.items
+        ]
     return payload
 
 
-def _message_coverage_digest(message: Message, *, exclude_approval_controls: bool = False) -> str | None:
+def _message_coverage_digest(
+    message: Message,
+    *,
+    exclude_approval_controls: bool = False,
+    include_security_labels: bool = False,
+) -> str | None:
     """Return a canonical digest for one replay message."""
     try:
-        payload = {
+        payload: dict[str, Any] = {
             "role": str(message.role),
             "contents": [
-                _coverage_content_payload(content)
+                _coverage_content_payload(content, include_security_labels=include_security_labels)
                 for content in message.contents
                 if not (
                     exclude_approval_controls
@@ -1549,6 +1567,13 @@ def _message_coverage_digest(message: Message, *, exclude_approval_controls: boo
                 )
             ],
         }
+        if include_security_labels:
+            if isinstance(message, LabeledMessage):
+                payload["security_label"] = message.security_label.to_dict()
+            else:
+                label_data = message.additional_properties.get("security_label")
+                if isinstance(label_data, Mapping):
+                    payload["security_label"] = dict(cast(Mapping[str, Any], label_data))
         canonical = _strict_json_value(
             payload,
             path="history message",
@@ -1565,7 +1590,11 @@ def _message_coverage_digest(message: Message, *, exclude_approval_controls: boo
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _control_free_replay_projection(messages: Sequence[Message]) -> tuple[list[int], list[str]] | None:
+def _control_free_replay_projection(
+    messages: Sequence[Message],
+    *,
+    include_security_labels: bool = False,
+) -> tuple[list[int], list[str]] | None:
     """Return original indices and digests for non-control replay messages."""
     indices: list[int] = []
     digests: list[str] = []
@@ -1575,21 +1604,16 @@ def _control_free_replay_projection(messages: Sequence[Message]) -> tuple[list[i
             for content in message.contents
         ):
             continue
-        digest = _message_coverage_digest(message, exclude_approval_controls=True)
+        digest = _message_coverage_digest(
+            message,
+            exclude_approval_controls=True,
+            include_security_labels=include_security_labels,
+        )
         if digest is None:
             return None
         indices.append(index)
         digests.append(digest)
     return indices, digests
-
-
-def _message_has_explicit_replay_label(message: Message) -> bool:
-    """Return whether a covered message carries an explicit restrictive label."""
-    if isinstance(message, LabeledMessage):
-        return True
-    if isinstance(message.additional_properties.get("security_label"), Mapping):
-        return True
-    return any(isinstance(content.additional_properties.get("security_label"), Mapping) for content in message.contents)
 
 
 def _history_coverage_record(digests: Sequence[str]) -> dict[str, Any]:
@@ -4445,6 +4469,8 @@ class SecureAgentConfig(ContextProvider):
             )
     """
 
+    requires_loaded_context_before_invocation = True
+
     DEFAULT_SOURCE_ID = "secure_agent"
 
     def __init__(
@@ -4630,7 +4656,10 @@ class SecureAgentConfig(ContextProvider):
         """Return bounded durable coverage for the current provider histories."""
         coverage: dict[str, Any] = {}
         for source_id in sorted(history_source_ids):
-            projection = _control_free_replay_projection(history_messages.get(source_id, ()))
+            projection = _control_free_replay_projection(
+                history_messages.get(source_id, ()),
+                include_security_labels=True,
+            )
             if projection is not None and len(coverage) < _MAX_HISTORY_COVERAGE_SOURCES:
                 _, digests = projection
                 coverage[source_id] = _history_coverage_record(digests)
@@ -4648,13 +4677,17 @@ class SecureAgentConfig(ContextProvider):
             path="history reconstruction coverage",
         )
 
-    async def _update_per_service_history_coverage(
+    async def after_history_persisted(
         self,
-        history_messages: Mapping[str, Sequence[Message]],
         *,
+        agent: Any,
+        session: AgentSession,
         context: SessionContext,
+        state: dict[str, Any],
+        history_messages: Mapping[str, Sequence[Message]],
     ) -> None:
         """Extend only run-local coverage with framework-owned persisted messages."""
+        del agent, session, state
         self._history_fold_guard(context).update(
             self._history_coverage_for_message_map(history_messages, set(history_messages))
         )
@@ -4735,7 +4768,7 @@ class SecureAgentConfig(ContextProvider):
                 scope=scope,
                 approval_authority=approval_authority,
             )
-            projection = _control_free_replay_projection(messages)
+            projection = _control_free_replay_projection(messages, include_security_labels=True)
             covered_indices: set[int] = set()
             if projection is not None:
                 indices, digests = projection
@@ -4753,7 +4786,7 @@ class SecureAgentConfig(ContextProvider):
                 if is_covered and not any(
                     content.type in {"function_approval_request", "function_approval_response"}
                     for content in message.contents
-                ) and not _message_has_explicit_replay_label(message):
+                ):
                     continue
                 history_labels.append(
                     _replayed_message_label(
@@ -4799,7 +4832,7 @@ class SecureAgentConfig(ContextProvider):
             commit_coverage=commit_coverage,
         )
 
-    async def _finalize_history_coverage(
+    async def after_run_complete(
         self,
         *,
         agent: Any,
@@ -4807,32 +4840,19 @@ class SecureAgentConfig(ContextProvider):
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
-        """Authenticate the exact history snapshots persisted for the completed run."""
-        history_providers = [
-            provider
-            for provider in getattr(agent, "context_providers", ())
-            if isinstance(provider, HistoryProvider) and provider.load_messages
-        ]
-        if not history_providers:
-            self._store_history_coverage(state, {}, set())
-        else:
-            history_context = SessionContext(
-                session_id=session.session_id,
-                service_session_id=session.service_session_id,
-                input_messages=[],
-            )
-            for provider in history_providers:
-                await provider.before_run(
-                    agent=agent,
-                    session=session,
-                    context=history_context,
-                    state=session.state.setdefault(provider.source_id, {}),
-                )
+        """Authenticate exact framework-owned history persisted for the completed run."""
+        history_source_ids = self._history_source_ids(agent)
+        del session
+        raw_persisted = context.metadata.get(_PERSISTED_HISTORY_MESSAGES_METADATA_KEY)
+        if isinstance(raw_persisted, Mapping):
+            persisted = cast(Mapping[str, Sequence[Message]], raw_persisted)
             self._store_history_coverage(
                 state,
-                history_context.context_messages,
-                {provider.source_id for provider in history_providers},
+                persisted,
+                history_source_ids.intersection(persisted),
             )
+        elif not history_source_ids:
+            self._store_history_coverage(state, {}, set())
 
         replay_messages = list(context.input_messages)
         if context.response is not None:
@@ -4842,7 +4862,7 @@ class SecureAgentConfig(ContextProvider):
             replay_messages,
         )
 
-    async def _prepare_approval_history(
+    async def after_context_loaded(
         self,
         *,
         agent: Any,
