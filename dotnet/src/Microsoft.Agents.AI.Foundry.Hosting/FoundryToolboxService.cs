@@ -36,8 +36,9 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <c>{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{toolboxName}/mcp?api-version={ApiVersion}</c>.
 /// </para>
 /// <para>
-/// When <c>FOUNDRY_PROJECT_ENDPOINT</c> is absent the service starts without error and
-/// no tools are registered, keeping the container healthy per spec §2.
+/// The endpoint can also come from a configured override or, as a local-development fallback,
+/// <c>AZURE_AI_PROJECT_ENDPOINT</c>. If no endpoint is resolved, startup completes with
+/// toolbox support disabled and the toolbox health check reports <c>Healthy</c>.
 /// </para>
 /// <para>
 /// Startup eagerly connects to every name in <see cref="FoundryToolboxOptions.ToolboxNames"/>.
@@ -45,6 +46,11 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// resolved at request time through <see cref="GetToolboxToolsAsync"/>. Unknown toolboxes are
 /// rejected when <see cref="FoundryToolboxOptions.StrictMode"/> is <see langword="true"/> and
 /// lazily connected otherwise.
+/// </para>
+/// <para>
+/// Startup consent requirements and non-cancellation discovery failures do not fail the toolbox
+/// health check. They are retained for per-request resolution, so a healthy check does not guarantee
+/// that every toolbox is available. Cancellation propagates to the host instead of being deferred.
 /// </para>
 /// <para>
 /// Discovered tools with <c>_meta.tool_configuration.require_approval</c> set to <c>always</c>
@@ -89,20 +95,24 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
     public IReadOnlyList<AITool> Tools { get; private set; } = [];
 
     /// <summary>
-    /// Gets the startup status of the service. Reflects the outcome of pre-registered
-    /// toolbox connections opened in <see cref="StartAsync"/>; lazy-opens triggered by
-    /// per-request markers do not change this value.
+    /// Gets the startup status of the service. Remains <see cref="FoundryToolboxStartupStatus.Pending"/>
+    /// until <see cref="StartAsync"/> completes; per-request toolbox resolution does not change this value.
     /// </summary>
     /// <remarks>
-    /// Consumed by <see cref="FoundryToolboxHealthCheck"/> to gate the
-    /// <c>GET /readiness</c> probe so the Foundry hosted runtime does not start routing
-    /// traffic to a container whose pre-registered toolbox failed to open at startup.
+    /// The toolbox health check reports its registration's failure status while startup is pending
+    /// (<c>Unhealthy</c> by default). Normal startup completes with
+    /// <see cref="FoundryToolboxStartupStatus.Healthy"/>, <see cref="FoundryToolboxStartupStatus.NoEndpoint"/>,
+    /// <see cref="FoundryToolboxStartupStatus.ConsentRequired"/>, or <see cref="FoundryToolboxStartupStatus.Degraded"/>;
+    /// all four report <c>Healthy</c> for this check. Other readiness checks and host startup failures
+    /// can still prevent the container from serving requests.
     /// </remarks>
     public FoundryToolboxStartupStatus StartupStatus { get; private set; } = FoundryToolboxStartupStatus.Pending;
 
     /// <summary>
-    /// Gets the names of pre-registered toolboxes that failed to open during
-    /// <see cref="StartAsync"/>. Empty when startup was successful or has not run yet.
+    /// Gets the names used to report <see cref="FoundryToolboxStartupStatus.Unhealthy"/>.
+    /// The current implementation leaves this list empty: non-cancellation discovery failures
+    /// are recorded in <see cref="DeferredToolboxNames"/>, and startup cancellation propagates
+    /// to the host without adding failed names.
     /// </summary>
     public IReadOnlyList<string> FailedToolboxNames { get; private set; } = [];
 
@@ -149,7 +159,19 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
     /// </summary>
     internal Func<string, string?, CancellationToken, Task<ToolboxOpenResult>>? ToolboxOpener { get; set; }
 
-    /// <inheritdoc/>
+    /// <summary>
+    /// Attempts to connect to and enumerate each pre-registered toolbox, caching available tools
+    /// and recording consent requirements or deferred discovery failures.
+    /// </summary>
+    /// <remarks>
+    /// Non-cancellation toolbox discovery exceptions are logged and deferred for per-request retries;
+    /// they do not fail startup or the toolbox health check. An <see cref="OperationCanceledException"/>
+    /// during discovery propagates to the host and leaves <see cref="StartupStatus"/> pending.
+    /// A host startup failure does not imply that the readiness endpoint is available to report this state.
+    /// </remarks>
+    /// <param name="cancellationToken">The token used to cancel toolbox discovery during startup.</param>
+    /// <returns>A task that represents the startup operation.</returns>
+    /// <exception cref="OperationCanceledException">Toolbox discovery was canceled.</exception>
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         // Per tools-integration-spec.md §2-§3, the container derives the toolbox proxy base
