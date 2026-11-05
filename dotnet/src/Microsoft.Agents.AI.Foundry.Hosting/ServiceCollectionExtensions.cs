@@ -203,7 +203,7 @@ public static class FoundryHostingExtensions
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
-    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, <see cref="FoundryAgentSessionStore"/> uses the AgentServer SDK's local state-store fallback.</param>
+    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, the default store uses the AgentServer SDK's local state-store fallback.</param>
     /// <param name="configure">
     /// Optional callback to configure <see cref="FoundryResponsesOptions"/>, for example to allow the
     /// agent's own service to store the responses it produces, or to opt in to durable long-running

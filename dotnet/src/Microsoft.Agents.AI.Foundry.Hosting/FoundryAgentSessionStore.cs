@@ -51,7 +51,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class FoundryAgentSessionStore : AgentSessionStore
+internal sealed class FoundryAgentSessionStore : AgentSessionStore
 {
     /// <summary>
     /// The default state-store name used to hold every agent session persisted by this store.
