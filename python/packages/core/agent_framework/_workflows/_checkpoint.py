@@ -929,8 +929,15 @@ class FileCheckpointStorage:
         checkpointing does not fail unrelated recovery. Writes after validation belong
         to a subsequent snapshot. This relies on the filesystem reporting file changes
         and writers using atomic replacement, as ``save`` does.
-        Checkpoints with equal timestamps retain directory iteration order.
-        Nested directories are included, with in-tree directory aliases visited only once.
+        Discovery is scoped to the immediate storage directory, consistent with
+        :meth:`list_checkpoints` (which uses ``glob("*.json")``); a child
+        :class:`FileCheckpointStorage` in a subdirectory is not discovered. Directory
+        entries (including one named ``*.json``) are skipped without recursing into
+        them. Per-file symlink escapes are still caught by :meth:`_validate_file_path`.
+        Checkpoints with equal timestamps are resolved through the lineage chain
+        (``previous_checkpoint_id``), falling back to the greatest ``checkpoint_id``
+        among unsuperseded candidates, so the choice is stable and does not depend on
+        directory iteration order.
         Reading and decoding run in a worker thread so decoding does not block the event
         loop.
 
@@ -956,6 +963,8 @@ class FileCheckpointStorage:
             directories[root] = _version(root.stat())
             with os.scandir(root) as entries:
                 for entry in entries:
+                    if entry.is_dir():
+                        continue
                     if os.path.normcase(entry.name).endswith(".json"):
                         paths.append(Path(entry.path))
             return paths, directories
@@ -1052,15 +1061,6 @@ class FileCheckpointStorage:
                     raise _CheckpointScanInvalidated(
                         f"Checkpoint {file_path} disappeared during the scan; retry get_latest"
                     ) from e
-                except (json.JSONDecodeError, UnicodeDecodeError) as ex:
-                    logger.warning(
-                        "Quarantining checkpoint file %s that is not valid JSON while "
-                        "finding the latest checkpoint for workflow '%s': %s",
-                        file_path,
-                        workflow_name,
-                        ex,
-                    )
-                    continue
                 except WorkflowCheckpointException:
                     raise
                 except Exception as e:

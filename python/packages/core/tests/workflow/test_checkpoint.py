@@ -3925,6 +3925,23 @@ async def test_file_checkpoint_storage_get_latest_does_not_discover_child_storag
     assert latest.state == {"stage": "parent"}
 
 
+async def test_file_checkpoint_storage_get_latest_skips_child_storage_directory_named_like_json(
+    tmp_path: Path,
+) -> None:
+    """A child storage directory named '*.json' must not block parent recovery."""
+
+    parent_storage = FileCheckpointStorage(tmp_path)
+    parent_id = await parent_storage.save(_stamped_checkpoint({"stage": "parent"}, "2026-01-01T10:00:00+00:00"))
+
+    child_storage = FileCheckpointStorage(tmp_path / "archive.json")
+    await child_storage.save(_stamped_checkpoint({"stage": "child"}, "2026-01-01T11:00:00+00:00"))
+
+    latest = await parent_storage.get_latest(workflow_name="recovery-workflow")
+    assert latest is not None
+    assert latest.checkpoint_id == parent_id
+    assert latest.state == {"stage": "parent"}
+
+
 async def test_file_checkpoint_storage_get_latest_quarantines_duplicate_workflow_name_keys(
     tmp_path: Path,
 ) -> None:
