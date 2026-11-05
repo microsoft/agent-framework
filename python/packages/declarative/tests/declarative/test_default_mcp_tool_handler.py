@@ -259,11 +259,11 @@ async def test_constructor_passes_invocation_and_discovery_options(mcp_tool_cons
         "url": invocation.server_url,
         "load_prompts": False,
         "http_client": None,
-        "headers": {"X-Test": "value"},
+        "static_headers": {"X-Test": "value"},
         "max_discovery_pages": 12,
         "max_discovery_items": 345,
     }
-    assert mcp_tool_constructor.call_args.kwargs["headers"] is not invocation.headers
+    assert mcp_tool_constructor.call_args.kwargs["static_headers"] is not invocation.headers
 
 
 @pytest.mark.parametrize("option", ["max_discovery_pages", "max_discovery_items"])
