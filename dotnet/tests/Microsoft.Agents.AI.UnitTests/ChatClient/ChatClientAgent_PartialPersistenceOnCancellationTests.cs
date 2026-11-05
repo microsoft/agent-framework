@@ -162,6 +162,39 @@ public class ChatClientAgent_PartialPersistenceOnCancellationTests
     }
 
     [Fact]
+    public async Task RunStreamingAsync_FlagEnabled_CancelledAfterDeclarationOnlyFunctionCall_PersistsCallAsCompletedRunAsync()
+    {
+        // Arrange
+        using CancellationTokenSource cts = new();
+        var declaration = AIFunctionFactory.CreateDeclaration("GetLocation", "Frontend tool", AIFunctionFactory.Create(() => "Rome").JsonSchema);
+        var chatClient = new ScriptedStreamingChatClient(
+            cts,
+            new StreamingCall([new ChatResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("call1", "GetLocation")]) { MessageId = "m1" }]));
+        ChatClientAgent agent = new(chatClient, options: new() { ChatOptions = new() { Tools = [declaration] }, PersistPartialMessagesOnCancellation = true });
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        // FunctionInvokingChatClient returns the call to the caller and ends the loop without observing the token,
+        // so the run completes even though the caller cancels as soon as it receives the call.
+        await foreach (var update in agent.RunStreamingAsync([new(ChatRole.User, "Hello")], session, cancellationToken: cts.Token))
+        {
+            if (update.Contents.OfType<FunctionCallContent>().Any())
+            {
+                cts.Cancel();
+            }
+        }
+
+        // Assert
+        Assert.True(cts.IsCancellationRequested);
+        var history = GetHistory(agent, session);
+        Assert.Equal(2, history.Count);
+        Assert.Equal(ChatRole.User, history[0].Role);
+        var functionCall = Assert.IsType<FunctionCallContent>(Assert.Single(history[1].Contents));
+        Assert.Equal("call1", functionCall.CallId);
+        Assert.False(IsMarkedAsPartial(history[1]));
+    }
+
+    [Fact]
     public void CreatePartialResponseMessages_RemovesOnlyUnsettledToolCalls()
     {
         // Arrange
