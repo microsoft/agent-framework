@@ -40,8 +40,19 @@ otherwise see [Extensibility](extensibility.md#custom-providers).
 - Durable agents and workflows run on Azure Functions and Durable Task; see
   [Hosting and deployment](hosting-and-deployment.md).
 
+LocalCodeAct and Hyperlight redact host tool exception diagnostics by default. Enable
+`IncludeDetailedErrors` on their provider options only for a trusted channel; full exceptions include
+stack traces and inner exceptions. This is separate from the
+outer `FunctionInvokingChatClient` error policy and sensitive-data logging; outer redaction cannot repair
+diagnostics already caught and returned by generated code.
+
 For AG-UI, remember that thread and run IDs are correlation identifiers, not authentication boundaries. The
 application owns authorization, durable snapshots, scaling, and rendering policy.
+
+For Purview, all prompt content uses the `UploadText` activity and all response content uses `DownloadText`,
+including binary content. The middleware cannot reliably distinguish file attachments from inline binary
+content. Configure DLP policies for these text activities; `UploadFile`-only or `DownloadFile`-only rules do
+not block binary content through this integration.
 
 ## Selection checklist
 

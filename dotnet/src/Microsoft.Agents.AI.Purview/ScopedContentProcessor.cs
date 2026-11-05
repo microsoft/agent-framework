@@ -148,24 +148,21 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             value.Substring(authorityEnd));
     }
 
-    private static bool TryGetUserIdFromPayload(IEnumerable<ChatMessage> messages, out string? userId)
+    private static bool TryGetUserIdFromMessage(ChatMessage message, out string? userId)
     {
         userId = null;
 
-        foreach (ChatMessage message in messages)
+        if (message.AdditionalProperties != null &&
+            message.AdditionalProperties.TryGetValue(Constants.UserId, out string? potentialUserId) &&
+            Guid.TryParse(potentialUserId, out Guid _))
         {
-            if (message.AdditionalProperties != null &&
-                message.AdditionalProperties.TryGetValue(Constants.UserId, out string? potentialUserId) &&
-                Guid.TryParse(potentialUserId, out Guid _))
-            {
-                userId = potentialUserId;
-                return true;
-            }
-            else if (Guid.TryParse(message.AuthorName, out Guid _))
-            {
-                userId = message.AuthorName;
-                return true;
-            }
+            userId = potentialUserId;
+            return true;
+        }
+        else if (Guid.TryParse(message.AuthorName, out Guid _))
+        {
+            userId = message.AuthorName;
+            return true;
         }
 
         return false;
@@ -184,21 +181,43 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     private async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, string? sessionId, Activity activity, PurviewSettings settings, string? userId, CancellationToken cancellationToken)
     {
         List<ProcessContentRequest> pcRequests = [];
+        List<ChatMessage> messageList = [.. messages];
         TokenInfo? tokenInfo = await this._purviewClient.GetUserInfoFromTokenAsync(cancellationToken, settings.TenantId).ConfigureAwait(false);
         string tenantId = tokenInfo?.TenantId ?? settings.TenantId ?? throw new PurviewRequestException("No tenant id provided or inferred for Purview request. Please provide a tenant id in PurviewSettings or configure the TokenCredential to authenticate to a tenant.");
-        string? resolvedUserId = !string.IsNullOrEmpty(tokenInfo?.UserId) ? tokenInfo.UserId : userId;
-        if (string.IsNullOrEmpty(resolvedUserId) && TryGetUserIdFromPayload(messages, out string? payloadUserId))
+        string? authenticatedUserId = !string.IsNullOrEmpty(tokenInfo?.UserId) ? tokenInfo.UserId : userId;
+        string? inheritedUserId = authenticatedUserId;
+
+        // Use the first explicit identity for any leading system or generated messages that have no user id.
+        if (string.IsNullOrEmpty(inheritedUserId))
         {
-            resolvedUserId = payloadUserId;
+            foreach (ChatMessage message in messageList)
+            {
+                if (TryGetUserIdFromMessage(message, out inheritedUserId))
+                {
+                    break;
+                }
+            }
         }
 
-        foreach (ChatMessage message in messages)
+        foreach (ChatMessage message in messageList)
         {
+            string? resolvedUserId = authenticatedUserId;
+            if (string.IsNullOrEmpty(resolvedUserId))
+            {
+                if (TryGetUserIdFromMessage(message, out string? messageUserId))
+                {
+                    inheritedUserId = messageUserId;
+                }
+
+                // Generated assistant and tool messages normally have no user id. Attribute them to
+                // the latest explicitly identified user without overriding later explicit identities.
+                resolvedUserId = inheritedUserId;
+            }
+
             string messageId = message.MessageId ?? Guid.NewGuid().ToString();
             string correlationId = (sessionId ?? Guid.NewGuid().ToString()) + "@AF";
             long baseSequenceNumber = DateTime.UtcNow.Ticks;
             List<ContentBase> mappedContents = MapMessageContents(message);
-            ActivityMetadata activityMetadata = new(activity);
             PolicyLocation policyLocation;
 
             if (settings.PurviewAppLocation != null)
@@ -244,6 +263,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             for (int entryIndex = 0; entryIndex < mappedContents.Count; entryIndex++)
             {
                 string identifier = entryIndex == 0 ? messageId : $"{messageId}-{entryIndex}";
+                ActivityMetadata activityMetadata = new(activity);
                 ProcessConversationMetadata contentEntry = new(mappedContents[entryIndex], identifier, false, $"Agent Framework Message {messageId}", correlationId)
                 {
                     SequenceNumber = baseSequenceNumber + entryIndex,

@@ -114,6 +114,16 @@ from ._run_common import (
     _resolve_ui_payload,  # type: ignore
     _track_tool_call_segment,  # type: ignore
 )
+from ._session_ownership import (
+    SCOPE_CONFLICT_CODE,
+    SCOPE_CONFLICT_LOG_MESSAGE,
+    SCOPE_CONFLICT_MESSAGE,
+    WORKFLOW_AGENT_TOOL_CODE,
+    WORKFLOW_AGENT_TOOL_MESSAGE,
+    claim_workflow_agent,
+    workflow_agent_tool_error,
+    workflow_agent_tools,
+)
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
     _SNAPSHOT_SCOPE_INPUT_KEY,
@@ -3027,6 +3037,19 @@ async def _run_agent_stream(
     ):
         async for event in snapshot_session.hydrate_events(run_id=run_id):
             yield event
+        return
+
+    # A replay above runs no agent, so only a run that reaches the workflow decides who owns its executors.
+    unsupported_tools = workflow_agent_tools(agent)
+    if unsupported_tools:
+        logger.error(workflow_agent_tool_error(agent.name or agent.id, unsupported_tools))
+        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield RunErrorEvent(message=WORKFLOW_AGENT_TOOL_MESSAGE, code=WORKFLOW_AGENT_TOOL_CODE)
+        return
+    if not claim_workflow_agent(agent, snapshot_scope):
+        logger.error(SCOPE_CONFLICT_LOG_MESSAGE, agent.name or agent.id)
+        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield RunErrorEvent(message=SCOPE_CONFLICT_MESSAGE, code=SCOPE_CONFLICT_CODE)
         return
 
     snapshot_seed_messages: list[dict[str, Any]] | None = None

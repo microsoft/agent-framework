@@ -43,6 +43,7 @@ from agent_framework import (
     normalize_messages,
 )
 from agent_framework._mcp import MCPTool
+from agent_framework._middleware import categorize_middleware
 from agent_framework._settings import load_settings
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import FunctionTool, ToolTypes
@@ -51,7 +52,7 @@ from agent_framework._types import (
     _get_data_bytes_as_str,  # pyright: ignore[reportPrivateUsage]
     normalize_tools,
 )
-from agent_framework.exceptions import AgentException, ContentError
+from agent_framework.exceptions import AgentException, ContentError, MiddlewareException
 from agent_framework.observability import AgentTelemetryLayer
 
 from ._feature_usage import FeatureIndex
@@ -891,6 +892,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         Raises:
             AgentException: If the request fails.
+            MiddlewareException: If a context provider contributes unsupported function middleware.
         """
         if middleware:
             logger.warning(
@@ -1098,6 +1100,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         Raises:
             AgentException: If the request fails.
+            MiddlewareException: If a context provider contributes unsupported function middleware.
         """
         if not self._started:
             await self.start()
@@ -1264,6 +1267,10 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         Returns:
             The SessionContext with provider context populated.
+
+        Raises:
+            MiddlewareException: If a context provider contributes function middleware,
+                which cannot be applied to the SDK-owned tool loop.
         """
         session_context = SessionContext(
             session_id=session.session_id,
@@ -1280,6 +1287,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 session=session,
                 context=session_context,
                 state=session.state.setdefault(provider.source_id, {}),
+            )
+
+        if categorize_middleware(session_context.get_middleware())["function"]:
+            raise MiddlewareException(
+                "GitHubCopilotAgent does not support function middleware contributed by context providers. "
+                "Use Agent with a chat client when function middleware is required."
             )
 
         return session_context
@@ -1731,6 +1744,11 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         merged with the agent's tools and converted to SDK tools, and approval callbacks
         are turned into ``hooks``.
 
+        Forwarding options alone is not an authorization or revocation guarantee for
+        capabilities already resident in a resumed SDK/CLI service session. Enforce
+        authorization at the MCP service/tool boundary and use a fresh service session
+        when narrowing configured capabilities.
+
         Args:
             streaming: Whether to enable streaming for the session.
             runtime_options: Runtime options that take precedence over default_options.
@@ -1869,10 +1887,10 @@ class GitHubCopilotAgent(  # type: ignore[misc]
     RawGitHubCopilotAgent[OptionsT],
     Generic[OptionsT],
 ):
-    """A GitHub Copilot Agent with full middleware and telemetry support.
+    """A GitHub Copilot Agent with agent middleware and telemetry support.
 
     This is the recommended agent class for most use cases. It includes
-    middleware support and OpenTelemetry-based telemetry for observability,
+    agent middleware and OpenTelemetry-based telemetry for observability,
     with middleware running outside the telemetry span so middleware execution
     time is not captured in traces. For a minimal implementation without these
     layers, use :class:`RawGitHubCopilotAgent`.
@@ -1922,7 +1940,7 @@ class GitHubCopilotAgent(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize a GitHub Copilot Agent with full middleware and telemetry.
+        """Initialize a GitHub Copilot Agent with agent middleware and telemetry.
 
         Args:
             instructions: System message for the agent.

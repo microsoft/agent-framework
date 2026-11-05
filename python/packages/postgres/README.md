@@ -39,7 +39,7 @@ The `schema` argument defaults to `public`.
 A connector-created pool is closed by `close()` or an async context manager.
 Alternatively, inject an open Psycopg `AsyncConnection` or `AsyncConnectionPool`
 using `client`; it remains caller-owned and bypasses settings loading.
-Injected clients cannot be combined with connection-string or `.env` options.
+Connection-string and `.env` options are ignored when a client is injected.
 Collections created by a store borrow its pool, so keep the store open while
 using them.
 

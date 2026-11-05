@@ -319,6 +319,60 @@ def test_mcp_transport_subclasses_accept_tool_name_prefix() -> None:
     )
 
 
+def test_mcp_transport_subclasses_default_discovery_page_limit() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        tools = [
+            MCPStdioTool(name="stdio", command="python"),
+            MCPStreamableHTTPTool(name="http", url="https://example.com/mcp"),
+            MCPWebsocketTool(name="websocket", url="wss://example.com/mcp"),  # ty: ignore[deprecated]
+        ]
+
+    assert all(tool.max_discovery_pages == 100 for tool in tools)
+    assert all(tool.max_discovery_items == 1_000 for tool in tools)
+
+
+def test_mcp_transport_subclasses_forward_discovery_page_limit() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        tools = [
+            MCPStdioTool(name="stdio", command="python", max_discovery_pages=101, max_discovery_items=1_001),
+            MCPStreamableHTTPTool(
+                name="http",
+                url="https://example.com/mcp",
+                max_discovery_pages=102,
+                max_discovery_items=1_002,
+            ),
+            MCPWebsocketTool(  # ty: ignore[deprecated]
+                name="websocket",
+                url="wss://example.com/mcp",
+                max_discovery_pages=103,
+                max_discovery_items=1_003,
+            ),
+        ]
+
+    assert [tool.max_discovery_pages for tool in tools] == [101, 102, 103]
+    assert [tool.max_discovery_items for tool in tools] == [1_001, 1_002, 1_003]
+
+
+@pytest.mark.parametrize("max_discovery_pages", [0, -1])
+def test_mcp_tool_rejects_non_positive_discovery_page_limit(max_discovery_pages: int) -> None:
+    with pytest.raises(ValueError, match="max_discovery_pages must be positive or None"):
+        MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="test_tool",
+            max_discovery_pages=max_discovery_pages,
+        )
+
+
+@pytest.mark.parametrize("max_discovery_items", [0, -1])
+def test_mcp_tool_rejects_non_positive_discovery_item_limit(max_discovery_items: int) -> None:
+    with pytest.raises(ValueError, match="max_discovery_items must be positive or None"):
+        MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="test_tool",
+            max_discovery_items=max_discovery_items,
+        )
+
+
 @pytest.mark.parametrize("configured_name", ["search_docs", "docs_search_docs"])
 async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration(configured_name: str):
     """Prefixed MCP tool names should still honor unprefixed allow/approval configuration."""
@@ -511,9 +565,12 @@ async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empt
     tool = MCPTool(name="docs", tool_name_prefix="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     mock_session = AsyncMock()
     tool.session = mock_session
+    initial_annotations = types.ToolAnnotations(read_only_hint=True, open_world_hint=False)
+    refreshed_annotations = types.ToolAnnotations(read_only_hint=True, open_world_hint=True)
     keep = types.Tool(
         name="keep",
         input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+        annotations=initial_annotations,
         _meta={"version": 1},
     )
     removed = types.Tool(
@@ -536,6 +593,7 @@ async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empt
     original_functions = list(original_list)
     original_meta = dict(tool._tool_call_meta_by_name)
     keep.meta = {"version": 2}
+    keep.annotations = refreshed_annotations
 
     async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
         assert tool._functions == original_functions
@@ -559,6 +617,39 @@ async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empt
         assert kept_function.result_parser is parser
     assert tool._tool_call_meta_by_name == ({} if empty_snapshot else {"keep": {"version": 2}})
     assert tool._tool_param_names_by_name == ({} if empty_snapshot else {"keep": {"query"}})
+    assert tool._tool_annotations_by_name == ({} if empty_snapshot else {"keep": refreshed_annotations})
+
+
+async def test_failed_tool_refresh_preserves_previous_annotation_snapshot() -> None:
+    tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    original_annotations = types.ToolAnnotations(read_only_hint=True, open_world_hint=False)
+    replacement_annotations = types.ToolAnnotations(read_only_hint=True, open_world_hint=True)
+    original = types.Tool(
+        name="search",
+        input_schema={"type": "object", "properties": {}},
+        annotations=original_annotations,
+    )
+    mock_session.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[original]))
+    await tool.load_tools()
+
+    replacement = types.Tool(
+        name="search",
+        input_schema={"type": "object", "properties": {}},
+        annotations=replacement_annotations,
+    )
+    mock_session.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(tools=[replacement], next_cursor="second"),
+            RuntimeError("refresh failed"),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="refresh failed"):
+        await tool.load_tools()
+
+    assert tool._tool_annotations_by_name == {"search": original_annotations}
 
 
 async def test_load_tools_skips_only_task_required_tools(caplog: pytest.LogCaptureFixture) -> None:
@@ -5721,6 +5812,39 @@ async def test_connect_preserves_request_timeout_over_24_hours() -> None:
             assert mock_client_class.call_args.kwargs["read_timeout_seconds"] == 90_000
 
 
+async def test_connect_uses_default_read_timeout_when_request_timeout_is_omitted() -> None:
+    from agent_framework._mcp import _MCP_DEFAULT_READ_TIMEOUT_SECONDS
+
+    tool = MCPStdioTool(
+        name="test",
+        command="test-command",
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    with patch("mcp.Client") as mock_client_class:
+        mock_client_class.return_value = _mock_sdk_client(protocol_version="2026-07-28")
+
+        async with tool:
+            assert mock_client_class.call_args.kwargs["read_timeout_seconds"] == _MCP_DEFAULT_READ_TIMEOUT_SECONDS
+
+
+async def test_connect_allows_disabling_request_timeout() -> None:
+    tool = MCPStdioTool(
+        name="test",
+        command="test-command",
+        load_tools=False,
+        load_prompts=False,
+        request_timeout=None,
+    )
+
+    with patch("mcp.Client") as mock_client_class:
+        mock_client_class.return_value = _mock_sdk_client(protocol_version="2026-07-28")
+
+        async with tool:
+            assert mock_client_class.call_args.kwargs["read_timeout_seconds"] is None
+
+
 async def test_connect_revalidates_request_timeout_cleared_after_construction() -> None:
     tool = MCPStdioTool(
         name="test",
@@ -6587,7 +6711,7 @@ def test_mcp_stdio_tool_get_mcp_client_with_env_and_kwargs():
 
 async def test_mcp_streamable_http_tool_get_mcp_client_all_params():
     """Test MCPStreamableHTTPTool.get_mcp_client() with all parameters."""
-    from agent_framework._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT
+    from agent_framework._mcp import _MCP_DEFAULT_READ_TIMEOUT_SECONDS, MCP_DEFAULT_SSE_READ_TIMEOUT
 
     tool = MCPStreamableHTTPTool(
         name="test",
@@ -6601,7 +6725,7 @@ async def test_mcp_streamable_http_tool_get_mcp_client_all_params():
             http_client = tool._httpx_client
             assert http_client is not None
             assert http_client.follow_redirects is True
-            assert http_client.timeout.connect == MCP_DEFAULT_TIMEOUT
+            assert http_client.timeout.connect == _MCP_DEFAULT_READ_TIMEOUT_SECONDS
             assert http_client.timeout.read == MCP_DEFAULT_SSE_READ_TIMEOUT
             assert not http_client.event_hooks["request"]
             assert mock_http_client.call_args.kwargs["http_client"]._client is http_client
@@ -6868,6 +6992,150 @@ async def test_load_tools_with_pagination():
     assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3", "tool_4"]
 
 
+async def test_load_tools_rejects_catalog_exceeding_page_limit() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_pages=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        cursor = params.cursor if params is not None else None
+        if cursor is None:
+            return types.ListToolsResult(
+                tools=[types.Tool(name="first", input_schema={"type": "object", "properties": {}})],
+                next_cursor="second",
+            )
+        if cursor == "second":
+            return types.ListToolsResult(
+                tools=[types.Tool(name="second", input_schema={"type": "object", "properties": {}})],
+                next_cursor="third",
+            )
+        raise AssertionError(f"Unexpected tools/list cursor: {cursor!r}")
+
+    mock_session.list_tools = AsyncMock(side_effect=list_tools)
+
+    with pytest.raises(ToolExecutionException, match="max_discovery_pages=2"):
+        await tool.load_tools()
+
+    assert mock_session.list_tools.await_count == 2
+    assert tool.functions == []
+
+
+async def test_load_tools_accepts_catalog_completing_at_page_limit() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_pages=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(
+                tools=[types.Tool(name="first", input_schema={"type": "object", "properties": {}})],
+                next_cursor="second",
+            ),
+            types.ListToolsResult(tools=[types.Tool(name="second", input_schema={"type": "object", "properties": {}})]),
+        ]
+    )
+
+    await tool.load_tools()
+
+    assert mock_session.list_tools.await_count == 2
+    assert [function.name for function in tool.functions] == ["first", "second"]
+
+
+async def test_load_tools_allows_unbounded_pagination_when_limit_is_none() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_pages=None,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    pages_served = 0
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        nonlocal pages_served
+        if pages_served == 0:
+            assert params is None
+        else:
+            assert params is not None
+            assert params.cursor == str(pages_served)
+
+        pages_served += 1
+        next_cursor = str(pages_served) if pages_served < 101 else None
+        return types.ListToolsResult(tools=[], next_cursor=next_cursor)
+
+    mock_session.list_tools = AsyncMock(side_effect=list_tools)
+
+    await tool.load_tools()
+
+    assert pages_served == 101
+    assert mock_session.list_tools.await_count == 101
+
+
+@pytest.mark.parametrize("catalog_kind", ["tools", "prompts"])
+async def test_catalog_discovery_accepts_items_at_limit(catalog_kind: str) -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_items=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    if catalog_kind == "tools":
+        mock_session.list_tools = AsyncMock(
+            return_value=types.ListToolsResult(
+                tools=[
+                    types.Tool(name="first", input_schema={"type": "object", "properties": {}}),
+                    types.Tool(name="second", input_schema={"type": "object", "properties": {}}),
+                ]
+            )
+        )
+        await tool.load_tools()
+    else:
+        mock_session.list_prompts = AsyncMock(
+            return_value=types.ListPromptsResult(prompts=[types.Prompt(name="first"), types.Prompt(name="second")])
+        )
+        await tool.load_prompts()
+
+    assert [function.name for function in tool.functions] == ["first", "second"]
+
+
+@pytest.mark.parametrize("catalog_kind", ["tools", "prompts"])
+async def test_catalog_discovery_rejects_items_exceeding_limit(catalog_kind: str) -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_items=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    if catalog_kind == "tools":
+        mock_session.list_tools = AsyncMock(
+            return_value=types.ListToolsResult(
+                tools=[
+                    types.Tool(name=name, input_schema={"type": "object", "properties": {}})
+                    for name in ("first", "second", "third")
+                ]
+            )
+        )
+        load_catalog = tool.load_tools
+    else:
+        mock_session.list_prompts = AsyncMock(
+            return_value=types.ListPromptsResult(
+                prompts=[types.Prompt(name=name) for name in ("first", "second", "third")]
+            )
+        )
+        load_catalog = tool.load_prompts
+
+    with pytest.raises(ToolExecutionException, match="max_discovery_items=2"):
+        await load_catalog()
+
+    assert tool.functions == []
+
+
 async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
     """Test that load_tools normalizes inputSchema for zero-argument MCP tools.
 
@@ -7019,6 +7287,88 @@ async def test_load_prompts_with_pagination():
     assert mock_session.list_prompts.call_count == 2
     assert len(tool._functions) == 3
     assert [f.name for f in tool._functions] == ["prompt_1", "prompt_2", "prompt_3"]
+
+
+async def test_load_prompts_rejects_catalog_exceeding_page_limit() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_pages=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    async def list_prompts(params: types.PaginatedRequestParams | None = None) -> types.ListPromptsResult:
+        cursor = params.cursor if params is not None else None
+        if cursor is None:
+            return types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="second")
+        if cursor == "second":
+            return types.ListPromptsResult(prompts=[types.Prompt(name="second")], next_cursor="third")
+        raise AssertionError(f"Unexpected prompts/list cursor: {cursor!r}")
+
+    mock_session.list_prompts = AsyncMock(side_effect=list_prompts)
+
+    with pytest.raises(ToolExecutionException, match="max_discovery_pages=2"):
+        await tool.load_prompts()
+
+    assert mock_session.list_prompts.await_count == 2
+    assert tool.functions == []
+
+
+async def test_load_prompts_accepts_catalog_completing_at_page_limit() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_pages=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_prompts = AsyncMock(
+        side_effect=[
+            types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="second"),
+            types.ListPromptsResult(prompts=[types.Prompt(name="second")]),
+        ]
+    )
+
+    await tool.load_prompts()
+
+    assert mock_session.list_prompts.await_count == 2
+    assert [function.name for function in tool.functions] == ["first", "second"]
+
+
+@pytest.mark.parametrize("catalog_kind", ["tools", "prompts"])
+async def test_catalog_discovery_follows_empty_string_cursor(catalog_kind: str) -> None:
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    if catalog_kind == "tools":
+
+        async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+            if params is None:
+                return types.ListToolsResult(
+                    tools=[types.Tool(name="first", input_schema={"type": "object", "properties": {}})],
+                    next_cursor="",
+                )
+            assert params.cursor == ""
+            return types.ListToolsResult(
+                tools=[types.Tool(name="second", input_schema={"type": "object", "properties": {}})]
+            )
+
+        mock_session.list_tools = AsyncMock(side_effect=list_tools)
+        await tool.load_tools()
+        assert mock_session.list_tools.await_count == 2
+    else:
+
+        async def list_prompts(params: types.PaginatedRequestParams | None = None) -> types.ListPromptsResult:
+            if params is None:
+                return types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="")
+            assert params.cursor == ""
+            return types.ListPromptsResult(prompts=[types.Prompt(name="second")])
+
+        mock_session.list_prompts = AsyncMock(side_effect=list_prompts)
+        await tool.load_prompts()
+        assert mock_session.list_prompts.await_count == 2
+
+    assert [function.name for function in tool.functions] == ["first", "second"]
 
 
 async def test_load_tools_pagination_with_duplicates():
@@ -8580,7 +8930,7 @@ def test_mcp_streamable_http_rejects_header_provider_with_supplied_client() -> N
 @pytest.mark.parametrize(
     ("option_name", "option_value"),
     [
-        ("request_timeout", 30),
+        ("request_timeout", 31),
         ("terminate_on_close", False),
         ("http_client", Mock(spec=AsyncClient)),
         ("static_headers", {}),
@@ -8609,7 +8959,7 @@ def test_mcp_streamable_http_lists_all_framework_owned_http_options_with_supplie
         MCPStreamableHTTPTool(
             name="test",
             mcp_client=Mock(),
-            request_timeout=30,
+            request_timeout=31,
             terminate_on_close=False,
             http_client=Mock(spec=AsyncClient),
             static_headers={},
@@ -8677,7 +9027,7 @@ def test_mcp_streamable_http_get_mcp_client_requires_framework_owned_url() -> No
 @pytest.mark.parametrize(
     ("option_name", "option_value"),
     [
-        ("request_timeout", 30),
+        ("request_timeout", 31),
         ("args", []),
         ("env", {}),
         ("encoding", ""),
@@ -8709,7 +9059,7 @@ def test_mcp_stdio_lists_all_framework_owned_options_with_supplied_client() -> N
         MCPStdioTool(
             name="test",
             mcp_client=Mock(),
-            request_timeout=30,
+            request_timeout=31,
             args=[],
             env={},
             encoding="",
@@ -9274,6 +9624,78 @@ async def test_load_tools_reconnects_on_closed_resource_when_ping_is_unavailable
     second_session.list_tools.assert_awaited_once()
 
 
+async def test_load_tools_retries_continuation_page_after_closed_resource() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool._ping_available = False
+
+    first_page = types.ListToolsResult(
+        tools=[types.Tool(name="first", input_schema={"type": "object", "properties": {}})],
+        next_cursor="second",
+    )
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        if params is None:
+            return first_page
+        assert params.cursor == "second"
+        raise ClosedResourceError
+
+    first_session = Mock()
+    first_session.list_tools = AsyncMock(side_effect=list_tools)
+    _set_framework_owned_session(tool, first_session)
+
+    second_page = types.ListToolsResult(
+        tools=[types.Tool(name="second", input_schema={"type": "object", "properties": {}})]
+    )
+    second_session = Mock()
+    second_session.list_tools = AsyncMock(return_value=second_page)
+
+    async def reconnect() -> None:
+        tool.session = second_session
+        tool._supports_tools = True
+
+    with patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect:
+        await tool.load_tools()
+
+    assert [function.name for function in tool.functions] == ["first", "second"]
+    assert first_session.list_tools.await_count == 2
+    mock_reconnect.assert_awaited_once_with()
+    continuation_call = second_session.list_tools.await_args
+    assert continuation_call is not None
+    continuation_params = continuation_call.kwargs["params"]
+    assert continuation_params.cursor == "second"
+
+
+async def test_load_tools_fails_after_closed_resource_retry_is_exhausted() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool._ping_available = False
+
+    first_session = Mock()
+    first_session.list_tools = AsyncMock(side_effect=ClosedResourceError())
+    _set_framework_owned_session(tool, first_session)
+
+    second_session = Mock()
+    second_session.list_tools = AsyncMock(side_effect=ClosedResourceError())
+
+    async def reconnect() -> None:
+        tool.session = second_session
+        tool._supports_tools = True
+
+    with (
+        patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect,
+        pytest.raises(ToolExecutionException, match="Failed to load tools - connection lost"),
+    ):
+        await tool.load_tools()
+
+    first_session.list_tools.assert_awaited_once()
+    mock_reconnect.assert_awaited_once_with()
+    second_session.list_tools.assert_awaited_once()
+    assert tool.functions == []
+
+
 async def test_load_prompts_reconnects_on_closed_resource_when_ping_is_unavailable() -> None:
     from anyio import ClosedResourceError
 
@@ -9301,6 +9723,72 @@ async def test_load_prompts_reconnects_on_closed_resource_when_ping_is_unavailab
     first_session.list_prompts.assert_awaited_once()
     mock_reconnect.assert_awaited_once_with()
     second_session.list_prompts.assert_awaited_once()
+
+
+async def test_load_prompts_retries_continuation_page_after_closed_resource() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool._ping_available = False
+
+    first_page = types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="second")
+
+    async def list_prompts(params: types.PaginatedRequestParams | None = None) -> types.ListPromptsResult:
+        if params is None:
+            return first_page
+        assert params.cursor == "second"
+        raise ClosedResourceError
+
+    first_session = Mock()
+    first_session.list_prompts = AsyncMock(side_effect=list_prompts)
+    _set_framework_owned_session(tool, first_session)
+
+    second_session = Mock()
+    second_session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[types.Prompt(name="second")]))
+
+    async def reconnect() -> None:
+        tool.session = second_session
+        tool._supports_prompts = True
+
+    with patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect:
+        await tool.load_prompts()
+
+    assert [function.name for function in tool.functions] == ["first", "second"]
+    assert first_session.list_prompts.await_count == 2
+    mock_reconnect.assert_awaited_once_with()
+    continuation_call = second_session.list_prompts.await_args
+    assert continuation_call is not None
+    continuation_params = continuation_call.kwargs["params"]
+    assert continuation_params.cursor == "second"
+
+
+async def test_load_prompts_fails_after_closed_resource_retry_is_exhausted() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool._ping_available = False
+
+    first_session = Mock()
+    first_session.list_prompts = AsyncMock(side_effect=ClosedResourceError())
+    _set_framework_owned_session(tool, first_session)
+
+    second_session = Mock()
+    second_session.list_prompts = AsyncMock(side_effect=ClosedResourceError())
+
+    async def reconnect() -> None:
+        tool.session = second_session
+        tool._supports_prompts = True
+
+    with (
+        patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect,
+        pytest.raises(ToolExecutionException, match="Failed to load prompts - connection lost"),
+    ):
+        await tool.load_prompts()
+
+    first_session.list_prompts.assert_awaited_once()
+    mock_reconnect.assert_awaited_once_with()
+    second_session.list_prompts.assert_awaited_once()
+    assert tool.functions == []
 
 
 async def test_mcp_tool_filters_framework_kwargs():
@@ -9918,7 +10406,11 @@ async def test_mcp_streamable_http_tool_without_header_provider():
 
 async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
     """Test that the httpx event hook injects headers from the contextvar."""
-    from agent_framework._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT, _mcp_call_headers
+    from agent_framework._mcp import (
+        _MCP_DEFAULT_READ_TIMEOUT_SECONDS,
+        MCP_DEFAULT_SSE_READ_TIMEOUT,
+        _mcp_call_headers,
+    )
 
     tool = MCPStreamableHTTPTool(
         name="test",
@@ -9934,7 +10426,7 @@ async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
             # The tool should have created an httpx client with the event hook
             assert tool._httpx_client is not None
             assert tool._httpx_client.follow_redirects is True
-            assert tool._httpx_client.timeout.connect == MCP_DEFAULT_TIMEOUT
+            assert tool._httpx_client.timeout.connect == _MCP_DEFAULT_READ_TIMEOUT_SECONDS
             assert tool._httpx_client.timeout.read == MCP_DEFAULT_SSE_READ_TIMEOUT
             hooks = tool._httpx_client.event_hooks.get("request", [])
             assert len(hooks) == 1, "Expected one request event hook"

@@ -1,9 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
-using System.Text.Json;
 using OpenTelemetry;
 
 namespace Microsoft.Agents.AI.Workflows.Observability;
@@ -146,9 +143,8 @@ internal sealed class WorkflowTelemetryContext
     /// <param name="executorId">The executor identifier.</param>
     /// <param name="executorType">The executor type name.</param>
     /// <param name="messageType">The message type name.</param>
-    /// <param name="message">The input message. Logged only when <see cref="WorkflowTelemetryOptions.EnableSensitiveData"/> is true.</param>
     /// <returns>An activity if executor process telemetry is enabled, otherwise null.</returns>
-    public Activity? StartExecutorProcessActivity(string executorId, string? executorType, string messageType, object? message)
+    public Activity? StartExecutorProcessActivity(string executorId, string? executorType, string messageType)
     {
         if (!this.IsEnabled || this.Options.DisableExecutorProcess)
         {
@@ -165,25 +161,7 @@ internal sealed class WorkflowTelemetryContext
             .SetTag(Tags.ExecutorType, executorType)
             .SetTag(Tags.MessageType, messageType);
 
-        if (this.Options.EnableSensitiveData)
-        {
-            activity.SetTag(Tags.ExecutorInput, SerializeForTelemetry(message));
-        }
-
         return activity;
-    }
-
-    /// <summary>
-    /// Sets the executor output tag on an activity when sensitive data logging is enabled.
-    /// </summary>
-    /// <param name="activity">The activity to set the output on.</param>
-    /// <param name="output">The output value to log.</param>
-    public void SetExecutorOutput(Activity? activity, object? output)
-    {
-        if (activity is not null && this.Options.EnableSensitiveData)
-        {
-            activity.SetTag(Tags.ExecutorOutput, SerializeForTelemetry(output));
-        }
     }
 
     /// <summary>
@@ -205,9 +183,8 @@ internal sealed class WorkflowTelemetryContext
     /// </summary>
     /// <param name="sourceId">The source executor identifier.</param>
     /// <param name="targetId">The target executor identifier, if any.</param>
-    /// <param name="message">The message being sent. Logged only when <see cref="WorkflowTelemetryOptions.EnableSensitiveData"/> is true.</param>
     /// <returns>An activity if message send telemetry is enabled, otherwise null.</returns>
-    public Activity? StartMessageSendActivity(string sourceId, string? targetId, object? message)
+    public Activity? StartMessageSendActivity(string sourceId, string? targetId)
     {
         if (!this.IsEnabled || this.Options.DisableMessageSend)
         {
@@ -226,33 +203,6 @@ internal sealed class WorkflowTelemetryContext
             activity.SetTag(Tags.MessageTargetId, targetId);
         }
 
-        if (this.Options.EnableSensitiveData)
-        {
-            activity.SetTag(Tags.MessageContent, SerializeForTelemetry(message));
-        }
-
         return activity;
-    }
-
-    [UnconditionalSuppressMessage("ReflectionAnalysis", "IL3050:RequiresDynamicCode", Justification = "Telemetry serialization is optional and only used when explicitly enabled.")]
-    [UnconditionalSuppressMessage("Trimming", "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access", Justification = "Telemetry serialization is optional and only used when explicitly enabled.")]
-    private static string? SerializeForTelemetry(object? value)
-    {
-        if (value is null)
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Serialize(value, value.GetType());
-        }
-        // Telemetry must never fail workflow execution. Serialization can throw arbitrary exceptions
-        // (unregistered polymorphic types, reflection-disabled AOT, throwing property getters, custom
-        // converters), so fall back for every serialization failure.
-        catch (Exception)
-        {
-            return $"[Unserializable: {value.GetType().FullName}]";
-        }
     }
 }

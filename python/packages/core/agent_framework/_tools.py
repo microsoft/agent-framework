@@ -17,11 +17,12 @@ from collections.abc import (
     AsyncIterable,
     Awaitable,
     Callable,
+    Generator,
     Iterable,
     Mapping,
     Sequence,
 )
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from datetime import time as datetime_time
@@ -138,10 +139,23 @@ _APPROVED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_approved_function_arguments"
 _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: Final[str] = "_security_function_arguments"
 _PREPARED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_prepared_function_arguments"
 _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: Final[str] = "_auto_prepare_function_arguments"
+_SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT: Final[
+    contextvars.ContextVar[tuple[Any, Callable[[Any], None], asyncio.Task[Any] | None] | None]
+] = contextvars.ContextVar("agent_framework_core_security_argument_materialization_context", default=None)
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
 _USER_VISIBLE_CONTENT_TYPES: Final[set[str]] = {"data", "uri", "error", "hosted_file", "hosted_vector_store"}
+
+
+@contextmanager
+def _suspend_security_argument_materialization() -> Generator[None]:
+    """Prevent nested tool calls from inheriting one invocation's materialization capability."""
+    token = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.set(None)
+    try:
+        yield
+    finally:
+        _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.reset(token)
 
 
 class _FunctionArgumentValidationError(TypeError):
@@ -664,6 +678,8 @@ class FunctionTool(SerializationMixin):
         "_schema_supplied",
         "_invoke_sync_on_event_loop",
     }
+    # A tool that ``BaseAgent.as_tool()`` made keeps pointing at its agent when copied, as its function does.
+    _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation", "_wrapped_agent"}
 
     def __init__(
         self,
@@ -1167,7 +1183,6 @@ class FunctionTool(SerializationMixin):
         direct_argument_kwargs = (
             {key: value for key, value in kwargs.items() if key in parameter_names} if arguments is None else {}
         )
-        runtime_kwargs = dict(context.kwargs) if context is not None else {}
         unexpected_kwargs = {key: value for key, value in kwargs.items() if key not in direct_argument_kwargs}
         if unexpected_kwargs:
             unexpected_names = ", ".join(sorted(unexpected_kwargs))
@@ -1180,6 +1195,23 @@ class FunctionTool(SerializationMixin):
         if arguments is None and context is not None:
             arguments = context.arguments
 
+        security_materialization = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.get()
+        if security_materialization is not None:
+            active_context, materialize, origin_task = security_materialization
+            if (
+                asyncio.current_task() is origin_task
+                and active_context.function is self
+                and (context is None or context is active_context)
+            ):
+                direct_arguments = self._arguments_as_mapping(arguments)
+                if direct_arguments is not None:
+                    active_context.arguments = direct_arguments
+                active_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
+                materialize(active_context)
+                arguments = active_context.arguments
+                context = active_context
+
+        runtime_kwargs = dict(context.kwargs) if context is not None else {}
         current_arguments = self._arguments_as_mapping(arguments)
         approval_visible_arguments = self._approval_visible_arguments(arguments, context)
         self._ensure_security_arguments_unchanged(context, current_arguments)
@@ -1211,7 +1243,8 @@ class FunctionTool(SerializationMixin):
         if not OBSERVABILITY_SETTINGS.ENABLED:
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {observable_kwargs}")
-            result = await self._invoke_function(call_kwargs)
+            with _suspend_security_argument_materialization():
+                result = await self._invoke_function(call_kwargs)
             if skip_parsing:
                 logger.info(f"Function {self.name} succeeded.")
                 logger.debug(f"Function result: {type(result).__name__}")
@@ -1290,7 +1323,8 @@ class FunctionTool(SerializationMixin):
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
             try:
-                result = await self._invoke_function(call_kwargs)
+                with _suspend_security_argument_materialization():
+                    result = await self._invoke_function(call_kwargs)
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()
