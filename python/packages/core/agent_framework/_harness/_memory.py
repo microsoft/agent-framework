@@ -154,7 +154,11 @@ def _bounded_slug_part(slug: str) -> str:
     encoded = slug.encode("utf-8")
     if len(encoded) <= _MAX_TOPIC_SLUG_BYTES:
         return slug
-    return encoded[:_MAX_TOPIC_SLUG_BYTES].decode("utf-8", errors="ignore")
+    # A cut can land right after a separator; trailing separators would pair
+    # with the digest separator into a double dash that a later slugify of the
+    # stem collapses, so the bounded slug stays canonical by dropping them.
+    bounded = encoded[:_MAX_TOPIC_SLUG_BYTES].decode("utf-8", errors="ignore")
+    return bounded.rstrip("-")
 
 
 def _topic_stem_candidates(topic: str, *, slug_override: str | None = None) -> Iterator[str]:
@@ -365,8 +369,25 @@ class MemoryIndexEntry:
         Returns:
             One compact pointer line.
         """
-        pointer_line = f"- [{self.topic}](topics/{self.slug}.md): {self.summary}"
-        return _trim_pointer_line(pointer_line, max_length=max_length)
+        # The link destination must survive trimming: a long digest stem can
+        # push the line past the budget, and cutting the destination would
+        # strip the .md suffix and the closing parenthesis, leaving an index
+        # link that opens nothing. Trim the summary first, then the visible
+        # label, never the destination itself.
+        link_tail = f"](topics/{self.slug}.md): "
+        whole_link = f"[{self.topic}{link_tail}"
+        if len("- ") + len(whole_link) + len(self.summary) <= max_length:
+            return f"- {whole_link}{self.summary}"
+        summary_budget = max_length - len("- ") - len(whole_link) - len("...")
+        if summary_budget >= 0:
+            return f"- {whole_link}{self.summary[:summary_budget].rstrip()}..."
+        label_budget = max_length - len("- [") - len(link_tail) - len("...")
+        if label_budget > 0:
+            label = self.topic[:label_budget].rstrip()
+            return f"- [{label}{link_tail}..."
+        # Even the bare link destination busts the budget: keep the full line
+        # rather than emit a link whose destination was cut.
+        return f"- [{self.topic}{link_tail}{self.summary}"
 
     def __eq__(self, other: object) -> bool:
         """Compare two index entries by value."""
@@ -999,15 +1020,33 @@ class MemoryFileStore(MemoryStore):
         topic_path = self._writable_topic_path(session, source_id=source_id, record=record)
         _atomic_write_text(topic_path, f"{record.to_markdown()}\n")
         record.set_on_disk_stem(topic_path.stem)
-        if previous_path is not None and previous_path != topic_path:
+        if (
+            previous_path is not None
+            and previous_path != topic_path
+            and self._path_holds_topic(previous_path, record.topic)
+        ):
+            # A resolution through a legacy slug-only file or a shared slug can
+            # name another topic's record; retiring it would silently destroy
+            # that topic, so only a file holding this very topic is retired.
             previous_path.unlink(missing_ok=True)
 
     def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
         """Delete one topic memory file."""
         topic_path = self._existing_topic_path(session, source_id=source_id, topic=topic)
-        if topic_path is None:
+        if topic_path is None or not self._path_holds_topic(topic_path, topic):
             raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
         topic_path.unlink()
+
+    def _path_holds_topic(self, path: Path, topic: str) -> bool:
+        """Return whether the record in ``path`` is the given topic's own record.
+
+        Digest-stemmed resolutions already validated exact identity; this guards
+        the alias-capable resolutions (legacy slug-only files, shared slugs),
+        where the occupant may be a different topic. The comparison folds case
+        because a legacy heading may spell the topic differently than a lookup.
+        """
+        record = MemoryTopicRecord.from_markdown(path.read_text(encoding="utf-8"), fallback_topic=path.stem)
+        return _normalize_topic(record.topic).casefold() == _normalize_topic(topic).casefold()
 
     def rebuild_index(
         self,
@@ -1253,7 +1292,21 @@ class MemoryContextProvider(HistoryProvider):
             return store_lock
 
     def _topic_async_lock(self, session: AgentSession, topic: str) -> asyncio.Lock:
-        return self._store_async_lock(session, kind="topic", key=_slugify_topic(topic))
+        """Return the per topic lock, keyed on one canonical identity.
+
+        Every supported alias of a topic (its name, its readable slug, or the
+        persisted stem an index link carries) must resolve to the same lock, or
+        a write through one alias can interleave with a consolidation holding
+        another alias's lock and be overwritten by the stale result. The
+        persisted stem is that identity: it names the one file that holds the
+        topic. A name with no file yet locks on its slugified name, which every
+        concurrent creator of that topic also computes.
+        """
+        try:
+            record = self.store.get_topic(session, source_id=self.source_id, topic=topic)
+        except FileNotFoundError:
+            return self._store_async_lock(session, kind="topic", key=_slugify_topic(topic))
+        return self._store_async_lock(session, kind="topic", key=record.storage_stem)
 
     def _state_async_lock(self, session: AgentSession) -> asyncio.Lock:
         return self._store_async_lock(session, kind="state", key="maintenance")
@@ -1735,12 +1788,15 @@ class MemoryContextProvider(HistoryProvider):
 
         success_count = 0
         for record in topic_records:
-            async with self._topic_async_lock(session, record.slug):
+            async with self._topic_async_lock(session, record.storage_stem or record.slug):
                 try:
-                    # Reload by the exact topic identity: a slug can be shared
-                    # by several topics, and dropping one of them here would
-                    # silently skip its consolidation.
-                    current_record = self.store.get_topic(session, source_id=self.source_id, topic=record.topic)
+                    # Reload by the persisted stem: it is the one name that
+                    # resolves this exact file for every record shape,
+                    # including records stored under an explicit slug, whose
+                    # topic-derived filename family would miss them.
+                    current_record = self.store.get_topic(
+                        session, source_id=self.source_id, topic=record.storage_stem or record.topic
+                    )
                 except FileNotFoundError:
                     continue
                 consolidated_record, succeeded = await self._consolidate_topic(

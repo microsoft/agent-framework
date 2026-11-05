@@ -1201,6 +1201,89 @@ def test_memory_explicit_slug_override_is_persisted_and_findable(tmp_path) -> No
         store.get_topic(session, source_id="src", topic="machine")
 
 
+def test_memory_writing_a_shared_slug_name_keeps_the_other_topic(tmp_path) -> None:
+    """Writing a topic whose name shares another topic's slug must not retire it."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="C++", slug=None, summary="cpp", memories=["smart pointers"], updated_at="t"),
+        source_id="src",
+    )
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="c", slug=None, summary="cee", memories=["letter"], updated_at="t"),
+        source_id="src",
+    )
+
+    assert store.get_topic(session, source_id="src", topic="C++").memories == ["smart pointers"]
+    assert store.get_topic(session, source_id="src", topic="c").memories == ["letter"]
+    with pytest.raises(FileNotFoundError):
+        store.delete_topic(session, source_id="src", topic="c2")
+    store.delete_topic(session, source_id="src", topic="c")
+    assert store.get_topic(session, source_id="src", topic="C++").memories == ["smart pointers"]
+
+
+def test_memory_writing_a_new_slug_keeps_an_unrelated_legacy_slug_file(tmp_path) -> None:
+    """A legacy slug-only file holding another topic is never retired by a write."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    topics_dir = store._get_topics_directory(session, source_id="src")
+
+    legacy = topics_dir / "c.md"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(
+        "# C++\n\nUpdated: t\nSessions: -\n\n## Summary\ncpp\n\n## Memories\n- smart pointers\n",
+        encoding="utf-8",
+    )
+
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="C#", slug=None, summary="cs", memories=["ctors"], updated_at="t"),
+        source_id="src",
+    )
+
+    assert store.get_topic(session, source_id="src", topic="C++").memories == ["smart pointers"]
+    assert legacy.exists()
+
+
+def test_memory_topic_truncation_after_a_separator_stays_canonical(tmp_path) -> None:
+    """A slug cut right after a separator must not produce a double dash stem."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    topic = "a" * 186 + " " + "b" * 10
+    written = MemoryTopicRecord(topic=topic, summary="s", memories=["kept"], updated_at="t")
+    store.write_topic(session, written, source_id="src")
+
+    assert "--" not in written.storage_stem
+    assert store.get_topic(session, source_id="src", topic=topic).memories == ["kept"]
+    entries = store.rebuild_index(session, source_id="src", line_limit=10, line_length=200)
+    for entry in entries:
+        assert (store._get_topics_directory(session, source_id="src") / f"{entry.slug}.md").exists()
+        assert store.get_topic(session, source_id="src", topic=entry.slug).memories == ["kept"]
+
+
+def test_memory_index_pointer_lines_keep_the_full_link_for_long_names(tmp_path) -> None:
+    """Trimming a long pointer line shortens the label and summary, never the link."""
+    entry = MemoryIndexEntry(
+        topic="release " + "notes " * 18,
+        slug="release-notes-" + "f" * 16,
+        summary="quarterly planning review with the product and research teams across every region",
+        updated_at="t",
+    )
+    line = entry.to_pointer_line(max_length=150)
+    assert len(line) <= 150
+    assert line.endswith(f"](topics/{entry.slug}.md): ...") or line.endswith("...")
+    assert f"](topics/{entry.slug}.md)" in line
+    parsed_slug = line.split("(topics/", 1)[1].split(".md)", 1)[0]
+    assert parsed_slug == entry.slug
+
+
 def test_memory_reads_a_legacy_topic_file_with_a_long_slug(tmp_path) -> None:
     """A legacy slug only filename near the component limit stays readable.
 
@@ -1317,6 +1400,100 @@ def test_memory_write_extends_the_stem_when_another_topic_owns_the_primary_stem(
     entries = store.rebuild_index(session, source_id="src", line_limit=10, line_length=200)
     for entry in entries:
         assert (topics_dir / f"{entry.slug}.md").exists()
+
+
+async def test_memory_consolidation_processes_records_stored_under_an_explicit_slug(tmp_path) -> None:
+    """Consolidation reloads by the persisted stem, so override slug records are not skipped."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    consolidation_client = _MemoryHarnessClient(
+        consolidation_payload={"summary": "Consolidated override.", "memories": ["Visit Oslo in June."]}
+    )
+    provider = MemoryContextProvider(
+        store=store,
+        consolidation_client=consolidation_client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    )
+    agent = Agent(
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        context_providers=[provider],
+        default_options=_no_store_options(),
+    )
+
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Remember this."])],
+    )
+    consolidate_memories = _tool_by_name(options["tools"], "consolidate_memories")
+
+    store.write_topic(
+        session,
+        MemoryTopicRecord(
+            topic="Machine Learning",
+            slug="ml-notes",
+            summary="s",
+            memories=["prefers short answers"],
+            updated_at="t",
+        ),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    await consolidate_memories.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    record = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="ml-notes")
+    assert record.topic == "Machine Learning"
+    assert record.summary == "Consolidated override."
+    assert consolidation_client.calls == ["consolidate"]
+
+
+async def test_memory_consolidation_does_not_lose_a_write_through_an_index_stem(tmp_path) -> None:
+    """A write through a persisted stem alias during consolidation must survive it."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    provider = MemoryContextProvider(store=store)
+    agent = Agent(
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        context_providers=[provider],
+        default_options=_no_store_options(),
+    )
+
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Remember this."])],
+    )
+    write_memory = _tool_by_name(options["tools"], "write_memory")
+    await write_memory.invoke(arguments={"topic": "Travel Preferences", "memory": "window seat"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    written = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Travel Preferences")
+    stem = written.storage_stem
+
+    original_consolidate = provider._consolidate_topic  # type: ignore[reportPrivateUsage]
+    pending_merge: dict[str, object] = {}
+
+    async def consolidate_with_a_write_in_flight(*, client, record, now):  # type: ignore[reportPrivateUsage]
+        # A write arrives through the index stem alias while consolidation is
+        # mid call. With one canonical lock identity it waits for the lock and
+        # then applies on top of the consolidated record; with alias keyed
+        # locks it would complete now and be overwritten by the stale result.
+        import asyncio as _asyncio
+
+        task = _asyncio.create_task(
+            provider._merge_memory(session=session, topic=stem, memory="urgent fact", now=now)  # type: ignore[reportPrivateUsage]
+        )
+        pending_merge["task"] = task
+        await _asyncio.sleep(0)
+        await _asyncio.sleep(0)
+        return record, True
+
+    provider._consolidate_topic = consolidate_with_a_write_in_flight  # type: ignore[reportPrivateUsage]
+    await provider._run_consolidation(  # type: ignore[reportPrivateUsage]
+        client=_MemoryHarnessClient(), session=session, force=True, now=datetime.now(timezone.utc)
+    )
+    await pending_merge["task"]  # type: ignore[misc]
+
+    final_record = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Travel Preferences")
+    assert "urgent fact" in final_record.memories
+    assert "window seat" in final_record.memories
+    del original_consolidate
 
 
 async def test_memory_consolidation_processes_topics_whose_slug_differs_from_their_name(tmp_path) -> None:
