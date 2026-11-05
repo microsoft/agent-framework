@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from agent_framework import (
@@ -21,7 +21,9 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from tests.workflow.mcp_helpers import StatefulMCPServer
+
+if TYPE_CHECKING:
+    from tests.workflow.mcp_helpers import StatefulMCPServer
 
 # Skip all tests in this directory on Python 3.14+ because powerfx doesn't support it yet
 if sys.version_info >= (3, 14):
@@ -39,6 +41,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 @pytest.fixture
 def stateful_mcp_server() -> StatefulMCPServer:
+    from tests.workflow.mcp_helpers import StatefulMCPServer
+
     return StatefulMCPServer()
 
 
