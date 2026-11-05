@@ -197,7 +197,7 @@ def test_injected_collection_resolves_collection_independently(
     client, database, _ = pymongo_objects
     monkeypatch.setenv("AZURE_DOCUMENTDB_COLLECTION_NAME", "environment_collection")
     definition = VectorStoreCollectionDefinition(definition_factory().fields)
-    kwargs = {"client": client, "database_name": "db"} if kind == "account" else {"database": database}
+    kwargs: dict[str, Any] = {"client": client, "database_name": "db"} if kind == "account" else {"database": database}
     resource = AzureDocumentDBCollection(
         dict,
         definition=definition,
