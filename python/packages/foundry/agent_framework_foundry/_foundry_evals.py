@@ -43,6 +43,7 @@ from agent_framework._evaluation import (
     RubricScore,
 )
 from agent_framework._feature_stage import ExperimentalFeature, experimental
+from agent_framework._settings import load_settings
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._types import Message
 
@@ -859,7 +860,9 @@ class FoundryEvals:
         project_client: An async ``AIProjectClient`` instance
             (from ``azure.ai.projects.aio``).  Provide this or *client*.
         model: Model deployment name for the evaluator LLM judge.
-            Resolved from ``client.model`` when omitted.
+            Resolved from ``client.model`` when omitted. When a client is
+            auto-created, uses ``FOUNDRY_MODEL`` before falling back to
+            ``"gpt-4o"``.
         evaluators: Evaluator specifications.  Entries may be built-in
             short names (e.g. ``"relevance"``), fully-qualified
             ``"builtin.*"`` names, or :class:`GeneratedEvaluatorRef`
@@ -922,9 +925,10 @@ class FoundryEvals:
 
         # Auto-create a FoundryChatClient from env vars when no client is provided
         if client is None and project_client is None:
-            from ._chat_client import FoundryChatClient
+            from ._chat_client import FoundryChatClient, FoundrySettings
 
-            client = FoundryChatClient(model=model or "gpt-4o")
+            foundry_settings = load_settings(FoundrySettings, env_prefix="FOUNDRY_", model=model)
+            client = FoundryChatClient(model=foundry_settings.get("model") or "gpt-4o")
 
         self._client = _resolve_openai_client(client, project_client)
         # Resolve model: explicit param > client.model > error

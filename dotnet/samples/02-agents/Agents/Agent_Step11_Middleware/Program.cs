@@ -261,7 +261,12 @@ async Task<AgentResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMes
             .ConvertAll(functionApprovalRequest =>
             {
                 Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {((FunctionCallContent)functionApprovalRequest.ToolCall).Name}");
-                return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
+                bool approved = Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false;
+
+                // When rejecting, tell the model not to retry the call.
+                return new ChatMessage(ChatRole.User, [approved
+                    ? functionApprovalRequest.CreateResponse(approved: true)
+                    : functionApprovalRequest.CreateResponse(approved: false, reason: "The user rejected this tool call. Do not retry it.")]);
             });
 
         response = await innerAgent.RunAsync(response.Messages, session, options, cancellationToken);

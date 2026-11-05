@@ -75,7 +75,7 @@ internal sealed class Program
         // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
         // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
         // Create the agent provider that will service agent requests within the workflow.
-        AzureAgentProvider agentProvider = new(new Uri(this.FoundryEndpoint), new DefaultAzureCredential())
+        FoundryAgentProvider agentProvider = new(new Uri(this.FoundryEndpoint), new DefaultAzureCredential())
         {
             // Functions included here will be auto-executed by the framework.
             Functions = this.Functions
