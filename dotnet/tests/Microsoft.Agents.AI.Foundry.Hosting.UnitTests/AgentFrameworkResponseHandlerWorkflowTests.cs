@@ -145,7 +145,6 @@ public class AgentFrameworkResponseHandlerWorkflowTests
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddKeyedSingleton("my-workflow", workflowAgent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -205,7 +204,6 @@ public class AgentFrameworkResponseHandlerWorkflowTests
         services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton(agent);
         services.AddSingleton<ILogger<AgentFrameworkResponseHandler>>(NullLogger<AgentFrameworkResponseHandler>.Instance);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(

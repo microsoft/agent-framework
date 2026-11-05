@@ -35,11 +35,21 @@
     <UserSecretsId>7933e8df-ba8d-4e62-b419-6d34d53de308</UserSecretsId>
     <NoWarn>$(NoWarn);MAAI001</NoWarn>
     <AgentFrameworkVersion>1.22.0-preview.260918.1</AgentFrameworkVersion>
+    <LocalAgentFrameworkRoot>$(MSBuildThisFileDirectory)..\..\..\..\..\src</LocalAgentFrameworkRoot>
+    <UseLocalAgentFramework Condition="'$(UseLocalAgentFramework)' == '' and Exists('$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj')">true</UseLocalAgentFramework>
   </PropertyGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(UseLocalAgentFramework)' == 'true'">
+    <ProjectReference Include="$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
+    <ProjectReference Include="$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseLocalAgentFramework)' != 'true'">
     <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="$(AgentFrameworkVersion)" />
     <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="$(AgentFrameworkVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="DotNetEnv" Version="3.2.0" />
   </ItemGroup>
 

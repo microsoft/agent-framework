@@ -115,7 +115,6 @@ public sealed class HostedOutboundUserAgentTests : IAsyncDisposable
         AIAgent agent = new ChatClientAgent(chatClient);
 
         builder.Services.AddFoundryResponses(agent, new InMemoryAgentSessionStore());
-        builder.Services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         builder.Services.AddLogging();
 
         this._app = builder.Build();

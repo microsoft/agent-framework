@@ -796,7 +796,6 @@ public sealed class OAuthConsentToolInvocationTests
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton(agent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var options = new FoundryResponsesOptions
         {
             AllowStoredOutputEnabled = allowStoredOutputEnabled,

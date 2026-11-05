@@ -102,8 +102,6 @@ public sealed class SteerableLongRunningIntegrationTests
                 ResilientBackground = true,
                 SteerableConversations = true,
             });
-        builder.Services.AddSingleton<HostedSessionIsolationKeyProvider>(
-            new FakeHostedSessionIsolationKeyProvider());
         builder.Services.AddLogging();
 
         WebApplication app = builder.Build();

@@ -242,7 +242,6 @@ public class OAuthConsentPolicyHandlerTests
         var services = new ServiceCollection();
         services.AddSingleton(sessionStore ?? new InMemoryAgentSessionStore());
         services.AddSingleton(agent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var handler = new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
             NullLogger<AgentFrameworkResponseHandler>.Instance,

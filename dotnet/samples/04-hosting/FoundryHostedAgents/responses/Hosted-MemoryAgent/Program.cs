@@ -8,10 +8,9 @@
 //
 // Memory scope flows from request -> hosting layer -> session -> provider:
 //   1. Foundry sets x-agent-user-id on every inbound request.
-//   2. AgentFrameworkResponseHandler reads context.PlatformContext.UserIdKey via the registered
-//      HostedSessionIsolationKeyProvider and stores it on the session as a HostedSessionContext.
-//   3. FoundryMemoryProvider's stateInitializer reads HostedSessionContext.UserId and uses it as
-//      the FoundryMemoryProviderScope, partitioning memories per user.
+//   2. The hosting layer reads context.PlatformContext.UserIdKey and associates it with the session.
+//   3. FoundryMemoryProvider's stateInitializer reads that id via GetHostedUserId and uses it as the
+//      FoundryMemoryProviderScope, partitioning memories per user.
 
 using Azure.AI.Projects;
 using Azure.Identity;
@@ -81,8 +80,8 @@ ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions()
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 //
 // Per-user memory isolation comes from the platform-injected x-agent-user-id header, resolved by the
-// default HostedSessionIsolationKeyProvider into the session's HostedSessionContext. This sample reads
-// that context directly to scope memory per user. A
+// hosting layer and associated with the AgentSession. This sample reads that id directly to scope
+// memory per user. A
 // request with no resolved user identity throws. So locally you must send an x-agent-user-id request
 // header (see scripts/smoke.ps1); vary it to simulate distinct users. On the Foundry platform the
 // header is always present, so no local provider registration is needed.
@@ -97,13 +96,13 @@ app.Run();
 
 static FoundryMemoryProvider.State CreatePerUserMemoryState(AgentSession? session)
 {
-    HostedSessionContext hostedContext =
-        session?.GetHostedContext()
+    string userId =
+        session?.GetHostedUserId()
         ?? throw new InvalidOperationException(
             "Foundry hosted user identity is required to scope memories.");
 
     return new FoundryMemoryProvider.State(
-        new FoundryMemoryProviderScope(hostedContext.UserId));
+        new FoundryMemoryProviderScope(userId));
 }
 
 static string? FirstNonBlank(params string?[] candidates) =>

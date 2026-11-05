@@ -500,7 +500,6 @@ public class ServiceCollectionExtensionsTests
 
         AIAgent agent = new ChatClientAgent(CreateAnnotationChatClient());
         builder.Services.AddFoundryResponses(agent, new InMemoryAgentSessionStore());
-        builder.Services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         builder.Services.AddLogging();
 
         await using var app = builder.Build();

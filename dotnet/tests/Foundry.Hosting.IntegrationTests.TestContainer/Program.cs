@@ -284,7 +284,7 @@ static Func<string, CancellationToken, Task<IEnumerable<TextSearchProvider.TextS
     };
 // user-identity scenario: returns USER-ID:<platform-user-key> without calling a model so the
 // assertion works even when the subscription has no OpenAI chat deployment. The hosting layer
-// writes HostedSessionContext from x-agent-user-id before RunCoreAsync.
+// associates x-agent-user-id with the AgentSession before RunCoreAsync.
 static AIAgent CreateUserIdentityAgent(AIProjectClient _, string __) =>
     new UserIdentityEchoAgent();
 
@@ -312,10 +312,10 @@ static AIAgent CreateSessionFilesAgent(AIProjectClient client, string deployment
             AIFunctionFactory.Create(ReadFile)
         ]);
 
-// Memory scenario. The agent uses FoundryMemoryProvider scoped per user via the
-// HostedSessionContext that the hosting layer applies from the platform isolation headers.
-// In production the platform sets the headers; here we rely on the default
-// PlatformHostedSessionIsolationKeyProvider that AgentFrameworkResponseHandler resolves.
+// Memory scenario. The agent uses FoundryMemoryProvider scoped by the trusted user id that the
+// hosting layer associates with the AgentSession from the platform isolation headers.
+// In production the platform sets the headers; the hosting layer resolves the same platform context
+// in this integration container.
 static async Task<AIAgent> CreateMemoryAgentAsync(AIProjectClient client, string deployment)
 {
     var embedding = Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-ada-002";
@@ -342,13 +342,13 @@ static async Task<AIAgent> CreateMemoryAgentAsync(AIProjectClient client, string
 
 static FoundryMemoryProvider.State CreatePerUserMemoryState(AgentSession? session)
 {
-    HostedSessionContext hostedContext =
-        session?.GetHostedContext()
+    string userId =
+        session?.GetHostedUserId()
         ?? throw new InvalidOperationException(
             "Foundry hosted user identity is required to scope memories.");
 
     return new FoundryMemoryProvider.State(
-        new FoundryMemoryProviderScope(hostedContext.UserId));
+        new FoundryMemoryProviderScope(userId));
 }
 
 // Agent skills scenario. Uses AgentSkillsProvider with two bundled Contoso Outdoors skills

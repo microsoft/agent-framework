@@ -239,8 +239,6 @@ public sealed class ResilientTwoLifetimeIntegrationTests
             agent,
             sessionStore,
             new FoundryResponsesOptions { ResilientBackground = true });
-        builder.Services.AddSingleton<HostedSessionIsolationKeyProvider>(
-            new FakeHostedSessionIsolationKeyProvider());
         builder.Services.AddLogging();
         if (recoveryCoordinator is not null)
         {

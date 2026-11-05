@@ -261,8 +261,6 @@ public class AgentFrameworkResponseHandlerResilienceTests
             store,
             new FoundryResponsesOptions { ResilientBackground = true });
         services.AddLogging();
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(
-            new FakeHostedSessionIsolationKeyProvider());
         using ServiceProvider provider = services.BuildServiceProvider();
         var handler = Assert.IsType<AgentFrameworkResponseHandler>(
             provider.GetRequiredService<ResponseHandler>());
@@ -282,7 +280,6 @@ public class AgentFrameworkResponseHandlerResilienceTests
         var services = new ServiceCollection();
         services.AddSingleton(store);
         services.AddSingleton(agent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var sp = services.BuildServiceProvider();
 
         var options = Options.Create(new FoundryResponsesOptions { ResilientBackground = resilient });

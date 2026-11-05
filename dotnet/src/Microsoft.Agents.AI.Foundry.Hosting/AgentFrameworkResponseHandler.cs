@@ -52,12 +52,6 @@ internal sealed class AgentFrameworkResponseHandler : ResponseHandler
     private readonly bool _resilientBackground;
 
     /// <summary>
-    /// Cached fallback used when no <see cref="HostedSessionIsolationKeyProvider"/> is registered in DI.
-    /// Avoids a per-request allocation on the request hot path.
-    /// </summary>
-    private static readonly HostedSessionIsolationKeyProvider s_defaultIsolationKeyProvider = new PlatformHostedSessionIsolationKeyProvider();
-
-    /// <summary>
     /// Initializes a new instance of the <see cref="AgentFrameworkResponseHandler"/> class
     /// that resolves agents from keyed DI services.
     /// </summary>
@@ -113,32 +107,32 @@ internal sealed class AgentFrameworkResponseHandler : ResponseHandler
         var agent = this.ResolveAgent(request);
         var sessionStore = this.ResolveSessionStore(request);
 
-        // 2. Resolve the per-request hosted session identity context, so the session can be
+        // 2. Resolve the per-request hosted user identity, so the session can be
         // loaded from a per-user partition. Fresh sessions are tagged once; resumed sessions are
         // validated against the live request to detect cross-user session leaks and in-process tampering.
-        var isolationKeyProvider = this._serviceProvider.GetService<HostedSessionIsolationKeyProvider>()
-            ?? s_defaultIsolationKeyProvider;
-        var resolvedHostedContext = await isolationKeyProvider.GetKeysAsync(context, request, cancellationToken).ConfigureAwait(false);
-        if (resolvedHostedContext is null && FoundryEnvironment.IsHosted)
+        string? resolvedUserId = context.PlatformContext?.UserIdKey;
+        if (string.IsNullOrWhiteSpace(resolvedUserId))
+        {
+            resolvedUserId = null;
+        }
+
+        if (resolvedUserId is null && FoundryEnvironment.IsHosted)
         {
             // Hosted by Foundry yet the provider produced no user identity. The endpoint filter
             // already rejected protocol 1.0.0, so this is the unexpected case of a 2.0.0
-            // request that carried a call id but no x-agent-user-id, or a custom provider that returned
-            // null in production. Reject rather than silently persist an unscoped, cross-user session.
+            // request that carried a call id but no x-agent-user-id. Reject rather than silently persist
+            // an unscoped, cross-user session.
             throw new InvalidOperationException(
-                $"The registered {nameof(HostedSessionIsolationKeyProvider)} returned null for the current request. " +
-                "Ensure the Foundry platform is providing the x-agent-user-id header, " +
-                "or register a custom provider that supplies fallback values for local development.");
+                "The Foundry platform did not provide a user identity for the current request. " +
+                "Ensure the x-agent-user-id header is present.");
         }
 
-        // When resolvedHostedContext is null here the container is NOT hosted by Foundry (local
+        // When resolvedUserId is null here the container is NOT hosted by Foundry (local
         // development: docker run / dotnet run outside the platform, so no x-agent-user-id header).
         // Per-user isolation simply does not apply in that case: no user partition is added to the
         // session key and no hosted context is stamped or
         // validated. This lets contributors run the image locally without registering a fallback
         // provider, while production stays strict because FoundryEnvironment.IsHosted is true there.
-        var resolvedUserId = resolvedHostedContext?.UserId;
-
         // 3. Load or create a new session from the interaction.
         // Map the request to a stable MAF AgentSession key: conversation_id when present, else the
         // partition embedded in previous_response_id (chains converge), else the minted response id
@@ -195,23 +189,23 @@ internal sealed class AgentFrameworkResponseHandler : ResponseHandler
 
         // Stamp/validate the hosted identity only when one was resolved. Locally (non-hosted) there is
         // no user identity, so there is nothing to partition or tamper-check and the session is shared.
-        if (session is not null && resolvedHostedContext is not null)
+        if (session is not null && resolvedUserId is not null)
         {
-            var existingHostedContext = session.GetHostedContext();
-            if (existingHostedContext is null)
+            string? existingUserId = session.GetHostedUserId();
+            if (existingUserId is null)
             {
                 // Fresh path: the session has no hosted context yet (either freshly created here,
                 // or freshly loaded for a conversation_id that the platform supplied without any
                 // prior hosted-agent request having stamped a context). Stamp it now.
-                session.SetHostedContext(resolvedHostedContext);
+                session.SetHostedUserId(resolvedUserId);
             }
-            else if (!string.Equals(existingHostedContext.UserId, resolvedHostedContext.UserId, StringComparison.Ordinal))
+            else if (!string.Equals(existingUserId, resolvedUserId, StringComparison.Ordinal))
             {
                 // Resume path: the persisted identity must match the live request. A mismatch
                 // signals either a cross-user session leak or in-process tampering of the
                 // persisted identity. Reject the request hard.
                 throw new ResponsesApiException(
-                    new Error("hosted_session_identity_mismatch", "Hosted session identity context mismatch"),
+                    new Error("hosted_user_identity_mismatch", "Hosted user identity mismatch"),
                     403);
             }
         }

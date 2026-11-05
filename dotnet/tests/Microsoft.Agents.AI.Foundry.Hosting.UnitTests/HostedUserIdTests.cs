@@ -15,94 +15,47 @@ using Moq;
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 /// <summary>
-/// Tests covering the per-session identity context that <see cref="AgentFrameworkResponseHandler"/>
-/// applies via the registered <see cref="HostedSessionIsolationKeyProvider"/>.
+/// Tests covering the per-session user identity that <see cref="AgentFrameworkResponseHandler"/>
+/// reads from <see cref="ResponseContext.PlatformContext"/>.
 /// </summary>
-public class HostedSessionIdentityContextTests
+public class HostedUserIdTests
 {
-    private const string TestUserId = "user-isolation-key-1";
+    private const string TestUserId = "alice";
 
     [Fact]
-    public void HostedSessionContext_RejectsNullOrWhitespaceKeys()
-    {
-        // Assert
-        Assert.Throws<ArgumentNullException>(() => new HostedSessionContext(null!));
-        Assert.Throws<ArgumentException>(() => new HostedSessionContext(string.Empty));
-        Assert.Throws<ArgumentException>(() => new HostedSessionContext("   "));
-    }
-
-    [Fact]
-    public async Task PlatformProvider_MapsIsolationContextValuesAsync()
-    {
-        // Arrange
-        var provider = new PlatformHostedSessionIsolationKeyProvider();
-        var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
-        mockContext.Setup(x => x.PlatformContext).Returns(new PlatformContext(TestUserId, "call-1"));
-        var request = new CreateResponse { Model = "test" };
-
-        // Act
-        var result = await provider.GetKeysAsync(mockContext.Object, request, CancellationToken.None);
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.Equal(TestUserId, result.UserId);
-    }
-
-    [Fact]
-    public async Task PlatformProvider_ReturnsNullWhenIsolationKeysAreEmptyAsync()
-    {
-        // Arrange
-        var provider = new PlatformHostedSessionIsolationKeyProvider();
-        var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
-        // CallBase delegates to ResponseContext.PlatformContext default which is PlatformContext.Empty.
-        var request = new CreateResponse { Model = "test" };
-
-        // Act
-        var result = await provider.GetKeysAsync(mockContext.Object, request, CancellationToken.None);
-
-        // Assert
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public async Task Handler_FreshSession_AppliesContextFromCustomProviderAsync()
+    public async Task Handler_FreshSession_AppliesUserIdentityFromPlatformContextAsync()
     {
         // Arrange
         var capturingAgent = new HostedContextCapturingAgent();
-        var fakeProvider = new FakeHostedSessionIsolationKeyProvider("alice");
-        var handler = BuildHandler(capturingAgent, fakeProvider);
+        var handler = BuildHandler(capturingAgent);
 
-        var (request, mockContext) = BuildFreshRequest();
+        var (request, mockContext) = BuildFreshRequest(TestUserId);
 
         // Act
         await DrainAsync(handler.CreateAsync(request, mockContext.Object, CancellationToken.None));
 
         // Assert
         Assert.NotNull(capturingAgent.LastSession);
-        var ctx = capturingAgent.LastSession.GetHostedContext();
-        Assert.NotNull(ctx);
-        Assert.Equal("alice", ctx.UserId);
+        Assert.Equal(TestUserId, capturingAgent.LastSession.GetHostedUserId());
     }
 
     [Fact]
     public async Task Handler_NullKeysFromProvider_NotHosted_SucceedsWithoutContextAsync()
     {
-        // Arrange: a provider that returns null keys (as the default platform provider does locally when
-        // no x-agent-user-id header is present). Under unit tests FoundryEnvironment.IsHosted is false, so
+        // Arrange: no x-agent-user-id is present. Under unit tests FoundryEnvironment.IsHosted is false, so
         // the container is treated as local: the request must proceed with per-user isolation not triggered
         // rather than 500ing. No hosted context is stamped on the session.
         var capturingAgent = new HostedContextCapturingAgent();
-        var fakeProvider = new FakeHostedSessionIsolationKeyProvider(userId: null);
-        var handler = BuildHandler(capturingAgent, fakeProvider);
+        var handler = BuildHandler(capturingAgent);
 
-        var (request, mockContext) = BuildFreshRequest();
+        var (request, mockContext) = BuildFreshRequest(userId: null);
 
         // Act
         await DrainAsync(handler.CreateAsync(request, mockContext.Object, CancellationToken.None));
 
         // Assert: no throw, a session was produced, and it carries no hosted identity context.
         Assert.NotNull(capturingAgent.LastSession);
-        Assert.Null(capturingAgent.LastSession.GetHostedContext());
+        Assert.Null(capturingAgent.LastSession.GetHostedUserId());
     }
 
     [Fact]
@@ -110,9 +63,8 @@ public class HostedSessionIdentityContextTests
     {
         // Arrange
         var capturingAgent = new HostedContextCapturingAgent();
-        var fakeProvider = new FakeHostedSessionIsolationKeyProvider("alice");
         var sessionStore = new InMemoryAgentSessionStore();
-        var handler = BuildHandler(capturingAgent, fakeProvider, sessionStore);
+        var handler = BuildHandler(capturingAgent, sessionStore);
 
         // Step 1: drive a fresh request to populate the session store with a tagged session.
         var (freshRequest, freshContext) = BuildFreshRequest();
@@ -126,7 +78,7 @@ public class HostedSessionIdentityContextTests
         AIAgent storageAgent = new FoundryHostingAgent(capturingAgent, "default");
         await sessionStore.SaveSessionAsync(
             storageAgent,
-            new AgentSessionStoreKey(ConversationId).WithPartition("user", "alice"),
+            new AgentSessionStoreKey(ConversationId).WithPartition("user", TestUserId),
             capturingAgent.LastSession,
             CancellationToken.None);
 
@@ -139,9 +91,7 @@ public class HostedSessionIdentityContextTests
 
         // Assert
         Assert.NotNull(capturingAgent.LastSession);
-        var ctx = capturingAgent.LastSession.GetHostedContext();
-        Assert.NotNull(ctx);
-        Assert.Equal("alice", ctx.UserId);
+        Assert.Equal(TestUserId, capturingAgent.LastSession.GetHostedUserId());
     }
 
     [Fact]
@@ -149,9 +99,8 @@ public class HostedSessionIdentityContextTests
     {
         // Arrange
         var capturingAgent = new HostedContextCapturingAgent();
-        var aliceProvider = new FakeHostedSessionIsolationKeyProvider("alice");
         var sessionStore = new InMemoryAgentSessionStore();
-        var aliceHandler = BuildHandler(capturingAgent, aliceProvider, sessionStore);
+        var aliceHandler = BuildHandler(capturingAgent, sessionStore);
 
         var (freshRequest, freshContext) = BuildFreshRequest();
         await DrainAsync(aliceHandler.CreateAsync(freshRequest, freshContext.Object, CancellationToken.None));
@@ -169,14 +118,13 @@ public class HostedSessionIdentityContextTests
             CancellationToken.None);
 
         // Bob attempts to resume Alice's conversation.
-        var bobProvider = new FakeHostedSessionIsolationKeyProvider("bob");
-        var bobHandler = BuildHandler(capturingAgent, bobProvider, sessionStore);
-        var (resumeRequest, resumeContext) = BuildResumeRequest(ConversationId);
+        var bobHandler = BuildHandler(capturingAgent, sessionStore);
+        var (resumeRequest, resumeContext) = BuildResumeRequest(ConversationId, userId: "bob");
 
         // Act & Assert
         var ex = await Assert.ThrowsAsync<ResponsesApiException>(() => DrainAsync(bobHandler.CreateAsync(resumeRequest, resumeContext.Object, CancellationToken.None)));
         Assert.Equal(403, ex.StatusCode);
-        Assert.Equal("Hosted session identity context mismatch", ex.Error.Message);
+        Assert.Equal("Hosted user identity mismatch", ex.Error.Message);
     }
 
     [Fact]
@@ -198,8 +146,7 @@ public class HostedSessionIdentityContextTests
             untagged,
             CancellationToken.None);
 
-        var fakeProvider = new FakeHostedSessionIsolationKeyProvider("alice");
-        var handler = BuildHandler(capturingAgent, fakeProvider, sessionStore);
+        var handler = BuildHandler(capturingAgent, sessionStore);
         var (resumeRequest, resumeContext) = BuildResumeRequest(ConversationId);
 
         // Act
@@ -207,53 +154,72 @@ public class HostedSessionIdentityContextTests
 
         // Assert
         Assert.NotNull(capturingAgent.LastSession);
-        var ctx = capturingAgent.LastSession.GetHostedContext();
-        Assert.NotNull(ctx);
-        Assert.Equal("alice", ctx.UserId);
+        Assert.Equal("alice", capturingAgent.LastSession.GetHostedUserId());
     }
 
     [Fact]
-    public void GetHostedContext_ReturnsNullWhenAbsent()
+    public void GetHostedUserId_ReturnsNullWhenAbsent()
     {
         // Arrange
         var session = new HostedContextCapturingSession();
 
         // Act
-        var ctx = session.GetHostedContext();
+        var userId = session.GetHostedUserId();
 
         // Assert
-        Assert.Null(ctx);
+        Assert.Null(userId);
     }
 
     [Fact]
-    public void SetHostedContext_ThenGet_RoundTrips()
+    public void SetHostedUserId_ThenGetHostedUserId_RoundTrips()
     {
         // Arrange
         var session = new HostedContextCapturingSession();
 
         // Act
-        session.SetHostedContext(new HostedSessionContext("alice"));
-        var ctx = session.GetHostedContext();
+        session.SetHostedUserId("alice");
+        var userId = session.GetHostedUserId();
 
         // Assert
-        Assert.NotNull(ctx);
-        Assert.Equal("alice", ctx.UserId);
+        Assert.Equal("alice", userId);
+    }
+
+    [Fact]
+    public void SetHostedUserId_NullOrWhitespace_Throws()
+    {
+        // Arrange
+        var session = new HostedContextCapturingSession();
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => session.SetHostedUserId(null!));
+        Assert.Throws<ArgumentException>(() => session.SetHostedUserId(string.Empty));
+        Assert.Throws<ArgumentException>(() => session.SetHostedUserId("   "));
+    }
+
+    [Fact]
+    public void SetHostedUserId_SecondWrite_Throws()
+    {
+        // Arrange
+        var session = new HostedContextCapturingSession();
+        session.SetHostedUserId("alice");
+
+        // Act & Assert
+        Assert.Throws<InvalidOperationException>(() => session.SetHostedUserId("bob"));
     }
 
     private static AgentFrameworkResponseHandler BuildHandler(
         AIAgent agent,
-        HostedSessionIsolationKeyProvider provider,
         AgentSessionStore? sessionStore = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(sessionStore ?? new InMemoryAgentSessionStore());
         services.AddSingleton(agent);
-        services.AddSingleton(provider);
         var sp = services.BuildServiceProvider();
         return new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
     }
 
-    private static (CreateResponse Request, Mock<ResponseContext> Context) BuildFreshRequest()
+    private static (CreateResponse Request, Mock<ResponseContext> Context) BuildFreshRequest(
+        string? userId = TestUserId)
     {
         var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
@@ -263,6 +229,8 @@ public class HostedSessionIdentityContextTests
         });
 
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
+        mockContext.Setup(x => x.PlatformContext).Returns(
+            userId is null ? PlatformContext.Empty : new PlatformContext(userId, null));
         mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
         mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
@@ -270,9 +238,11 @@ public class HostedSessionIdentityContextTests
         return (request, mockContext);
     }
 
-    private static (CreateResponse Request, Mock<ResponseContext> Context) BuildResumeRequest(string conversationId)
+    private static (CreateResponse Request, Mock<ResponseContext> Context) BuildResumeRequest(
+        string conversationId,
+        string? userId = TestUserId)
     {
-        var (request, mockContext) = BuildFreshRequest();
+        var (request, mockContext) = BuildFreshRequest(userId);
         request.Conversation = BinaryData.FromString($"\"{conversationId}\"");
         return (request, mockContext);
     }
@@ -286,7 +256,7 @@ public class HostedSessionIdentityContextTests
 
     /// <summary>
     /// Minimal <see cref="AIAgent"/> subclass that captures the session it was invoked with so tests
-    /// can inspect the <see cref="HostedSessionContext"/> applied by the handler.
+    /// can inspect the hosted user id applied by the handler.
     /// </summary>
     private sealed class HostedContextCapturingAgent : AIAgent
     {
