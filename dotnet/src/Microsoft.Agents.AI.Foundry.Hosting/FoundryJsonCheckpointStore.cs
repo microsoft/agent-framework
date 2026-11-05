@@ -56,7 +56,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
+internal sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
 {
     /// <summary>
     /// The default state-store name used to hold every workflow checkpoint persisted by this store.

@@ -25,7 +25,7 @@ executor identities for a stored workflow checkpoint to match.
 | --- | --- |
 | Background task, response events, and selected response snapshots | AgentServer |
 | AgentSession and workflow checkpoint reference | Foundry state-store-backed session storage |
-| Workflow execution checkpoints | `FoundryJsonCheckpointStore` |
+| Workflow execution checkpoints | Foundry state-store-backed checkpoint storage |
 
 At each completed workflow superstep, the hosting adapter saves the AgentSession, records the
 workflow checkpoint ID in AgentServer internal response metadata, and calls
