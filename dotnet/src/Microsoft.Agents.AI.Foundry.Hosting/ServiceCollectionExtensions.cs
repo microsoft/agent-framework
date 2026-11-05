@@ -385,7 +385,8 @@ public static class FoundryHostingExtensions
     /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
     /// <param name="configureOptions">
     /// Callback to configure <see cref="FoundryToolboxOptions"/>, such as
-    /// <see cref="FoundryToolboxOptions.StrictMode"/> or
+    /// <see cref="FoundryToolboxOptions.StrictMode"/>,
+    /// <see cref="FoundryToolboxOptions.TokenScope"/>, or
     /// <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>.
     /// </param>
     /// <param name="toolboxNames">Names of the Foundry toolboxes to pre-register at startup.</param>
