@@ -25,6 +25,11 @@ other required CI checks will report.
   `FoundryToolboxService` uses `FoundryToolboxServiceOptions`.
 - Give boolean options a direct, unambiguous predicate. Avoid redundant combinations such as `Allow...Enabled`;
   distinguish similarly named concepts such as agent-service response storage versus hosting response storage.
+- Boolean settings should default to `false`. When a setting would otherwise default to `true`, consider
+  reframing its name and implementation so `false` expresses the intended default behavior; for example,
+  `AllowUnregisteredToolboxes = false` instead of `StrictMode = true`. Keep the name and conditional logic aligned.
+  Do not simply flip an existing default or weaken safe behavior to satisfy this convention; changes to existing
+  public settings must preserve compatibility or receive explicit approval for a breaking change.
 - Use consistent provider/domain qualifiers across related public types. Flag duplicate simple names in namespaces
   consumers commonly import together when they create ambiguity.
 - Do not flag inherited or overridden names dictated by external contracts. Do not recommend breaking renames solely
