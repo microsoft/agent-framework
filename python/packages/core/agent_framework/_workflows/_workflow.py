@@ -35,13 +35,7 @@ from ._const import (
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
     RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
     ROUTED_WORKFLOW_RUN_KWARGS_KEY,
-    WORKFLOW_AGENT_RUN_KEY,
-    WORKFLOW_AGENT_SESSION_ID_KEY,
-    WORKFLOW_PARENT_SESSION_ID_KEY,
-    WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY,
-    WORKFLOW_RESPONSE_SCOPE_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
-    WORKFLOW_SESSION_ID_KEY,
 )
 from ._edge import (
     EdgeGroup,
@@ -54,25 +48,10 @@ from ._events import (
     WorkflowRunState,
     _framework_event_origin,  # type: ignore
 )
-from ._executor import (
-    Executor,
-    _ResponseBatchValidation,  # pyright: ignore[reportPrivateUsage]
-    _ResponseBatchValidator,  # pyright: ignore[reportPrivateUsage]
-)
+from ._executor import Executor
 from ._model_utils import DictConvertible
-from ._request_context import (
-    get_response_scopes,
-    initialize_workflow_session_id,
-    request_context_state_key,
-    restore_request_context,
-    validate_request_contexts,
-)
 from ._runner import RunnerImpl
-from ._runner_context import (
-    RunnerContext,
-    WorkflowMessage,
-    _get_queued_response_info_events,  # pyright: ignore[reportPrivateUsage]
-)
+from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
 from ._typing_utils import is_instance_of, try_coerce_to_type
 from ._validation import ValidationTypeEnum, WorkflowValidationError
@@ -433,14 +412,6 @@ class Workflow(DictConvertible):
         # ever iterating, the weakref dereferences to ``None`` once Python collects it,
         # so a subsequent ``run()`` is allowed.
         self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
-        self._response_batch_validator: _ResponseBatchValidator | None = None
-        self._runner._response_batch_validator = self._validate_response_batch  # pyright: ignore[reportPrivateUsage]
-        self._runner._queued_response_validator = (  # pyright: ignore[reportPrivateUsage]
-            lambda scopes: self._validate_response_requests((), scopes=scopes)
-        )
-        self._runner._wrapped_response_validator = (  # pyright: ignore[reportPrivateUsage]
-            lambda wrapped, scopes: self._validate_response_requests((), wrapped_requests=wrapped, scopes=scopes)
-        )
 
         # Run-scoped pause checkpoint bookkeeping (owned by Workflow, not callers).
         # Captured at the start of each ``_run_core`` so ``resolve_pause_checkpoint_id``
@@ -458,22 +429,6 @@ class Workflow(DictConvertible):
         CPython GIL, so no locking is required.
         """
         return self._status
-
-    def _set_parent_run_context(self, parent_state: State, binding_id: str) -> None:
-        parent_scope = parent_state.get(WORKFLOW_SESSION_ID_KEY)
-        if parent_scope is None:
-            logger.warning("Parent workflow has no checkpointed session scope; assigning a new isolated scope.")
-            parent_scope = uuid.uuid4().hex
-            parent_state.set(WORKFLOW_SESSION_ID_KEY, parent_scope)
-        if not isinstance(parent_scope, str) or not parent_scope:
-            raise ValueError("Invalid parent workflow session scope.")
-        state = self._runner.state
-        state.set(
-            WORKFLOW_PARENT_SESSION_ID_KEY,
-            uuid.uuid5(uuid.NAMESPACE_URL, json.dumps([parent_scope, binding_id])).hex,
-        )
-        state.set(WORKFLOW_AGENT_RUN_KEY, parent_state.get(WORKFLOW_AGENT_RUN_KEY) is True)
-        state.set(WORKFLOW_AGENT_SESSION_ID_KEY, parent_state.get(WORKFLOW_AGENT_SESSION_ID_KEY))
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the workflow definition into a JSON-ready dictionary."""
@@ -807,8 +762,6 @@ class Workflow(DictConvertible):
                     f"Expected input types: {start_executor.input_types}."
                 )
 
-            initialize_workflow_session_id(self._runner.state)
-
             await self._runner.context.send_message(entry_message)
             # Record the entry checkpoint capturing the seeded input before any
             # executor runs. The runner only checkpoints after each superstep.
@@ -902,39 +855,6 @@ class Workflow(DictConvertible):
         Raises:
             ValueError: If parameter combination is invalid.
         """
-        response_stream = self._run_stream(
-            message,
-            streaming=stream,
-            responses=responses,
-            checkpoint_id=checkpoint_id,
-            checkpoint_storage=checkpoint_storage,
-            include_status_events=include_status_events,
-            tools=tools,
-            function_invocation_kwargs=function_invocation_kwargs,
-            client_kwargs=client_kwargs,
-        )
-        return response_stream if stream else response_stream.get_final_response()
-
-    def _run_stream(
-        self,
-        message: Any | None = None,
-        *,
-        streaming: bool = False,
-        responses: Mapping[str, Any] | None = None,
-        checkpoint_id: str | None = None,
-        checkpoint_storage: CheckpointStorage | None = None,
-        include_status_events: bool = False,
-        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: WorkflowInvocationKwargs
-        | Mapping[str, Mapping[str, Any]]
-        | Mapping[str, Any]
-        | None = None,
-        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        is_agent_run: bool = False,
-        agent_session_id: str | None = None,
-        parent_context: tuple[State, str] | None = None,
-    ) -> ResponseStream[WorkflowEvent, WorkflowRunResult]:
-        """Admit a run with its framework-owned context before constructing the stream."""
         # Validate parameters first so misuse fails before we touch any run state.
         self._validate_run_params(message, responses, checkpoint_id)
 
@@ -952,13 +872,6 @@ class Workflow(DictConvertible):
                 "Workflow is already running; concurrent runs are not allowed on the same instance."
             )
 
-        if message is not None:
-            self._runner.state.set(WORKFLOW_AGENT_RUN_KEY, is_agent_run)
-            self._runner.state.set(WORKFLOW_AGENT_SESSION_ID_KEY, agent_session_id)
-            self._runner.state.set(WORKFLOW_PARENT_SESSION_ID_KEY, None)
-            if parent_context is not None:
-                self._set_parent_run_context(*parent_context)
-
         # No run is active, so any runtime checkpoint storage override still set on the
         # context is stale - left over from a prior run whose stream was dropped before
         # its async-generator finalizer ran. Clear it so this run starts clean and does
@@ -973,7 +886,7 @@ class Workflow(DictConvertible):
                 responses=responses,
                 checkpoint_id=checkpoint_id,
                 checkpoint_storage=checkpoint_storage,
-                streaming=streaming,
+                streaming=stream,
                 tools=tools,
                 function_invocation_kwargs=function_invocation_kwargs,
                 client_kwargs=client_kwargs,
@@ -982,7 +895,9 @@ class Workflow(DictConvertible):
         )
         self._active_run = weakref.ref(response_stream)
 
-        return response_stream
+        if stream:
+            return response_stream
+        return response_stream.get_final_response()
 
     async def _run_core(
         self,
@@ -1035,8 +950,7 @@ class Workflow(DictConvertible):
             # NOTE: _validate_run_params already enforces that ``message`` is
             # mutually exclusive with both ``checkpoint_id`` and ``responses``,
             # so we don't need to re-check those here.
-            has_messages = await self._runner.context.has_messages()
-            if message is not None and has_messages:
+            if message is not None and await self._runner.context.has_messages():
                 raise RuntimeError(
                     "Cannot start a new run with 'message' while in-flight executor "
                     "messages remain from a prior run. Resume from a checkpoint "
@@ -1044,9 +958,6 @@ class Workflow(DictConvertible):
                     "Workflows that need to recover from a mid-run failure must use "
                     "checkpointing; there is no in-process recovery path."
                 )
-
-            if checkpoint_id is None and not has_messages and self._runner.state.has(WORKFLOW_RESPONSE_SCOPE_KEY):
-                self._runner.state.delete(WORKFLOW_RESPONSE_SCOPE_KEY)
 
             # Warn (but don't block) when a fresh message or a checkpoint restore begins while the
             # workflow still has pending request_info events from an unfinished request/response
@@ -1220,81 +1131,6 @@ class Workflow(DictConvertible):
         await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
         await self._send_responses_internal(responses)
 
-    def _validate_response_batch(self, requests: Sequence[WorkflowEvent]) -> None:
-        if self._response_batch_validator is not None:
-            migration = self._response_batch_validator(requests)
-            if migration is not None:
-                migration()
-
-    async def _validate_response_requests(
-        self,
-        requests: Sequence[WorkflowEvent],
-        *,
-        wrapped_requests: Mapping[str, Sequence[WorkflowEvent]] | None = None,
-        scopes: set[str] | None = None,
-    ) -> None:
-        validations = await self._get_response_validation_batches(
-            requests, wrapped_requests=wrapped_requests, scopes=scopes
-        )
-        migrations = [validator(batch) for validator, batch in validations]
-        for migration in migrations:
-            if migration is not None:
-                migration()
-
-    async def _get_response_validation_batches(
-        self,
-        requests: Sequence[WorkflowEvent],
-        *,
-        wrapped_requests: Mapping[str, Sequence[WorkflowEvent]] | None = None,
-        scopes: set[str] | None = None,
-    ) -> list[_ResponseBatchValidation]:
-        messages = await self._runner._get_queued_messages()  # pyright: ignore[reportPrivateUsage]
-        queued_requests = _get_queued_response_info_events(messages)
-        if wrapped_requests is None:
-            wrapped_requests = {}
-        if scopes is None:
-            scopes = get_response_scopes(self._runner.state)
-        batch = [*queued_requests, *requests]
-        parent_contexts = self._runner.state.get(WORKFLOW_REQUEST_PARENT_CONTEXTS_KEY, {})
-        boundary_contexts = [
-            (
-                self._runner.state.get(request_context_state_key(executor_id), parent_contexts),
-                wrapped_requests.get(executor_id, []),
-            )
-            for executor_id in self.executors
-            if executor_id in wrapped_requests or self._runner.state.has(request_context_state_key(executor_id))
-        ]
-
-        def validate_parent_contexts(_requests: Sequence[WorkflowEvent]) -> Callable[[], None]:
-            selected_scopes = validate_request_contexts(
-                parent_contexts,
-                batch,
-                boundary_contexts=boundary_contexts,
-                previous_scopes=scopes,
-            )
-
-            def accept_scope() -> None:
-                scopes.update(selected_scopes)
-                if selected_scopes:
-                    self._runner.state.set(WORKFLOW_RESPONSE_SCOPE_KEY, next(iter(selected_scopes)))
-
-            return accept_scope
-
-        validations: list[_ResponseBatchValidation] = []
-        if self._response_batch_validator is not None:
-            validations.append((self._response_batch_validator, batch))
-        validations.append((validate_parent_contexts, batch))
-        for executor in self.executors.values():
-            delegated = [
-                *(request for request in batch if request.source_executor_id == executor.id),
-                *wrapped_requests.get(executor.id, []),
-            ]
-            if delegated:
-                validations.extend(
-                    await executor._get_response_validation_batches(delegated)  # pyright: ignore[reportPrivateUsage]
-                )
-        return validations
-
     async def _validate_responses_internal(self, responses: Mapping[str, Any]) -> dict[str, Any]:
         """Validate responses before a run can consume pending requests."""
         from ._agent_executor import _validate_computer_tool_result  # pyright: ignore[reportPrivateUsage]
@@ -1313,7 +1149,6 @@ class Workflow(DictConvertible):
             if isinstance(pending_request.data, Content) and pending_request.data.type == "computer_tool_call":
                 _validate_computer_tool_result(pending_request.data, response)
             coerced_responses[request_id] = response
-        await self._validate_response_requests([pending_requests[request_id] for request_id in coerced_responses])
         return coerced_responses
 
     async def _send_responses_internal(self, responses: Mapping[str, Any]) -> None:
@@ -1697,9 +1532,6 @@ class Workflow(DictConvertible):
                     for request_id, event in pending.items()
                     if event.source_executor_id in computer_executor_ids
                 )
-            await self._validate_response_requests([
-                request for request_id, request in pending.items() if request_id in selected_ids
-            ])
             cancelled_events = await self._runner.context.cancel_request_info_events(selected_ids)
             for request_id, request_event in cancelled_events.items():
                 source_executor_id = request_event.source_executor_id
@@ -1711,7 +1543,6 @@ class Workflow(DictConvertible):
                     state=self._runner.state,
                     runner_context=self._runner.context,
                 )
-                restore_request_context(self._runner.state, request_id)
                 await executor._cancel_pending_request(request_id, context)  # pyright: ignore[reportPrivateUsage]
 
         if checkpoint_storage is not None:

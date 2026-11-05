@@ -397,7 +397,6 @@ class WorkflowAgent(BaseAgent):
         output_events: list[WorkflowEvent[Any]] = []
         async for event in self._run_core(
             session_messages,
-            session.session_id if session is not None else None,
             checkpoint_id,
             checkpoint_storage,
             streaming=False,
@@ -485,7 +484,6 @@ class WorkflowAgent(BaseAgent):
         role_gate = _StreamingRoleGate()
         async for event in self._run_core(
             session_messages,
-            session.session_id if session is not None else None,
             checkpoint_id,
             checkpoint_storage,
             streaming=True,
@@ -507,7 +505,6 @@ class WorkflowAgent(BaseAgent):
     async def _run_core(
         self,
         input_messages: Sequence[Message],
-        agent_session_id: str | None,
         checkpoint_id: str | None,
         checkpoint_storage: CheckpointStorage | None,
         streaming: bool,
@@ -522,7 +519,6 @@ class WorkflowAgent(BaseAgent):
 
         Args:
             input_messages: Normalized input messages to process.
-            agent_session_id: Framework-local identity of the supplied agent session.
             checkpoint_id: ID of checkpoint to restore from.
             checkpoint_storage: Runtime checkpoint storage.
             streaming: Whether to use streaming workflow methods.
@@ -540,21 +536,19 @@ class WorkflowAgent(BaseAgent):
             logger.debug(f"Restoring workflow from checkpoint {checkpoint_id}")
             # Restore the workflow from checkpoint
             if streaming:
-                restore_stream = self.workflow.run(
+                async for _ in self.workflow.run(
                     stream=True,
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
                     tools=tools,
-                )
-                async for _ in restore_stream:
+                ):
                     pass
             else:
-                restore_result = self.workflow.run(
+                _ = await self.workflow.run(
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
                     tools=tools,
                 )
-                _ = await restore_result
             if not input_messages:
                 logger.info("No input messages provided; the workflow has been restored to the checkpoint state.")
                 return
@@ -572,42 +566,43 @@ class WorkflowAgent(BaseAgent):
             pending_requests = await self.workflow._runner_context.get_pending_request_info_events()  # pyright: ignore[reportPrivateUsage]
             function_responses = self._extract_function_responses(input_messages, pending_requests)
             if streaming:
-                response_stream = self.workflow.run(
+                async for event in self.workflow.run(
                     responses=function_responses,
                     stream=True,
                     checkpoint_storage=checkpoint_storage,
                     tools=tools,
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
-                )
-                async for event in response_stream:
+                ):
                     yield event
             else:
-                response_result = self.workflow.run(
+                for event in await self.workflow.run(
                     responses=function_responses,
                     checkpoint_storage=checkpoint_storage,
                     tools=tools,
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
-                )
-                for event in await response_result:
+                ):
                     yield event
         elif final_state == WorkflowRunState.IDLE:
-            response_stream = self.workflow._run_stream(  # pyright: ignore[reportPrivateUsage]
-                message=input_messages,
-                streaming=streaming,
-                checkpoint_storage=checkpoint_storage,
-                tools=tools,
-                function_invocation_kwargs=function_invocation_kwargs,
-                client_kwargs=client_kwargs,
-                is_agent_run=True,
-                agent_session_id=agent_session_id,
-            )
             if streaming:
-                async for event in response_stream:
+                async for event in self.workflow.run(
+                    message=input_messages,
+                    stream=True,
+                    checkpoint_storage=checkpoint_storage,
+                    tools=tools,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
+                ):
                     yield event
             else:
-                for event in await response_stream.get_final_response():
+                for event in await self.workflow.run(
+                    message=input_messages,
+                    checkpoint_storage=checkpoint_storage,
+                    tools=tools,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
+                ):
                     yield event
         else:
             raise AgentException(f"The underlying workflow is in an invalid state to restart: {final_state}.")

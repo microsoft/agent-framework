@@ -27,7 +27,6 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework._workflows._request_context import get_or_create_workflow_session_id, restore_workflow_session_id
 
 from ._declarative_base import (
     ActionComplete,
@@ -35,7 +34,6 @@ from ._declarative_base import (
     DeclarativeWorkflowState,
 )
 from ._executors_agents import TOOL_REGISTRY_KEY
-from ._mcp_handler import get_request_workflow_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -63,13 +61,11 @@ class ToolApprovalRequest:
         request_id: Unique identifier for this approval request.
         function_name: Evaluated function name to be invoked.
         arguments: Evaluated arguments to be passed to the function.
-        workflow_session_id: Framework-owned scope of the workflow that issued the request.
     """
 
     request_id: str
     function_name: str
     arguments: dict[str, Any]
-    workflow_session_id: str | None = None
 
 
 @dataclass
@@ -515,7 +511,6 @@ class BaseToolExecutor(DeclarativeActionExecutor):
                 request_id=request_id,
                 function_name=function_name,
                 arguments=arguments,
-                workflow_session_id=get_or_create_workflow_session_id(ctx.state),
             )
             logger.info(f"{self.__class__.__name__}: requesting approval for '{function_name}'")
             await ctx.request_info(request, ToolApprovalResponse, request_id=request_id)
@@ -552,7 +547,6 @@ class BaseToolExecutor(DeclarativeActionExecutor):
         Rejected calls store the rejection and complete without evaluating
         ``autoSend``.
         """
-        restore_workflow_session_id(ctx.state, get_request_workflow_session_id(original_request.workflow_session_id))
         state = self._get_state(ctx.state)
 
         function_name = original_request.function_name

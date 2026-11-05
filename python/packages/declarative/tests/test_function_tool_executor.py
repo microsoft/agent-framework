@@ -763,7 +763,11 @@ def mock_state() -> MagicMock:
     mock_state._data = {}
 
     def mock_get(key: str, default: Any = None) -> Any:
-        return mock_state._data.get(key, default)
+        if key not in mock_state._data:
+            if default is not None:
+                return default
+            raise KeyError(key)
+        return mock_state._data[key]
 
     def mock_set(key: str, value: Any) -> None:
         mock_state._data[key] = value
@@ -1201,7 +1205,6 @@ class TestApprovalFlow:
             request_id="req-123",
             function_name="my_tool",
             arguments={"x": 7},
-            workflow_session_id="workflow-a",
         )
         response = ToolApprovalResponse(approved=True)
 
@@ -1238,7 +1241,6 @@ class TestApprovalFlow:
             request_id="req-456",
             function_name="my_tool",
             arguments={"x": 5},
-            workflow_session_id="workflow-a",
         )
         response = ToolApprovalResponse(approved=False, reason="Not authorized")
 

@@ -7,23 +7,13 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from agent_framework import (
-    CheckpointStorage,
-    Executor,
-    SubWorkflowRequestMessage,
-    SubWorkflowResponseMessage,
-    Workflow,
-    WorkflowBuilder,
-    WorkflowContext,
-    WorkflowExecutor,
-    handler,
-    response_handler,
-)
 
 if TYPE_CHECKING:
-    from tests.workflow.mcp_helpers import StatefulMCPServer
+    import httpx2 as httpx
+    from mcp.server import Server
 
 # Skip all tests in this directory on Python 3.14+ because powerfx doesn't support it yet
 if sys.version_info >= (3, 14):
@@ -40,58 +30,76 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 @pytest.fixture
-def stateful_mcp_server() -> StatefulMCPServer:
-    from tests.workflow.mcp_helpers import StatefulMCPServer
+def mcp_tool_factory() -> Callable[[], MagicMock]:
+    from agent_framework import Content, MCPStreamableHTTPTool
+    from mcp import types
 
-    return StatefulMCPServer()
+    def create() -> MagicMock:
+        tool = MagicMock(spec=MCPStreamableHTTPTool)
+        tool.connect = AsyncMock()
+        tool.close = AsyncMock()
+        tool.call_tool = AsyncMock(return_value=[Content.from_text("ok")])
+        tool._require_connection.return_value.list_tools_page = AsyncMock(return_value=types.ListToolsResult(tools=[]))
+        return tool
+
+    return create
 
 
 @pytest.fixture
-def coordinator_relay_workflow() -> Callable[[Workflow, CheckpointStorage], Workflow]:
-    """Build a parent that relays child requests without changing their IDs."""
+def mcp_tool(mcp_tool_factory: Callable[[], MagicMock]) -> MagicMock:
+    return mcp_tool_factory()
 
-    class Requester(Executor):
-        @handler
-        async def start(self, message: str, ctx: WorkflowContext) -> None:
-            await ctx.request_info(message, str)
 
-        @response_handler
-        async def respond(self, original: str, response: str, ctx: WorkflowContext[Any, dict[str, str]]) -> None:
-            await ctx.yield_output({"response": response})
+@pytest.fixture
+def mcp_tool_constructor(mcp_tool: MagicMock, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    import agent_framework
 
-    class Coordinator(Executor):
-        @handler
-        async def start(self, message: int, ctx: WorkflowContext[Any]) -> None:
-            await ctx.send_message({}, target_id="mcp")
-            await ctx.send_message(str(message), target_id="requester")
+    constructor = MagicMock(return_value=mcp_tool)
+    monkeypatch.setattr(agent_framework, "MCPStreamableHTTPTool", constructor)
+    return constructor
 
-        @handler
-        async def relay(self, request: SubWorkflowRequestMessage, ctx: WorkflowContext) -> None:
-            await ctx.request_info(request, str, request_id=request.source_event.request_id)
 
-        @response_handler
-        async def respond(
-            self,
-            original: SubWorkflowRequestMessage,
-            response: str,
-            ctx: WorkflowContext[SubWorkflowResponseMessage],
-        ) -> None:
-            await ctx.send_message(original.create_response(response), target_id="requester")
+@pytest.fixture
+def stateful_mcp_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Server[Any], dict[str, list[str]], list[httpx.AsyncClient]]:
+    import httpx2 as httpx
+    from mcp import types
+    from mcp.server import Server, ServerRequestContext
+    from mcp.shared.exceptions import MCPError
+    from starlette.requests import Request
 
-        @handler
-        async def collect(self, message: dict[str, str], ctx: WorkflowContext[dict[str, Any]]) -> None:
-            await ctx.send_message({}, target_id="mcp")
+    histories: dict[str, list[str]] = {}
+    clients: list[httpx.AsyncClient] = []
+    client_type = httpx.AsyncClient
 
-    def build(mcp_workflow: Workflow, storage: CheckpointStorage) -> Workflow:
-        coordinator = Coordinator(id="coordinator")
-        requester = WorkflowExecutor(WorkflowBuilder(start_executor=Requester(id="pause")).build(), id="requester")
-        mcp = WorkflowExecutor(mcp_workflow, id="mcp")
-        return (
-            WorkflowBuilder(start_executor=coordinator, checkpoint_storage=storage)
-            .add_edge(coordinator, requester)
-            .add_edge(requester, coordinator)
-            .add_edge(coordinator, mcp)
-            .build()
+    async def reject_discovery(ctx: ServerRequestContext, params: types.RequestParams) -> types.DiscoverResult:
+        # Force the stateful handshake, not the modern stateless HTTP protocol.
+        raise MCPError(-32601, "Method not found")
+
+    async def list_tools(
+        ctx: ServerRequestContext, params: types.PaginatedRequestParams | None
+    ) -> types.ListToolsResult:
+        assert isinstance(ctx.request, Request)
+        histories.setdefault(ctx.request.headers["mcp-session-id"], [])
+        return types.ListToolsResult(
+            tools=[types.Tool(name="remember", input_schema={"type": "object", "properties": {}})]
         )
 
-    return build
+    async def call_tool(ctx: ServerRequestContext, params: types.CallToolRequestParams) -> types.CallToolResult:
+        assert isinstance(ctx.request, Request)
+        history = histories[ctx.request.headers["mcp-session-id"]]
+        history.append("marker")
+        return types.CallToolResult(content=[types.TextContent(type="text", text=str(len(history)))])
+
+    server: Server[Any] = Server("invocation-isolation", on_list_tools=list_tools, on_call_tool=call_tool)
+    server.add_request_handler("server/discover", types.RequestParams, reject_discovery)
+    app = server.streamable_http_app(json_response=True)
+
+    def create_client(**kwargs: Any) -> httpx.AsyncClient:
+        client = client_type(transport=httpx.ASGITransport(app=app), **kwargs)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(httpx, "AsyncClient", create_client)
+    return server, histories, clients
