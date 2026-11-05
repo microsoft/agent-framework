@@ -8,7 +8,7 @@ import re
 import stat
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 INLINE_LINK_PATTERN = re.compile(r"!?\[[^\]\n]*\]\(\s*(<[^>\n]+>|[^)\s]+)")
 REFERENCE_DEFINITION_PATTERN = re.compile(r"(?m)^[ \t]{0,3}\[(?!\^)[^\]\n]+\]:[ \t]*(?:<([^>\n]+)>|(\S+))")
@@ -52,11 +52,15 @@ def validate_agent_skill_links(skills_directory: Path) -> list[str]:
                     errors.append(f"{markdown_path}: unsupported URI scheme: {target}")
                     continue
 
-                relative_target = parsed_target.path
+                relative_target = unquote(parsed_target.path)
                 if not relative_target:
                     continue
 
                 target_path = Path(relative_target)
+                if target_path.is_absolute():
+                    errors.append(f"{markdown_path}: absolute local link is not allowed: {target}")
+                    continue
+
                 candidate = markdown_path.parent / target_path
                 try:
                     resolved_candidate = candidate.resolve(strict=True)

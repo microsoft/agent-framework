@@ -68,10 +68,12 @@ Agent Framework owns:
 
 - transport and Client construction, Client entry, and resource cleanup for framework-created connections;
 - the lifecycle-owner task, locks, connection publication, reset coordination, and cancellation cleanup;
+- the default request read timeout for framework-created Clients, with an explicit `None` opt-out;
+- configurable page/item bounds for Agent Framework-driven tool and prompt catalog discovery;
 - request-scoped HTTP header identity and reconnects caused by identity changes;
 - tool argument filtering and trusted request metadata merging;
 - result parsing, Agent Framework content conversion, tracing, and error translation;
-- atomic catalog publication and rollback after a failed complete fetch;
+- atomic catalog publication, including retained server annotations, and rollback after a failed complete fetch;
 - the background catalog-subscription task for any high-level Client, including refresh scheduling, retry/backoff,
   cancellation, and recovery after a subscription ends or is lost;
 - security and approval policy.
@@ -80,13 +82,19 @@ For **caller-supplied** connections, the caller owns:
 
 - entering and closing a **supplied** high-level `Client`;
 - constructing and closing a **supplied** low-level `ClientSession`;
-- the transport, authentication, callbacks, and other configuration already captured by either supplied object.
+- the transport, authentication, callbacks, request timeout, and other configuration already captured by either
+  supplied object. Agent Framework does not overwrite that request policy, while its own catalog-materialization
+  page and item bounds still apply.
 
 Transport-specific tool constructors enforce the same ownership boundary. A URL or command selects
 framework-owned Client construction; a supplied high-level `mcp.Client` selects caller-owned construction and
 lifecycle. Constructor combinations that mix those ownership modes or configure a transport the caller already
 owns raise `ValueError` instead of silently ignoring parameters. Temporarily retained legacy constructor and
 `ClientSession` combinations remain compatible and will be removed in vNext.
+
+Catalog page and item limits apply after the MCP SDK parses each response. They do not establish a universal
+transport response-size bound; applications must connect to MCP servers trusted to return reasonably sized responses
+and configure transport-specific limits where the selected transport exposes them.
 
 The SDK `Client` owns:
 
@@ -153,6 +161,7 @@ A caller-supplied `Client` is the preferred way to provide an existing connectio
 
 - The Client must already be entered before the MCP tool connects.
 - Agent Framework does not enter, close, replace, or recreate it.
+- Agent Framework does not replace its request timeout or transport-level resource policy.
 - Standard operations continue through the high-level Client and retain SDK MRTR and response-cache behavior.
 - Agent Framework manages its own catalog-subscription task around `Client.listen()` while the wrapper is connected.
 - `MCPTool.session` remains `None`.
@@ -182,8 +191,9 @@ protocol-gated compatibility operations; they are not universal preflights.
 ### Tasks
 
 The supported MCP Python SDK 2.x runtime does not expose the current `io.modelcontextprotocol/tasks` extension.
-Tools that may require Tasks are not presented as ordinary supported calls, and the removed long-running Tasks
-sample remains deferred. An MRTR `InputRequiredResult` is not a Tasks `input_required` status.
+Tools that require Tasks are not presented as ordinary supported calls. Tools with optional Tasks support continue
+through ordinary `tools/call` without task augmentation, and the removed long-running Tasks sample remains deferred.
+An MRTR `InputRequiredResult` is not a Tasks `input_required` status.
 
 ## Consequences
 

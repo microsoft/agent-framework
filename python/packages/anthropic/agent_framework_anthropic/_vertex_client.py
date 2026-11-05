@@ -81,6 +81,7 @@ class RawAnthropicVertexClient(RawAnthropicClient[AnthropicOptionsT], Generic[An
         region_setting = settings.get("cloud_ml_region")
         project_id_setting = settings.get("anthropic_vertex_project_id")
 
+        owns_client = anthropic_client is None
         if anthropic_client is None:
             resolved_region = region_setting if region_setting is not None else NOT_GIVEN
             resolved_project_id = project_id_setting if project_id_setting is not None else NOT_GIVEN
@@ -102,6 +103,7 @@ class RawAnthropicVertexClient(RawAnthropicClient[AnthropicOptionsT], Generic[An
             additional_beta_flags=additional_beta_flags,
             additional_properties=additional_properties,
         )
+        self._owns_client = owns_client
 
 
 class AnthropicVertexClient(

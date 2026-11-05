@@ -29,7 +29,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
     // These constants mirror Microsoft.Agents.AI.Workflows.Observability.ActivityNames
     // which is internal and not accessible from this test project.
     private const string WorkflowBuildActivityName = "workflow.build";
-    private const string WorkflowRunActivityName = "workflow_invoke";
+    private const string WorkflowRunActivityName = "invoke_workflow";
 
     // The default activity source name used by the workflow telemetry context.
     private const string DefaultTelemetrySourceName = "Microsoft.Agents.AI.Workflows";
@@ -93,7 +93,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
             ConfigureTelemetry = opt =>
             {
                 callbackInvoked = true;
-                opt.EnableSensitiveData = true;
+                opt.DisableEdgeGroupProcess = true;
             }
         };
 
@@ -102,7 +102,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
         WorkflowTelemetryOptions telemetryOptions = new();
         options.ConfigureTelemetry(telemetryOptions);
         Assert.True(callbackInvoked);
-        Assert.True(telemetryOptions.EnableSensitiveData);
+        Assert.True(telemetryOptions.DisableEdgeGroupProcess);
     }
 
     [Fact]
@@ -201,7 +201,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
             ConfigureTelemetry = opt =>
             {
                 configureInvoked = true;
-                opt.EnableSensitiveData = true;
+                opt.DisableEdgeGroupProcess = true;
             },
             LoggerFactory = NullLoggerFactory.Instance
         };
@@ -222,6 +222,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
         Assert.NotEmpty(capturedActivities);
         Assert.Contains(capturedActivities, a => a.OperationName.StartsWith(WorkflowBuildActivityName, StringComparison.Ordinal));
         Assert.Contains(capturedActivities, a => a.OperationName.StartsWith(WorkflowRunActivityName, StringComparison.Ordinal));
+        Assert.DoesNotContain(capturedActivities, a => a.OperationName.StartsWith("edge_group.process", StringComparison.Ordinal));
     }
 
     [Fact]

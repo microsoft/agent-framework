@@ -1114,8 +1114,6 @@ async def test_cancelled_release_session_still_retrieves_task_exceptions(caplog:
         exit_gate.set()
         for _ in range(10):
             await asyncio.sleep(0)  # let the abandoned task fail and its callbacks run
-        # On Python 3.10 a cancelled task keeps its CancelledError traceback, whose frames reference the tasks.
-        del release
         gc.collect()
         loop.set_exception_handler(previous_handler)
 

@@ -37,7 +37,7 @@ When principles compete, use this order:
 
 ## Tool-Enforced Style
 
-Ruff is the formatter and linter. The current configuration uses a 120-character line length and targets Python 3.10
+Ruff is the formatter and linter. The current configuration uses a 120-character line length and targets Python 3.11
 or later. `pyproject.toml` and the other tool configuration files are the source of truth for exact values and enabled
 rules.
 
@@ -179,6 +179,26 @@ def create_agent(
 - The API MUST document who owns the mapping, where it is forwarded, and whether values are copied or mutated.
 - Wrappers MUST NOT accept or forward generic keyword arguments they do not use.
 
+### Execution Modes and Configuration
+
+- Public APIs SHOULD make supported execution modes and their required inputs apparent from signatures and types.
+- When modes require substantially different parameters, lifecycle rules, or state contracts, authors SHOULD compare
+  separate entry points, typed alternatives, and a combined signature.
+- A long list of conditional parameter requirements SHOULD trigger an API-design review. Additional documentation
+  alone does not resolve an unclear API. Configuration classes must still satisfy the Import-Light Common Paths rules.
+- Invalid combinations MUST fail before execution or external side effects when the required information is already
+  available. Factory-dependent validation MUST occur before running the resolved object.
+
+### Names, Direction, and Ownership
+
+- Names SHOULD identify the operation's direction and the object or layer it affects.
+- Related settings SHOULD use the same term for the same concept. A different term requires a meaningful semantic
+  distinction.
+- Wrappers SHOULD distinguish framework behavior, hosting-platform behavior, and downstream-service behavior.
+- Public renames MUST follow the compatibility policy; improved terminology alone does not authorize a breaking change.
+- Related APIs across protocols or languages SHOULD use consistent concepts and terminology, without forcing identical
+  signatures where their contracts or language conventions differ.
+
 ### Interfaces and Reuse
 
 - Behavioral contracts SHOULD use `Protocol`.
@@ -186,6 +206,15 @@ def create_agent(
   control, or other required runtime semantics.
 - Composition and inheritance are both acceptable. Choose based on substitutability, lifecycle, and clarity rather
   than a blanket preference.
+
+### Compatibility and Feature Lifecycle
+
+- Compatibility review MUST cover behavior as well as signatures, including defaults, accepted combinations, wire
+  formats, persistence, and resource ownership.
+- Upstream dependency stability MUST NOT be treated as evidence that an integration feature is stable or that a
+  required fix is available.
+- Dependency-specific capability claims MUST be supported by the required dependency version and relevant behavioral
+  evidence.
 
 ## Asynchronous Code and Resource Ownership
 
@@ -197,6 +226,27 @@ def create_agent(
   - Close or cancel resources the object creates.
   - Do not close caller-injected resources.
   - Use synchronous or asynchronous context managers when lifecycle management is part of correct use.
+
+### Factories and Identity-Dependent Resources
+
+- Factory APIs MUST document invocation frequency, access to request context, and ownership of returned objects and
+  their resources.
+- State required across requests MUST NOT depend on request-owned object identity unless that lifetime is explicitly
+  guaranteed.
+- Identity-dependent caches and connections MUST have an explicit isolation scope and invalidation or rebinding
+  contract.
+- Examples MUST follow the same ownership contract as package code; sample brevity does not justify unsafe sharing.
+
+## State and Continuation Contracts
+
+- APIs that manage state MUST identify the authority for each kind of state and the purpose of each continuation
+  identifier.
+- Independently configurable state layers MUST document their interaction, including duplicate persistence, history
+  divergence, branching restrictions, and unsupported combinations where applicable.
+- State transitions with externally visible consequences MUST define when ownership is claimed, when state becomes
+  durable, and what happens after failure or retry.
+- Checkpointing or retry support MUST NOT be described as exactly-once execution unless that guarantee also covers
+  external side effects.
 
 ## Exception Hierarchy
 
@@ -303,6 +353,18 @@ Package-governance decisions and detailed validation commands live in
 [`python-package-management`](.github/skills/python-package-management/SKILL.md).
 
 ## Documentation
+
+### Adapter and Option Contracts
+
+- Public adapter parameters MUST document whether the adapter interprets, translates, forwards, overrides, or ignores
+  their values, including unsupported or ineffective settings.
+- Documentation for upstream SDK types SHOULD link to the upstream contract and explain adapter-specific behavior
+  or limitations.
+- APIs with multiple configuration sources MUST document precedence and distinguish construction defaults from
+  per-run overrides.
+- Option hooks MUST document their inputs, return contract, invocation timing, supported execution paths, mutation
+  behavior, and validation applied after the hook.
+- Examples SHOULD include public imports and show the smallest complete initialization for the scenario.
 
 ### Module Docstrings
 

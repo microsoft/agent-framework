@@ -49,6 +49,16 @@ from ._run_common import (
     _snapshot_messages_match,
     _snapshot_overlap_length,
 )
+from ._session_ownership import (
+    SCOPE_CONFLICT_CODE,
+    SCOPE_CONFLICT_LOG_MESSAGE,
+    SCOPE_CONFLICT_MESSAGE,
+    WORKFLOW_AGENT_TOOL_CODE,
+    WORKFLOW_AGENT_TOOL_MESSAGE,
+    claim_agent_executors,
+    workflow_agent_tool_error,
+    workflow_agent_tools,
+)
 from ._snapshot_session import ThreadSnapshotSession, _event_messages_to_snapshot_dicts
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
@@ -671,8 +681,15 @@ class AgentFrameworkWorkflow:
         """Initialize the AG-UI workflow wrapper.
 
         Args:
-            workflow: Optional workflow instance to expose.
-            workflow_factory: Optional factory for thread-scoped workflow instances.
+            workflow: Optional workflow instance to expose. One instance serves every request, so its executors keep
+                their state across callers. When requests carry an authorization scope, a workflow that holds
+                ``AgentExecutor`` instances serves only the first scope that runs it; a run in another scope ends
+                with a ``WORKFLOW_SCOPE_CONFLICT`` ``RUN_ERROR``.
+            workflow_factory: Optional factory for thread-scoped workflow instances. Build a new workflow, including
+                new ``AgentExecutor`` and ``AgentSession`` instances, on every call. Each authorization scope and
+                thread then keeps its own executor sessions. The factory receives only the thread id and runs once
+                for each scope and thread. Start every session with fresh state, and do not restore session state
+                that is keyed by the thread id alone. Use ``checkpoint_storage`` to continue a conversation.
             name: Optional workflow name.
             description: Optional workflow description.
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
@@ -878,6 +895,19 @@ class AgentFrameworkWorkflow:
         ):
             async for event in snapshot_session.hydrate_events(run_id=run_id):
                 yield event
+            return
+
+        # A replay above starts no workflow, so only a run that reaches the executors decides who owns them.
+        unsupported_tools = workflow_agent_tools(workflow)
+        if unsupported_tools:
+            logger.error(workflow_agent_tool_error(self.name, unsupported_tools))
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield RunErrorEvent(message=WORKFLOW_AGENT_TOOL_MESSAGE, code=WORKFLOW_AGENT_TOOL_CODE)
+            return
+        if not claim_agent_executors(workflow, snapshot_scope):
+            logger.error(SCOPE_CONFLICT_LOG_MESSAGE, self.name)
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield RunErrorEvent(message=SCOPE_CONFLICT_MESSAGE, code=SCOPE_CONFLICT_CODE)
             return
 
         # Seed follow-up turns so the workflow runs with the full persisted thread

@@ -22,13 +22,11 @@ pip install agent-framework-openai
 
 Supported Platforms:
 
-- Python: 3.10–3.15
+- Python: 3.11–3.15
 - OS: Windows, macOS, Linux
 
-Python 3.10 remains supported and tested for this release, but it is deprecated
-because upstream Python 3.10 has reached end of life. New environments should
-use Python 3.11 or later. Removing Python 3.10 support will be handled in a
-future release rather than by this compatibility update.
+Python 3.11 or later is required. Supported environments are subject to
+[integration-specific limits](../../README.md#python-315-limitations).
 
 ## 1. Setup API Keys
 
@@ -68,6 +66,14 @@ carry a documented feature-usage token.
   token while retaining the package/version User-Agent.
 - `AGENT_FRAMEWORK_USER_AGENT_DISABLED=true` disables the entire Agent Framework
   User-Agent contribution, including the feature token.
+
+OpenTelemetry providers configured through `configure_otel_providers()` share a
+resource containing `"microsoft.agent-framework": "True"` (a string) by default. This
+resource attribute applies to logs, traces, and metrics, including other
+instrumentation using those providers. Existing environment and explicit resource
+attribute overrides retain their precedence. If you configure providers yourself,
+use `agent_framework.observability.create_resource()` for each provider or add the
+attribute to your own shared resource.
 
 See the following [getting started samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/01-get-started) for more information.
 

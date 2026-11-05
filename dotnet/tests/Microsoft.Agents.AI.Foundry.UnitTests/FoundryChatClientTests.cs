@@ -11,6 +11,7 @@ using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
+using AgentReference = Azure.AI.Extensions.OpenAI.AgentReference;
 
 #pragma warning disable OPENAI001, CS0618
 

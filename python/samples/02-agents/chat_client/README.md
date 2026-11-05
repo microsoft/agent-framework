@@ -6,7 +6,7 @@ This folder contains examples for direct chat client usage patterns.
 
 | File | Description |
 |------|-------------|
-| [`built_in_chat_clients.py`](built_in_chat_clients.py) | Consolidated sample for built-in chat clients. Uses `get_client()` to create the selected client and pass it to `main()`. |
+| [`built_in_chat_clients.py`](built_in_chat_clients.py) | Consolidated sample for built-in chat clients. Passes a client name to `main()`, which creates the selected client with `get_client()`. |
 | [`chat_response_cancellation.py`](chat_response_cancellation.py) | Demonstrates how to cancel chat responses during streaming, showing proper cancellation handling and cleanup. |
 | [`custom_chat_client.py`](custom_chat_client.py) | Demonstrates how to create custom chat clients by extending the `BaseChatClient` class. Shows a `EchoingChatClient` implementation and how to integrate it with `Agent` using the `as_agent()` method. |
 | [`require_per_service_call_history_persistence.py`](require_per_service_call_history_persistence.py) | Compares two otherwise identical `FoundryChatClient` agents with `store=False`; the only difference is whether `require_per_service_call_history_persistence` is enabled, and only the run without it stores the synthesized tool result when middleware terminates the loop early. |
@@ -16,17 +16,17 @@ This folder contains examples for direct chat client usage patterns.
 `built_in_chat_clients.py` starts with:
 
 ```python
-asyncio.run(main("openai_responses"))
+asyncio.run(main("openai_chat"))
 ```
 
 Change the argument to pick a client:
 
-- `openai_responses`
+- `openai_chat`
 - `openai_chat_completion`
 - `anthropic`
 - `ollama`
 - `bedrock`
-- `azure_openai_responses`
+- `azure_openai_chat`
 - `azure_openai_chat_completion`
 - `foundry_chat`
 
@@ -49,7 +49,7 @@ uv run samples/02-agents/chat_client/require_per_service_call_history_persistenc
 
 Depending on the selected client, set the appropriate environment variables:
 
-**For Azure OpenAI clients (`azure_openai_responses` and `azure_openai_chat_completion`):**
+**For Azure OpenAI clients (`azure_openai_chat` and `azure_openai_chat_completion`):**
 - `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint
 - `AZURE_OPENAI_MODEL`: The Azure OpenAI deployment used by the sample
 - `AZURE_OPENAI_API_VERSION` (optional): Azure OpenAI API version override
@@ -62,7 +62,7 @@ Depending on the selected client, set the appropriate environment variables:
 **For OpenAI clients:**
 - `OPENAI_API_KEY`: Your OpenAI API key
 - `OPENAI_CHAT_COMPLETION_MODEL`: The OpenAI model for `openai_chat_completion`
-- `OPENAI_CHAT_MODEL`: The OpenAI model for `openai_responses`
+- `OPENAI_CHAT_MODEL`: The OpenAI model for `openai_chat`
 
 **For Anthropic client (`anthropic`):**
 - `ANTHROPIC_API_KEY`: Your Anthropic API key

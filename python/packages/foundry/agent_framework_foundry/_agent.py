@@ -13,7 +13,7 @@ import logging
 import sys
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypedDict, cast
 
 from agent_framework import (
     AgentMiddlewareLayer,
@@ -57,10 +57,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework import (
@@ -292,6 +288,8 @@ class RawFoundryAgentChatClient(
             tokenizer=tokenizer,
             additional_properties=additional_properties,
         )
+        self._owns_client = True
+        self._project_client_closed = False
         self.model = ""  # Foundry agents resolve model server-side; ignore env vars (issue #7272).
 
     @override
@@ -541,10 +539,15 @@ class RawFoundryAgentChatClient(
 
         return transformed
 
+    @override
     async def close(self) -> None:
-        """Close the project client if we created it."""
-        if self._should_close_client:
-            await self.project_client.close()
+        """Close owned OpenAI and project connections, not the supplied credential."""
+        try:
+            await super().close()
+        finally:
+            if self._should_close_client and not self._project_client_closed:
+                await self.project_client.close()
+                self._project_client_closed = True
 
 
 class _FoundryAgentChatClient(
