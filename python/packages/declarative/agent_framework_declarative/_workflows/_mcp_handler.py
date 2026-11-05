@@ -139,7 +139,7 @@ class DefaultMCPToolHandler:
 
         if invocation.tool_name == self.LIST_TOOLS_TOOL_NAME and invocation.arguments:
             message = f"The reserved MCP '{self.LIST_TOOLS_TOOL_NAME}' operation does not accept tool arguments."
-            return MCPToolResult(outputs=[Content.from_text(f"Error: {message}")], is_error=True, error_message=message)
+            raise ValueError(message)
 
         tool: MCPStreamableHTTPTool | None = None
         try:

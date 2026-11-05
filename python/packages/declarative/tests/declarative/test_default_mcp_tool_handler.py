@@ -278,12 +278,10 @@ def test_invalid_discovery_limit_raises(option: str, value: int) -> None:
 
 async def test_list_tools_rejects_arguments_before_provider(mcp_tool_constructor: MagicMock) -> None:
     provider = AsyncMock()
-    result = await DefaultMCPToolHandler(client_provider=provider).invoke_tool(
-        MCPToolInvocation("https://mcp.example/api", "tools/list", arguments={"unexpected": True})
-    )
-    assert result.is_error
-    assert result.error_message is not None
-    assert "does not accept tool arguments" in result.error_message
+    with pytest.raises(ValueError, match="The reserved MCP 'tools/list' operation does not accept tool arguments"):
+        await DefaultMCPToolHandler(client_provider=provider).invoke_tool(
+            MCPToolInvocation("https://mcp.example/api", "tools/list", arguments={"unexpected": True})
+        )
     provider.assert_not_awaited()
     mcp_tool_constructor.assert_not_called()
 
