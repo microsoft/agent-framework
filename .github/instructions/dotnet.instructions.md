@@ -21,6 +21,8 @@ other required CI checks will report.
   boundaries permit.
 - Group hosting extensions by receiver: service collection, host application builder, and endpoint route builder.
   Follow neighboring receiver-specific class names.
+- Name a service's options type `<ServiceName>Options`, using the full service type name; for example,
+  `FoundryToolboxService` uses `FoundryToolboxServiceOptions`.
 - Give boolean options a direct, unambiguous predicate. Avoid redundant combinations such as `Allow...Enabled`;
   distinguish similarly named concepts such as agent-service response storage versus hosting response storage.
 - Use consistent provider/domain qualifiers across related public types. Flag duplicate simple names in namespaces
