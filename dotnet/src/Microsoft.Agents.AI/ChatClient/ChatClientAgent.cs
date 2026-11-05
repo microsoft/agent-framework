@@ -1081,48 +1081,32 @@ public sealed partial class ChatClientAgent : AIAgent
     /// Builds the response messages to persist for a cancelled streaming run from the updates received so far.
     /// </summary>
     /// <remarks>
-    /// Incomplete content is removed so that the stored history remains valid for the next service call:
-    /// tool calls and tool results without a matching counterpart in the partial response,
-    /// pending input requests (for example, <see cref="ToolApprovalRequestContent"/>), and empty text.
-    /// Tool calls and results are only matched within the partial response, because the request messages are expected
+    /// Only the tool calls without a matching tool result in the partial response are removed, so that the stored
+    /// history remains valid for the next service call; all other content is kept as received.
+    /// Tool calls are only matched within the partial response, because the request messages are expected
     /// to contain settled history only, so the response never contains results for tool calls from the request.
-    /// Messages left without content are dropped, and every remaining message is marked with
-    /// <see cref="PartialResponseMarkerKey"/>.
+    /// Messages left without content after removing their unsettled tool calls are dropped, and every remaining
+    /// message is marked with <see cref="PartialResponseMarkerKey"/>.
     /// </remarks>
     internal static List<ChatMessage> CreatePartialResponseMessages(IEnumerable<ChatResponseUpdate> responseUpdates)
     {
         IList<ChatMessage> responseMessages = responseUpdates.ToChatResponse().Messages;
 
-        HashSet<string> toolCallIds = new(StringComparer.Ordinal);
-        HashSet<string> toolResultIds = new(StringComparer.Ordinal);
-
-        foreach (var content in responseMessages.SelectMany(m => m.Contents))
-        {
-            switch (content)
-            {
-                case ToolCallContent toolCall:
-                    toolCallIds.Add(toolCall.CallId);
-                    break;
-                case ToolResultContent toolResult:
-                    toolResultIds.Add(toolResult.CallId);
-                    break;
-            }
-        }
+        HashSet<string> toolResultIds = new(
+            responseMessages.SelectMany(m => m.Contents).OfType<ToolResultContent>().Select(toolResult => toolResult.CallId),
+            StringComparer.Ordinal);
 
         List<ChatMessage> partialMessages = [];
         foreach (var message in responseMessages)
         {
-            List<AIContent> contents = message.Contents.Where(content => content switch
-            {
-                ToolCallContent toolCall => toolResultIds.Contains(toolCall.CallId),
-                ToolResultContent toolResult => toolCallIds.Contains(toolResult.CallId),
-                InputRequestContent => false,
-                TextContent text => !string.IsNullOrEmpty(text.Text),
-                _ => true,
-            }).ToList();
+            List<AIContent> contents = message.Contents
+                .Where(content => content is not ToolCallContent toolCall || toolResultIds.Contains(toolCall.CallId))
+                .ToList();
 
-            if (contents.Count == 0)
+            if (contents.Count == 0 && message.Contents.Count > 0)
             {
+                // The message only contained unsettled tool calls, so it is dropped. Messages that were already empty
+                // are kept, because they may still carry other valuable data.
                 continue;
             }
 

@@ -323,9 +323,9 @@ public sealed class ChatClientAgentOptions
     /// </para>
     /// <para>
     /// When set to <see langword="true"/> and a streaming run is cancelled by the caller's cancellation token, the agent
-    /// builds a response from the updates received so far, removes incomplete content (for example, a
-    /// <see cref="FunctionCallContent"/> without a matching <see cref="FunctionResultContent"/>, or a pending
-    /// <see cref="ToolApprovalRequestContent"/>), marks each persisted response message with
+    /// builds a response from the updates received so far, removes the tool calls that have not been settled (a
+    /// <see cref="FunctionCallContent"/> without a matching <see cref="FunctionResultContent"/>) while keeping all other
+    /// content, marks each persisted response message with
     /// <see cref="ChatClientAgent.PartialResponseMarkerKey"/> in <see cref="ChatMessage.AdditionalProperties"/>,
     /// and notifies the <see cref="ChatHistoryProvider"/> and the <see cref="ChatClientAgent.AIContextProviders"/>
     /// as for a successful invocation. The original <see cref="System.OperationCanceledException"/> is always rethrown,

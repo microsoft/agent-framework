@@ -162,23 +162,33 @@ public class ChatClientAgent_PartialPersistenceOnCancellationTests
     }
 
     [Fact]
-    public void CreatePartialResponseMessages_RemovesFunctionResultWithoutMatchingCallInResponse()
+    public void CreatePartialResponseMessages_RemovesOnlyUnsettledToolCalls()
     {
         // Arrange
+        TextContent emptyTextWithMetadata = new(string.Empty) { AdditionalProperties = new() { ["key"] = "value" } };
+        AIContent customContent = new();
+        ToolApprovalRequestContent approvalRequest = new("request1", new FunctionCallContent("call3", "BookTrip"));
         ChatResponseUpdate[] updates =
         [
-            new(ChatRole.Assistant, [new FunctionCallContent("call1", "GetWeather")]) { MessageId = "m1" },
-            new(ChatRole.Tool, [new FunctionResultContent("call1", "Sunny"), new FunctionResultContent("call2", "Rainy")]) { MessageId = "m2" },
+            new(ChatRole.Assistant, [new FunctionCallContent("call1", "GetWeather"), new FunctionCallContent("call2", "GetTime")]) { MessageId = "m1" },
+            new(ChatRole.Tool, [new FunctionResultContent("call1", "Sunny")]) { MessageId = "m2" },
+            new(ChatRole.Assistant, [emptyTextWithMetadata, customContent, approvalRequest]) { MessageId = "m3" },
+            new(ChatRole.Assistant, [new FunctionCallContent("call4", "GetNews")]) { MessageId = "m4" },
         ];
 
         // Act
         var messages = ChatClientAgent.CreatePartialResponseMessages(updates);
 
         // Assert
+        Assert.Equal(["m1", "m2", "m3"], messages.Select(m => m.MessageId));
         var contents = messages.SelectMany(m => m.Contents).ToList();
         Assert.Contains(contents, c => c is FunctionCallContent { CallId: "call1" });
         Assert.Contains(contents, c => c is FunctionResultContent { CallId: "call1" });
-        Assert.DoesNotContain(contents, c => c is FunctionResultContent { CallId: "call2" });
+        Assert.DoesNotContain(contents, c => c is FunctionCallContent { CallId: "call2" });
+        Assert.DoesNotContain(contents, c => c is FunctionCallContent { CallId: "call4" });
+        Assert.Contains(contents, c => c is TextContent text && text.AdditionalProperties?["key"] is "value");
+        Assert.Contains(customContent, contents);
+        Assert.Contains(approvalRequest, contents);
     }
 
     [Fact]
