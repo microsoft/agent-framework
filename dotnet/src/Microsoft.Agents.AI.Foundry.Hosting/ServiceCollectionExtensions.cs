@@ -39,7 +39,7 @@ public static class FoundryHostingExtensions
     private const string ResponsesServerSettingsSectionName = "ResponsesServer";
 
     /// <summary>
-    /// Registers the Azure AI Responses Server SDK and <see cref="AgentFrameworkResponseHandler"/>
+    /// Registers the Azure AI Responses Server SDK and the Agent Framework response handler
     /// on a host application builder.
     /// </summary>
     /// <remarks>
@@ -131,7 +131,7 @@ public static class FoundryHostingExtensions
     }
 
     /// <summary>
-    /// Registers the Azure AI Responses Server SDK and <see cref="AgentFrameworkResponseHandler"/>
+    /// Registers the Azure AI Responses Server SDK and the Agent Framework response handler
     /// as the <see cref="ResponseHandler"/>. Agents are resolved from keyed DI services
     /// using the <c>agent.name</c> or <c>metadata["entity_id"]</c> from incoming requests.
     /// </summary>
@@ -349,7 +349,7 @@ public static class FoundryHostingExtensions
 
     /// <summary>
     /// Registers the Foundry Toolbox service, which eagerly connects to the Foundry Toolboxes
-    /// MCP proxy at startup and provides MCP tools to <see cref="AgentFrameworkResponseHandler"/>.
+    /// MCP proxy at startup and provides MCP tools to the registered response handler.
     /// </summary>
     /// <remarks>
     /// <para>

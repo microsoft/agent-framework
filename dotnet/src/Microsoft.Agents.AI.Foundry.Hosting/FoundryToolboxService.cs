@@ -25,7 +25,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <summary>
 /// An <see cref="IHostedService"/> that eagerly connects to the Foundry Toolboxes MCP proxy at
 /// container startup, discovers tools via <c>tools/list</c>, and caches them so they can be
-/// injected into every <see cref="ChatOptions"/> by <see cref="AgentFrameworkResponseHandler"/>.
+/// injected into every <see cref="ChatOptions"/> by the registered response handler.
 /// </summary>
 /// <remarks>
 /// <para>

@@ -34,7 +34,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// to be hosted as Azure Foundry Hosted Agents.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public class AgentFrameworkResponseHandler : ResponseHandler
+internal sealed class AgentFrameworkResponseHandler : ResponseHandler
 {
     private const string LatestWorkflowCheckpointIdMetadataKey = "_last_checkpoint_id";
     private const string UserPartitionName = "user";
