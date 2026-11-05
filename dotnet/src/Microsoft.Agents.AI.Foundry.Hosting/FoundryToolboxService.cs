@@ -55,7 +55,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
+public sealed partial class FoundryToolboxService : IHostedService, IAsyncDisposable
 {
     private readonly FoundryToolboxOptions _options;
     private readonly TokenCredential _credential;
@@ -161,7 +161,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
 
         if (string.IsNullOrEmpty(projectEndpoint))
         {
-            this._logger.LogToolboxSupportDisabled();
+            LogToolboxSupportDisabled(this._logger);
             this.Tools = [];
             this.StartupStatus = FoundryToolboxStartupStatus.NoEndpoint;
             return;
@@ -174,7 +174,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
 
         if (this._options.ToolboxNames.Count == 0)
         {
-            this._logger.LogNoPreRegisteredToolboxes();
+            LogNoPreRegisteredToolboxes(this._logger);
             this.Tools = [];
             this.StartupStatus = FoundryToolboxStartupStatus.Healthy;
             return;
@@ -201,7 +201,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                     // per-request, and retry enumeration once the user has consented.
                     this._pendingConsents[toolboxName] = consents;
 
-                    this._logger.LogToolboxRequiresConsent(toolboxName);
+                    LogToolboxRequiresConsent(this._logger, toolboxName);
 
                     continue;
                 }
@@ -220,7 +220,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                 // yet. Rather than failing readiness and bricking the container, keep it routable and
                 // defer the toolbox: it is retried per-request via RetryDeferredToolboxesAsync, where
                 // the user context is available and enumeration can succeed (or surface consent).
-                this._logger.LogToolboxStartupEnumerationDeferred(toolboxName, ex);
+                LogToolboxStartupEnumerationDeferred(this._logger, toolboxName, ex);
 
                 deferred.Add(toolboxName);
             }
@@ -315,7 +315,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                 {
                     // Transient/other error: leave the toolbox pending so a later request retries.
                     // Do not surface a consent prompt (we have no URL); proceed without these tools.
-                    this._logger.LogConsentGatedToolboxRetryFailed(toolboxName, ex);
+                    LogConsentGatedToolboxRetryFailed(this._logger, toolboxName, ex);
                 }
             }
 
@@ -379,7 +379,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     // Still failing — keep it deferred and retry on a later request.
-                    this._logger.LogDeferredToolboxRetryFailed(toolboxName, ex);
+                    LogDeferredToolboxRetryFailed(this._logger, toolboxName, ex);
                 }
             }
         }
@@ -667,7 +667,8 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         List<Exception> failures)
     {
         failures.Add(exception);
-        this._logger.LogToolboxResourceDisposalFailed(
+        LogToolboxResourceDisposalFailed(
+            this._logger,
             resource,
             toolboxName ?? "(none)",
             owner,
@@ -799,7 +800,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
 
         var proxyUrl = $"{this._resolvedEndpoint!}/toolboxes/{toolboxName}/mcp?api-version={this._options.ApiVersion}";
 
-        this._logger.LogConnectingToToolbox(toolboxName, proxyUrl);
+        LogConnectingToToolbox(this._logger, toolboxName, proxyUrl);
 
         // Build the endpoint URI before allocating the HttpClient so a malformed URL cannot leak it.
         var endpoint = new Uri(proxyUrl);
@@ -864,7 +865,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             throw;
         }
 
-        this._logger.LogToolboxToolsDiscovered(toolboxName, mcpTools.Count);
+        LogToolboxToolsDiscovered(this._logger, toolboxName, mcpTools.Count);
 
         var wrapped = new List<AITool>(mcpTools.Count);
         foreach (var tool in mcpTools)
@@ -914,7 +915,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             }
         }
 
-        this._logger.LogUnsupportedToolApprovalConfiguration(tool.Name, toolboxName);
+        LogUnsupportedToolApprovalConfiguration(this._logger, tool.Name, toolboxName);
         return true;
     }
 
@@ -994,4 +995,57 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     /// <see cref="Consents"/> when enumeration is blocked pending user OAuth consent.
     /// </summary>
     internal sealed record ToolboxOpenResult(CachedToolbox? Cached, IReadOnlyList<McpConsentInfo>? Consents);
+
+    [LoggerMessage(LogLevel.Warning, "Neither FOUNDRY_PROJECT_ENDPOINT nor AZURE_AI_PROJECT_ENDPOINT is set; toolbox support is disabled.")]
+    private static partial void LogToolboxSupportDisabled(ILogger logger);
+
+    [LoggerMessage(LogLevel.Information, "No pre-registered toolbox names configured.")]
+    private static partial void LogNoPreRegisteredToolboxes(ILogger logger);
+
+    [LoggerMessage(LogLevel.Information, "Toolbox '{ToolboxName}' requires user OAuth consent before its tools can be enumerated. The container stays ready; the consent prompt is surfaced to the caller per-request.")]
+    private static partial void LogToolboxRequiresConsent(ILogger logger, string toolboxName);
+
+    [LoggerMessage(LogLevel.Warning, "Toolbox '{ToolboxName}' could not be enumerated at startup; deferring it to per-request resolution. The container stays ready and the toolbox is retried on the next request when the per-user context is available.")]
+    private static partial void LogToolboxStartupEnumerationDeferred(
+        ILogger logger,
+        string toolboxName,
+        Exception exception);
+
+    [LoggerMessage(LogLevel.Warning, "Retry of consent-gated toolbox '{ToolboxName}' failed; it remains pending.")]
+    private static partial void LogConsentGatedToolboxRetryFailed(
+        ILogger logger,
+        string toolboxName,
+        Exception exception);
+
+    [LoggerMessage(LogLevel.Warning, "Retry of deferred toolbox '{ToolboxName}' failed; it remains deferred.")]
+    private static partial void LogDeferredToolboxRetryFailed(
+        ILogger logger,
+        string toolboxName,
+        Exception exception);
+
+    [LoggerMessage(LogLevel.Warning, "Failed to dispose {Resource} for toolbox {ToolboxName} owned by {Owner}.")]
+    private static partial void LogToolboxResourceDisposalFailed(
+        ILogger logger,
+        string resource,
+        string toolboxName,
+        string owner,
+        Exception exception);
+
+    [LoggerMessage(LogLevel.Information, "Connecting to toolbox '{ToolboxName}' at {ProxyUrl}.")]
+    private static partial void LogConnectingToToolbox(
+        ILogger logger,
+        string toolboxName,
+        string proxyUrl);
+
+    [LoggerMessage(LogLevel.Information, "Toolbox '{ToolboxName}': discovered {ToolCount} tool(s).")]
+    private static partial void LogToolboxToolsDiscovered(
+        ILogger logger,
+        string toolboxName,
+        int toolCount);
+
+    [LoggerMessage(LogLevel.Warning, "Tool '{ToolName}' in toolbox '{ToolboxName}' has an unsupported approval configuration; requiring approval for every call.")]
+    private static partial void LogUnsupportedToolApprovalConfiguration(
+        ILogger logger,
+        string toolName,
+        string toolboxName);
 }

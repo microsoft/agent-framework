@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Rejects an unsupported hosted Responses protocol before the request enters AgentServer's
 /// resilient task boundary.
 /// </summary>
-internal sealed class HostedProtocolCompatibilityFilter : IEndpointFilter
+internal sealed partial class HostedProtocolCompatibilityFilter : IEndpointFilter
 {
     private const string CallIdHeaderName = "x-agent-foundry-call-id";
     private const string ErrorSourceHeaderName = "x-platform-error-source";
@@ -59,7 +59,7 @@ internal sealed class HostedProtocolCompatibilityFilter : IEndpointFilter
             return next(context);
         }
 
-        this._logger.LogUnsupportedResponsesProtocol();
+        LogUnsupportedResponsesProtocol(this._logger);
 
         BinaryData responseData =
             ((IPersistableModel<ApiErrorResponse>)new ApiErrorResponse(unsupportedProtocolError.Error))
@@ -76,4 +76,7 @@ internal sealed class HostedProtocolCompatibilityFilter : IEndpointFilter
     private static bool IsCreateResponseRequest(HttpRequest request)
         => HttpMethods.IsPost(request.Method) &&
             request.Path.Value?.EndsWith("/responses", StringComparison.OrdinalIgnoreCase) is true;
+
+    [LoggerMessage(LogLevel.Error, "Hosted container served unsupported Responses protocol 1.0.0 (no x-agent-foundry-call-id header); this image requires protocol 2.0.0.")]
+    private static partial void LogUnsupportedResponsesProtocol(ILogger logger);
 }

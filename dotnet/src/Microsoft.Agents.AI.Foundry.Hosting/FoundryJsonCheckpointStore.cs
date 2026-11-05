@@ -56,7 +56,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
+public sealed partial class FoundryJsonCheckpointStore : JsonCheckpointStore
 {
     /// <summary>
     /// The default state-store name used to hold every workflow checkpoint persisted by this store.
@@ -243,12 +243,16 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
                 // Another writer added a checkpoint to the same session between the read and the
                 // write. The checkpoint item is already stored under its own key, so the next
                 // attempt simply re-reads the index and appends to the newer list.
-                this._logger?.LogCheckpointIndexRaceRetry(
-                    attempt + 1,
-                    this._maxIndexUpdateAttempts,
-                    checkpointInfo.CheckpointId,
-                    sessionId,
-                    ex);
+                if (this._logger is { } logger)
+                {
+                    LogCheckpointIndexRaceRetry(
+                        logger,
+                        attempt + 1,
+                        this._maxIndexUpdateAttempts,
+                        checkpointInfo.CheckpointId,
+                        sessionId,
+                        ex);
+                }
 
                 continue;
             }
@@ -380,10 +384,14 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
                 catch (FoundryStorageNotFoundException ex)
                 {
                     // Already deleted, by an earlier attempt or another instance.
-                    this._logger?.LogObsoleteCheckpointAlreadyGone(
-                        entry.CheckpointId,
-                        sessionId,
-                        ex);
+                    if (this._logger is { } logger)
+                    {
+                        LogObsoleteCheckpointAlreadyGone(
+                            logger,
+                            entry.CheckpointId,
+                            sessionId,
+                            ex);
+                    }
                 }
             }
         }
@@ -391,7 +399,10 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
         {
             // Another instance updated the same session index first. Leaving the old items in place
             // is safer than deleting against a stale index; a later resume can prune them.
-            this._logger?.LogCheckpointPruningRace(sessionId, ex);
+            if (this._logger is { } logger)
+            {
+                LogCheckpointPruningRace(logger, sessionId, ex);
+            }
         }
         catch (FoundryStorageException ex)
         {
@@ -400,7 +411,10 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
             // so failing the resume over housekeeping would break a conversation that was about to
             // carry on. It is reported instead, because left unreported this is how a session's
             // checkpoints would silently pile up until the index no longer fits.
-            this._logger?.LogCheckpointPruningFailed(sessionId, this.StoreName, ex);
+            if (this._logger is { } logger)
+            {
+                LogCheckpointPruningFailed(logger, sessionId, this.StoreName, ex);
+            }
         }
     }
 
@@ -593,4 +607,33 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
     }
 
     private sealed record IndexEntry(string CheckpointId, string? ParentCheckpointId, bool HasParentMetadata);
+
+    [LoggerMessage(LogLevel.Debug, "Attempt {Attempt} of {MaxAttempts} to index checkpoint '{CheckpointId}' for session '{SessionId}' lost to another writer. Retrying.")]
+    private static partial void LogCheckpointIndexRaceRetry(
+        ILogger logger,
+        int attempt,
+        int maxAttempts,
+        string checkpointId,
+        string sessionId,
+        Exception exception);
+
+    [LoggerMessage(LogLevel.Debug, "Obsolete checkpoint '{CheckpointId}' of session '{SessionId}' was already gone.")]
+    private static partial void LogObsoleteCheckpointAlreadyGone(
+        ILogger logger,
+        string checkpointId,
+        string sessionId,
+        Exception exception);
+
+    [LoggerMessage(LogLevel.Debug, "Pruning obsolete checkpoints of session '{SessionId}' lost to another writer. The old checkpoints remain until a later resume or expiry.")]
+    private static partial void LogCheckpointPruningRace(
+        ILogger logger,
+        string sessionId,
+        Exception exception);
+
+    [LoggerMessage(LogLevel.Warning, "Could not prune obsolete checkpoints of session '{SessionId}' in the Foundry state store '{StoreName}'. The resume itself succeeded; the leftovers stay until the store's own expiry removes them.")]
+    private static partial void LogCheckpointPruningFailed(
+        ILogger logger,
+        string sessionId,
+        string storeName,
+        Exception exception);
 }

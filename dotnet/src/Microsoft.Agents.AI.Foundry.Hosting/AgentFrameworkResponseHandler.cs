@@ -34,7 +34,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// to be hosted as Azure Foundry Hosted Agents.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public class AgentFrameworkResponseHandler : ResponseHandler
+public partial class AgentFrameworkResponseHandler : ResponseHandler
 {
     private const string LatestWorkflowCheckpointIdMetadataKey = "_last_checkpoint_id";
     private const string UserPartitionName = "user";
@@ -484,7 +484,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     // Catch agent execution errors and emit a proper failed event
                     // with the real error message instead of letting the SDK emit
                     // a generic "An internal server error occurred."
-                    this._logger.LogAgentExecutionFailed(context.ResponseId, ex);
+                    LogAgentExecutionFailed(this._logger, context.ResponseId, ex);
 
                     failedEvent = stream.EmitFailed(
                         ResponseErrorCode.ServerError,
@@ -546,13 +546,13 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     // preserve the existing behavior and emit incomplete.
                     if (isResilientTurn)
                     {
-                        this._logger.LogShutdownDeferredForRecovery();
+                        LogShutdownDeferredForRecovery(this._logger);
                         deferredForRecovery = true;
                         await context.ExitForRecoveryAsync(cancellationToken).ConfigureAwait(false);
                         yield break;
                     }
 
-                    this._logger.LogShutdownEmittingIncomplete();
+                    LogShutdownEmittingIncomplete(this._logger);
                     yield return stream.EmitIncomplete();
                     yield break;
                 }
@@ -563,7 +563,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     // same conversation. Finish the current response cleanly so Core can drain the
                     // queued input as a new handler invocation. The MAF AgentSession is saved in the
                     // outer finally block and becomes the starting state for that invocation.
-                    this._logger.LogSteeringInputDetected(context.ResponseId);
+                    LogSteeringInputDetected(this._logger, context.ResponseId);
                     emittedTerminal = true;
                     yield return stream.EmitCompleted();
                     yield break;
@@ -605,7 +605,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
-                        this._logger.LogIncrementalSessionSaveSkipped(context.ResponseId, ex);
+                        LogIncrementalSessionSaveSkipped(this._logger, context.ResponseId, ex);
                     }
                 }
 
@@ -649,7 +649,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         if (notAllowedStoreUsageDetected)
         {
-            this._logger.LogServerSideStorageNotAllowed(agent.Name);
+            LogServerSideStorageNotAllowed(this._logger, agent.Name);
 
             throw HostedStoredOutputCompatibility.CreateMisconfiguredAgentError();
         }
@@ -683,7 +683,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                this._logger.LogWorkflowCheckpointNotPaired(
+                LogWorkflowCheckpointNotPaired(
+                    this._logger,
                     checkpoint.CheckpointId,
                     context.ResponseId,
                     ex);
@@ -809,7 +810,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             }
             catch (InvalidOperationException ex)
             {
-                this._logger.LogToolboxResolutionFailed(name, responseId, ex);
+                LogToolboxResolutionFailed(this._logger, name, responseId, ex);
 
                 // A resolution error fails the request even when earlier markers collected consents.
                 return new(Tools: [], Consents: [], Error: ex.Message);
@@ -930,7 +931,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         {
             if (!policy.IsAllowed(consent.ConsentUrl))
             {
-                this._logger.LogConsentLinkRejected(
+                LogConsentLinkRejected(
+                    this._logger,
                     consent.ToolName,
                     consent.ToolboxName,
                     responseId);
@@ -985,7 +987,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 return this.PrepareResolvedAgent(agent, storageIdentity);
             }
 
-            this._logger.LogKeyedAgentNotFound(agentName);
+            LogKeyedAgentNotFound(this._logger, agentName);
         }
 
         // Try non-keyed default
@@ -1035,7 +1037,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 return sessionStore;
             }
 
-            this._logger.LogKeyedSessionStoreNotFound(agentName);
+            LogKeyedSessionStoreNotFound(this._logger, agentName);
         }
 
         // Try non-keyed default
@@ -1081,4 +1083,55 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         IReadOnlyList<AITool> Tools,
         IReadOnlyList<McpConsentInfo> Consents,
         string? Error);
+
+    [LoggerMessage(LogLevel.Error, "Agent execution failed for response {ResponseId}.")]
+    private static partial void LogAgentExecutionFailed(
+        ILogger logger,
+        string responseId,
+        Exception exception);
+
+    [LoggerMessage(LogLevel.Information, "Shutdown detected on a resilient turn; deferring for recovery.")]
+    private static partial void LogShutdownDeferredForRecovery(ILogger logger);
+
+    [LoggerMessage(LogLevel.Information, "Shutdown detected, emitting incomplete response.")]
+    private static partial void LogShutdownEmittingIncomplete(ILogger logger);
+
+    [LoggerMessage(LogLevel.Information, "Steering input detected for response {ResponseId}; completing the active turn.")]
+    private static partial void LogSteeringInputDetected(ILogger logger, string responseId);
+
+    [LoggerMessage(LogLevel.Debug, "Incremental session save was skipped for response {ResponseId}; the end-of-turn save will persist the final state.")]
+    private static partial void LogIncrementalSessionSaveSkipped(
+        ILogger logger,
+        string responseId,
+        Exception exception);
+
+    [LoggerMessage(LogLevel.Error, "Agent '{AgentName}' should not have server side storage enabled. This produced a new untracked conversation/response in the server while the hosted agent also generated a conversation for the request of the agent.")]
+    private static partial void LogServerSideStorageNotAllowed(ILogger logger, string? agentName);
+
+    [LoggerMessage(LogLevel.Debug, "Workflow checkpoint {CheckpointId} was not paired with response {ResponseId} because its AgentSession could not be saved.")]
+    private static partial void LogWorkflowCheckpointNotPaired(
+        ILogger logger,
+        string checkpointId,
+        string responseId,
+        Exception exception);
+
+    [LoggerMessage(LogLevel.Warning, "Foundry toolbox '{ToolboxName}' could not be resolved for response {ResponseId}.")]
+    private static partial void LogToolboxResolutionFailed(
+        ILogger logger,
+        string toolboxName,
+        string responseId,
+        Exception exception);
+
+    [LoggerMessage(LogLevel.Warning, "OAuth consent request for tool '{ToolName}' in toolbox '{ToolboxName}' was rejected by the consent link policy for response {ResponseId}.")]
+    private static partial void LogConsentLinkRejected(
+        ILogger logger,
+        string toolName,
+        string toolboxName,
+        string responseId);
+
+    [LoggerMessage(LogLevel.Warning, "Agent '{AgentName}' not found in keyed services. Attempting default resolution.")]
+    private static partial void LogKeyedAgentNotFound(ILogger logger, string agentName);
+
+    [LoggerMessage(LogLevel.Warning, "SessionStore for agent '{AgentName}' not found in keyed services. Attempting default resolution.")]
+    private static partial void LogKeyedSessionStoreNotFound(ILogger logger, string agentName);
 }

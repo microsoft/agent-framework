@@ -35,7 +35,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-internal sealed class HostedStoredOutputHealthCheck : IHealthCheck
+internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly FoundryResponsesOptions _hostingOptions;
@@ -137,14 +137,20 @@ internal sealed class HostedStoredOutputHealthCheck : IHealthCheck
             // about how it stores responses and is not held against it. A cancellation of its own, a
             // timeout inside the agent for instance, lands here too; only the health check's own
             // cancellation is left to propagate.
-            this._logger?.LogStoredOutputProbeFailed(agent.Name, ex);
+            if (this._logger is { } logger)
+            {
+                LogStoredOutputProbeFailed(logger, agent.Name, ex);
+            }
 
             return false;
         }
 
         if (probe.StoredOutputEnabled is null)
         {
-            this._logger?.LogStoredOutputSettingUnknown(agent.Name);
+            if (this._logger is { } logger)
+            {
+                LogStoredOutputSettingUnknown(logger, agent.Name);
+            }
         }
 
         return probe.StoredOutputEnabled is true;
@@ -154,4 +160,13 @@ internal sealed class HostedStoredOutputHealthCheck : IHealthCheck
     /// Every agent this container can serve: the ones registered under a name, plus the default.
     /// </summary>
     private List<AIAgent> ResolveAgents() => FoundryHostingExtensions.ResolveRegisteredAgents(this._serviceProvider);
+
+    [LoggerMessage(LogLevel.Debug, "Could not probe the stored output setting for agent '{AgentName}'.")]
+    private static partial void LogStoredOutputProbeFailed(
+        ILogger logger,
+        string? agentName,
+        Exception exception);
+
+    [LoggerMessage(LogLevel.Debug, "Agent '{AgentName}' builds a request whose stored output setting could not be determined.")]
+    private static partial void LogStoredOutputSettingUnknown(ILogger logger, string? agentName);
 }
