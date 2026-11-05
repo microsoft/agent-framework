@@ -241,6 +241,8 @@ public sealed class FoundryAgentSessionStoreTests
         // Assert
         var entry = Assert.Single(logs.Entries);
         Assert.Equal(LogLevel.Debug, entry.Level);
+        Assert.Equal(0, entry.EventId.Id);
+        Assert.Equal("LogSessionNotFound", entry.EventId.Name);
         Assert.Equal(
             "Session 'conv-1' was not found in the Foundry state store 'agent-framework/sessions'. Nothing to delete.",
             entry.Message);

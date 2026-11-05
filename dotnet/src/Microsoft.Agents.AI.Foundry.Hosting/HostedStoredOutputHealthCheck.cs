@@ -13,6 +13,7 @@ using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
+#pragma warning disable SYSLIB1006 // Preserve the legacy EventId 0 for every migrated log message.
 
 /// <summary>
 /// Reports, on the <c>GET /readiness</c> probe, a registered agent configured to have its own service
@@ -161,12 +162,12 @@ internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
     /// </summary>
     private List<AIAgent> ResolveAgents() => FoundryHostingExtensions.ResolveRegisteredAgents(this._serviceProvider);
 
-    [LoggerMessage(LogLevel.Debug, "Could not probe the stored output setting for agent '{AgentName}'.")]
+    [LoggerMessage(LogLevel.Debug, "Could not probe the stored output setting for agent '{AgentName}'.", EventId = 0)]
     private static partial void LogStoredOutputProbeFailed(
         ILogger logger,
         string? agentName,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Debug, "Agent '{AgentName}' builds a request whose stored output setting could not be determined.")]
+    [LoggerMessage(LogLevel.Debug, "Agent '{AgentName}' builds a request whose stored output setting could not be determined.", EventId = 0)]
     private static partial void LogStoredOutputSettingUnknown(ILogger logger, string? agentName);
 }

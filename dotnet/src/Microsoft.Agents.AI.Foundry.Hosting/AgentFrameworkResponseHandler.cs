@@ -27,6 +27,7 @@ using ResponseIncompleteEvent = Azure.AI.AgentServer.Responses.Models.ResponseIn
 using ResponseOutputItemDoneEvent = Azure.AI.AgentServer.Responses.Models.ResponseOutputItemDoneEvent;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
+#pragma warning disable SYSLIB1006 // Preserve the legacy EventId 0 for every migrated log message.
 
 /// <summary>
 /// A <see cref="ResponseHandler"/> implementation that bridges the Azure AI Responses Server SDK
@@ -1084,54 +1085,57 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
         IReadOnlyList<McpConsentInfo> Consents,
         string? Error);
 
-    [LoggerMessage(LogLevel.Error, "Agent execution failed for response {ResponseId}.")]
+    [LoggerMessage(
+        EventId = 0,
+        Level = LogLevel.Error,
+        Message = "Agent execution failed for response {ResponseId}.")]
     private static partial void LogAgentExecutionFailed(
         ILogger logger,
         string responseId,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Information, "Shutdown detected on a resilient turn; deferring for recovery.")]
+    [LoggerMessage(LogLevel.Information, "Shutdown detected on a resilient turn; deferring for recovery.", EventId = 0)]
     private static partial void LogShutdownDeferredForRecovery(ILogger logger);
 
-    [LoggerMessage(LogLevel.Information, "Shutdown detected, emitting incomplete response.")]
+    [LoggerMessage(LogLevel.Information, "Shutdown detected, emitting incomplete response.", EventId = 0)]
     private static partial void LogShutdownEmittingIncomplete(ILogger logger);
 
-    [LoggerMessage(LogLevel.Information, "Steering input detected for response {ResponseId}; completing the active turn.")]
+    [LoggerMessage(LogLevel.Information, "Steering input detected for response {ResponseId}; completing the active turn.", EventId = 0)]
     private static partial void LogSteeringInputDetected(ILogger logger, string responseId);
 
-    [LoggerMessage(LogLevel.Debug, "Incremental session save was skipped for response {ResponseId}; the end-of-turn save will persist the final state.")]
+    [LoggerMessage(LogLevel.Debug, "Incremental session save was skipped for response {ResponseId}; the end-of-turn save will persist the final state.", EventId = 0)]
     private static partial void LogIncrementalSessionSaveSkipped(
         ILogger logger,
         string responseId,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Error, "Agent '{AgentName}' should not have server side storage enabled. This produced a new untracked conversation/response in the server while the hosted agent also generated a conversation for the request of the agent.")]
+    [LoggerMessage(LogLevel.Error, "Agent '{AgentName}' should not have server side storage enabled. This produced a new untracked conversation/response in the server while the hosted agent also generated a conversation for the request of the agent.", EventId = 0)]
     private static partial void LogServerSideStorageNotAllowed(ILogger logger, string? agentName);
 
-    [LoggerMessage(LogLevel.Debug, "Workflow checkpoint {CheckpointId} was not paired with response {ResponseId} because its AgentSession could not be saved.")]
+    [LoggerMessage(LogLevel.Debug, "Workflow checkpoint {CheckpointId} was not paired with response {ResponseId} because its AgentSession could not be saved.", EventId = 0)]
     private static partial void LogWorkflowCheckpointNotPaired(
         ILogger logger,
         string checkpointId,
         string responseId,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Warning, "Foundry toolbox '{ToolboxName}' could not be resolved for response {ResponseId}.")]
+    [LoggerMessage(LogLevel.Warning, "Foundry toolbox '{ToolboxName}' could not be resolved for response {ResponseId}.", EventId = 0)]
     private static partial void LogToolboxResolutionFailed(
         ILogger logger,
         string toolboxName,
         string responseId,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Warning, "OAuth consent request for tool '{ToolName}' in toolbox '{ToolboxName}' was rejected by the consent link policy for response {ResponseId}.")]
+    [LoggerMessage(LogLevel.Warning, "OAuth consent request for tool '{ToolName}' in toolbox '{ToolboxName}' was rejected by the consent link policy for response {ResponseId}.", EventId = 0)]
     private static partial void LogConsentLinkRejected(
         ILogger logger,
         string toolName,
         string toolboxName,
         string responseId);
 
-    [LoggerMessage(LogLevel.Warning, "Agent '{AgentName}' not found in keyed services. Attempting default resolution.")]
+    [LoggerMessage(LogLevel.Warning, "Agent '{AgentName}' not found in keyed services. Attempting default resolution.", EventId = 0)]
     private static partial void LogKeyedAgentNotFound(ILogger logger, string agentName);
 
-    [LoggerMessage(LogLevel.Warning, "SessionStore for agent '{AgentName}' not found in keyed services. Attempting default resolution.")]
+    [LoggerMessage(LogLevel.Warning, "SessionStore for agent '{AgentName}' not found in keyed services. Attempting default resolution.", EventId = 0)]
     private static partial void LogKeyedSessionStoreNotFound(ILogger logger, string agentName);
 }

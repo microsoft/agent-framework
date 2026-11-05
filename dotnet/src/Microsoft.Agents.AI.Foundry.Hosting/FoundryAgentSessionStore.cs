@@ -226,7 +226,7 @@ public sealed partial class FoundryAgentSessionStore : AgentSessionStore
 
     private static BinaryData ToJsonString(string value) => FoundryStateStoreJson.ToJsonString(value);
 
-    [LoggerMessage(LogLevel.Debug, "Session '{SessionId}' was not found in the Foundry state store '{StoreName}'. Nothing to delete.")]
+    [LoggerMessage(LogLevel.Debug, "Session '{SessionId}' was not found in the Foundry state store '{StoreName}'. Nothing to delete.", EventId = 0)]
     private static partial void LogSessionNotFound(
         ILogger logger,
         string sessionId,

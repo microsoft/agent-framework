@@ -18,6 +18,7 @@ using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
+#pragma warning disable SYSLIB1006 // Preserve the legacy EventId 0 for every migrated log message.
 
 /// <summary>
 /// Provides a <see cref="JsonCheckpointStore"/> that persists workflow checkpoints through
@@ -608,7 +609,7 @@ public sealed partial class FoundryJsonCheckpointStore : JsonCheckpointStore
 
     private sealed record IndexEntry(string CheckpointId, string? ParentCheckpointId, bool HasParentMetadata);
 
-    [LoggerMessage(LogLevel.Debug, "Attempt {Attempt} of {MaxAttempts} to index checkpoint '{CheckpointId}' for session '{SessionId}' lost to another writer. Retrying.")]
+    [LoggerMessage(LogLevel.Debug, "Attempt {Attempt} of {MaxAttempts} to index checkpoint '{CheckpointId}' for session '{SessionId}' lost to another writer. Retrying.", EventId = 0)]
     private static partial void LogCheckpointIndexRaceRetry(
         ILogger logger,
         int attempt,
@@ -617,20 +618,20 @@ public sealed partial class FoundryJsonCheckpointStore : JsonCheckpointStore
         string sessionId,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Debug, "Obsolete checkpoint '{CheckpointId}' of session '{SessionId}' was already gone.")]
+    [LoggerMessage(LogLevel.Debug, "Obsolete checkpoint '{CheckpointId}' of session '{SessionId}' was already gone.", EventId = 0)]
     private static partial void LogObsoleteCheckpointAlreadyGone(
         ILogger logger,
         string checkpointId,
         string sessionId,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Debug, "Pruning obsolete checkpoints of session '{SessionId}' lost to another writer. The old checkpoints remain until a later resume or expiry.")]
+    [LoggerMessage(LogLevel.Debug, "Pruning obsolete checkpoints of session '{SessionId}' lost to another writer. The old checkpoints remain until a later resume or expiry.", EventId = 0)]
     private static partial void LogCheckpointPruningRace(
         ILogger logger,
         string sessionId,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Warning, "Could not prune obsolete checkpoints of session '{SessionId}' in the Foundry state store '{StoreName}'. The resume itself succeeded; the leftovers stay until the store's own expiry removes them.")]
+    [LoggerMessage(LogLevel.Warning, "Could not prune obsolete checkpoints of session '{SessionId}' in the Foundry state store '{StoreName}'. The resume itself succeeded; the leftovers stay until the store's own expiry removes them.", EventId = 0)]
     private static partial void LogCheckpointPruningFailed(
         ILogger logger,
         string sessionId,

@@ -21,6 +21,7 @@ using ModelContextProtocol;
 using ModelContextProtocol.Client;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
+#pragma warning disable SYSLIB1006 // Preserve the legacy EventId 0 for every migrated log message.
 
 /// <summary>
 /// An <see cref="IHostedService"/> that eagerly connects to the Foundry Toolboxes MCP proxy at
@@ -996,34 +997,34 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
     /// </summary>
     internal sealed record ToolboxOpenResult(CachedToolbox? Cached, IReadOnlyList<McpConsentInfo>? Consents);
 
-    [LoggerMessage(LogLevel.Warning, "Neither FOUNDRY_PROJECT_ENDPOINT nor AZURE_AI_PROJECT_ENDPOINT is set; toolbox support is disabled.")]
+    [LoggerMessage(LogLevel.Warning, "Neither FOUNDRY_PROJECT_ENDPOINT nor AZURE_AI_PROJECT_ENDPOINT is set; toolbox support is disabled.", EventId = 0)]
     private static partial void LogToolboxSupportDisabled(ILogger logger);
 
-    [LoggerMessage(LogLevel.Information, "No pre-registered toolbox names configured.")]
+    [LoggerMessage(LogLevel.Information, "No pre-registered toolbox names configured.", EventId = 0)]
     private static partial void LogNoPreRegisteredToolboxes(ILogger logger);
 
-    [LoggerMessage(LogLevel.Information, "Toolbox '{ToolboxName}' requires user OAuth consent before its tools can be enumerated. The container stays ready; the consent prompt is surfaced to the caller per-request.")]
+    [LoggerMessage(LogLevel.Information, "Toolbox '{ToolboxName}' requires user OAuth consent before its tools can be enumerated. The container stays ready; the consent prompt is surfaced to the caller per-request.", EventId = 0)]
     private static partial void LogToolboxRequiresConsent(ILogger logger, string toolboxName);
 
-    [LoggerMessage(LogLevel.Warning, "Toolbox '{ToolboxName}' could not be enumerated at startup; deferring it to per-request resolution. The container stays ready and the toolbox is retried on the next request when the per-user context is available.")]
+    [LoggerMessage(LogLevel.Warning, "Toolbox '{ToolboxName}' could not be enumerated at startup; deferring it to per-request resolution. The container stays ready and the toolbox is retried on the next request when the per-user context is available.", EventId = 0)]
     private static partial void LogToolboxStartupEnumerationDeferred(
         ILogger logger,
         string toolboxName,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Warning, "Retry of consent-gated toolbox '{ToolboxName}' failed; it remains pending.")]
+    [LoggerMessage(LogLevel.Warning, "Retry of consent-gated toolbox '{ToolboxName}' failed; it remains pending.", EventId = 0)]
     private static partial void LogConsentGatedToolboxRetryFailed(
         ILogger logger,
         string toolboxName,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Warning, "Retry of deferred toolbox '{ToolboxName}' failed; it remains deferred.")]
+    [LoggerMessage(LogLevel.Warning, "Retry of deferred toolbox '{ToolboxName}' failed; it remains deferred.", EventId = 0)]
     private static partial void LogDeferredToolboxRetryFailed(
         ILogger logger,
         string toolboxName,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Warning, "Failed to dispose {Resource} for toolbox {ToolboxName} owned by {Owner}.")]
+    [LoggerMessage(LogLevel.Warning, "Failed to dispose {Resource} for toolbox {ToolboxName} owned by {Owner}.", EventId = 0)]
     private static partial void LogToolboxResourceDisposalFailed(
         ILogger logger,
         string resource,
@@ -1031,19 +1032,19 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
         string owner,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Information, "Connecting to toolbox '{ToolboxName}' at {ProxyUrl}.")]
+    [LoggerMessage(LogLevel.Information, "Connecting to toolbox '{ToolboxName}' at {ProxyUrl}.", EventId = 0)]
     private static partial void LogConnectingToToolbox(
         ILogger logger,
         string toolboxName,
         string proxyUrl);
 
-    [LoggerMessage(LogLevel.Information, "Toolbox '{ToolboxName}': discovered {ToolCount} tool(s).")]
+    [LoggerMessage(LogLevel.Information, "Toolbox '{ToolboxName}': discovered {ToolCount} tool(s).", EventId = 0)]
     private static partial void LogToolboxToolsDiscovered(
         ILogger logger,
         string toolboxName,
         int toolCount);
 
-    [LoggerMessage(LogLevel.Warning, "Tool '{ToolName}' in toolbox '{ToolboxName}' has an unsupported approval configuration; requiring approval for every call.")]
+    [LoggerMessage(LogLevel.Warning, "Tool '{ToolName}' in toolbox '{ToolboxName}' has an unsupported approval configuration; requiring approval for every call.", EventId = 0)]
     private static partial void LogUnsupportedToolApprovalConfiguration(
         ILogger logger,
         string toolName,

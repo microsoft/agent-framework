@@ -77,6 +77,6 @@ internal sealed partial class HostedProtocolCompatibilityFilter : IEndpointFilte
         => HttpMethods.IsPost(request.Method) &&
             request.Path.Value?.EndsWith("/responses", StringComparison.OrdinalIgnoreCase) is true;
 
-    [LoggerMessage(LogLevel.Error, "Hosted container served unsupported Responses protocol 1.0.0 (no x-agent-foundry-call-id header); this image requires protocol 2.0.0.")]
+    [LoggerMessage(LogLevel.Error, "Hosted container served unsupported Responses protocol 1.0.0 (no x-agent-foundry-call-id header); this image requires protocol 2.0.0.", EventId = 0)]
     private static partial void LogUnsupportedResponsesProtocol(ILogger logger);
 }

@@ -11,6 +11,7 @@ internal sealed class RecordingLoggerFactory : ILoggerFactory
 {
     public List<(
         LogLevel Level,
+        EventId EventId,
         string Message,
         Exception? Exception,
         IReadOnlyList<KeyValuePair<string, object?>> Properties)> Entries
@@ -29,6 +30,7 @@ internal sealed class RecordingLoggerFactory : ILoggerFactory
     private sealed class RecordingLogger(
         List<(
             LogLevel Level,
+            EventId EventId,
             string Message,
             Exception? Exception,
             IReadOnlyList<KeyValuePair<string, object?>> Properties)> entries) : ILogger
@@ -45,7 +47,7 @@ internal sealed class RecordingLoggerFactory : ILoggerFactory
                 properties.AddRange(values);
             }
 
-            entries.Add((logLevel, formatter(state, exception), exception, properties));
+            entries.Add((logLevel, eventId, formatter(state, exception), exception, properties));
         }
     }
 }

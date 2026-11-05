@@ -724,6 +724,8 @@ public class FoundryToolboxServiceTests
         Assert.True(handlers["throws"].IsDisposed);
         Assert.True(handlers["continues"].IsDisposed);
         var warning = Assert.Single(logs.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Equal(0, warning.EventId.Id);
+        Assert.Equal("LogToolboxResourceDisposalFailed", warning.EventId.Name);
         Assert.Equal(
             $"Failed to dispose HTTP client for toolbox throws owned by response scope '{scope.Id}'.",
             warning.Message);
