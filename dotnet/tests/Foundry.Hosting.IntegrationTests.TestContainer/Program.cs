@@ -73,11 +73,10 @@ if (!string.IsNullOrEmpty(port))
     builder.WebHost.UseUrls($"http://+:{port}");
 }
 
-builder.AddFoundryResponses(agent, configure: options =>
+builder.AddFoundryResponses(agent, options: new FoundryResponsesOptions
 {
-    options.ResilientBackground =
-        scenario is "resilient-workflow" or "steerable-long-running";
-    options.SteerableConversations = scenario == "steerable-long-running";
+    ResilientBackground = scenario is "resilient-workflow" or "steerable-long-running",
+    SteerableConversations = scenario == "steerable-long-running",
 });
 
 // Scenarios that consume a project toolbox set IT_TOOLBOX_NAME through their fixture.

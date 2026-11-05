@@ -97,10 +97,10 @@ public sealed class SteerableLongRunningIntegrationTests
         builder.Services.AddFoundryResponses(
             agent,
             new InMemoryAgentSessionStore(),
-            options =>
+            new FoundryResponsesOptions
             {
-                options.ResilientBackground = true;
-                options.SteerableConversations = true;
+                ResilientBackground = true,
+                SteerableConversations = true,
             });
         builder.Services.AddSingleton<HostedSessionIsolationKeyProvider>(
             new FakeHostedSessionIsolationKeyProvider());

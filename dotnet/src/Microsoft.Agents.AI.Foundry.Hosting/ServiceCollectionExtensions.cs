@@ -52,26 +52,26 @@ public static class FoundryHostingExtensions
     /// </code>
     /// </remarks>
     /// <param name="host">The host application builder.</param>
-    /// <param name="configure">Optional callback to configure <see cref="FoundryResponsesOptions"/>.</param>
+    /// <param name="options">Optional hosting behavior. Required inputs belong on the extension method parameters.</param>
     /// <returns>The host application builder for chaining.</returns>
     public static IHostApplicationBuilder AddFoundryResponses(
         this IHostApplicationBuilder host,
-        Action<FoundryResponsesOptions>? configure = null)
+        FoundryResponsesOptions? options = null)
     {
         _ = Throw.IfNull(host);
-        FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(host, configure);
+        FoundryResponsesOptions configuredOptions = ResolveFoundryResponsesOptions(host, options);
         bool serverAdded = AddResponsesServerOnce(
             host.Services,
             host,
             configuredOptions,
-            configure is not null);
+            options is not null);
         host.Services.AddHealthChecks();
         ConfigureFoundryListenPort(host.Services);
         ConfigureFoundryResponsesOptions(
             host.Services,
             configuredOptions,
             includeServerOptions: serverAdded,
-            applyOptions: serverAdded || configure is not null);
+            applyOptions: serverAdded || options is not null);
         host.Services.TryAddSingleton<AgentSessionStore>(_ => CreateDefaultAgentSessionStore());
         RegisterResponseHandler(host.Services);
         MarkFeatureUsed();
@@ -90,30 +90,30 @@ public static class FoundryHostingExtensions
     /// <param name="host">The host application builder.</param>
     /// <param name="agent">The agent instance to register.</param>
     /// <param name="agentSessionStore">The agent session store to use, or <see langword="null"/> for the default.</param>
-    /// <param name="configure">Optional callback to configure <see cref="FoundryResponsesOptions"/>.</param>
+    /// <param name="options">Optional hosting behavior. Required inputs belong on the extension method parameters.</param>
     /// <returns>The host application builder for chaining.</returns>
     public static IHostApplicationBuilder AddFoundryResponses(
         this IHostApplicationBuilder host,
         AIAgent agent,
         AgentSessionStore? agentSessionStore = null,
-        Action<FoundryResponsesOptions>? configure = null)
+        FoundryResponsesOptions? options = null)
     {
         _ = Throw.IfNull(host);
         _ = Throw.IfNull(agent);
 
-        FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(host, configure);
+        FoundryResponsesOptions configuredOptions = ResolveFoundryResponsesOptions(host, options);
         bool serverAdded = AddResponsesServerOnce(
             host.Services,
             host,
             configuredOptions,
-            configure is not null);
+            options is not null);
         host.Services.AddHealthChecks();
         ConfigureFoundryListenPort(host.Services);
         ConfigureFoundryResponsesOptions(
             host.Services,
             configuredOptions,
             includeServerOptions: serverAdded,
-            applyOptions: serverAdded || configure is not null);
+            applyOptions: serverAdded || options is not null);
         agentSessionStore ??= CreateDefaultAgentSessionStore();
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
@@ -138,7 +138,7 @@ public static class FoundryHostingExtensions
     /// <remarks>
     /// <para>
     /// This overload is for local or non-hosted scenarios. Foundry hosted applications must call
-    /// <see cref="AddFoundryResponses(IHostApplicationBuilder, Action{FoundryResponsesOptions}?)"/>
+    /// <see cref="AddFoundryResponses(IHostApplicationBuilder, FoundryResponsesOptions)"/>
     /// so AgentServer can bind response and task storage from the host configuration.
     /// </para>
     /// <para>
@@ -153,28 +153,28 @@ public static class FoundryHostingExtensions
     /// </para>
     /// </remarks>
     /// <param name="services">The service collection.</param>
-    /// <param name="configure">
-    /// Optional callback to configure <see cref="FoundryResponsesOptions"/>, for example to allow the
+    /// <param name="options">
+    /// Optional <see cref="FoundryResponsesOptions"/>, for example to allow the
     /// agent's own service to store the responses it produces, or to opt in to durable long-running
     /// (resilient) background responses via <see cref="FoundryResponsesOptions.ResilientBackground"/>.
     /// </param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, Action<FoundryResponsesOptions>? configure = null)
+    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, FoundryResponsesOptions? options = null)
     {
         _ = Throw.IfNull(services);
-        FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(configure);
+        FoundryResponsesOptions configuredOptions = CopyFoundryResponsesOptions(options);
         bool serverAdded = AddResponsesServerOnce(
             services,
             host: null,
             configuredOptions,
-            configure is not null);
+            options is not null);
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
         ConfigureFoundryResponsesOptions(
             services,
             configuredOptions,
             includeServerOptions: serverAdded,
-            applyOptions: serverAdded || configure is not null);
+            applyOptions: serverAdded || options is not null);
         services.TryAddSingleton<AgentSessionStore>(_ => CreateDefaultAgentSessionStore());
         RegisterResponseHandler(services);
         MarkFeatureUsed();
@@ -204,8 +204,8 @@ public static class FoundryHostingExtensions
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
     /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, the default store uses the AgentServer SDK's local state-store fallback.</param>
-    /// <param name="configure">
-    /// Optional callback to configure <see cref="FoundryResponsesOptions"/>, for example to allow the
+    /// <param name="options">
+    /// Optional <see cref="FoundryResponsesOptions"/>, for example to allow the
     /// agent's own service to store the responses it produces, or to opt in to durable long-running
     /// (resilient) background responses via <see cref="FoundryResponsesOptions.ResilientBackground"/>.
     /// </param>
@@ -214,24 +214,24 @@ public static class FoundryHostingExtensions
         this IServiceCollection services,
         AIAgent agent,
         AgentSessionStore? agentSessionStore = null,
-        Action<FoundryResponsesOptions>? configure = null)
+        FoundryResponsesOptions? options = null)
     {
         _ = Throw.IfNull(services);
         _ = Throw.IfNull(agent);
 
-        FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(configure);
+        FoundryResponsesOptions configuredOptions = CopyFoundryResponsesOptions(options);
         bool serverAdded = AddResponsesServerOnce(
             services,
             host: null,
             configuredOptions,
-            configure is not null);
+            options is not null);
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
         ConfigureFoundryResponsesOptions(
             services,
             configuredOptions,
             includeServerOptions: serverAdded,
-            applyOptions: serverAdded || configure is not null);
+            applyOptions: serverAdded || options is not null);
         agentSessionStore ??= CreateDefaultAgentSessionStore();
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
@@ -262,16 +262,35 @@ public static class FoundryHostingExtensions
     /// Resilience flags on <see cref="FoundryResponsesOptions"/> are forwarded to
     /// <see cref="ResponsesServerOptions"/> so the AgentServer SDK enables recovery for the same host.
     /// </remarks>
-    private static FoundryResponsesOptions CreateFoundryResponsesOptions(Action<FoundryResponsesOptions>? configure)
+    private static FoundryResponsesOptions CopyFoundryResponsesOptions(FoundryResponsesOptions? source)
     {
-        FoundryResponsesOptions options = new();
-        configure?.Invoke(options);
-        return options;
+        if (source is null)
+        {
+            return new();
+        }
+
+        var copy = new FoundryResponsesOptions
+        {
+            AllowStoredOutputEnabled = source.AllowStoredOutputEnabled,
+            OAuthConsentInterruptedToolResult = source.OAuthConsentInterruptedToolResult,
+            IncludeReasoningEncryptedContent = source.IncludeReasoningEncryptedContent,
+        };
+        if (source.IsResilientBackgroundSet)
+        {
+            copy.ResilientBackground = source.ResilientBackground;
+        }
+
+        if (source.IsSteerableConversationsSet)
+        {
+            copy.SteerableConversations = source.SteerableConversations;
+        }
+
+        return copy;
     }
 
-    private static FoundryResponsesOptions CreateFoundryResponsesOptions(
+    private static FoundryResponsesOptions ResolveFoundryResponsesOptions(
         IHostApplicationBuilder host,
-        Action<FoundryResponsesOptions>? configure)
+        FoundryResponsesOptions? suppliedOptions)
     {
         FoundryResponsesOptions options = new();
         IConfigurationSection section =
@@ -286,7 +305,23 @@ public static class FoundryHostingExtensions
             options.SteerableConversations = steerableConversations;
         }
 
-        configure?.Invoke(options);
+        if (suppliedOptions is not null)
+        {
+            options.AllowStoredOutputEnabled = suppliedOptions.AllowStoredOutputEnabled;
+            options.OAuthConsentInterruptedToolResult = suppliedOptions.OAuthConsentInterruptedToolResult;
+            options.IncludeReasoningEncryptedContent = suppliedOptions.IncludeReasoningEncryptedContent;
+
+            if (suppliedOptions.IsResilientBackgroundSet)
+            {
+                options.ResilientBackground = suppliedOptions.ResilientBackground;
+            }
+
+            if (suppliedOptions.IsSteerableConversationsSet)
+            {
+                options.SteerableConversations = suppliedOptions.SteerableConversations;
+            }
+        }
+
         return options;
     }
 
@@ -311,6 +346,7 @@ public static class FoundryHostingExtensions
             services.Configure<FoundryResponsesOptions>(options =>
             {
                 options.AllowStoredOutputEnabled = configuredOptions.AllowStoredOutputEnabled;
+                options.OAuthConsentInterruptedToolResult = configuredOptions.OAuthConsentInterruptedToolResult;
                 options.IncludeReasoningEncryptedContent = configuredOptions.IncludeReasoningEncryptedContent;
                 if (includeServerOptions)
                 {
@@ -376,15 +412,15 @@ public static class FoundryHostingExtensions
         this IServiceCollection services,
         TokenCredential credential,
         params string[] toolboxNames)
-        => services.AddFoundryToolboxes(credential, configureOptions: null, toolboxNames);
+        => services.AddFoundryToolboxes(credential, options: null, toolboxNames);
 
     /// <summary>
-    /// Registers the Foundry Toolbox service with additional options configuration.
+    /// Registers the Foundry Toolbox service with optional behavior configuration.
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
-    /// <param name="configureOptions">
-    /// Callback to configure <see cref="FoundryToolboxOptions"/>, such as
+    /// <param name="options">
+    /// Optional <see cref="FoundryToolboxOptions"/>, such as
     /// <see cref="FoundryToolboxOptions.StrictMode"/>,
     /// <see cref="FoundryToolboxOptions.TokenScope"/>, or
     /// <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>.
@@ -394,7 +430,7 @@ public static class FoundryHostingExtensions
     public static IServiceCollection AddFoundryToolboxes(
         this IServiceCollection services,
         TokenCredential credential,
-        Action<FoundryToolboxOptions>? configureOptions,
+        FoundryToolboxOptions? options,
         params string[] toolboxNames)
     {
         _ = Throw.IfNull(services);
@@ -407,17 +443,20 @@ public static class FoundryHostingExtensions
                 $"Call {nameof(AddFoundryToolboxes)} only once per service collection.");
         }
 
-        services.Configure<FoundryToolboxOptions>(opt =>
+        FoundryToolboxOptions configuredOptions = CopyFoundryToolboxOptions(options, toolboxNames);
+        services.Configure<FoundryToolboxOptions>(registeredOptions =>
         {
-            foreach (var name in toolboxNames)
-            {
-                if (!string.IsNullOrWhiteSpace(name))
-                {
-                    opt.ToolboxNames.Add(name);
-                }
-            }
+            registeredOptions.ApiVersion = configuredOptions.ApiVersion;
+            registeredOptions.TokenScope = configuredOptions.TokenScope;
+            registeredOptions.StrictMode = configuredOptions.StrictMode;
+            registeredOptions.AllowedOAuthConsentOrigins = configuredOptions.AllowedOAuthConsentOrigins is null
+                ? null
+                : [.. configuredOptions.AllowedOAuthConsentOrigins];
 
-            configureOptions?.Invoke(opt);
+            foreach (var name in configuredOptions.ToolboxNames)
+            {
+                registeredOptions.ToolboxNames.Add(name);
+            }
         });
 
         // Register FoundryToolboxService as a singleton, injecting the caller-provided credential
@@ -454,6 +493,32 @@ public static class FoundryHostingExtensions
         });
 
         return services;
+    }
+
+    private static FoundryToolboxOptions CopyFoundryToolboxOptions(
+        FoundryToolboxOptions? source,
+        string[] toolboxNames)
+    {
+        var copy = new FoundryToolboxOptions();
+        if (source is not null)
+        {
+            copy.ApiVersion = source.ApiVersion;
+            copy.TokenScope = source.TokenScope;
+            copy.StrictMode = source.StrictMode;
+            copy.AllowedOAuthConsentOrigins = source.AllowedOAuthConsentOrigins is null
+                ? null
+                : [.. source.AllowedOAuthConsentOrigins];
+        }
+
+        foreach (string name in toolboxNames)
+        {
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                copy.ToolboxNames.Add(name);
+            }
+        }
+
+        return copy;
     }
 
     /// <summary>

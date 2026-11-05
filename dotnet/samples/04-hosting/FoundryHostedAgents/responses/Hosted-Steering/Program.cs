@@ -30,7 +30,9 @@ AIAgent agent = new AIProjectClient(projectEndpoint, new DefaultAzureCredential(
         description: "A steerable general-purpose AI assistant");
 
 var builder = WebApplication.CreateBuilder(args);
-builder.AddFoundryResponses(agent, configure: options => options.SteerableConversations = true);
+builder.AddFoundryResponses(
+    agent,
+    options: new FoundryResponsesOptions { SteerableConversations = true });
 
 var app = builder.Build();
 app.MapFoundryResponses();

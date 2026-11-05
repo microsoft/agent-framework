@@ -12,6 +12,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
+using Azure.Core;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Http;
@@ -116,14 +117,86 @@ public class ServiceCollectionExtensionsTests
 
         // Act
         services.AddFoundryResponses();
-        services.AddFoundryResponses(options =>
-            options.AllowStoredOutputEnabled = true);
+        services.AddFoundryResponses(new FoundryResponsesOptions
+        {
+            AllowStoredOutputEnabled = true,
+        });
         using ServiceProvider provider = services.BuildServiceProvider();
 
         // Assert
         Assert.True(
             provider.GetRequiredService<IOptions<FoundryResponsesOptions>>()
                 .Value.AllowStoredOutputEnabled);
+    }
+
+    [Fact]
+    public void AddFoundryResponses_OptionsObject_AppliesAllValues()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var suppliedOptions = new FoundryResponsesOptions
+        {
+            AllowStoredOutputEnabled = true,
+            OAuthConsentInterruptedToolResult = "consent interrupted",
+            IncludeReasoningEncryptedContent = false,
+            ResilientBackground = true,
+            SteerableConversations = true,
+        };
+
+        // Act
+        services.AddFoundryResponses(suppliedOptions);
+        using ServiceProvider provider = services.BuildServiceProvider();
+        FoundryResponsesOptions registeredOptions =
+            provider.GetRequiredService<IOptions<FoundryResponsesOptions>>().Value;
+
+        // Assert
+        Assert.True(registeredOptions.AllowStoredOutputEnabled);
+        Assert.Equal("consent interrupted", registeredOptions.OAuthConsentInterruptedToolResult);
+        Assert.False(registeredOptions.IncludeReasoningEncryptedContent);
+        Assert.True(registeredOptions.ResilientBackground);
+        Assert.True(registeredOptions.SteerableConversations);
+    }
+
+    [Fact]
+    public void AddFoundryResponses_OptionsObject_PreservesUnspecifiedHostSettings()
+    {
+        // Arrange
+        HostApplicationBuilder builder = Host.CreateApplicationBuilder();
+        builder.Configuration[$"ResponsesServer:{nameof(FoundryResponsesOptions.ResilientBackground)}"] = "true";
+
+        // Act
+        builder.AddFoundryResponses(new FoundryResponsesOptions
+        {
+            AllowStoredOutputEnabled = true,
+        });
+        using ServiceProvider provider = builder.Services.BuildServiceProvider();
+        FoundryResponsesOptions registeredOptions =
+            provider.GetRequiredService<IOptions<FoundryResponsesOptions>>().Value;
+
+        // Assert
+        Assert.True(registeredOptions.AllowStoredOutputEnabled);
+        Assert.True(registeredOptions.ResilientBackground);
+    }
+
+    [Fact]
+    public void AddFoundryResponses_OptionsObject_ExplicitFalseOverridesHostSettings()
+    {
+        // Arrange
+        HostApplicationBuilder builder = Host.CreateApplicationBuilder();
+        builder.Configuration[$"ResponsesServer:{nameof(FoundryResponsesOptions.ResilientBackground)}"] = "true";
+
+        // Act
+        builder.AddFoundryResponses(new FoundryResponsesOptions
+        {
+            ResilientBackground = false,
+        });
+        using ServiceProvider provider = builder.Services.BuildServiceProvider();
+
+        // Assert
+        Assert.False(
+            provider.GetRequiredService<IOptions<FoundryResponsesOptions>>()
+                .Value.ResilientBackground);
     }
 
     [Fact]
@@ -136,8 +209,10 @@ public class ServiceCollectionExtensionsTests
 
         // Act
         var exception = Assert.Throws<InvalidOperationException>(
-            () => services.AddFoundryResponses(options =>
-                options.SteerableConversations = true));
+            () => services.AddFoundryResponses(new FoundryResponsesOptions
+            {
+                SteerableConversations = true,
+            }));
 
         // Assert
         Assert.Contains(
@@ -176,9 +251,43 @@ public class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
         // Cast to bind the agent overload: the parameterless overload also accepts a single null
-        // (as its optional configure callback), so the cast keeps this test targeting the agent path.
+        // options object, so the cast keeps this test targeting the agent path.
         Assert.Throws<ArgumentNullException>(
             () => services.AddFoundryResponses((AIAgent)null!));
+    }
+
+    [Fact]
+    public void AddFoundryToolboxes_OptionsObject_CopiesOptionalBehavior()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var suppliedOptions = new FoundryToolboxOptions
+        {
+            ApiVersion = "v2",
+            TokenScope = "https://example.test/.default",
+            StrictMode = false,
+            AllowedOAuthConsentOrigins = ["https://login.example.test"],
+        };
+
+        // Act
+        services.AddFoundryToolboxes(
+            Mock.Of<TokenCredential>(),
+            suppliedOptions,
+            "first-toolbox",
+            " ",
+            "second-toolbox");
+        suppliedOptions.ApiVersion = "mutated";
+        suppliedOptions.AllowedOAuthConsentOrigins[0] = "https://mutated.example.test";
+        using ServiceProvider provider = services.BuildServiceProvider();
+        FoundryToolboxOptions registeredOptions =
+            provider.GetRequiredService<IOptions<FoundryToolboxOptions>>().Value;
+
+        // Assert
+        Assert.Equal("v2", registeredOptions.ApiVersion);
+        Assert.Equal("https://example.test/.default", registeredOptions.TokenScope);
+        Assert.False(registeredOptions.StrictMode);
+        Assert.Equal(["https://login.example.test"], registeredOptions.AllowedOAuthConsentOrigins);
+        Assert.Equal(["first-toolbox", "second-toolbox"], registeredOptions.ToolboxNames);
     }
 
     [Fact]

@@ -91,7 +91,7 @@ public sealed class HostedResponsesRegistrationTests
             builder.Services.AddFoundryResponses(
                 agent.Object,
                 new InMemoryAgentSessionStore(),
-                options => options.SteerableConversations = true);
+                new FoundryResponsesOptions { SteerableConversations = true });
             await using WebApplication app = builder.Build();
             app.MapFoundryResponses();
             await app.StartAsync();

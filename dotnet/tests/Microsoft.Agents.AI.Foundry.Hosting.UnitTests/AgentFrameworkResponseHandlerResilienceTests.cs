@@ -259,7 +259,7 @@ public class AgentFrameworkResponseHandlerResilienceTests
         services.AddFoundryResponses(
             agent,
             store,
-            options => options.ResilientBackground = true);
+            new FoundryResponsesOptions { ResilientBackground = true });
         services.AddLogging();
         services.AddSingleton<HostedSessionIsolationKeyProvider>(
             new FakeHostedSessionIsolationKeyProvider());

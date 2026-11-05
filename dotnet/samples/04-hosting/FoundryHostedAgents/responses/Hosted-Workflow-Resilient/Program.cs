@@ -53,7 +53,9 @@ AIAgent agent = new WorkflowBuilder(frenchAgent)
     .AsAIAgent(name: agentName);
 
 var builder = WebApplication.CreateBuilder(args);
-builder.AddFoundryResponses(agent, configure: options => options.ResilientBackground = true);
+builder.AddFoundryResponses(
+    agent,
+    options: new FoundryResponsesOptions { ResilientBackground = true });
 
 var app = builder.Build();
 app.MapFoundryResponses();

@@ -8,6 +8,11 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <summary>
 /// Options for hosting agents behind the Foundry Responses API.
 /// </summary>
+/// <remarks>
+/// This type contains optional hosting behavior only. Required inputs, such as the agent and an
+/// optional replacement <see cref="AgentSessionStore"/>, are supplied directly to
+/// <c>AddFoundryResponses</c>.
+/// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FoundryResponsesOptions
 {
@@ -97,7 +102,17 @@ public sealed class FoundryResponsesOptions
     /// <value>
     /// Default is <see langword="false"/>.
     /// </value>
-    public bool ResilientBackground { get; set; }
+    public bool ResilientBackground
+    {
+        get;
+        set
+        {
+            field = value;
+            this.IsResilientBackgroundSet = true;
+        }
+    }
+
+    internal bool IsResilientBackgroundSet { get; private set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether in-flight conversations accept steering (mid-turn
@@ -111,5 +126,15 @@ public sealed class FoundryResponsesOptions
     /// <value>
     /// Default is <see langword="false"/>.
     /// </value>
-    public bool SteerableConversations { get; set; }
+    public bool SteerableConversations
+    {
+        get;
+        set
+        {
+            field = value;
+            this.IsSteerableConversationsSet = true;
+        }
+    }
+
+    internal bool IsSteerableConversationsSet { get; private set; }
 }

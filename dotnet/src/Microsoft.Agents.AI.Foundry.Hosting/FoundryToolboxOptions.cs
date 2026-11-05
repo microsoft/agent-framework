@@ -9,6 +9,10 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <summary>
 /// Options for Foundry Toolbox MCP integration.
 /// </summary>
+/// <remarks>
+/// This type contains optional toolbox behavior only. The required credential and toolbox names are
+/// supplied directly to <c>AddFoundryToolboxes</c>.
+/// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FoundryToolboxOptions
 {
@@ -21,7 +25,7 @@ public sealed class FoundryToolboxOptions
     /// <c>{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{toolboxName}/mcp?api-version={ApiVersion}</c>
     /// per <c>tools-integration-spec.md</c> §2–§3.
     /// </summary>
-    public IList<string> ToolboxNames { get; } = [];
+    internal IList<string> ToolboxNames { get; } = [];
 
     /// <summary>
     /// Gets or sets the Toolboxes API version to use when constructing proxy URLs.
@@ -41,7 +45,7 @@ public sealed class FoundryToolboxOptions
     /// <summary>
     /// Gets or sets a value indicating whether per-request toolbox markers (referenced via
     /// <c>foundry-toolbox://</c> on the wire) are restricted to toolboxes pre-registered
-    /// via <see cref="ToolboxNames"/>. When <see langword="true"/> (the default), a request
+    /// through <c>AddFoundryToolboxes</c>. When <see langword="true"/> (the default), a request
     /// that references an unknown toolbox is rejected. When <see langword="false"/>, the
     /// server lazily opens an MCP connection for the referenced toolbox on first use and
     /// caches it.
