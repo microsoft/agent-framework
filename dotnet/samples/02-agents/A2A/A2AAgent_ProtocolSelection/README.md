@@ -79,11 +79,9 @@ then the client uses the gRPC endpoint listed in the card.
 If you already know the gRPC endpoint, create the client directly. No registration is needed:
 
 ```csharp
-using Microsoft.Agents.AI.A2A;
-
 using var client = new A2AGrpcClient(new Uri("https://agent.example.com:5001"));
 
-AIAgent agent = client.AsAIAgent(new A2AAgentOptions { Name = "Remote agent" });
+AIAgent agent = client.AsAIAgent();
 
 Console.WriteLine(await agent.RunAsync("Hello!"));
 ```
