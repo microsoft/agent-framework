@@ -45,7 +45,7 @@ public class AgentFrameworkResponseHandlerTelemetryTests
 
         var agent = new TelemetryTestAgent();
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -73,7 +73,7 @@ public class AgentFrameworkResponseHandlerTelemetryTests
 
         var agent = new TelemetryTestAgent();
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddKeyedSingleton<AIAgent>("keyed-agent", agent);
         var sp = services.BuildServiceProvider();
 
@@ -114,7 +114,7 @@ public class AgentFrameworkResponseHandlerTelemetryTests
             .Build();
 
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton(preWrapped);
         var sp = services.BuildServiceProvider();
 
@@ -145,7 +145,7 @@ public class AgentFrameworkResponseHandlerTelemetryTests
 
         var agent = new TelemetryTestAgent();
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 

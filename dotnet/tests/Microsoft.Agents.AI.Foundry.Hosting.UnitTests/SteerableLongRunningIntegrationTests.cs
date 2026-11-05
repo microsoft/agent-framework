@@ -96,7 +96,7 @@ public sealed class SteerableLongRunningIntegrationTests
         builder.WebHost.UseTestServer();
         builder.Services.AddFoundryResponses(
             agent,
-            new InMemoryAgentSessionStore(),
+            new TestAgentSessionStore(),
             new FoundryResponsesOptions
             {
                 ResilientBackground = true,

@@ -36,7 +36,7 @@ public class AgentFrameworkResponseHandlerResilienceTests
     {
         // Arrange: recovery ran before the first AgentSession snapshot was persisted.
         var recording = new RecordingAgent();
-        var handler = CreateHandler(recording, new InMemoryAgentSessionStore(), resilient: true);
+        var handler = CreateHandler(recording, new TestAgentSessionStore(), resilient: true);
         var request = NewBackgroundStoreRequest("original input");
         var context = CreateContext(isRecovery: true);
 
@@ -73,7 +73,7 @@ public class AgentFrameworkResponseHandlerResilienceTests
     {
         // Arrange: the same request on a fresh (non-recovery) turn.
         var recording = new RecordingAgent();
-        var handler = CreateHandler(recording, new InMemoryAgentSessionStore(), resilient: true);
+        var handler = CreateHandler(recording, new TestAgentSessionStore(), resilient: true);
         var request = NewBackgroundStoreRequest("original input");
         var context = CreateContext(isRecovery: false);
 
@@ -118,7 +118,7 @@ public class AgentFrameworkResponseHandlerResilienceTests
         persisted.Output.Add(NewMessageItem("prior_2", "prior item two"));
 
         var recording = new RecordingAgent();
-        var handler = CreateHandler(recording, new InMemoryAgentSessionStore(), resilient: true);
+        var handler = CreateHandler(recording, new TestAgentSessionStore(), resilient: true);
         var request = NewBackgroundStoreRequest("input");
         var context = CreateContext(isRecovery: true, persistedResponse: persisted);
 

@@ -90,7 +90,7 @@ public sealed class HostedResponsesRegistrationTests
             // Act
             builder.Services.AddFoundryResponses(
                 agent.Object,
-                new InMemoryAgentSessionStore(),
+                new TestAgentSessionStore(),
                 new FoundryResponsesOptions { SteerableConversations = true });
             await using WebApplication app = builder.Build();
             app.MapFoundryResponses();

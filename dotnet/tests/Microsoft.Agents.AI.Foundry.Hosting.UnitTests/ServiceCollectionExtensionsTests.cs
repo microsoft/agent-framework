@@ -499,7 +499,7 @@ public class ServiceCollectionExtensionsTests
         builder.WebHost.UseTestServer();
 
         AIAgent agent = new ChatClientAgent(CreateAnnotationChatClient());
-        builder.Services.AddFoundryResponses(agent, new InMemoryAgentSessionStore());
+        builder.Services.AddFoundryResponses(agent, new TestAgentSessionStore());
         builder.Services.AddLogging();
 
         await using var app = builder.Build();

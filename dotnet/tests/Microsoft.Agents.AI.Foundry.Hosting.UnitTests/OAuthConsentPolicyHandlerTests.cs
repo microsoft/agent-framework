@@ -240,7 +240,7 @@ public class OAuthConsentPolicyHandlerTests
         bool stopAfterFirstOutput = false)
     {
         var services = new ServiceCollection();
-        services.AddSingleton(sessionStore ?? new InMemoryAgentSessionStore());
+        services.AddSingleton(sessionStore ?? new TestAgentSessionStore());
         services.AddSingleton(agent);
         var handler = new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),

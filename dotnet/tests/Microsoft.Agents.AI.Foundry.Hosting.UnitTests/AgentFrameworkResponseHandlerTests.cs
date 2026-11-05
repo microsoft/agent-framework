@@ -30,7 +30,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = CreateTestAgent("Hello from the agent!");
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         services.AddSingleton<ILogger<AgentFrameworkResponseHandler>>(NullLogger<AgentFrameworkResponseHandler>.Instance);
         var sp = services.BuildServiceProvider();
@@ -69,7 +69,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = CreateTestAgent("Keyed agent response");
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddKeyedSingleton<AIAgent>("my-agent", agent);
         var sp = services.BuildServiceProvider();
 
@@ -105,7 +105,7 @@ public class AgentFrameworkResponseHandlerTests
     {
         // Arrange
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -153,7 +153,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = CreateTestAgent("model agent");
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddKeyedSingleton<AIAgent>("my-agent", agent);
         var sp = services.BuildServiceProvider();
 
@@ -190,7 +190,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = CreateTestAgent("entity agent");
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddKeyedSingleton<AIAgent>("entity-agent", agent);
         var sp = services.BuildServiceProvider();
 
@@ -230,7 +230,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = CreateTestAgent("default agent");
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -266,7 +266,7 @@ public class AgentFrameworkResponseHandlerTests
     {
         // Arrange
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -300,7 +300,7 @@ public class AgentFrameworkResponseHandlerTests
     {
         // Arrange
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -334,7 +334,7 @@ public class AgentFrameworkResponseHandlerTests
     {
         // Arrange
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -378,7 +378,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = new CapturingAgent();
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -427,7 +427,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = new CapturingAgent();
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -470,7 +470,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = new CapturingAgent();
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -509,7 +509,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = new CapturingAgent();
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -551,7 +551,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = new ThrowingAgent(new InvalidOperationException("Agent crashed"));
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -591,7 +591,7 @@ public class AgentFrameworkResponseHandlerTests
         var agent1 = CreateTestAgent("Agent 1 response");
         var agent2 = CreateTestAgent("Agent 2 response");
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddKeyedSingleton<AIAgent>("agent-1", agent1);
         services.AddKeyedSingleton<AIAgent>("agent-2", agent2);
         var sp = services.BuildServiceProvider();
@@ -629,7 +629,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange
         var agent = new CancellationCheckingAgent();
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -677,7 +677,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange — register a plain (non-instrumented) agent
         var agent = CreateTestAgent("otel test response");
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
@@ -719,7 +719,7 @@ public class AgentFrameworkResponseHandlerTests
         // to be handed to the agent, otherwise it answers knowing nothing of the conversation.
         var captured = new List<ChatMessage>();
         var agent = new ChatClientAgent(CreateCapturingChatClient(captured), new ChatClientAgentOptions { Name = "keeps-nothing" });
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
         var request = new CreateResponse { Model = "test" };
         request.Conversation = BinaryData.FromString("\"conv-known\"");
         request.Input = BinaryData.FromObjectAsJson(new[]
@@ -751,7 +751,7 @@ public class AgentFrameworkResponseHandlerTests
         // first turn that persists it.
         const string ConversationId = "conv-resumed";
         var agent = new WorkflowLikeAgent();
-        var store = new InMemoryAgentSessionStore();
+        var store = new TestAgentSessionStore();
         var handler = BuildHandlerWith(agent, store);
         await DrainEventsAsync(handler.CreateAsync(
             NewConversationTurn(ConversationId, "first question"),
@@ -778,7 +778,7 @@ public class AgentFrameworkResponseHandlerTests
         const string ConversationId = "conv-keeps-nothing";
         var captured = new List<ChatMessage>();
         var agent = new ChatClientAgent(CreateCapturingChatClient(captured), new ChatClientAgentOptions { Name = "keeps-nothing" });
-        var store = new InMemoryAgentSessionStore();
+        var store = new TestAgentSessionStore();
         var handler = BuildHandlerWith(agent, store);
         await DrainEventsAsync(handler.CreateAsync(
             NewConversationTurn(ConversationId, "first question"),
@@ -808,7 +808,7 @@ public class AgentFrameworkResponseHandlerTests
         var agent = new ChatClientAgent(
             CreateCapturingChatClient([], conversationId: "conv-from-the-model"),
             new ChatClientAgentOptions { Name = "hosted" });
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
 
         // Act
         var first = await CollectEventNamesAsync(handler, "conv-model", "resp_" + new string('9', 46), "first question");
@@ -875,7 +875,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange: a plain AIAgent, a hosted workflow for instance, carries the conversation in its own
         // session state and picks up where it left off.
         var agent = new CapturingAgent();
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
         var (request, ctx) = BuildChainRequest("resp_" + new string('1', 46), callId: null);
         ctx.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
            .ReturnsAsync([NewHistoryMessageItem("msg_hist_1", "earlier turn")]);
@@ -897,7 +897,7 @@ public class AgentFrameworkResponseHandlerTests
         // handler registers FoundryChatHistoryProvider for the turn.
         var captured = new List<ChatMessage>();
         var agent = new ChatClientAgent(CreateCapturingChatClient(captured));
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
         var (request, ctx) = BuildChainRequest("resp_" + new string('2', 46), callId: null);
         ctx.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
            .ReturnsAsync([NewHistoryMessageItem("msg_hist_1", "earlier turn")]);
@@ -918,7 +918,7 @@ public class AgentFrameworkResponseHandlerTests
         var agent = new ChatClientAgent(
             CreateCapturingChatClient([]),
             new ChatClientAgentOptions { ChatHistoryProvider = recordingProvider });
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
         var (request, ctx) = BuildChainRequest("resp_" + new string('5', 46), callId: null);
         ctx.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
            .ReturnsAsync([NewHistoryMessageItem("msg_hist_1", "already kept by the service")]);
@@ -939,7 +939,7 @@ public class AgentFrameworkResponseHandlerTests
         // Arrange: the model inside the container keeps the conversation, so it reports a conversation
         // id of its own, and the platform reports one earlier turn for the same conversation.
         const string ResponseId = "resp_" + "4444444444444444444444444444444444444444444444";
-        var store = new InMemoryAgentSessionStore();
+        var store = new TestAgentSessionStore();
         var agent = new ChatClientAgent(CreateCapturingChatClient([], conversationId: "conv-model"));
         var handler = BuildHandlerWith(agent, store);
         var (request, ctx) = BuildChainRequest(ResponseId, callId: null);
@@ -965,7 +965,7 @@ public class AgentFrameworkResponseHandlerTests
         var agent = new ChatClientAgent(
             CreateCapturingChatClient(captured),
             new ChatClientAgentOptions { ChatHistoryProvider = new FixedChatHistoryProvider("from my own store") });
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
         var (request, ctx) = BuildChainRequest("resp_" + new string('3', 46), callId: null);
         ctx.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
            .ReturnsAsync([NewHistoryMessageItem("msg_hist_1", "from the platform")]);
@@ -987,7 +987,7 @@ public class AgentFrameworkResponseHandlerTests
         // restart or a second replica looks like.
         var captured = new List<ChatMessage>();
         var agent = new ChatClientAgent(CreateCapturingChatClient(captured));
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
 
         // Act
         await DrainEventsAsync(handler.CreateAsync(
@@ -1024,7 +1024,7 @@ public class AgentFrameworkResponseHandlerTests
                 RawRepresentationFactory = _ => new CreateResponseOptions { EndUserId = "set by the container" },
             },
         });
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
 
         // Act
         await DrainEventsAsync(handler.CreateAsync(
@@ -1053,7 +1053,7 @@ public class AgentFrameworkResponseHandlerTests
                 new ChatResponseUpdate(ChatRole.Assistant, "ok") { MessageId = "resp_msg_1", ConversationId = "conv-downstream" }));
 
         var agent = new ChatClientAgent(client.Object);
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
 
         // Act + Assert: the hosting service already recorded this turn, so a second recording held by
         // the service behind the chat client has no owner and no way to stay in step. The container was
@@ -1086,7 +1086,7 @@ public class AgentFrameworkResponseHandlerTests
             });
 
         var agent = CreateHarnessAgent(client.Object);
-        var store = new InMemoryAgentSessionStore();
+        var store = new TestAgentSessionStore();
         var handler = BuildHandlerWith(agent, store);
 
         // Act
@@ -1149,7 +1149,7 @@ public class AgentFrameworkResponseHandlerTests
                 }));
 
         var agent = CreateHarnessAgent(client.Object);
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
 
         // Act
         var failure = await Assert.ThrowsAsync<ResponsesApiException>(() => DrainEventsAsync(handler.CreateAsync(
@@ -1180,7 +1180,7 @@ public class AgentFrameworkResponseHandlerTests
             WarnOnChatHistoryProviderConflict = false,
         });
 
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
 
         // Act: collect whatever reaches the caller before the failure.
         var seen = new List<string>();
@@ -1214,7 +1214,7 @@ public class AgentFrameworkResponseHandlerTests
         var agent = new ChatClientAgent(client.Object);
         var handler = BuildHandlerWith(
             agent,
-            new InMemoryAgentSessionStore(),
+            new TestAgentSessionStore(),
             hostingOptions: new FoundryResponsesOptions { AllowStoredOutputEnabled = true });
 
         // Act
@@ -1242,7 +1242,7 @@ public class AgentFrameworkResponseHandlerTests
             CreateCapturingChatClient(captured, conversationId: "conv-downstream"),
             new ChatClientAgentOptions { Name = "keeps-its-own" });
 
-        var store = new InMemoryAgentSessionStore();
+        var store = new TestAgentSessionStore();
         var handler = BuildHandlerWith(
             agent,
             store,
@@ -1275,7 +1275,7 @@ public class AgentFrameworkResponseHandlerTests
         // place it lives.
         var captured = new List<ChatMessage>();
         var agent = new ChatClientAgent(CreateCapturingChatClient(captured));
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
 
         await DrainEventsAsync(handler.CreateAsync(
             NewConversationRequest("conv-single-source", "first question", store: true),
@@ -1309,7 +1309,7 @@ public class AgentFrameworkResponseHandlerTests
             });
 
         var agent = new ChatClientAgent(client.Object);
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
 
         // Act
         await DrainEventsAsync(handler.CreateAsync(
@@ -1346,7 +1346,7 @@ public class AgentFrameworkResponseHandlerTests
         var agent = new ChatClientAgent(client.Object);
         var handler = BuildHandlerWith(
             agent,
-            new InMemoryAgentSessionStore(),
+            new TestAgentSessionStore(),
             hostingOptions: new FoundryResponsesOptions { IncludeReasoningEncryptedContent = false });
 
         // Act
@@ -1386,7 +1386,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var handler = BuildHandlerWith(
             agent,
-            new InMemoryAgentSessionStore(),
+            new TestAgentSessionStore(),
             hostingOptions: new FoundryResponsesOptions { AllowStoredOutputEnabled = true });
 
         // Act
@@ -1422,7 +1422,7 @@ public class AgentFrameworkResponseHandlerTests
                 RawRepresentationFactory = _ => new ChatCompletionOptions { EndUserId = "set by the container" },
             },
         });
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
 
         // Act
         await DrainEventsAsync(handler.CreateAsync(
@@ -1463,7 +1463,7 @@ public class AgentFrameworkResponseHandlerTests
                 }));
 
         var agent = new ChatClientAgent(client.Object);
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
 
         // Act
         var events = new List<ResponseStreamEvent>();
@@ -1504,7 +1504,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     /// <summary>Reads back the session the handler persisted for a response and returns it as JSON text.</summary>
-    private static async Task<string> SerializedSessionOfAsync(AIAgent agent, InMemoryAgentSessionStore store, string responseId)
+    private static async Task<string> SerializedSessionOfAsync(AIAgent agent, TestAgentSessionStore store, string responseId)
     {
         var sessionKey = HostedConversationKey.Resolve(conversationId: null, previousResponseId: null, responseId);
         AIAgent storageAgent = new FoundryHostingAgent(
@@ -1841,7 +1841,7 @@ public class AgentFrameworkResponseHandlerTests
     {
         // Arrange
         var agent = new SessionCountingAgent();
-        var store = new InMemoryAgentSessionStore();
+        var store = new TestAgentSessionStore();
         var handler = BuildHandlerWith(agent, store);
 
         const string PartitionA = "aaaaaaaaaaaaaaaa00";
@@ -1870,7 +1870,7 @@ public class AgentFrameworkResponseHandlerTests
     {
         // Arrange
         var agent = new CallIdCapturingAgent();
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
         var (request, ctx) = BuildChainRequest("caresp_" + new string('0', 50), callId: "call-xyz");
 
         // Act
@@ -1887,7 +1887,7 @@ public class AgentFrameworkResponseHandlerTests
     {
         // Arrange
         var agent = new CallIdCapturingAgent();
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
         var (request, ctx) = BuildChainRequest("caresp_" + new string('0', 50), callId: null);
 
         // Act
@@ -1902,7 +1902,7 @@ public class AgentFrameworkResponseHandlerTests
     {
         // Arrange
         var agent = new CallIdCapturingAgent();
-        var handler = BuildHandlerWith(agent, new InMemoryAgentSessionStore());
+        var handler = BuildHandlerWith(agent, new TestAgentSessionStore());
         var (request, ctx) = BuildChainRequest("caresp_" + new string('0', 50), callId: "call-xyz");
 
         // The caller's ambient call id starts clear.

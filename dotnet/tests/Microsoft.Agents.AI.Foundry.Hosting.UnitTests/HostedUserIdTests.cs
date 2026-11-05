@@ -63,7 +63,7 @@ public class HostedUserIdTests
     {
         // Arrange
         var capturingAgent = new HostedContextCapturingAgent();
-        var sessionStore = new InMemoryAgentSessionStore();
+        var sessionStore = new TestAgentSessionStore();
         var handler = BuildHandler(capturingAgent, sessionStore);
 
         // Step 1: drive a fresh request to populate the session store with a tagged session.
@@ -99,7 +99,7 @@ public class HostedUserIdTests
     {
         // Arrange
         var capturingAgent = new HostedContextCapturingAgent();
-        var sessionStore = new InMemoryAgentSessionStore();
+        var sessionStore = new TestAgentSessionStore();
         var aliceHandler = BuildHandler(capturingAgent, sessionStore);
 
         var (freshRequest, freshContext) = BuildFreshRequest();
@@ -136,7 +136,7 @@ public class HostedUserIdTests
         // stamped. Such a session is treated as "fresh" rather than "resume" because there is
         // no prior identity to defend; the stamp made now is what future resumes will validate.
         var capturingAgent = new HostedContextCapturingAgent();
-        var sessionStore = new InMemoryAgentSessionStore();
+        var sessionStore = new TestAgentSessionStore();
         const string ConversationId = "untagged-chat-id";
         var untagged = await capturingAgent.CreateSessionAsync(CancellationToken.None);
         AIAgent storageAgent = new FoundryHostingAgent(capturingAgent, "default");
@@ -212,7 +212,7 @@ public class HostedUserIdTests
         AgentSessionStore? sessionStore = null)
     {
         var services = new ServiceCollection();
-        services.AddSingleton(sessionStore ?? new InMemoryAgentSessionStore());
+        services.AddSingleton(sessionStore ?? new TestAgentSessionStore());
         services.AddSingleton(agent);
         var sp = services.BuildServiceProvider();
         return new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);

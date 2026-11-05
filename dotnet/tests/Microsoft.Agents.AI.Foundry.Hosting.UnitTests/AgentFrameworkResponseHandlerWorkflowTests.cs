@@ -143,7 +143,7 @@ public class AgentFrameworkResponseHandlerWorkflowTests
             executionEnvironment: InProcessExecution.OffThread);
 
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddKeyedSingleton("my-workflow", workflowAgent);
         var sp = services.BuildServiceProvider();
 
@@ -201,7 +201,7 @@ public class AgentFrameworkResponseHandlerWorkflowTests
             bool resilient = false)
     {
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton(agent);
         services.AddSingleton<ILogger<AgentFrameworkResponseHandler>>(NullLogger<AgentFrameworkResponseHandler>.Instance);
         var sp = services.BuildServiceProvider();

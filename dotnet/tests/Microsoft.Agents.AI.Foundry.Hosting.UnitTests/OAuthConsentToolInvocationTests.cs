@@ -794,7 +794,7 @@ public sealed class OAuthConsentToolInvocationTests
         string? oauthConsentInterruptedToolResult = null)
     {
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton(agent);
         var options = new FoundryResponsesOptions
         {
