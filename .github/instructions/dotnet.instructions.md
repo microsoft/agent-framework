@@ -30,3 +30,15 @@ other required CI checks will report.
 - Do not flag inherited or overridden names dictated by external contracts. Do not recommend breaking renames solely
   for stylistic consistency; explain the concrete discoverability or semantic problem. Treat unresolved namespace
   ordering or prefix choices as design questions, not established convention violations.
+
+## Service Options Review
+
+- For new or materially edited service APIs, accept the concrete options type rather than `IOptions<TOptions>`,
+  `IOptionsSnapshot<TOptions>`, or `IOptionsMonitor<TOptions>`. Resolve configuration in the registration layer and
+  pass the resulting options to the service.
+- Keep effective settings stable for the lifetime of a service, especially when it owns state initialized from
+  those settings. Do not introduce configuration-change subscriptions or re-read changing options during operations
+  unless live reconfiguration is an explicitly designed contract that preserves state consistency.
+- `IOptions<TOptions>` does not itself reload options; `IOptionsMonitor<TOptions>` supports change notifications,
+  and `IOptionsSnapshot<TOptions>` recomputes options per scope. The concrete-options convention keeps service APIs
+  independent of these mechanisms; it does not make mutable options objects immutable.
