@@ -102,11 +102,13 @@ class WorkflowFactory:
         """Initialize the workflow factory.
 
         Args:
-            agent_factory: Optional AgentFactory for creating agents from inline YAML definitions.
+            agent_factory: Optional AgentFactory for creating agents from inline or file-based YAML definitions.
+                The default factory is created on first use and emits an experimental warning.
             agents: Optional pre-created agents by name. These are looked up when processing
                 InvokeAzureAgent actions in the workflow YAML.
             bindings: Optional function bindings for tool calls within workflow actions.
             env_file: Optional path to .env file for environment variables used in agent creation.
+                Loaded when the default agent factory is first needed.
             checkpoint_storage: Optional checkpoint storage enabling pause/resume functionality.
             max_iterations: Optional maximum runner supersteps.  Overrides the YAML ``maxTurns``
                 field and the core default (100).  Workflows with ``GotoAction`` loops (e.g.
@@ -186,7 +188,8 @@ class WorkflowFactory:
                     },
                 )
         """
-        self._agent_factory = agent_factory or AgentFactory(env_file_path=env_file)
+        self._agent_factory = agent_factory
+        self._env_file = env_file
         self._agents: dict[str, SupportsAgentRun | AgentExecutor] = dict(agents) if agents else {}
         self._bindings: dict[str, Any] = dict(bindings) if bindings else {}
         self._tools: dict[str, Any] = {}  # Tool registry for InvokeFunctionTool actions
@@ -563,6 +566,9 @@ class WorkflowFactory:
         Returns:
             An agent instance
         """
+        if self._agent_factory is None:
+            self._agent_factory = AgentFactory(env_file_path=self._env_file)
+
         # Check if it's a reference to an external file
         if "file" in agent_def:
             file_path = agent_def["file"]

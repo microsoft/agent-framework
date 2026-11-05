@@ -22,6 +22,18 @@ This package ships at two different stability levels:
   **experimental** and may change or be removed in future versions without notice.
   Using any of these symbols emits an `ExperimentalWarning` on first use.
 
+`WorkflowFactory` creates its default `AgentFactory` lazily when loading an
+agent definition from the workflow's `agents` section, including references to
+agent YAML files. That path uses the experimental declarative-agent APIs and
+emits the corresponding warning. The `env_file` passed to `WorkflowFactory` is
+loaded at that point.
+
+Workflows containing only workflow actions use the stable workflow APIs. To use
+agents through that surface, create them with the appropriate client and pass
+them through `WorkflowFactory(agents=...)` or `register_agent(...)`. Registered
+agents take precedence over matching YAML definitions and bypass declarative
+agent loading.
+
 ## Declarative features
 
 The declarative packages provides support for building agents based on a declarative yaml specification.
