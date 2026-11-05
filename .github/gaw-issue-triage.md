@@ -45,11 +45,16 @@ users and labels, not each path-to-owner pairing.
 
 Issue writes use separate, limited publishing steps. Every write is tied to
 the validated issue number, including manual dispatch. The agent has read-only
-GitHub access. Detection failures block publishing. Native Priority means the
-repository's issue field, not a Projects-board field. Access to that field still
-needs a real publication test. A trusted check rejects empty, missing, or
-non-Feature issue-type requests before any issue update; triage cannot clear
-the current type.
+GitHub access. Detection failures block publishing. Triage does not set or change
+issue priority; maintainers choose it using the reported evidence. A trusted check
+rejects empty, missing, or non-Feature issue-type requests before any issue
+update; triage cannot clear the current type.
+
+Reports keep the reproduction result separate from the support boundary
+(Direct support, Best effort, Unsupported, Extension point, or Unclear) and cite
+the source that sets it. Unclear scope is left to a maintainer. Reports also
+record the affected and reported versions and, when verified, a known-good
+version, the introducing or fixing change, and whether a fix is released.
 
 ## Flow at a glance
 
@@ -93,7 +98,7 @@ enabling automatic triage, use an authorized test issue/repository to:
    assigns Bug/Feature using the App token.
 3. On an authorized disposable issue, deselect `preview` and check label changes,
    owner assignment without removing existing assignees, native Feature type,
-   native High/Low Priority, comments, and reproduction artifacts.
+   unchanged priority, comments, and reproduction artifacts.
 4. Check that the published comment is a short explanation linking the run,
    without reproduction JSON. Parse `reproduction.json` from a confirmed
    reproduction's artifact. Compare its issue, commit, commands, observed

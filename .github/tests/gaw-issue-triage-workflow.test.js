@@ -111,7 +111,7 @@ describe('Issue triage workflow', () => {
 
   it('pins every issue writer to the validated number in manual runs too', () => {
     assert.match(job('safe_outputs'), /^      - prepare$/m);
-    const names = ['add_comment', 'add_labels', 'remove_labels', 'assign_to_user', 'set_issue_type', 'set_issue_field'];
+    const names = ['add_comment', 'add_labels', 'remove_labels', 'assign_to_user', 'set_issue_type'];
     const agentConfig = configFor('agent', 'GH_AW_SAFE_OUTPUTS_CONFIG');
     for (const name of names) {
       assert.equal(handlers[name].target, '${{ needs.prepare.outputs.issue_number }}', name);
@@ -120,7 +120,7 @@ describe('Issue triage workflow', () => {
     }
     assert.deepEqual(handlers.remove_labels.allowed, ['triage']);
     assert.deepEqual(handlers.set_issue_type.allowed, ['Feature']);
-    assert.deepEqual(handlers.set_issue_field.allowed_fields, ['Priority']);
+    assert.equal(handlers.set_issue_field, undefined, 'Triage must not change issue fields such as Priority');
     assert.equal(handlers.add_comment.hide_older_comments, false);
     assert.notEqual(handlers.assign_to_user.unassign_first, true);
     const tools = manifest.mcp_servers.find(server => server.name === 'safeoutputs').tools;
@@ -175,7 +175,7 @@ describe('Issue triage workflow', () => {
     assert.match(outcome, /route the package owner\/labels/);
     assert.doesNotMatch(outcome, /assign `/);
     assert.doesNotMatch(owners, /likely-fixed-owner:/);
-    assert.match(source, /gaw-issue-triage-owners\.yaml` for routing, including for likely-fixed/);
+    assert.match(source, /gaw-issue-triage-owners\.yaml` for routing, including for reports that\nget the `likely-fixed` label/);
   });
 
   it('blocks publishing after detection findings or errors, without failure issues', () => {

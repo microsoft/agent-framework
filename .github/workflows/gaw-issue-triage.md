@@ -265,11 +265,6 @@ safe-outputs:
     target: ${{ needs.prepare.outputs.issue_number }}
     allowed: [Feature]
     max: 1
-  # Limit field updates to the native Priority field, not a Projects-board field.
-  set-issue-field:
-    target: ${{ needs.prepare.outputs.issue_number }}
-    allowed-fields: [Priority]
-    max: 1
   # Post at most one useful new comment, without editing or hiding earlier comments.
   add-comment:
     target: ${{ needs.prepare.outputs.issue_number }}
@@ -421,20 +416,43 @@ old results as observations from this run.
 If no bundle exists, investigate normally.
 
 1. Identify the claimed behavior, expected behavior, relevant Python/.NET code,
-   tests, versions, and any corrections in the discussion. Read applicable
-   repository instructions. Focus on the reported problem, not broad exploration.
+   tests, affected package, reported version, and any corrections in the
+   discussion. Read applicable repository instructions. Focus on the reported
+   problem, not broad exploration.
+   Separately, identify the support boundary for the scenario. Keep it apart from
+   the reproduction result: a provider-specific failure can be reproducible without
+   breaking a promise made by Agent Framework. Use one category:
+   - **Direct support**: the SDK owns the types, behavior, documentation,
+     compatibility, and tests for the scenario.
+   - **Best effort**: standard behavior may work, but provider-specific or unusual
+     behavior is not guaranteed.
+   - **Unsupported**: the SDK does not promise the scenario and should reject it
+     clearly when practical.
+   - **Extension point**: the SDK owns a stable hook or adapter contract while
+     another component owns the variation.
+   - **Unclear**: no maintained source establishes the boundary.
+   Cite the maintained specification, accepted decision record, or public
+   documentation that sets the boundary. Do not infer a promise from current code
+   or tests alone. If it is unclear, say so and leave the scope decision to a
+   maintainer. Distinguish a bug against a stated promise from a request to
+   change the supported scope.
 2. Try a relevant existing local test or create a minimal reproduction test.
    Do not modify product code to make a test fail. Use mocks or local fakes only
    when they accurately exercise the reported behavior; do not mock away the
    behavior being checked. No live-service credentials are available.
 3. Use the repository's existing dependency manifests and lockfiles. Install only
    the needed package/test dependencies inside this sandbox after the spam check.
-   For Python, use the workspace's uv version and frozen lockfile; the Lab package
-   has its own workspace. For .NET, use `dotnet/global.json` and focused test
+   For Python, uv is already installed at the version pinned in
+   `python/pyproject.toml`. Work from `python/`, or from `python/packages/lab/`
+   for the Lab package, which has its own workspace and lockfile. Install only the
+   affected package with `uv sync --frozen` (for example with `--package`), then
+   run focused tests through `uv run pytest` on specific test files or test IDs.
+   For .NET, the SDK is installed from `dotnet/global.json`; use focused test
    projects with their configured test runner. Do not restore/test every package.
    Do not change dependency manifests, lockfiles, or source to repair the setup.
-4. Capture each command and its actual output. For .NET commands, redirect output
-   to a report file first and read that file instead of repeating an expensive run.
+4. Capture each command and its actual output. For Python and .NET test runs,
+   redirect output to a report file first and read that file instead of
+   repeating an expensive run.
    Store reports, copied generated tests, and relevant output under
    `/tmp/gh-aw/agent/triage/gaw-issue-triage-issue-${{ needs.prepare.outputs.issue_number }}/`.
    This is the evidence folder checked after investigation. Generated tests may live
@@ -452,7 +470,10 @@ If no bundle exists, investigate normally.
 7. Check whether the current behavior already addresses the issue. A version
    difference alone is not a likely fix. Cite a specific verified correction
    and a relevant passing reproduction or corrected documentation before
-   recommending `likely-fixed`.
+   recommending `likely-fixed`. Check whether that fix is only on the default
+   branch or already in a published package version. Recommend upgrading only
+   to a published version that contains the fix; otherwise say the fix is not
+   released yet.
 
 Do not label source-only suspicion as reproduced. Do not change a Bug to a
 Feature just because tests were unavailable or the reported API name was wrong.
@@ -465,15 +486,15 @@ Do not remove existing labels other than `triage`.
 
 | Finding | Updates |
 | --- | --- |
-| Observed reported failure, or directly verified documentation defect | Add `reproduced`, route the package owner/labels, set native Priority to High, remove `triage`, and post one short evidence comment linking the run. Save reproduction JSON in the artifact, not the comment. |
+| Observed reported failure, or directly verified documentation defect | Add `reproduced`, route the package owner/labels, remove `triage`, and post one short evidence comment linking the run. Save reproduction JSON in the artifact, not the comment. |
 | Strong source evidence without observed failure; unavailable service/setup | Add `needs-maintainer-triage`. Keep `triage`; do not claim reproduction or resolution. Normally no public comment. |
 | Relevant reproduction actually ran and did not fail, but more details are needed | Add `requested-info`; post focused questions explaining why the missing details matter. Do not request information already in the discussion. |
-| Specific verified evidence indicates the report is already fixed | Add `likely-fixed`, set native Priority to Low, route the package owner/labels, remove `triage`, and post evidence-backed upgrade guidance. |
-| Feature request | Route package owner/labels; set native type to Feature only if different. Remove `triage` once routing is complete. Normally no comment or priority change. |
+| Specific verified evidence indicates the report is already fixed | Add `likely-fixed`, route the package owner/labels, remove `triage`, and post evidence-backed upgrade guidance. |
+| Feature request | Route package owner/labels; set native type to Feature only if different. Remove `triage` once routing is complete. Normally no comment. |
 | Incorrect usage, with the supported alternative verified | Post a helpful explanation of the correct API/configuration. Do not invent a framework change or reclassify it as a Feature. |
 
-Use `.github/gaw-issue-triage-owners.yaml` for routing, including for likely-fixed
-reports. Choose one primary Python or
+Use `.github/gaw-issue-triage-owners.yaml` for routing, including for reports that
+get the `likely-fixed` label. Choose one primary Python or
 .NET package owner, including for cross-language reports. With high ownership
 confidence, use the longest matching path. With medium confidence, use a route
 only for an exact package path; otherwise use the language fallback. With low
@@ -487,8 +508,9 @@ Do not invent owners/labels or remove other assignees. If no language can be
 determined, leave ownership for maintainer triage. The preparation job checks
 author/team eligibility; do not try to read team membership or credentials.
 
-Use the native issue field named Priority, not a Projects-board field. Do not
-silently substitute a priority label if field access fails. Let publication
+Do not set or change issue priority, and do not add priority labels. Reproduction
+shows confidence in a finding, not its impact or urgency; maintainers choose
+priority. Report evidence that can inform that decision. Let publication
 failures remain visible in Actions; do not claim updates succeeded unless confirmed.
 
 ## 4. Save evidence in artifacts and post a short comment
@@ -497,7 +519,17 @@ Upload a bundle when this run has useful new evidence or reviewed earlier files
 worth retaining, even without a newly confirmed reproduction. Do not upload
 bundles for Features or suspected spam. Save a current `report.md` stating this run's
 finding, tested checkout revision, commands actually run, limitations, and which
-earlier files were retained or omitted and why. Retained evidence must keep its
+earlier files were retained or omitted and why. Also record:
+- the support boundary category and the source that establishes it, or that it
+  is unclear and needs a maintainer decision;
+- the affected package and the reported version;
+- when verified, a known-good version and links to the PR or commit that
+  introduced or fixed the behavior, and whether the cause is in this repository,
+  an external dependency, or a provider;
+- for likely fixes, whether the fix is only on the default branch or in a
+  published package version.
+Mark anything not verified as unknown; do not guess. The tested checkout
+revision alone does not show whether a bug is a release regression. Retained evidence must keep its
 original source and must not imply a fresh reproduction. Keep the bundle within
 10 MiB and 1,000-file limits, including retained history; do not silently drop
 important evidence to make it fit. Empty folders and path metadata are also bounded.
@@ -516,6 +548,8 @@ Link the Actions run, not an invented artifact URL:
 Post at most one useful new issue comment. Read earlier triage comments and avoid
 repeating an unchanged result. Do not edit or hide old comments. Write concise,
 plain-language guidance with links to relevant source and the Actions run.
+For Bugs, briefly state the support boundary and its source, or that it is
+unclear and needs a maintainer decision.
 Do not put reproduction JSON or an expandable reproduction-details section in
 the comment. Saving or carrying forward a bundle does not itself require a new
 comment. Do not claim to have tested anything that was not run.
