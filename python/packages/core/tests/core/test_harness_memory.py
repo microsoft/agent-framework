@@ -293,6 +293,7 @@ def test_memory_file_store_quarantines_corrupt_state_file(tmp_path: Path) -> Non
 
     assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == {
         "last_consolidated_at": None,
+        "pending_turn_ids": {},
         "sessions_since_consolidation": [],
     }
     assert not state_path.exists()
@@ -322,6 +323,7 @@ def test_memory_file_store_quarantines_non_utf8_state_file(tmp_path: Path) -> No
 
     assert store.read_state(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == {
         "last_consolidated_at": None,
+        "pending_turn_ids": {},
         "sessions_since_consolidation": [],
     }
     quarantined = list(state_path.parent.glob(".state.json.*.corrupt"))
