@@ -4328,12 +4328,20 @@ class SecureAgentConfig(ContextProvider):
         messages: Sequence[Message],
         *,
         complete_replay_messages: Sequence[Message] | None = None,
+        replay_history_complete: bool = True,
     ) -> None:
         """Fold new transport messages before a snapshot-only return persists them."""
         state = session.state.setdefault(self.source_id, {})
         if not isinstance(state, dict):
             raise ValueError("Security provider state must be a dictionary.")
         restored_context_label = _STATE_CONTEXT_LABEL in state
+        if not restored_context_label and not replay_history_complete:
+            _clear_replay_state_covered_markers(messages)
+            if complete_replay_messages is not None and complete_replay_messages is not messages:
+                _clear_replay_state_covered_markers(complete_replay_messages)
+            raise RuntimeError(
+                "Cannot reconstruct service-managed history without an authoritative FIDES context label."
+            )
         scope = _SecurityScope(cast(dict[str, Any], state), scope_id=session.session_id)
         replay_messages = (
             messages if restored_context_label or complete_replay_messages is None else complete_replay_messages
