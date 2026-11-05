@@ -2592,8 +2592,12 @@ def test_malformed_local_environment_shell_call_is_not_executable(
 @pytest.mark.parametrize("max_output_length", [None, 4096])
 @pytest.mark.parametrize("round_trip", [False, True])
 @pytest.mark.parametrize("environment", [{"type": "local"}, None])
+@pytest.mark.parametrize("service_storage", [False, True])
 def test_empty_local_shell_call_replays_with_empty_output(
-    max_output_length: int | None, round_trip: bool, environment: dict[str, str] | None
+    max_output_length: int | None,
+    round_trip: bool,
+    environment: dict[str, str] | None,
+    service_storage: bool,
 ) -> None:
     """Zero local commands must replay with a matching empty result, not an orphan call."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -2614,14 +2618,15 @@ def test_empty_local_shell_call_replays_with_empty_output(
         restored_result = Message.from_json(Message("assistant", [contents[1]]).to_json()).contents[0]
         message = Message("assistant", [contents[0], restored_result])
     replay = client._prepare_messages_for_openai(
-        [message, Message("user", "Continue")],
-        request_uses_service_side_storage=False,
+        [message, Message("user", ["Continue"])],
+        request_uses_service_side_storage=service_storage,
     )
 
     shell_calls = [entry for entry in replay if entry["type"] == "shell_call"]
-    assert len(shell_calls) == 1
-    assert shell_calls[0]["call_id"] == "call_empty"
-    assert shell_calls[0]["action"]["commands"] == []
+    assert len(shell_calls) == (0 if service_storage else 1)
+    if not service_storage:
+        assert shell_calls[0]["call_id"] == "call_empty"
+        assert shell_calls[0]["action"]["commands"] == []
     shell_outputs = [entry for entry in replay if entry["type"] == "shell_call_output"]
     expected_output: dict[str, Any] = {"type": "shell_call_output", "call_id": "call_empty", "output": []}
     if max_output_length is not None:
@@ -2708,6 +2713,177 @@ def test_empty_shell_result_is_not_synthesized_for_hosted_unconfigured_or_malfor
     contents = client._shell_item_to_contents(item, tool_name)
 
     assert [content.type for content in contents] == ["shell_tool_call"]
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("continuation", ["stateless", "response", "conversation"])
+async def test_empty_local_shell_output_survives_mixed_tool_continuation(streaming: bool, continuation: str) -> None:
+    """The next request submits local results once without replaying stored shell items."""
+    requests: list[dict[str, Any]] = []
+    executed: list[str] = []
+
+    def local_exec(command: str) -> str:
+        executed.append("shell")
+        return command
+
+    @tool(approval_mode="never_require")
+    def ordinary_tool() -> str:
+        """Return the ordinary tool result."""
+        executed.append("ordinary")
+        return "ordinary result"
+
+    shell_call = {
+        "type": "shell_call",
+        "id": "sh_empty",
+        "call_id": "call_empty",
+        "status": "completed",
+        "environment": {"type": "local"},
+        "action": {"commands": []},
+    }
+    hosted_call = {
+        "type": "shell_call",
+        "id": "sh_hosted",
+        "call_id": "call_hosted",
+        "status": "completed",
+        "environment": {"type": "container_reference", "container_id": "cntr_fixture"},
+        "action": {"commands": ["pwd"]},
+    }
+    hosted_output = {
+        "type": "shell_call_output",
+        "id": "sh_hosted_output",
+        "call_id": "call_hosted",
+        "status": "completed",
+        "output": [{"stdout": "/workspace", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
+    }
+
+    def respond(request: Any) -> Any:
+        requests.append(json.loads(request.content))
+        first = len(requests) == 1
+        output: list[dict[str, Any]] = (
+            [
+                hosted_call,
+                hosted_output,
+                shell_call,
+                {
+                    "type": "function_call",
+                    "id": "fc_ordinary",
+                    "call_id": "call_ordinary",
+                    "name": "ordinary_tool",
+                    "arguments": "{}",
+                    "status": "completed",
+                },
+            ]
+            if first
+            else [
+                {
+                    "type": "message",
+                    "id": "msg_done",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "done", "annotations": [], "logprobs": []}],
+                }
+            ]
+        )
+        response: dict[str, Any] = {
+            "id": "resp_first" if first else "resp_final",
+            "object": "response",
+            "created_at": 1000000000,
+            "status": "completed",
+            "model": "test-model",
+            "output": output,
+            "usage": None,
+            "metadata": {},
+            "parallel_tool_calls": True,
+            "tools": [],
+            "tool_choice": "auto",
+            "error": None,
+            "incomplete_details": None,
+            "conversation": {"id": "conv_fixture"} if continuation == "conversation" else None,
+        }
+        if not streaming:
+            return _OPENAI_HTTPX.Response(200, json=response)
+        events: list[dict[str, Any]] = [
+            {
+                "type": "response.created",
+                "response": {**response, "status": "in_progress", "output": []},
+            }
+        ]
+        for index, item in enumerate(output):
+            events.append({"type": "response.output_item.added", "output_index": index, "item": item})
+            if item["type"] == "function_call":
+                events.append({
+                    "type": "response.function_call_arguments.delta",
+                    "output_index": index,
+                    "item_id": item["id"],
+                    "delta": "{}",
+                })
+            elif item["type"] == "message":
+                events.append({
+                    "type": "response.output_text.delta",
+                    "output_index": index,
+                    "content_index": 0,
+                    "item_id": item["id"],
+                    "delta": "done",
+                    "logprobs": [],
+                })
+            events.append({"type": "response.output_item.done", "output_index": index, "item": item})
+        events.append({"type": "response.completed", "response": response})
+        body = "".join(
+            f"data: {json.dumps({**event, 'sequence_number': number})}\n\n" for number, event in enumerate(events)
+        )
+        return _OPENAI_HTTPX.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    async with AsyncOpenAI(
+        api_key="test-key", http_client=_OPENAI_HTTPX.AsyncClient(transport=_OPENAI_HTTPX.MockTransport(respond))
+    ) as api:
+        client = OpenAIChatClient(model="test-model", async_client=api)
+        options: OpenAIChatOptions[None] = {
+            "store": continuation != "stateless",
+            "tools": [OpenAIChatClient.get_shell_tool(func=local_exec), ordinary_tool],
+        }
+        messages = [Message("user", ["Use the tools."])]
+        if streaming:
+            stream = client.get_response(messages, options=options, stream=True)
+            updates = [update async for update in stream]
+            result = await stream.get_final_response()
+            assert (
+                sum(
+                    content.type == "shell_tool_result" and content.call_id == "call_empty"
+                    for update in updates
+                    for content in update.contents
+                )
+                == 1
+            )
+        else:
+            result = await client.get_response(messages, options=options)
+
+    assert result.text == "done"
+    assert (
+        sum(
+            content.type == "shell_tool_result" and content.call_id == "call_empty"
+            for message in result.messages
+            for content in message.contents
+        )
+        == 1
+    )
+    assert executed == ["ordinary"]
+    assert len(requests) == 2
+    next_input = requests[1]["input"]
+    assert [item for item in next_input if item["type"] == "shell_call_output" and item["call_id"] == "call_empty"] == [
+        {"type": "shell_call_output", "call_id": "call_empty", "output": []}
+    ]
+    assert (
+        sum(item["type"] == "function_call_output" and item["call_id"] == "call_ordinary" for item in next_input) == 1
+    )
+    if continuation != "stateless":
+        assert all(item["type"] not in {"shell_call", "function_call"} for item in next_input)
+        assert all(item.get("call_id") != "call_hosted" for item in next_input)
+        key, value = (
+            ("conversation", "conv_fixture")
+            if continuation == "conversation"
+            else ("previous_response_id", "resp_first")
+        )
+        assert requests[1][key] == value
 
 
 @pytest.mark.asyncio

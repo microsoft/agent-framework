@@ -49,6 +49,7 @@ from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMidd
 from agent_framework._settings import SecretString
 from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
 from agent_framework._tools import (
+    _LOCAL_TOOL_RESULT_KEY,  # pyright: ignore[reportPrivateUsage]
     SHELL_TOOL_KIND_VALUE,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -1949,7 +1950,10 @@ class RawOpenAIChatClient(
                             args = {"type": "message", "role": message.role}
                         all_messages.append(function_call)
                 case "shell_tool_call" | "shell_tool_result":
-                    if request_uses_service_side_storage:
+                    if request_uses_service_side_storage and not (
+                        content.type == "shell_tool_result"
+                        and content.additional_properties.get(_LOCAL_TOOL_RESULT_KEY) is True
+                    ):
                         continue
                     if "content" in args or "tool_calls" in args:
                         all_messages.append(args)
@@ -2609,6 +2613,7 @@ class RawOpenAIChatClient(
                             call_id=shell_call_id,
                             outputs=[],
                             max_output_length=shell_max_output,
+                            additional_properties={_LOCAL_TOOL_RESULT_KEY: True},
                         )
                     )
         elif item_type == "local_shell_call":
