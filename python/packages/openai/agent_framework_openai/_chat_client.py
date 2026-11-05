@@ -927,6 +927,7 @@ class RawOpenAIChatClient(
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         continuation_token: OpenAIContinuationToken | None = options.get("continuation_token")
         extra_headers = cast("Mapping[str, Any] | None", kwargs.get("extra_headers"))
+        before_request = cast("Callable[[], None] | None", kwargs.get("_background_tool_recovery_before_request"))
 
         if stream:
             function_call_ids: dict[int, tuple[str, str]] = {}
@@ -1005,6 +1006,8 @@ class RawOpenAIChatClient(
                         run_options["extra_headers"] = dict(extra_headers)
                     response_format = validated_options.get("response_format")
                     try:
+                        if before_request is not None:
+                            before_request()
                         if "text_format" in run_options:
                             # The SDK's ``responses.stream(text_format=...)`` helper preserves
                             # client-side ``output_parsed`` partial parsing for structured outputs,
@@ -1074,6 +1077,8 @@ class RawOpenAIChatClient(
             if extra_headers is not None:
                 run_options["extra_headers"] = dict(extra_headers)
             try:
+                if before_request is not None:
+                    before_request()
                 if "text_format" in run_options:
                     raw_response = await client.responses.with_raw_response.parse(stream=False, **run_options)
                 else:
@@ -1313,8 +1318,7 @@ class RawOpenAIChatClient(
                 )
                 continue
             if isinstance(tool_item, FunctionTool):
-                params = tool_item.parameters()
-                params["additionalProperties"] = False
+                params: dict[str, Any] = {**tool_item.parameters(), "additionalProperties": False}
                 response_tools.append(
                     FunctionToolParam(
                         name=tool_item.name,

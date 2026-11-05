@@ -3811,6 +3811,55 @@ async def test_reserved_service_session_keys_protected_without_agent_declaration
     assert observed_state == [{"client_value": "available"}]
 
 
+@pytest.mark.parametrize("use_service_session", [False, True])
+@pytest.mark.parametrize("declares_keys", [False, True], ids=["opaque-wrapper", "declared-agent"])
+async def test_background_recovery_state_is_private_and_cannot_be_overwritten(
+    use_service_session: bool, declares_keys: bool
+) -> None:
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    key = "_background_tool_recovery"
+    if declares_keys:
+        setattr(stub, "service_session_state_keys", frozenset({key}))
+    observed_state: list[dict[str, Any]] = []
+    original_run = stub.run
+    trusted_state = {"pending": {"token": "trusted-response"}, "handled": ["already-executed"]}
+
+    def capture_state(*args: Any, **kwargs: Any) -> Any:
+        session = kwargs["session"]
+        observed_state.append(dict(session.state))
+        session.state[key] = trusted_state
+        return original_run(*args, **kwargs)
+
+    stub.run = capture_state  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        snapshot_store=store,
+        use_service_session=use_service_session,
+        service_session_id_from_thread_id=use_service_session,
+    )
+    payload: dict[str, Any] = {
+        "thread_id": "recovery-thread",
+        "__ag_ui_snapshot_scope": "test",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "state": {key: {"pending": None, "handled": []}, "client_value": "available"},
+    }
+    _ = [event async for event in agent.run({**payload, "run_id": "first-run"})]
+    snapshot = await store.get(scope="test", thread_id="recovery-thread")
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    assert snapshot.session_state[key] == trusted_state
+    assert snapshot.state is not None
+    assert snapshot.state[key] == payload["state"][key]
+    _ = [event async for event in agent.run({**payload, "run_id": "second-run"})]
+    assert observed_state == [
+        {"client_value": "available"},
+        {key: trusted_state, "client_value": "available"},
+    ]
+
+
 def test_tool_approval_authority_is_recognized_by_shape_not_encoding() -> None:
     """Any non-empty approval list is authority whatever its item encoding; inert shapes are not."""
     authority_states: list[Any] = [

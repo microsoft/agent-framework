@@ -6355,10 +6355,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 total_function_calls,
                 function_processing.function_call_count,
             )
-            for update in function_processing.streaming_updates:
-                yield update
             if function_processing.action != "continue" and function_processing.action != "stop":
                 # "return" action: model produced a terminal response.
+                for update in function_processing.streaming_updates:
+                    yield update
                 _clear_budget_state_from_session(invocation_session, budget_state)
                 return
             _apply_batch_limit_decision(
@@ -6381,6 +6381,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     usage=completed_usage,
                     options=options,
                 )
+            for update in function_processing.streaming_updates:
+                yield update
 
         # Phase 3: the iteration budget is exhausted, so stream one final response with tools disabled.
         if response is not None:
@@ -6556,6 +6558,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
 
         recovery: BackgroundToolRecovery | None = None
+        recovery_inputs = request_kwargs.pop("_background_tool_recovery_inputs", messages)
+        recovery_model: str | None = None
         recovery_scope = getattr(self, "_background_tool_recovery_scope", None)
         if recovery_scope is not None and self.function_invocation_configuration.get("enabled", True):
             from ._tool_recovery import BACKGROUND_TOOL_RECOVERY_KEY, BackgroundToolRecovery
@@ -6567,20 +6571,30 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 isinstance(stored_recovery, dict) and cast(dict[str, Any], stored_recovery).get("pending") is not None
             )
             if (options and (options.get("background") or options.get("continuation_token"))) or has_pending_recovery:
+                recovery_options = dict(options or {})
+                model_option = recovery_options.get("model") or getattr(self, "model", None)
+                recovery_model = model_option if isinstance(model_option, str) else None
+                if isinstance(stored_recovery, dict) and recovery_options.get("model") is None:
+                    saved_state = cast(dict[str, Any], stored_recovery)
+                    token = recovery_options.get("continuation_token")
+                    token_id = cast(Mapping[str, Any], token).get("response_id") if isinstance(token, Mapping) else None
+                    pending_state = saved_state.get("pending")
+                    pending_token = (
+                        cast(dict[str, Any], pending_state).get("token") if isinstance(pending_state, dict) else None
+                    )
+                    if token_id is not None and token_id in (saved_state.get("token"), pending_token):
+                        recovery_model = saved_state.get("model")
+                if recovery_model is not None:
+                    recovery_options["model"] = recovery_model
                 recovery = BackgroundToolRecovery(
-                    scope=recovery_scope(options or {}),
+                    scope=recovery_scope(recovery_options),
                     session=invocation_session,
                     authoritative=approval_session_is_authoritative,
                     options=options or {},
-                    messages=messages,
+                    messages=recovery_inputs,
+                    model=recovery_model,
                 )
-                provider_get_response = super_get_response
-
-                async def recoverable_provider_call(**kwargs: Any) -> Any:
-                    recovery.before_request()
-                    return await provider_get_response(**kwargs)
-
-                super_get_response = recoverable_provider_call
+                request_kwargs["_background_tool_recovery_before_request"] = recovery.before_request
 
         # Bind one executor with the run's custom arguments, middleware, configuration, and session.
         execute_function_calls = partial(
@@ -6597,6 +6611,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # Give the loop private mutable options and one shared run-local tool list for progressive tool changes.
         # Make options mutable so we can update conversation_id during function invocation loop
         mutable_options: dict[str, Any] = dict(options) if options else {}
+        if recovery_model:
+            mutable_options["model"] = recovery_model
         # Remove additional_function_arguments from options passed to underlying chat client
         # It's for tool invocation only and not recognized by chat service APIs
         mutable_options.pop("additional_function_arguments", None)

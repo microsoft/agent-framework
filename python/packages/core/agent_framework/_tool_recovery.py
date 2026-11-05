@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Mapping, Sequence
 from math import isfinite
 from time import perf_counter, time
@@ -11,6 +12,7 @@ from typing import Any, Literal, cast
 
 import msgspec
 
+from ._serialization import make_json_safe
 from ._sessions import AgentSession
 from ._types import ChatResponse, ChatResponseUpdate, Content, Message
 from .exceptions import ChatClientException, ChatClientInvalidRequestException
@@ -31,6 +33,8 @@ class _PendingToolDelivery(msgspec.Struct, kw_only=True, forbid_unknown_fields=T
     errors_in_a_row: int
     usage: dict[str, Any] | None
     tool_choice: Any
+    continuation: dict[str, Any]
+    tools: list[str]
 
 
 class _BackgroundToolState(msgspec.Struct, kw_only=True, forbid_unknown_fields=True):
@@ -39,6 +43,8 @@ class _BackgroundToolState(msgspec.Struct, kw_only=True, forbid_unknown_fields=T
     busy: bool
     handled: list[str]
     pending: _PendingToolDelivery | None
+    model: str | None = None
+    token: str | None = None
 
 
 class BackgroundToolRecovery:
@@ -52,8 +58,10 @@ class BackgroundToolRecovery:
         authoritative: bool,
         options: Mapping[str, Any],
         messages: Sequence[Message],
+        model: str | None,
     ) -> None:
         self._scope = scope
+        self.model = model
         self._session = session if authoritative else None
         raw_token = options.get("continuation_token")
         token = cast(Mapping[str, Any], raw_token).get("response_id") if isinstance(raw_token, Mapping) else None
@@ -71,7 +79,9 @@ class BackgroundToolRecovery:
             return self
         raw = self._session.state.get(BACKGROUND_TOOL_RECOVERY_KEY)
         if BACKGROUND_TOOL_RECOVERY_KEY not in self._session.state:
-            self._state = _BackgroundToolState(version=1, scope=self._scope, busy=False, handled=[], pending=None)
+            self._state = _BackgroundToolState(
+                version=1, scope=self._scope, busy=False, handled=[], pending=None, model=self.model
+            )
         else:
             try:
                 self._state = msgspec.convert(raw, type=_BackgroundToolState, strict=True)
@@ -80,12 +90,16 @@ class BackgroundToolRecovery:
                     "Invalid background tool recovery state; refusing replay."
                 ) from exc
         state = self._state
-        if state.scope != self._scope:
-            raise ChatClientInvalidRequestException("Background recovery belongs to a different provider or model.")
         if state.busy:
             raise ChatClientInvalidRequestException(
                 "Another background poll owns this session; concurrent polls are unsafe."
             )
+        if state.scope != self._scope:
+            if state.pending is not None or state.handled:
+                raise ChatClientInvalidRequestException("Background recovery belongs to a different provider or model.")
+            state.scope = self._scope
+            state.token = None
+        state.model = self.model
         if state.pending is not None:
             pending = state.pending
             if self._token != pending.token or self._inputs != pending.inputs:
@@ -163,6 +177,18 @@ class BackgroundToolRecovery:
         if not self.resuming or self._state is None or self._state.pending is None:
             return None
         pending = self._state.pending
+        definitions = self._tool_definitions(options.get("tools") or [])
+        restored_tools: list[Any] = []
+        available_tools = list(options.get("tools") or [])
+        for definition in pending.tools:
+            try:
+                index = definitions.index(definition)
+            except ValueError as exc:
+                raise ChatClientInvalidRequestException(
+                    "Background recovery requires the checkpointed tool registry; supply its tool implementations."
+                ) from exc
+            restored_tools.append(available_tools.pop(index))
+            definitions.pop(index)
         snapshot = copy.deepcopy(pending.budget)
         elapsed = float(snapshot.pop("elapsed_seconds"))
         paused_at = float(snapshot.pop("paused_at"))
@@ -176,9 +202,14 @@ class BackgroundToolRecovery:
         budget.update(snapshot)
         budget["start_time"] = perf_counter() - elapsed - max(0.0, time() - paused_at)
         options.pop("continuation_token", None)
-        options["conversation_id"] = pending.response_id
+        for key in ("conversation_id", "previous_response_id", "conversation"):
+            options.pop(key, None)
+        options.update(copy.deepcopy(pending.continuation))
         options["tool_choice"] = copy.deepcopy(pending.tool_choice)
-        request_kwargs["conversation_id"] = pending.response_id
+        options["tools"] = restored_tools
+        request_kwargs.pop("conversation_id", None)
+        if conversation_id := options.get("conversation_id"):
+            request_kwargs["conversation_id"] = conversation_id
         return pending
 
     def before_request(self) -> None:
@@ -194,12 +225,15 @@ class BackgroundToolRecovery:
             self._streamed_delivery = True
 
     def observe_response(self, response: ChatResponse[Any]) -> None:
-        if self._state is not None and self._state.pending is not None:
-            pending = self._state.pending
-            if pending.status == "submitting":
-                self._remember(pending.token, pending.response_id)
-                self._state.pending = None
-                self._save()
+        if self._state is not None:
+            if self._state.pending is not None:
+                pending = self._state.pending
+                if pending.status == "submitting":
+                    self._remember(pending.token, pending.response_id)
+                    self._state.pending = None
+            token = response.continuation_token
+            self._state.token = token.get("response_id") if isinstance(token, dict) else None
+            self._save()
         self._response = response
 
     def start_call(self, function_call: Content) -> bool:
@@ -207,9 +241,7 @@ class BackgroundToolRecovery:
         if self._response is None:
             return False
         if self._session is None or self._state is None:
-            raise ChatClientInvalidRequestException(
-                "Automatic background tools require an explicit AgentSession, reused for every poll."
-            )
+            return False
         if not self._response.response_id:
             raise ChatClientInvalidRequestException("Background tools require a provider response identity.")
         state = self._state
@@ -230,6 +262,8 @@ class BackgroundToolRecovery:
                 errors_in_a_row=0,
                 usage=None,
                 tool_choice=None,
+                continuation={},
+                tools=[],
             )
         occurrence_id = function_call.id
         if not occurrence_id or occurrence_id in state.pending.calls:
@@ -270,5 +304,31 @@ class BackgroundToolRecovery:
         pending.errors_in_a_row = errors_in_a_row
         pending.usage = dict(usage) if usage is not None else None
         pending.tool_choice = copy.deepcopy(options.get("tool_choice"))
+        conversation = options.get("conversation")
+        conversation_id = options.get("conversation_id")
+        if isinstance(conversation, Mapping):
+            conversation = cast(Mapping[str, Any], conversation).get("id")
+        if isinstance(conversation, str) and conversation:
+            conversation_id = conversation
+        pending.continuation = {"conversation_id": conversation_id or pending.response_id}
+        pending.tools = self._tool_definitions(options.get("tools") or [])
         pending.status = "ready"
         self._save()
+
+    @staticmethod
+    def _tool_definitions(tools: Sequence[Any]) -> list[str]:
+        from ._tools import FunctionTool
+
+        definitions: list[str] = []
+        for item in tools:
+            if isinstance(item, FunctionTool):
+                definition = {
+                    "tool": item.to_dict(exclude={"invocation_count", "invocation_exception_count"}),
+                    "additional_properties": make_json_safe(item.additional_properties),
+                }
+            elif isinstance(item, Mapping):
+                definition = make_json_safe(item)
+            else:
+                raise ChatClientInvalidRequestException("Background recovery cannot checkpoint this tool type.")
+            definitions.append(json.dumps(definition, sort_keys=True))
+        return definitions

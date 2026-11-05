@@ -181,6 +181,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   object AG-UI is handed, so a wrapper agent that does not forward it would silently drop the protection.
   `_RESERVED_SERVICE_SESSION_STATE_KEYS` therefore reserves such keys unconditionally; add a key there whenever
   it names a remote resource that the server's own credentialed call addresses.
+- Background tool recovery evidence (`_background_tool_recovery`) is protected from request Shared State even through
+  opaque wrappers, but retained in private Session Continuation State in both history modes.
 - `ToolApprovalMiddleware` names its session state with an application-chosen `source_id`, which a wrapper can hide
   from the agent AG-UI is handed. Tool approval authority is therefore also protected by shape, not only by name: a
   client Shared State value holding a non-empty `rules`, `queued_approval_requests` or `collected_approval_responses`

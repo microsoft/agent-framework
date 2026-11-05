@@ -45,6 +45,7 @@ from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
 from agent_framework_foundry._agent import (
     FoundryAgent,
+    FoundryAgentOptions,
     RawFoundryAgent,
     RawFoundryAgentChatClient,
     _FoundryAgentChatClient,
@@ -1398,8 +1399,9 @@ async def test_raw_foundry_agent_prepare_run_context_injects_agent_session_id_fr
 
 @pytest.mark.parametrize("agent_type", [RawFoundryAgent, FoundryAgent, None])
 @pytest.mark.parametrize("parent_handle", [None, "parent-agent-session"])
+@pytest.mark.parametrize("fails", [False, True], ids=["success", "failure"])
 async def test_foundry_agent_tools_isolate_service_state_between_children(
-    agent_type: type[RawFoundryAgent] | None, parent_handle: str | None
+    agent_type: type[RawFoundryAgent] | None, parent_handle: str | None, fails: bool
 ) -> None:
     """Delegated Foundry calls retain application state without sharing service handles."""
     project = MagicMock()
@@ -1412,6 +1414,7 @@ async def test_foundry_agent_tools_isolate_service_state_between_children(
     ]
     parent = AgentSession(service_session_id="parent-response")
     parent.state["ordinary"] = "parent-value"
+    parent.state["_background_tool_recovery"] = {"parent": "checkpoint"}
     if parent_handle is not None:
         parent.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = parent_handle
     observed_options: list[dict[str, Any]] = []
@@ -1423,6 +1426,8 @@ async def test_foundry_agent_tools_isolate_service_state_between_children(
         call_number = len(observed_options)
 
         async def stream() -> AsyncIterator[ChatResponseUpdate]:
+            if fails:
+                raise RuntimeError("Simulated child failure")
             yield ChatResponseUpdate(
                 role="assistant",
                 contents=[Content.from_text(text="done")],
@@ -1435,25 +1440,79 @@ async def test_foundry_agent_tools_isolate_service_state_between_children(
     with patch.object(RawFoundryAgentChatClient, "_inner_get_response", side_effect=respond):
         for child in (children[0], children[1], children[0]):
             delegated_tool = child.as_tool(propagate_session=True, stream_callback=updates.append)
-            result = await delegated_tool.invoke(
-                context=FunctionInvocationContext(
-                    function=delegated_tool,
-                    arguments={"task": "Run child"},
-                    session=parent,
-                    parent_service_session_state_keys={FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY},
-                )
+            original_run = child.run
+
+            def capture_session(*args: Any, _run: Callable[..., Any] = original_run, **kwargs: Any) -> Any:
+                child_session = kwargs["session"]
+                assert "_background_tool_recovery" not in child_session.state
+                child_session.state["_background_tool_recovery"] = {"child": "checkpoint"}
+                return _run(*args, **kwargs)
+
+            context = FunctionInvocationContext(
+                function=delegated_tool,
+                arguments={"task": "Run child"},
+                session=parent,
+                parent_service_session_state_keys={FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY},
             )
-            assert result[0].text == "done"
+            with patch.object(child, "run", side_effect=capture_session):
+                if fails:
+                    with pytest.raises(RuntimeError, match="Simulated child failure"):
+                        await delegated_tool.invoke(context=context)
+                else:
+                    result = await delegated_tool.invoke(context=context)
+                    assert result[0].text == "done"
 
     assert len(observed_options) == 3
     assert all("agent_session_id" not in options.get("extra_body", {}) for options in observed_options)
     assert all(options.get("conversation_id") is None for options in observed_options)
-    assert len([update for update in updates if update.contents]) == 3
-    expected_state = {"ordinary": "parent-value"}
+    assert len([update for update in updates if update.contents]) == (0 if fails else 3)
+    expected_state: dict[str, Any] = {
+        "ordinary": "parent-value",
+        "_background_tool_recovery": {"parent": "checkpoint"},
+    }
     if parent_handle is not None:
         expected_state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = parent_handle
     assert parent.state == expected_state
     assert parent.service_session_id == "parent-response"
+
+
+@pytest.mark.parametrize("allow_preview", [False, True])
+@pytest.mark.parametrize("change", ["name", "version", "reference"])
+async def test_foundry_background_recovery_rejects_another_agent(allow_preview: bool, change: str) -> None:
+    from agent_framework.exceptions import ChatClientInvalidRequestException
+
+    project = MagicMock()
+    project.get_openai_client.return_value = AsyncOpenAI(api_key="test-key")
+    client = _FoundryAgentChatClient(
+        project_client=project, agent_name="first-agent", agent_version="1", allow_preview=allow_preview
+    )
+    options = FoundryAgentOptions(background=True)
+    original_scope = client._background_tool_recovery_scope(options)
+    session = AgentSession()
+    session.state["_background_tool_recovery"] = {
+        "version": 1,
+        "scope": original_scope,
+        "busy": False,
+        "handled": ["resp_executed"],
+        "pending": None,
+    }
+    if change == "name":
+        client.agent_name = "second-agent"
+    elif change == "version":
+        client.agent_version = "2"
+    else:
+        options["extra_body"] = {"agent_reference": {"name": "second-agent", "type": "agent_reference"}}
+        if allow_preview:
+            assert client._background_tool_recovery_scope(options) == original_scope
+            return
+    with (
+        patch.object(client.client.responses.with_raw_response, "create", new=AsyncMock()) as create,
+        pytest.raises(ChatClientInvalidRequestException, match="different provider or model"),
+    ):
+        await client.get_response(
+            [Message("user", ["New request"])], options=options, client_kwargs={"session": session}
+        )
+    assert create.await_count == 0
 
 
 def test_foundry_agent_updates_session_from_response_ids() -> None:
