@@ -10,7 +10,6 @@ using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -39,7 +38,7 @@ public class FoundryToolboxServiceTests
 
         // Act
         void CreateService() => _ = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>());
 
         // Assert
@@ -51,7 +50,7 @@ public class FoundryToolboxServiceTests
     {
         var options = new FoundryToolboxOptions { StrictMode = true };
         var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>());
 
         // Act + Assert: no StartAsync so Tools is empty; unknown name in strict mode throws.
@@ -67,7 +66,7 @@ public class FoundryToolboxServiceTests
     {
         var options = new FoundryToolboxOptions { StrictMode = false };
         var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>());
 
         // Without calling StartAsync, endpoint is not resolved so lazy-open fails clearly.
@@ -90,7 +89,7 @@ public class FoundryToolboxServiceTests
             var options = new FoundryToolboxOptions();
             options.ToolboxNames.Add("any");
             var service = new FoundryToolboxService(
-                Options.Create(options),
+                options,
                 Mock.Of<TokenCredential>());
 
             await service.StartAsync(CancellationToken.None);
@@ -121,7 +120,7 @@ public class FoundryToolboxServiceTests
             var options = new FoundryToolboxOptions { ApiVersion = "v1" };
             options.ToolboxNames.Add("my-toolbox");
             var service = new FoundryToolboxService(
-                Options.Create(options),
+                options,
                 Mock.Of<TokenCredential>());
 
             // Act: StartAsync attempts to connect to the invalid endpoint and fails.
@@ -153,7 +152,7 @@ public class FoundryToolboxServiceTests
             var options = new FoundryToolboxOptions();
             options.ToolboxNames.Add("tb");
             var service = new FoundryToolboxService(
-                Options.Create(options),
+                options,
                 Mock.Of<TokenCredential>());
 
             await service.StartAsync(CancellationToken.None);
@@ -188,7 +187,7 @@ public class FoundryToolboxServiceTests
             options.ToolboxNames.Add("tb");
 
             var service = new FoundryToolboxService(
-                Options.Create(options),
+                options,
                 Mock.Of<TokenCredential>());
 
             await service.StartAsync(CancellationToken.None);
@@ -218,7 +217,7 @@ public class FoundryToolboxServiceTests
         options.ToolboxNames.Add("broken-toolbox");
 
         var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>());
 
         // Act
@@ -250,7 +249,7 @@ public class FoundryToolboxServiceTests
         options.ToolboxNames.Add("broken-toolbox");
 
         await using var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>());
 
         await service.StartAsync(CancellationToken.None);
@@ -280,7 +279,7 @@ public class FoundryToolboxServiceTests
         };
 
         var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>());
 
         await service.StartAsync(CancellationToken.None);
@@ -318,7 +317,7 @@ public class FoundryToolboxServiceTests
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
         await using var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>())
         {
             ToolboxOpener = (name, _, _) => Task.FromResult(
@@ -357,7 +356,7 @@ public class FoundryToolboxServiceTests
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
         await using var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>())
         {
             ToolboxOpener = (name, _, _) => Task.FromResult(
@@ -388,7 +387,7 @@ public class FoundryToolboxServiceTests
         };
         var openCount = 0;
         await using var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>())
         {
             ToolboxOpener = (_, _, _) =>
@@ -425,7 +424,7 @@ public class FoundryToolboxServiceTests
         };
         var openCount = 0;
         await using var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>())
         {
             ToolboxOpener = (_, _, _) =>
@@ -461,7 +460,7 @@ public class FoundryToolboxServiceTests
         options.ToolboxNames.Add("shared-toolbox");
         var openCount = 0;
         await using var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>())
         {
             ToolboxOpener = (_, _, _) =>
@@ -502,7 +501,7 @@ public class FoundryToolboxServiceTests
         options.ToolboxNames.Add("shared-toolbox");
         var openCount = 0;
         await using var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>())
         {
             ToolboxOpener = (_, _, _) =>
@@ -550,7 +549,7 @@ public class FoundryToolboxServiceTests
         options.ToolboxNames.Add("shared-toolbox");
         var openCount = 0;
         await using var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>())
         {
             ToolboxOpener = (_, _, _) =>
@@ -587,7 +586,7 @@ public class FoundryToolboxServiceTests
         };
         var handler = new TrackingHttpMessageHandler();
         await using var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>())
         {
             ToolboxOpener = (_, _, _) =>
@@ -629,7 +628,7 @@ public class FoundryToolboxServiceTests
         var concurrentOpenCount = 0;
         var openCount = 0;
         await using var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>())
         {
             ToolboxOpener = async (_, _, cancellationToken) =>
@@ -691,7 +690,7 @@ public class FoundryToolboxServiceTests
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
         var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>(),
             logger)
         {
@@ -740,7 +739,7 @@ public class FoundryToolboxServiceTests
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
         var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>(),
             logger)
         {

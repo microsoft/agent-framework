@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -32,7 +31,7 @@ public class FoundryToolboxMarkerScopingTests
         };
 
         var service = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>())
         {
             ToolboxOpener = opener,

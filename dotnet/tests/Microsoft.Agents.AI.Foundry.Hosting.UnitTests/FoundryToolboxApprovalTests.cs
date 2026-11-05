@@ -13,7 +13,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -35,7 +34,7 @@ public sealed class FoundryToolboxApprovalTests
         }
 
         await using var service = new FoundryToolboxService(
-            Options.Create(new FoundryToolboxOptions()),
+            new FoundryToolboxOptions(),
             Mock.Of<TokenCredential>());
 
         // Act
@@ -369,7 +368,7 @@ public sealed class FoundryToolboxApprovalTests
             }
 
             return new FoundryToolboxService(
-                Options.Create(options),
+                options,
                 credential.Object,
                 app.Services.GetRequiredService<ILogger<FoundryToolboxService>>());
         }

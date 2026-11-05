@@ -5,7 +5,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -73,7 +72,7 @@ public class FoundryToolboxHealthCheckTests
             EndpointOverride = "http://127.0.0.1:1/unreachable",
         };
         options.ToolboxNames.Add("broken-toolbox");
-        var service = new FoundryToolboxService(Options.Create(options), Mock.Of<TokenCredential>());
+        var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>());
         await service.StartAsync(CancellationToken.None);
 
         var check = new FoundryToolboxHealthCheck(service);
@@ -98,7 +97,7 @@ public class FoundryToolboxHealthCheckTests
         {
             EndpointOverride = "http://127.0.0.1:1/unused",
         };
-        var service = new FoundryToolboxService(Options.Create(options), Mock.Of<TokenCredential>());
+        var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>());
         await service.StartAsync(CancellationToken.None);
 
         var check = new FoundryToolboxHealthCheck(service);
@@ -118,7 +117,7 @@ public class FoundryToolboxHealthCheckTests
         {
             options.ToolboxNames.Add(toolbox);
         }
-        return new FoundryToolboxService(Options.Create(options), Mock.Of<TokenCredential>());
+        return new FoundryToolboxService(options, Mock.Of<TokenCredential>());
     }
 
     private static HealthCheckContext NewContext(HealthStatus failureStatus) =>

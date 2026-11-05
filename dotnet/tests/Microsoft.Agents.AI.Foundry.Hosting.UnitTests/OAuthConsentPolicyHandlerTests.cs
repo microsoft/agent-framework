@@ -13,7 +13,6 @@ using Azure.Core;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 
@@ -214,7 +213,7 @@ public class OAuthConsentPolicyHandlerTests
             options.ToolboxNames.Add(name);
         }
 
-        var service = new FoundryToolboxService(Options.Create(options), Mock.Of<TokenCredential>())
+        var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
         {
             ToolboxOpener = opener,
         };

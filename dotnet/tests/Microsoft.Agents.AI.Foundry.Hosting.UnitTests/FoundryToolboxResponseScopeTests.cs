@@ -15,7 +15,6 @@ using Azure.Core;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -50,7 +49,7 @@ public sealed class FoundryToolboxResponseScopeTests
         options.ToolboxNames.Add("shared-toolbox");
 
         await using var toolboxService = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>())
         {
             ToolboxOpener = async (_, _, cancellationToken) =>

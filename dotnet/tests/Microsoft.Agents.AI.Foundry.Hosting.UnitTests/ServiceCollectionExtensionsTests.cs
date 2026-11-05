@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.ServerSentEvents;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -257,7 +258,7 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddFoundryToolboxes_OptionsObject_CopiesOptionalBehavior()
+    public async Task AddFoundryToolboxes_OptionsObject_CopiesOptionalBehaviorAsync()
     {
         // Arrange
         var services = new ServiceCollection();
@@ -278,9 +279,14 @@ public class ServiceCollectionExtensionsTests
             "second-toolbox");
         suppliedOptions.ApiVersion = "mutated";
         suppliedOptions.AllowedOAuthConsentOrigins[0] = "https://mutated.example.test";
-        using ServiceProvider provider = services.BuildServiceProvider();
+        await using ServiceProvider provider = services.BuildServiceProvider();
+        FoundryToolboxService service = provider.GetRequiredService<FoundryToolboxService>();
+        FieldInfo optionsField = typeof(FoundryToolboxService).GetField(
+            "_options",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Foundry toolbox options field not found.");
         FoundryToolboxOptions registeredOptions =
-            provider.GetRequiredService<IOptions<FoundryToolboxOptions>>().Value;
+            Assert.IsType<FoundryToolboxOptions>(optionsField.GetValue(service));
 
         // Assert
         Assert.Equal("v2", registeredOptions.ApiVersion);

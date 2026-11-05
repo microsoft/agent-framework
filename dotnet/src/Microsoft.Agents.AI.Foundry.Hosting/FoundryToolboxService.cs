@@ -14,7 +14,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol;
@@ -128,14 +127,14 @@ internal sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
     /// Initializes a new instance of <see cref="FoundryToolboxService"/>.
     /// </summary>
     public FoundryToolboxService(
-        IOptions<FoundryToolboxOptions> options,
+        FoundryToolboxOptions options,
         TokenCredential credential,
         ILogger<FoundryToolboxService>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(credential);
 
-        this._options = options.Value;
+        this._options = options;
         this._credential = credential;
         this._logger = logger ?? NullLogger<FoundryToolboxService>.Instance;
         this.ConsentLinkPolicy = new OAuthConsentLinkPolicy(this._options.AllowedOAuthConsentOrigins);
