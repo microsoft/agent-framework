@@ -85,6 +85,12 @@ to share an HTTP connection pool, not an MCP session. Returned clients are
 borrowed and never closed by the handler. Returning `None` selects an internally
 owned client.
 
+Provider, connection, discovery, and transport failures raise exceptions and fail
+the workflow action, including after approval. Remote tool error responses still
+produce `MCPToolResult(is_error=True)` and populate `output.result` with an error
+string. Custom handlers should return error results only for tool-level errors;
+raised exceptions are not converted into workflow results.
+
 The handler no longer accepts `cache_max_size` or implements `aclose()` or an
 async context manager. Replace `async with DefaultMCPToolHandler() as handler:`
 with `handler = DefaultMCPToolHandler()` and remove handler shutdown calls.

@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx2 as httpx
 import pytest
 from agent_framework import Content, InMemoryCheckpointStorage
-from agent_framework.exceptions import ToolExecutionException
+from agent_framework.exceptions import ToolException, ToolExecutionException
 from mcp import types
 from mcp.server import Server
 from mcp.shared.exceptions import MCPError
@@ -156,19 +156,51 @@ async def test_approval_checkpoint_resume_uses_fresh_protocol_session(
     assert all(client.is_closed for client in clients)
 
 
-@pytest.mark.parametrize("stage", ["connect", "call_tool"])
 @pytest.mark.parametrize(
-    "error", [ToolExecutionException("tool error"), httpx.ReadTimeout("timeout"), MCPError(-32603, "MCP error")]
+    "error",
+    [
+        ToolException("connection failed"),
+        ToolExecutionException("tool error"),
+        httpx.ReadTimeout("timeout"),
+        MCPError(-32603, "MCP error"),
+        ValueError("invalid configuration"),
+    ],
 )
-async def test_transport_errors_clean_up_and_return_tool_errors(
-    mcp_tool: MagicMock, mcp_tool_constructor: MagicMock, stage: str, error: Exception
+async def test_connection_errors_clean_up_and_propagate(
+    mcp_tool: MagicMock, mcp_tool_constructor: MagicMock, error: Exception
 ) -> None:
-    getattr(mcp_tool, stage).side_effect = error
+    mcp_tool.connect.side_effect = error
+    with pytest.raises(type(error)) as excinfo:
+        await DefaultMCPToolHandler().invoke_tool(MCPToolInvocation("https://mcp.example/api", "remember"))
+    assert excinfo.value is error
+    mcp_tool.call_tool.assert_not_awaited()
+    mcp_tool.close.assert_awaited_once()
+
+
+async def test_remote_tool_error_returns_error_result(mcp_tool: MagicMock, mcp_tool_constructor: MagicMock) -> None:
+    mcp_tool.call_tool.side_effect = ToolExecutionException("tool error")
     result = await DefaultMCPToolHandler().invoke_tool(MCPToolInvocation("https://mcp.example/api", "remember"))
     assert result.is_error
-    assert result.error_message
+    assert result.error_message == "tool error"
     assert result.outputs[0].text is not None
     assert result.outputs[0].text.startswith("Error:")
+    mcp_tool.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize("error", [httpx.ReadTimeout("timeout"), MCPError(-32603, "MCP error")])
+async def test_call_transport_errors_clean_up_and_propagate(
+    mcp_tool: MagicMock, mcp_tool_constructor: MagicMock, error: Exception, wrapped: bool
+) -> None:
+    failure = ToolExecutionException("Failed to call tool", inner_exception=error) if wrapped else error
+    if wrapped:
+        failure.__cause__ = error
+    mcp_tool.call_tool.side_effect = failure
+    with pytest.raises(type(failure)) as excinfo:
+        await DefaultMCPToolHandler().invoke_tool(MCPToolInvocation("https://mcp.example/api", "remember"))
+    assert excinfo.value is failure
+    if wrapped:
+        assert excinfo.value.__cause__ is error
     mcp_tool.close.assert_awaited_once()
 
 
@@ -229,14 +261,16 @@ async def test_cleanup_error_does_not_replace_invocation_outcome(
     assert "error closing invocation MCP client" in caplog.text
 
 
-async def test_provider_failure_returns_error_without_constructing_tool(mcp_tool_constructor: MagicMock) -> None:
-    provider = AsyncMock(side_effect=RuntimeError("provider failed"))
-    result = await DefaultMCPToolHandler(client_provider=provider).invoke_tool(
-        MCPToolInvocation("https://mcp.example/api", "remember")
-    )
-    assert result.is_error
-    assert result.error_message is not None
-    assert "provider failed" in result.error_message
+@pytest.mark.parametrize("error", [RuntimeError("provider failed"), httpx.ConnectError("connection failed")])
+async def test_provider_failure_propagates_without_constructing_tool(
+    mcp_tool_constructor: MagicMock, error: Exception
+) -> None:
+    provider = AsyncMock(side_effect=error)
+    with pytest.raises(type(error)) as excinfo:
+        await DefaultMCPToolHandler(client_provider=provider).invoke_tool(
+            MCPToolInvocation("https://mcp.example/api", "remember")
+        )
+    assert excinfo.value is error
     mcp_tool_constructor.assert_not_called()
 
 
@@ -328,17 +362,19 @@ async def test_list_tools_preserves_catalog_and_pagination(
 
 async def test_list_tools_disconnected_error(mcp_tool: MagicMock, mcp_tool_constructor: MagicMock) -> None:
     mcp_tool._require_connection.side_effect = RuntimeError("disconnected")
-    result = await DefaultMCPToolHandler().invoke_tool(MCPToolInvocation("https://mcp.example/api", "tools/list"))
-    assert result.is_error
-    assert result.error_message is not None
-    assert "not connected" in result.error_message
+    with pytest.raises(RuntimeError, match="disconnected"):
+        await DefaultMCPToolHandler().invoke_tool(MCPToolInvocation("https://mcp.example/api", "tools/list"))
     mcp_tool.close.assert_awaited_once()
 
 
-async def test_list_tools_transport_error(mcp_tool: MagicMock, mcp_tool_constructor: MagicMock) -> None:
-    mcp_tool._require_connection.return_value.list_tools_page.side_effect = httpx.ReadTimeout("timeout")
-    result = await DefaultMCPToolHandler().invoke_tool(MCPToolInvocation("https://mcp.example/api", "tools/list"))
-    assert result.is_error
-    assert result.error_message is not None
-    assert "timeout" in result.error_message
+@pytest.mark.parametrize(
+    "error", [httpx.ReadTimeout("timeout"), MCPError(-32603, "MCP error"), ToolExecutionException("discovery failed")]
+)
+async def test_list_tools_transport_error(
+    mcp_tool: MagicMock, mcp_tool_constructor: MagicMock, error: Exception
+) -> None:
+    mcp_tool._require_connection.return_value.list_tools_page.side_effect = error
+    with pytest.raises(type(error)) as excinfo:
+        await DefaultMCPToolHandler().invoke_tool(MCPToolInvocation("https://mcp.example/api", "tools/list"))
+    assert excinfo.value is error
     mcp_tool.close.assert_awaited_once()

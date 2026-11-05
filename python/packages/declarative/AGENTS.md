@@ -33,6 +33,10 @@ The handler has no cache, `cache_max_size`, `aclose()`, or async context manager
 Hosts own admission, deadlines, cancellation, and shutdown of active calls; cancel
 and await them before closing any borrowed HTTP client.
 
+Provider, connection, discovery, and transport failures propagate and fail the
+action, including after approval. Remote tool error responses remain
+`MCPToolResult(is_error=True)`; executors do not convert raised exceptions into results.
+
 Per-invocation sessions add connection overhead and intentionally lose implicit
 server session continuity across calls, approval waits, and checkpoint resumes.
 Applications requiring continuity must use explicit remote state handles or an

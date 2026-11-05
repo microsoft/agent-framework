@@ -12,7 +12,6 @@ whose outputs enter workflow conversations.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -56,7 +55,7 @@ class MCPToolInvocation:
 
 @dataclass
 class MCPToolResult:
-    """Parsed MCP output, or an error that the workflow can store in its result."""
+    """Parsed MCP output, or a remote tool error the workflow can store in its result."""
 
     outputs: list[Content] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
     is_error: bool = False
@@ -74,7 +73,7 @@ class MCPToolHandler(Protocol):
     """
 
     async def invoke_tool(self, invocation: MCPToolInvocation) -> MCPToolResult:
-        """Return tool output or a transport/tool error; propagate programming errors."""
+        """Return tool output or a remote tool error; propagate setup and transport failures."""
         ...
 
 
@@ -135,7 +134,7 @@ class DefaultMCPToolHandler:
 
     async def invoke_tool(self, invocation: MCPToolInvocation) -> MCPToolResult:
         """Connect, dispatch, and finish protocol cleanup before returning."""
-        from agent_framework import Content, MCPStreamableHTTPTool
+        from agent_framework import MCPStreamableHTTPTool
 
         if invocation.tool_name == self.LIST_TOOLS_TOOL_NAME and invocation.arguments:
             message = f"The reserved MCP '{self.LIST_TOOLS_TOOL_NAME}' operation does not accept tool arguments."
@@ -143,29 +142,17 @@ class DefaultMCPToolHandler:
 
         tool: MCPStreamableHTTPTool | None = None
         try:
-            try:
-                client = await self._client_provider(invocation) if self._client_provider is not None else None
-                tool = MCPStreamableHTTPTool(
-                    name=invocation.server_label or "McpClient",
-                    url=invocation.server_url,
-                    load_prompts=False,
-                    http_client=client,
-                    static_headers=dict(invocation.headers),
-                    max_discovery_pages=self._max_discovery_pages,
-                    max_discovery_items=self._max_discovery_items,
-                )
-                await tool.connect()
-            except Exception as exc:
-                logger.warning(
-                    "DefaultMCPToolHandler: failed to obtain MCP client for url=%s tool=%s: %s",
-                    invocation.server_url,
-                    invocation.tool_name,
-                    exc,
-                )
-                message = f"Failed to connect to MCP server: {type(exc).__name__}: {exc}".rstrip(": ")
-                return MCPToolResult(
-                    outputs=[Content.from_text(f"Error: {message}")], is_error=True, error_message=message
-                )
+            client = await self._client_provider(invocation) if self._client_provider is not None else None
+            tool = MCPStreamableHTTPTool(
+                name=invocation.server_label or "McpClient",
+                url=invocation.server_url,
+                load_prompts=False,
+                http_client=client,
+                static_headers=dict(invocation.headers),
+                max_discovery_pages=self._max_discovery_pages,
+                max_discovery_items=self._max_discovery_items,
+            )
+            await tool.connect()
             return await self._invoke_connected_tool(tool, invocation)
         finally:
             if tool is not None:
@@ -175,11 +162,14 @@ class DefaultMCPToolHandler:
         from agent_framework import Content
         from agent_framework.exceptions import ToolExecutionException
 
+        if invocation.tool_name == self.LIST_TOOLS_TOOL_NAME:
+            return await self._invoke_list_tools(tool)
         try:
-            if invocation.tool_name == self.LIST_TOOLS_TOOL_NAME:
-                return await self._invoke_list_tools(tool)
             raw = await tool.call_tool(invocation.tool_name, **invocation.arguments)
         except ToolExecutionException as exc:
+            # Core chains protocol/transport failures, unlike remote is_error responses.
+            if exc.__cause__ is not None:
+                raise
             logger.info(
                 "DefaultMCPToolHandler: tool '%s' on '%s' raised ToolExecutionException",
                 invocation.tool_name,
@@ -187,18 +177,6 @@ class DefaultMCPToolHandler:
             )
             message = str(exc) or type(exc).__name__
             return MCPToolResult(outputs=[Content.from_text(f"Error: {message}")], is_error=True, error_message=message)
-        except httpx.HTTPError as exc:
-            message = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
-            return MCPToolResult(outputs=[Content.from_text(f"Error: {message}")], is_error=True, error_message=message)
-        except Exception as exc:
-            from mcp.shared.exceptions import MCPError
-
-            if isinstance(exc, MCPError):
-                message = str(exc) or type(exc).__name__
-                return MCPToolResult(
-                    outputs=[Content.from_text(f"Error: {message}")], is_error=True, error_message=message
-                )
-            raise
 
         outputs = [Content.from_text(raw)] if isinstance(raw, str) else list(raw)
         return MCPToolResult(outputs=outputs)
@@ -213,14 +191,12 @@ class DefaultMCPToolHandler:
         connection: Any | None = None
         session: Any | None = None
         if callable(require_connection):
-            with contextlib.suppress(RuntimeError):
-                connection = require_connection()
+            connection = require_connection()
         else:
             session = getattr(tool, "session", None)
 
         if connection is None and session is None:
-            message = "MCP session is not connected; cannot list tools."
-            return MCPToolResult(outputs=[Content.from_text(f"Error: {message}")], is_error=True, error_message=message)
+            raise RuntimeError("MCP session is not connected; cannot list tools.")
 
         collected: list[Any] = []
         params: mcp_types.PaginatedRequestParams | None = None
