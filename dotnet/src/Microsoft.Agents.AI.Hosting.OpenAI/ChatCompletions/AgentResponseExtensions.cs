@@ -86,7 +86,7 @@ internal static class AgentResponseExtensions
                         ToolCalls = [functionCallContent.ToChoiceMessageToolCall()]
                     },
 
-                    // function result. ChatCompletions dont provide the results of function result per API reference
+                    // function result. ChatCompletions don't provide the results of function result per API reference
                     FunctionResultContent functionResultContent => null,
 
                     // ignore
