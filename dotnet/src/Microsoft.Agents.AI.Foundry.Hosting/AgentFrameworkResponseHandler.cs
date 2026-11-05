@@ -484,10 +484,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     // Catch agent execution errors and emit a proper failed event
                     // with the real error message instead of letting the SDK emit
                     // a generic "An internal server error occurred."
-                    if (this._logger.IsEnabled(LogLevel.Error))
-                    {
-                        this._logger.LogError(ex, "Agent execution failed for response {ResponseId}.", context.ResponseId);
-                    }
+                    this._logger.LogAgentExecutionFailed(context.ResponseId, ex);
 
                     failedEvent = stream.EmitFailed(
                         ResponseErrorCode.ServerError,
@@ -549,13 +546,13 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     // preserve the existing behavior and emit incomplete.
                     if (isResilientTurn)
                     {
-                        this._logger.LogInformation("Shutdown detected on a resilient turn; deferring for recovery.");
+                        this._logger.LogShutdownDeferredForRecovery();
                         deferredForRecovery = true;
                         await context.ExitForRecoveryAsync(cancellationToken).ConfigureAwait(false);
                         yield break;
                     }
 
-                    this._logger.LogInformation("Shutdown detected, emitting incomplete response.");
+                    this._logger.LogShutdownEmittingIncomplete();
                     yield return stream.EmitIncomplete();
                     yield break;
                 }
@@ -566,12 +563,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     // same conversation. Finish the current response cleanly so Core can drain the
                     // queued input as a new handler invocation. The MAF AgentSession is saved in the
                     // outer finally block and becomes the starting state for that invocation.
-                    if (this._logger.IsEnabled(LogLevel.Information))
-                    {
-                        this._logger.LogInformation(
-                            "Steering input detected for response {ResponseId}; completing the active turn.",
-                            context.ResponseId);
-                    }
+                    this._logger.LogSteeringInputDetected(context.ResponseId);
                     emittedTerminal = true;
                     yield return stream.EmitCompleted();
                     yield break;
@@ -613,13 +605,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
-                        if (this._logger.IsEnabled(LogLevel.Debug))
-                        {
-                            this._logger.LogDebug(
-                                ex,
-                                "Incremental session save was skipped for response {ResponseId}; the end-of-turn save will persist the final state.",
-                                context.ResponseId);
-                        }
+                        this._logger.LogIncrementalSessionSaveSkipped(context.ResponseId, ex);
                     }
                 }
 
@@ -663,12 +649,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         if (notAllowedStoreUsageDetected)
         {
-            if (this._logger.IsEnabled(LogLevel.Error))
-            {
-                this._logger.LogError(
-                    "Agent '{AgentName}' should not have server side storage enabled. This produced a new untracked conversation/response in the server while the hosted agent also generated a conversation for the request of the agent.",
-                    agent.Name);
-            }
+            this._logger.LogServerSideStorageNotAllowed(agent.Name);
 
             throw HostedStoredOutputCompatibility.CreateMisconfiguredAgentError();
         }
@@ -702,14 +683,10 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                if (this._logger.IsEnabled(LogLevel.Debug))
-                {
-                    this._logger.LogDebug(
-                        ex,
-                        "Workflow checkpoint {CheckpointId} was not paired with response {ResponseId} because its AgentSession could not be saved.",
-                        checkpoint.CheckpointId,
-                        context.ResponseId);
-                }
+                this._logger.LogWorkflowCheckpointNotPaired(
+                    checkpoint.CheckpointId,
+                    context.ResponseId,
+                    ex);
 
                 return null;
             }
@@ -832,14 +809,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             }
             catch (InvalidOperationException ex)
             {
-                if (this._logger.IsEnabled(LogLevel.Warning))
-                {
-                    this._logger.LogWarning(
-                        ex,
-                        "Foundry toolbox '{ToolboxName}' could not be resolved for response {ResponseId}.",
-                        name,
-                        responseId);
-                }
+                this._logger.LogToolboxResolutionFailed(name, responseId, ex);
 
                 // A resolution error fails the request even when earlier markers collected consents.
                 return new(Tools: [], Consents: [], Error: ex.Message);
@@ -960,14 +930,10 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         {
             if (!policy.IsAllowed(consent.ConsentUrl))
             {
-                if (this._logger.IsEnabled(LogLevel.Warning))
-                {
-                    this._logger.LogWarning(
-                        "OAuth consent request for tool '{ToolName}' in toolbox '{ToolboxName}' was rejected by the consent link policy for response {ResponseId}.",
-                        consent.ToolName,
-                        consent.ToolboxName,
-                        responseId);
-                }
+                this._logger.LogConsentLinkRejected(
+                    consent.ToolName,
+                    consent.ToolboxName,
+                    responseId);
 
                 return false;
             }
@@ -1019,10 +985,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 return this.PrepareResolvedAgent(agent, storageIdentity);
             }
 
-            if (this._logger.IsEnabled(LogLevel.Warning))
-            {
-                this._logger.LogWarning("Agent '{AgentName}' not found in keyed services. Attempting default resolution.", agentName);
-            }
+            this._logger.LogKeyedAgentNotFound(agentName);
         }
 
         // Try non-keyed default
@@ -1072,10 +1035,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 return sessionStore;
             }
 
-            if (this._logger.IsEnabled(LogLevel.Warning))
-            {
-                this._logger.LogWarning("SessionStore for agent '{AgentName}' not found in keyed services. Attempting default resolution.", agentName);
-            }
+            this._logger.LogKeyedSessionStoreNotFound(agentName);
         }
 
         // Try non-keyed default

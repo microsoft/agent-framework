@@ -211,14 +211,7 @@ public sealed class FoundryAgentSessionStore : AgentSessionStore
         catch (FoundryStorageNotFoundException ex)
         {
             // Nothing stored for this key, so deletion remains idempotent.
-            if (this._logger.IsEnabled(LogLevel.Debug))
-            {
-                this._logger.LogDebug(
-                    ex,
-                    "Session '{SessionId}' was not found in the Foundry state store '{StoreName}'. Nothing to delete.",
-                    key.SessionId,
-                    this.StoreName);
-            }
+            this._logger.LogSessionNotFound(key.SessionId, this.StoreName, ex);
         }
     }
 

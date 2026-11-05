@@ -161,8 +161,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
 
         if (string.IsNullOrEmpty(projectEndpoint))
         {
-            this._logger.LogWarning(
-                "Neither FOUNDRY_PROJECT_ENDPOINT nor AZURE_AI_PROJECT_ENDPOINT is set; toolbox support is disabled.");
+            this._logger.LogToolboxSupportDisabled();
             this.Tools = [];
             this.StartupStatus = FoundryToolboxStartupStatus.NoEndpoint;
             return;
@@ -175,7 +174,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
 
         if (this._options.ToolboxNames.Count == 0)
         {
-            this._logger.LogInformation("No pre-registered toolbox names configured.");
+            this._logger.LogNoPreRegisteredToolboxes();
             this.Tools = [];
             this.StartupStatus = FoundryToolboxStartupStatus.Healthy;
             return;
@@ -202,13 +201,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                     // per-request, and retry enumeration once the user has consented.
                     this._pendingConsents[toolboxName] = consents;
 
-                    if (this._logger.IsEnabled(LogLevel.Information))
-                    {
-                        this._logger.LogInformation(
-                            "Toolbox '{ToolboxName}' requires user OAuth consent before its tools can be enumerated. " +
-                            "The container stays ready; the consent prompt is surfaced to the caller per-request.",
-                            toolboxName);
-                    }
+                    this._logger.LogToolboxRequiresConsent(toolboxName);
 
                     continue;
                 }
@@ -227,14 +220,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                 // yet. Rather than failing readiness and bricking the container, keep it routable and
                 // defer the toolbox: it is retried per-request via RetryDeferredToolboxesAsync, where
                 // the user context is available and enumeration can succeed (or surface consent).
-                if (this._logger.IsEnabled(LogLevel.Warning))
-                {
-                    this._logger.LogWarning(
-                        ex,
-                        "Toolbox '{ToolboxName}' could not be enumerated at startup; deferring it to per-request resolution. " +
-                        "The container stays ready and the toolbox is retried on the next request when the per-user context is available.",
-                        toolboxName);
-                }
+                this._logger.LogToolboxStartupEnumerationDeferred(toolboxName, ex);
 
                 deferred.Add(toolboxName);
             }
@@ -329,13 +315,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                 {
                     // Transient/other error: leave the toolbox pending so a later request retries.
                     // Do not surface a consent prompt (we have no URL); proceed without these tools.
-                    if (this._logger.IsEnabled(LogLevel.Warning))
-                    {
-                        this._logger.LogWarning(
-                            ex,
-                            "Retry of consent-gated toolbox '{ToolboxName}' failed; it remains pending.",
-                            toolboxName);
-                    }
+                    this._logger.LogConsentGatedToolboxRetryFailed(toolboxName, ex);
                 }
             }
 
@@ -399,13 +379,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     // Still failing — keep it deferred and retry on a later request.
-                    if (this._logger.IsEnabled(LogLevel.Warning))
-                    {
-                        this._logger.LogWarning(
-                            ex,
-                            "Retry of deferred toolbox '{ToolboxName}' failed; it remains deferred.",
-                            toolboxName);
-                    }
+                    this._logger.LogDeferredToolboxRetryFailed(toolboxName, ex);
                 }
             }
         }
@@ -693,15 +667,11 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         List<Exception> failures)
     {
         failures.Add(exception);
-        if (this._logger.IsEnabled(LogLevel.Warning))
-        {
-            this._logger.LogWarning(
-                exception,
-                "Failed to dispose {Resource} for toolbox {ToolboxName} owned by {Owner}.",
-                resource,
-                toolboxName ?? "(none)",
-                owner);
-        }
+        this._logger.LogToolboxResourceDisposalFailed(
+            resource,
+            toolboxName ?? "(none)",
+            owner,
+            exception);
     }
 
     /// <summary>
@@ -829,10 +799,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
 
         var proxyUrl = $"{this._resolvedEndpoint!}/toolboxes/{toolboxName}/mcp?api-version={this._options.ApiVersion}";
 
-        if (this._logger.IsEnabled(LogLevel.Information))
-        {
-            this._logger.LogInformation("Connecting to toolbox '{ToolboxName}' at {ProxyUrl}.", toolboxName, proxyUrl);
-        }
+        this._logger.LogConnectingToToolbox(toolboxName, proxyUrl);
 
         // Build the endpoint URI before allocating the HttpClient so a malformed URL cannot leak it.
         var endpoint = new Uri(proxyUrl);
@@ -897,13 +864,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             throw;
         }
 
-        if (this._logger.IsEnabled(LogLevel.Information))
-        {
-            this._logger.LogInformation(
-                "Toolbox '{ToolboxName}': discovered {ToolCount} tool(s).",
-                toolboxName,
-                mcpTools.Count);
-        }
+        this._logger.LogToolboxToolsDiscovered(toolboxName, mcpTools.Count);
 
         var wrapped = new List<AITool>(mcpTools.Count);
         foreach (var tool in mcpTools)
@@ -953,10 +914,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
             }
         }
 
-        this._logger.LogWarning(
-            "Tool '{ToolName}' in toolbox '{ToolboxName}' has an unsupported approval configuration; requiring approval for every call.",
-            tool.Name,
-            toolboxName);
+        this._logger.LogUnsupportedToolApprovalConfiguration(tool.Name, toolboxName);
         return true;
     }
 

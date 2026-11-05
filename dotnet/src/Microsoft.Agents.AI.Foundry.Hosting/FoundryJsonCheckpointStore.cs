@@ -243,16 +243,12 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
                 // Another writer added a checkpoint to the same session between the read and the
                 // write. The checkpoint item is already stored under its own key, so the next
                 // attempt simply re-reads the index and appends to the newer list.
-                if (this._logger?.IsEnabled(LogLevel.Debug) is true)
-                {
-                    this._logger.LogDebug(
-                        ex,
-                        "Attempt {Attempt} of {MaxAttempts} to index checkpoint '{CheckpointId}' for session '{SessionId}' lost to another writer. Retrying.",
-                        attempt + 1,
-                        this._maxIndexUpdateAttempts,
-                        checkpointInfo.CheckpointId,
-                        sessionId);
-                }
+                this._logger?.LogCheckpointIndexRaceRetry(
+                    attempt + 1,
+                    this._maxIndexUpdateAttempts,
+                    checkpointInfo.CheckpointId,
+                    sessionId,
+                    ex);
 
                 continue;
             }
@@ -384,14 +380,10 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
                 catch (FoundryStorageNotFoundException ex)
                 {
                     // Already deleted, by an earlier attempt or another instance.
-                    if (this._logger?.IsEnabled(LogLevel.Debug) is true)
-                    {
-                        this._logger.LogDebug(
-                            ex,
-                            "Obsolete checkpoint '{CheckpointId}' of session '{SessionId}' was already gone.",
-                            entry.CheckpointId,
-                            sessionId);
-                    }
+                    this._logger?.LogObsoleteCheckpointAlreadyGone(
+                        entry.CheckpointId,
+                        sessionId,
+                        ex);
                 }
             }
         }
@@ -399,13 +391,7 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
         {
             // Another instance updated the same session index first. Leaving the old items in place
             // is safer than deleting against a stale index; a later resume can prune them.
-            if (this._logger?.IsEnabled(LogLevel.Debug) is true)
-            {
-                this._logger.LogDebug(
-                    ex,
-                    "Pruning obsolete checkpoints of session '{SessionId}' lost to another writer. The old checkpoints remain until a later resume or expiry.",
-                    sessionId);
-            }
+            this._logger?.LogCheckpointPruningRace(sessionId, ex);
         }
         catch (FoundryStorageException ex)
         {
@@ -414,11 +400,7 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
             // so failing the resume over housekeeping would break a conversation that was about to
             // carry on. It is reported instead, because left unreported this is how a session's
             // checkpoints would silently pile up until the index no longer fits.
-            this._logger?.LogWarning(
-                ex,
-                "Could not prune obsolete checkpoints of session '{SessionId}' in the Foundry state store '{StoreName}'. The resume itself succeeded; the leftovers stay until the store's own expiry removes them.",
-                sessionId,
-                this.StoreName);
+            this._logger?.LogCheckpointPruningFailed(sessionId, this.StoreName, ex);
         }
     }
 

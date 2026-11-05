@@ -59,8 +59,7 @@ internal sealed class HostedProtocolCompatibilityFilter : IEndpointFilter
             return next(context);
         }
 
-        this._logger.LogError(
-            "Hosted container served unsupported Responses protocol 1.0.0 (no x-agent-foundry-call-id header); this image requires protocol 2.0.0.");
+        this._logger.LogUnsupportedResponsesProtocol();
 
         BinaryData responseData =
             ((IPersistableModel<ApiErrorResponse>)new ApiErrorResponse(unsupportedProtocolError.Error))
