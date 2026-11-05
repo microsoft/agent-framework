@@ -98,4 +98,4 @@ checkpoint resumes. Workflow checkpoints and approval verification are
 unchanged; no request-scope migration flag is required. Applications that need
 MCP session continuity must provide an explicitly scoped custom `MCPToolHandler`
 or pass explicit remote state handles as tool arguments. See the
-[decision record](../../../docs/decisions/0046-python-invocation-owned-mcp-sessions.md).
+[decision record](../../../docs/decisions/0053-python-invocation-owned-mcp-sessions.md).

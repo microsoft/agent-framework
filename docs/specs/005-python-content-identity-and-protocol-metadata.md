@@ -9,7 +9,7 @@ deciders: eavanvalkenburg
 ## Scope
 
 This specification defines the serialized Python contract selected by
-[ADR 0044](../decisions/0044-python-content-identity-and-protocol-metadata.md). It applies to `Content`, `Message`,
+[ADR 0048](../decisions/0048-python-content-identity-and-protocol-metadata.md). It applies to `Content`, `Message`,
 streamed response aggregation, and all Python provider and protocol adapters that emit or consume these values,
 including OpenAI, Foundry, Anthropic, Bedrock, Gemini, Mistral, Ollama, Claude, GitHub Copilot, Copilot Studio,
 Hosting Responses, Hosting A2A, DevUI, AG-UI, and A2A.
