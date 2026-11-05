@@ -4,8 +4,10 @@ namespace Microsoft.Agents.AI.Workflows.Observability;
 
 internal static class Tags
 {
+    public const string OperationName = "gen_ai.operation.name";
+    public const string ConversationId = "gen_ai.conversation.id";
     public const string WorkflowId = "workflow.id";
-    public const string WorkflowName = "workflow.name";
+    public const string WorkflowName = "gen_ai.workflow.name";
     public const string WorkflowDescription = "workflow.description";
     public const string WorkflowDefinition = "workflow.definition";
     public const string BuildErrorMessage = "build.error.message";
@@ -15,10 +17,7 @@ internal static class Tags
     public const string SessionId = "session.id";
     public const string ExecutorId = "executor.id";
     public const string ExecutorType = "executor.type";
-    public const string ExecutorInput = "executor.input";
-    public const string ExecutorOutput = "executor.output";
     public const string MessageType = "message.type";
-    public const string MessageContent = "message.content";
     public const string EdgeGroupType = "edge_group.type";
     public const string MessageSourceId = "message.source_id";
     public const string MessageTargetId = "message.target_id";

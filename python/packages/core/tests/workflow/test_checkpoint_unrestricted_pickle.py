@@ -14,6 +14,7 @@ unpickler by default:
 import asyncio
 import base64
 import enum
+import json
 import os
 import pickle
 import tempfile
@@ -34,6 +35,7 @@ from agent_framework._workflows._checkpoint_encoding import (
     decode_checkpoint_value,
     encode_checkpoint_value,
 )
+from tests.workflow.checkpoint_pickle_builders import dynamic_dict_subclass_pickle, metaclass_via_builtin_type_pickle
 
 
 class MaliciousPayload:
@@ -79,6 +81,13 @@ class _NamedPickleColor(enum.Enum):
     def __reduce_ex__(self, proto: object) -> tuple[Any, tuple[type[enum.Enum], str]]:
         del proto
         return (getattr, (type(self), self.name))
+
+
+class _PopulatedColor(enum.Enum):
+    """A populated enum used to prove member-less rejection does not affect ordinary round trips."""
+
+    RED = 1
+    BLUE = 2
 
 
 class _EnumNonMemberAttributePayload:
@@ -418,6 +427,209 @@ def test_restricted_decode_rejects_non_type_global_under_prefix():
             "agent_framework._workflows._checkpoint_encoding",
             "_value_type_to_key",
         )
+
+
+def test_restricted_decode_blocks_builtins_type_class_construction():
+    """``type(qualname, (dict,), {...})(items)`` constructs a new ``dict`` subclass whose
+    ``__module__``/``__qualname__`` are chosen by the payload; the restricted unpickler must block
+    this three-argument form before the new class is ever instantiated, even though ``dict`` alone
+    remains allowed.
+    """
+    payload = dynamic_dict_subclass_pickle("builtins", "type", "DynamicConfig", {"token": "value"})
+    checkpoint_value = {
+        _PICKLE_MARKER: base64.b64encode(payload).decode("ascii"),
+        _TYPE_MARKER: "builtins:DynamicConfig",
+    }
+
+    with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+        decode_checkpoint_value(checkpoint_value, allowed_types=frozenset())
+
+
+def test_restricted_decode_allows_type_single_argument_form():
+    """``type(x)`` (the introspective one-argument form) remains restorable: it only returns the
+    type of an already-constructed value and cannot construct a new class, so a checkpoint saved by
+    an earlier release that holds a bare ``NoneType`` value (``type(None)``, which pickles via this
+    same single-argument ``REDUCE`` call) must keep loading.
+    """
+    encoded = encode_checkpoint_value(type(None))
+    decoded = decode_checkpoint_value(encoded, allowed_types=frozenset())
+
+    assert decoded is type(None)
+
+
+def test_restricted_decode_blocks_explicit_three_argument_type_call():
+    """``find_class`` resolves ``builtins:type`` to a restricted call that still rejects the
+    dangerous three-argument (or any keyword-argument) construction form directly.
+    """
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    unpickler = _RestrictedUnpickler(pickle.dumps(object), frozenset())
+    restricted_type = unpickler.find_class("builtins", "type")
+    assert restricted_type(1) is int
+    with pytest.raises(pickle.UnpicklingError, match="deserialization blocked"):
+        restricted_type("DynamicConfig", (dict,), {})
+
+
+def test_restricted_decode_type_remains_restricted_even_when_explicitly_allowed():
+    """Explicitly listing ``builtins:type`` in ``allowed_types`` does not relax it to the dangerous
+    construction form; it always resolves to the same restricted single-argument call.
+    """
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    unpickler = _RestrictedUnpickler(pickle.dumps(object), frozenset({"builtins:type"}))
+    restricted_type = unpickler.find_class("builtins", "type")
+    assert restricted_type(1) is int
+    with pytest.raises(pickle.UnpicklingError, match="deserialization blocked"):
+        restricted_type("DynamicConfig", (dict,), {})
+
+
+@pytest.mark.parametrize("already_allowed_class_global", [("builtins", "dict"), ("builtins", "list")])
+def test_restricted_decode_blocks_type_called_on_a_class(already_allowed_class_global: tuple[str, str]):
+    """``type(x)`` must reject ``x`` being a class: every ordinary class (``dict``, ``list``, and any
+    class without a custom metaclass) is itself an instance of ``type``, so ``type(dict)`` would
+    otherwise return the bare ``type`` metaclass as a plain value.
+    """
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    unpickler = _RestrictedUnpickler(pickle.dumps(object), frozenset())
+    restricted_type = unpickler.find_class("builtins", "type")
+    module, name = already_allowed_class_global
+    resolved_class = unpickler.find_class(module, name)
+    with pytest.raises(pickle.UnpicklingError, match="deserialization blocked"):
+        restricted_type(resolved_class)
+
+
+def test_restricted_decode_blocks_two_step_type_metaclass_chain():
+    """End-to-end regression for the two-``REDUCE`` chain: pickle's ``REDUCE`` opcode calls whatever
+    object is on top of the stack without re-resolving it through ``find_class``, so a value
+    returned by one restricted call can be memoized and reused as the callable of a *second*
+    ``REDUCE`` with different arguments. Recovering the bare ``type`` metaclass via
+    ``type(dict)`` and then calling it with three arguments must still be rejected, not accepted as
+    a constructed class with caller-supplied data.
+    """
+    payload = metaclass_via_builtin_type_pickle(("builtins", "dict"), "DynamicConfig", {"token": "value"})
+    checkpoint_value = {
+        _PICKLE_MARKER: base64.b64encode(payload).decode("ascii"),
+        _TYPE_MARKER: "builtins:DynamicConfig",
+    }
+
+    with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+        decode_checkpoint_value(checkpoint_value, allowed_types=frozenset())
+
+
+@pytest.mark.parametrize(
+    ("alias_module", "alias_name"),
+    [
+        ("agent_framework._workflows._edge", "builtin_type"),
+        ("agent_framework._workflows._request_info_mixin", "builtin_type"),
+    ],
+)
+def test_restricted_decode_blocks_type_reexported_under_framework_prefix(alias_module: str, alias_name: str):
+    """A framework module attribute that happens to be ``builtins.type`` under an alias (for example
+    ``from builtins import type as builtin_type``) must not provide a second route to class
+    construction once the direct ``builtins:type`` key resolves to the restricted call instead.
+    """
+    payload = dynamic_dict_subclass_pickle(alias_module, alias_name, "DynamicConfig", {"token": "value"})
+    checkpoint_value = {
+        _PICKLE_MARKER: base64.b64encode(payload).decode("ascii"),
+        # Matches what the dynamically constructed class actually reports, so this exercises the
+        # metaclass check rather than the (otherwise orthogonal) _verify_type integrity check.
+        _TYPE_MARKER: f"{alias_module}:DynamicConfig",
+    }
+
+    with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+        decode_checkpoint_value(checkpoint_value, allowed_types=frozenset())
+
+
+def test_restricted_decode_blocks_enum_metaclass_reexported_under_framework_prefix():
+    """``enum.EnumMeta``/``EnumType``, imported into the encoding module for isinstance checks, is a
+    metaclass and must not be resolvable as a checkpoint global either.
+    """
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    unpickler = _RestrictedUnpickler(pickle.dumps(object), frozenset())
+    with pytest.raises(pickle.UnpicklingError, match="metaclass"):
+        unpickler.find_class("agent_framework._workflows._checkpoint_encoding", "EnumMeta")
+
+
+def test_restricted_decode_blocks_type_via_restricted_getattr():
+    """``getattr(dict, "__class__")`` is a second route to the raw ``type`` factory; the restricted
+    ``getattr`` helper must reject it even though ``dict`` itself is allowed.
+    """
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    unpickler = _RestrictedUnpickler(pickle.dumps(object), frozenset())
+    with pytest.raises(pickle.UnpicklingError, match="nested type"):
+        unpickler._restricted_getattr(dict, "__class__")
+
+
+def test_restricted_decode_blocks_unpopulated_enum_reexported_under_framework_prefix():
+    """``agent_framework._serialization`` re-exports the stdlib ``Enum`` base class (used for
+    ``isinstance`` checks). ``Enum`` has no members of its own, so ``EnumMeta.__call__`` would
+    dispatch a two-argument call to the Enum functional API and construct a brand-new class --
+    the same class-construction hazard as calling ``type`` directly. A populated application or
+    framework enum is not affected: Python refuses to subclass (functional-API or
+    otherwise) an Enum that already has members, on every supported Python version, so only
+    member-less Enum-family classes need to be rejected here.
+    """
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    unpickler = _RestrictedUnpickler(pickle.dumps(object), frozenset())
+    with pytest.raises(pickle.UnpicklingError, match="deserialization blocked"):
+        unpickler.find_class("agent_framework._serialization", "Enum")
+
+
+def test_restricted_decode_allows_populated_enum_value_round_trip():
+    """A populated enum explicitly allowed by key continues to round-trip by value, proving the
+    member-less rejection in the previous test does not affect ordinary enum checkpointing.
+    """
+    type_key = f"{_PopulatedColor.__module__}:{_PopulatedColor.__qualname__}"
+    encoded = encode_checkpoint_value(_PopulatedColor.RED)
+    decoded = decode_checkpoint_value(encoded, allowed_types=frozenset({type_key}))
+
+    assert decoded is _PopulatedColor.RED
+
+
+def test_restricted_decode_blocks_explicitly_allowed_metaclass():
+    """Explicitly listing a metaclass's own key in ``allowed_types`` must not un-block class
+    construction; there is no legitimate reconstructible application type that is itself a
+    metaclass (``builtins:type`` is handled separately -- see the restricted-call tests above).
+    """
+    from agent_framework._workflows._checkpoint_encoding import _RestrictedUnpickler
+
+    unpickler = _RestrictedUnpickler(pickle.dumps(object), frozenset({"enum:EnumMeta"}))
+    with pytest.raises(pickle.UnpicklingError, match="metaclass"):
+        unpickler.find_class("enum", "EnumMeta")
+
+
+async def test_file_storage_rejects_edited_checkpoint_class_construction():
+    """End-to-end regression: a checkpoint file edited on disk to replace a saved value's pickle
+    envelope with a REDUCE-based dynamic-class-construction payload must be rejected on ``load()``,
+    not accepted as the constructed class.
+    """
+    from agent_framework import WorkflowCheckpoint
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = FileCheckpointStorage(tmpdir)
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="test",
+            graph_signature_hash="hash",
+            state={"_executor_state": {"worker": {"token": "initial"}}},
+        )
+        checkpoint_id = await storage.save(checkpoint)
+
+        # Edit the checkpoint file directly on disk, independent of any in-memory state.
+        file_path = Path(tmpdir) / f"{checkpoint_id}.json"
+        payload = dynamic_dict_subclass_pickle("builtins", "type", "DynamicConfig", {"token": "modified"})
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+        data["state"]["_executor_state"]["worker"] = {
+            _PICKLE_MARKER: base64.b64encode(payload).decode("ascii"),
+            _TYPE_MARKER: "builtins:DynamicConfig",
+        }
+        file_path.write_text(json.dumps(data), encoding="utf-8")
+
+        with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+            await storage.load(checkpoint_id)
 
 
 @pytest.mark.parametrize("protocol", [2, 3])

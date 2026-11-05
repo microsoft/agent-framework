@@ -449,7 +449,7 @@ class BackgroundAgentsProvider(ContextProvider):
                     asyncio.gather(*pending, return_exceptions=True),
                     timeout=remaining,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 not_done = [task for task in pending if not task.done()]
                 logger.warning(
                     "Session release timed out waiting for %s task(s). They will be abandoned.",

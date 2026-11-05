@@ -394,6 +394,11 @@ class ToolApprovalMiddleware(AgentMiddleware):
         upgraded agent may use an improved version of a tool for which the old
         approval is still appropriate. The developer must decide whether each
         standing approval should carry over to the changed tool.
+
+        The rules are not tied to a caller either. Callers that share a session
+        share its standing approvals, for example when one ``AgentExecutor``
+        serves several callers. Give each caller its own session, or its own
+        workflow and executors.
     """
 
     def __init__(
@@ -562,6 +567,14 @@ class ToolApprovalMiddleware(AgentMiddleware):
                         remaining_update = copy.copy(update)
                         remaining_update.contents = remaining_contents
                         yield remaining_update
+                    elif update.additional_properties:
+                        metadata_update = copy.copy(update)
+                        metadata_update.contents = []
+                        metadata_update.role = None
+                        metadata_update.author_name = None
+                        metadata_update.message_id = None
+                        metadata_update.merge_mode = None
+                        yield metadata_update
                 if not all_auto_approved or has_other_user_input:
                     return
                 context.messages = []

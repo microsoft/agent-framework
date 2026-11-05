@@ -18,6 +18,7 @@ from redisvl.redis.utils import array_to_buffer
 from redisvl.utils.vectorize import BaseVectorizer
 
 from agent_framework_redis import RedisContextProvider
+from agent_framework_redis._context_provider import _scope_token, _scope_token_field
 
 
 class _TransportConnection(Connection):
@@ -66,8 +67,11 @@ def _provider(client: redis.Redis, *, borrowed: bool, **kwargs: Any) -> RedisCon
         # Borrowed indexes use RedisVL's default validate_on_load=False.
         index = AsyncSearchIndex.from_dict(provider.schema_dict, redis_client=client)
         provider = RedisContextProvider(redis_index=index, **kwargs)
+    else:
+        provider.redis_index._redis_client = client  # pyright: ignore[reportPrivateUsage]
     provider.redis_index.exists = AsyncMock(return_value=False)
     provider.redis_index.create = AsyncMock()
+    object.__setattr__(provider, "_validate_schema_compatibility", AsyncMock())
     return provider
 
 
@@ -89,9 +93,6 @@ async def test_context_manager_closes_owned_index_only(
     for borrowed, expected_waits in ((False, 1), (True, 0)):
         closes.reset_mock()
         provider = _provider(redis_client, borrowed=borrowed)
-        # The index connects lazily on first use, so model an index that has been
-        # used (before_run runs exists/create through it) before the provider exits.
-        await provider.redis_index.set_client(redis_client)
         async with provider:
             pass
         assert closes.await_count == expected_waits
@@ -122,15 +123,19 @@ async def test_after_run_encodes_messages_with_optional_fields_omitted(
     assert record["user_id"] == "user-1"
     assert record["conversation_id"] == "session-1"
     assert record["thread_id"] == "session-1"
+    assert record[_scope_token_field("user_id")] == _scope_token("user_id", "user-1")
+    assert record[_scope_token_field("conversation_id")] == _scope_token("conversation_id", "session-1")
+    assert record[_scope_token_field("thread_id")] == _scope_token("thread_id", "session-1")
     assert "message_id" not in record
     assert "author_name" not in record
     for key, value in scopes.items():
         assert record[key] == value
+        assert record[_scope_token_field(key)] == _scope_token(key, value)
     if not all_scopes:
         assert "application_id" not in record
         assert "agent_id" not in record
     assert len(_TransportConnection.packets) == 1
-    assert b"HSET" in _TransportConnection.packets[0]
+    assert all(b"HSET" in packet for packet in _TransportConnection.packets)
     assert message.to_dict() == before
 
 
@@ -163,11 +168,13 @@ async def test_borrowed_index_omits_null_values_without_changing_nonnull_values_
     await provider._add(data=document)
 
     record = write.call_args.args[2]
-    assert "application_id" not in record
+    assert record["application_id"] == "configured-app"
+    assert record["agent_id"] == "configured-agent"
+    assert record[_scope_token_field("application_id")] == _scope_token("application_id", "configured-app")
+    assert record[_scope_token_field("agent_id")] == _scope_token("agent_id", "configured-agent")
     assert "thread_id" not in record
     assert "optional_metadata" not in record
-    assert record["agent_id"] == "0"
-    assert record["conversation_id"] == "0"
+    assert "conversation_id" not in record
     assert record["message_id"] == "0"
     assert record["author_name"] == ""
     assert record["mime_type"] == 0

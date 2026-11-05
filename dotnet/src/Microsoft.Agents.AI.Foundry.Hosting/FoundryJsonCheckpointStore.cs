@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure;
 using Azure.AI.AgentServer.Core.Storage;
 using Azure.Core;
 using Microsoft.Agents.AI.Workflows;
@@ -533,7 +534,7 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
         return entries;
     }
 
-    private static async Task WriteEntriesAsync(FoundryStateStore store, string sessionIndexKey, string sessionId, List<IndexEntry> entries, string? ifMatch)
+    private static async Task WriteEntriesAsync(FoundryStateStore store, string sessionIndexKey, string sessionId, List<IndexEntry> entries, ETag? ifMatch)
     {
         Dictionary<string, BinaryData> value = new()
         {
@@ -549,7 +550,7 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
             return;
         }
 
-        await store.SetItemAsync(sessionIndexKey, value, ifMatch: ifMatch, cancellationToken: CancellationToken.None).ConfigureAwait(false);
+        await store.SetItemAsync(sessionIndexKey, value, ifMatch: ifMatch.Value, cancellationToken: CancellationToken.None).ConfigureAwait(false);
     }
 
     private static BinaryData WriteEntries(List<IndexEntry> entries)

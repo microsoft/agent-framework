@@ -27,7 +27,7 @@ import sys
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal, Never, cast
 
 from agent_framework import Agent, AgentResponse, AgentResponseUpdate, AgentSession, Message, SupportsAgentRun
 from agent_framework._telemetry import mark_feature_used
@@ -39,7 +39,6 @@ from agent_framework._workflows._executor import Executor
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
 from pydantic import BaseModel, Field
-from typing_extensions import Never
 
 from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,

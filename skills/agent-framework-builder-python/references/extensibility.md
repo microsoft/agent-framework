@@ -72,6 +72,9 @@ Use middleware instead when the requirement is primarily execution control aroun
 Set `after_run_once_per_turn=True` when an `AgentLoopMiddleware` should defer `after_run` until the whole user turn is
 complete. Context providers may add chat or function middleware, but not agent middleware.
 
+Check the selected agent's middleware support. `GitHubCopilotAgent` rejects provider-contributed function middleware
+before creating or resuming its SDK session; use `Agent` with a chat client when that middleware is required.
+
 For cross-session memory, include origin session attribution and enforce authorization before injecting content.
 
 Current references:

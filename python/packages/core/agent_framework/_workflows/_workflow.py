@@ -366,6 +366,7 @@ class Workflow(DictConvertible):
         self.start_executor_id = start_executor.id
         self.max_iterations = max_iterations
         self.name = name
+        self._generated_name: str | None = None
         self.description = description
         # Generate a unique ID for the workflow instance for monitoring purposes. This is not intended to be a
         # stable identifier across instances created from the same builder, for that, use the name field.
@@ -559,7 +560,7 @@ class Workflow(DictConvertible):
         """
         # Create workflow span that encompasses the entire execution
         attributes: dict[str, Any] = {OtelAttr.WORKFLOW_ID: self.id}
-        if self.name:
+        if self.name and self.name != self._generated_name:
             attributes[OtelAttr.WORKFLOW_NAME] = self.name
         if self.description:
             attributes[OtelAttr.WORKFLOW_DESCRIPTION] = self.description

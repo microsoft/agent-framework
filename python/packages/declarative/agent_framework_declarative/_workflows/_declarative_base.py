@@ -29,14 +29,13 @@ import locale
 import logging
 import os
 import re
-import sys
 import uuid
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal as _Decimal
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypedDict, cast
 
 from agent_framework import (
     Executor,
@@ -59,11 +58,6 @@ except (ImportError, RuntimeError):
     # ImportError: powerfx package not installed
     # RuntimeError: .NET runtime not available or misconfigured
     Engine = None
-
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)

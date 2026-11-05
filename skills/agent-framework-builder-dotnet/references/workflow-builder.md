@@ -47,6 +47,8 @@ between stages, final output, intermediate output, session ownership, and approv
 - Agent sessions are not automatically interchangeable between participants.
 - Tool approval (`ToolApprovalRequestContent`) and workflow human input (`RequestPort` external requests) are
   different suspension mechanisms.
+- With Magentic plan signoff enabled, respond to the pending plan-review request to approve or revise the plan.
+  Other turns are ignored with a workflow warning while review is pending, including after checkpoint resume.
 - Agents hosted as executors react to a `TurnToken` trigger after receiving messages; use the builder helpers or
   samples so participants actually start processing.
 - Handoff and group-chat patterns transform conversation history between participants; verify what each participant
