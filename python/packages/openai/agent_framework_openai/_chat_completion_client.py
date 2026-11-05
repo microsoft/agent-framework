@@ -514,6 +514,9 @@ class RawOpenAIChatCompletionClient(
         self.response_parser = response_parser
         self.message_preparer = message_preparer
         self._use_azure_client = use_azure_client
+        # Settings dict contains OpenAI/Azure configuration values (model, org_id, base_url, etc.)
+        # Client behavior parameters like timeout are stored directly as instance attributes
+        self.timeout = timeout
         if use_azure_client:
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 

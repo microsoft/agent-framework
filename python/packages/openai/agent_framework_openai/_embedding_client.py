@@ -255,6 +255,11 @@ class RawOpenAIEmbeddingClient(
             self.default_headers = None
         if use_azure_client:
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
+        
+        # Store configuration for serialization
+        # Settings dict contains OpenAI/Azure configuration values (model, org_id, base_url, etc.)
+        # Client behavior parameters like timeout are stored directly as instance attributes
+        self.timeout = timeout
 
         super().__init__(additional_properties=additional_properties)
 

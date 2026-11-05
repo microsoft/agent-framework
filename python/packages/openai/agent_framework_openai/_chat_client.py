@@ -831,6 +831,8 @@ class RawOpenAIChatClient(
         self.model: str = settings.get("model") or ""
 
         # Store configuration for serialization
+        # Settings dict contains OpenAI/Azure configuration values (model, org_id, base_url, etc.)
+        # Client behavior parameters like timeout are stored directly as instance attributes
         self.org_id = settings.get("org_id")
         self.base_url = settings.get("base_url")
         self.azure_endpoint = settings.get("endpoint")
@@ -842,6 +844,7 @@ class RawOpenAIChatClient(
         else:
             self.default_headers = None
         self.instruction_role = instruction_role
+        self.timeout = timeout
         if use_azure_client:
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
