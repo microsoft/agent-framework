@@ -63,7 +63,7 @@ dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.1",
     "pytest-cov==7.1.0",
-    "mypy==2.4.0",
+    "mypy==2.4.1",
     "pyright==1.1.414",
     #tasks
     "poethepoet==0.49.0",
