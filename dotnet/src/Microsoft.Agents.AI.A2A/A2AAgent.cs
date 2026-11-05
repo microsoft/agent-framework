@@ -31,45 +31,24 @@ public sealed class A2AAgent : AIAgent
     private static readonly AIAgentMetadata s_agentMetadata = new("a2a");
 
     private readonly IA2AClient _a2aClient;
-    private readonly A2AAgentOptions _agentOptions;
+    private readonly A2AAgentOptions? _agentOptions;
     private readonly ILogger _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="A2AAgent"/> class.
     /// </summary>
     /// <param name="a2aClient">The A2A client to use for interacting with A2A agents.</param>
-    /// <param name="id">The unique identifier for the agent.</param>
-    /// <param name="name">The name of the agent.</param>
-    /// <param name="description">The description of the agent.</param>
-    /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public A2AAgent(IA2AClient a2aClient, string? id = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null)
-        : this(
-              a2aClient,
-              new A2AAgentOptions
-              {
-                  Id = id,
-                  Name = name,
-                  Description = description
-              },
-              loggerFactory)
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="A2AAgent"/> class.
-    /// </summary>
-    /// <param name="a2aClient">The A2A client to use for interacting with A2A agents.</param>
     /// <param name="options">
-    /// Configuration options that control the agent's identity, including its identifier, name, and description.
+    /// Optional configuration options that control the agent's identity, including its identifier, name, and description.
+    /// When omitted or <see langword="null"/>, default options are used.
     /// </param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public A2AAgent(IA2AClient a2aClient, A2AAgentOptions options, ILoggerFactory? loggerFactory = null)
+    public A2AAgent(IA2AClient a2aClient, A2AAgentOptions? options = null, ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(a2aClient);
-        _ = Throw.IfNull(options);
 
         this._a2aClient = a2aClient;
-        this._agentOptions = options.Clone();
+        this._agentOptions = options?.Clone();
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgent>();
     }
 
@@ -243,13 +222,13 @@ public sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    protected override string? IdCore => this._agentOptions.Id;
+    protected override string? IdCore => this._agentOptions?.Id;
 
     /// <inheritdoc/>
-    public override string? Name => this._agentOptions.Name;
+    public override string? Name => this._agentOptions?.Name;
 
     /// <inheritdoc/>
-    public override string? Description => this._agentOptions.Description;
+    public override string? Description => this._agentOptions?.Description;
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
