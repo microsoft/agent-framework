@@ -33,6 +33,17 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public class ServiceCollectionExtensionsTests
 {
     [Fact]
+    public void FoundryResponsesOptions_UsesAgentServerDefaults()
+    {
+        // Arrange
+        var options = new FoundryResponsesOptions();
+
+        // Act + Assert
+        Assert.False(options.ResilientBackground);
+        Assert.False(options.SteerableConversations);
+    }
+
+    [Fact]
     public void AddFoundryResponses_MarksFeatureUsed()
     {
         // Arrange
@@ -154,6 +165,8 @@ public class ServiceCollectionExtensionsTests
             AllowStoredOutputEnabled = true,
             OAuthConsentInterruptedToolResult = "consent interrupted",
             IncludeReasoningEncryptedContent = false,
+            DefaultModel = "server-model",
+            DefaultFetchHistoryCount = 42,
             ResilientBackground = true,
             SteerableConversations = true,
         };
@@ -168,12 +181,21 @@ public class ServiceCollectionExtensionsTests
         Assert.True(registeredOptions.AllowStoredOutputEnabled);
         Assert.Equal("consent interrupted", registeredOptions.OAuthConsentInterruptedToolResult);
         Assert.False(registeredOptions.IncludeReasoningEncryptedContent);
+        Assert.Equal("server-model", registeredOptions.DefaultModel);
+        Assert.Equal(42, registeredOptions.DefaultFetchHistoryCount);
         Assert.True(registeredOptions.ResilientBackground);
         Assert.True(registeredOptions.SteerableConversations);
+
+        ResponsesServerOptions serverOptions =
+            provider.GetRequiredService<IOptions<ResponsesServerOptions>>().Value;
+        Assert.Equal("server-model", serverOptions.DefaultModel);
+        Assert.Equal(42, serverOptions.DefaultFetchHistoryCount);
+        Assert.True(serverOptions.ResilientBackground);
+        Assert.True(serverOptions.SteerableConversations);
     }
 
     [Fact]
-    public void AddFoundryResponses_OptionsObject_PreservesUnspecifiedHostSettings()
+    public void AddFoundryResponses_OptionsObject_UsesAgentServerDefaultsOverHostSettings()
     {
         // Arrange
         HostApplicationBuilder builder = Host.CreateApplicationBuilder();
@@ -190,7 +212,7 @@ public class ServiceCollectionExtensionsTests
 
         // Assert
         Assert.True(registeredOptions.AllowStoredOutputEnabled);
-        Assert.True(registeredOptions.ResilientBackground);
+        Assert.False(registeredOptions.ResilientBackground);
     }
 
     [Fact]

@@ -109,9 +109,24 @@ public static class HostApplicationBuilderExtensions
         IHostApplicationBuilder host,
         FoundryResponsesOptions? suppliedOptions)
     {
+        if (suppliedOptions is not null)
+        {
+            // AgentServer applies code configuration after host configuration. A supplied options
+            // object follows the same contract, including its inherited AgentServer defaults.
+            return ServiceCollectionExtensions.CopyFoundryResponsesOptions(suppliedOptions);
+        }
+
         FoundryResponsesOptions options = new();
         IConfigurationSection section =
             host.Configuration.GetSection(ServiceCollectionExtensions.ResponsesServerSettingsSectionName);
+        options.DefaultModel = section[nameof(FoundryResponsesOptions.DefaultModel)];
+        if (int.TryParse(
+            section[nameof(FoundryResponsesOptions.DefaultFetchHistoryCount)],
+            out int defaultFetchHistoryCount))
+        {
+            options.DefaultFetchHistoryCount = defaultFetchHistoryCount;
+        }
+
         if (bool.TryParse(section[nameof(FoundryResponsesOptions.ResilientBackground)], out bool resilientBackground))
         {
             options.ResilientBackground = resilientBackground;
@@ -120,23 +135,6 @@ public static class HostApplicationBuilderExtensions
         if (bool.TryParse(section[nameof(FoundryResponsesOptions.SteerableConversations)], out bool steerableConversations))
         {
             options.SteerableConversations = steerableConversations;
-        }
-
-        if (suppliedOptions is not null)
-        {
-            options.AllowStoredOutputEnabled = suppliedOptions.AllowStoredOutputEnabled;
-            options.OAuthConsentInterruptedToolResult = suppliedOptions.OAuthConsentInterruptedToolResult;
-            options.IncludeReasoningEncryptedContent = suppliedOptions.IncludeReasoningEncryptedContent;
-
-            if (suppliedOptions.IsResilientBackgroundSet)
-            {
-                options.ResilientBackground = suppliedOptions.ResilientBackground;
-            }
-
-            if (suppliedOptions.IsSteerableConversationsSet)
-            {
-                options.SteerableConversations = suppliedOptions.SteerableConversations;
-            }
         }
 
         return options;

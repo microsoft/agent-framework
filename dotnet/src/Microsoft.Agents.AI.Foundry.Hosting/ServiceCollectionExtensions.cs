@@ -59,7 +59,7 @@ public static class ServiceCollectionExtensions
     /// <param name="options">
     /// Optional <see cref="FoundryResponsesOptions"/>, for example to allow the
     /// agent's own service to store the responses it produces, or to opt in to durable long-running
-    /// (resilient) background responses via <see cref="FoundryResponsesOptions.ResilientBackground"/>.
+    /// (resilient) background responses via <see cref="ResponsesServerOptions.ResilientBackground"/>.
     /// </param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryResponses(this IServiceCollection services, FoundryResponsesOptions? options = null)
@@ -110,7 +110,7 @@ public static class ServiceCollectionExtensions
     /// <param name="options">
     /// Optional <see cref="FoundryResponsesOptions"/>, for example to allow the
     /// agent's own service to store the responses it produces, or to opt in to durable long-running
-    /// (resilient) background responses via <see cref="FoundryResponsesOptions.ResilientBackground"/>.
+    /// (resilient) background responses via <see cref="ResponsesServerOptions.ResilientBackground"/>.
     /// </param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryResponses(
@@ -166,30 +166,24 @@ public static class ServiceCollectionExtensions
     /// Resilience flags on <see cref="FoundryResponsesOptions"/> are forwarded to
     /// <see cref="ResponsesServerOptions"/> so the AgentServer SDK enables recovery for the same host.
     /// </remarks>
-    private static FoundryResponsesOptions CopyFoundryResponsesOptions(FoundryResponsesOptions? source)
+    internal static FoundryResponsesOptions CopyFoundryResponsesOptions(FoundryResponsesOptions? source)
     {
         if (source is null)
         {
             return new();
         }
 
-        var copy = new FoundryResponsesOptions
+        return new FoundryResponsesOptions
         {
             AllowStoredOutputEnabled = source.AllowStoredOutputEnabled,
             OAuthConsentInterruptedToolResult = source.OAuthConsentInterruptedToolResult,
             IncludeReasoningEncryptedContent = source.IncludeReasoningEncryptedContent,
+            DefaultModel = source.DefaultModel,
+            DefaultFetchHistoryCount = source.DefaultFetchHistoryCount,
+            ResilientBackground = source.ResilientBackground,
+            SteerableConversations = source.SteerableConversations,
+            ResponseAcceptor = source.ResponseAcceptor,
         };
-        if (source.IsResilientBackgroundSet)
-        {
-            copy.ResilientBackground = source.ResilientBackground;
-        }
-
-        if (source.IsSteerableConversationsSet)
-        {
-            copy.SteerableConversations = source.SteerableConversations;
-        }
-
-        return copy;
     }
 
     internal static void RegisterResponseHandler(IServiceCollection services)
@@ -217,8 +211,11 @@ public static class ServiceCollectionExtensions
                 options.IncludeReasoningEncryptedContent = configuredOptions.IncludeReasoningEncryptedContent;
                 if (includeServerOptions)
                 {
+                    options.DefaultModel = configuredOptions.DefaultModel;
+                    options.DefaultFetchHistoryCount = configuredOptions.DefaultFetchHistoryCount;
                     options.ResilientBackground = configuredOptions.ResilientBackground;
                     options.SteerableConversations = configuredOptions.SteerableConversations;
+                    options.ResponseAcceptor = configuredOptions.ResponseAcceptor;
                 }
             });
         }
@@ -428,9 +425,11 @@ public static class ServiceCollectionExtensions
             return false;
         }
 
+        bool resilientBackground = configuredOptions.ResilientBackground;
+        bool steerableConversations = configuredOptions.SteerableConversations;
         services.AddSingleton(new FoundryResponsesServerMarker(
-            configuredOptions.ResilientBackground,
-            configuredOptions.SteerableConversations));
+            resilientBackground,
+            steerableConversations));
         if (host is not null)
         {
 #pragma warning disable SCME0002
@@ -438,8 +437,14 @@ public static class ServiceCollectionExtensions
                 ResponsesServerSettingsSectionName,
                 settings =>
                 {
-                    settings.ResilientBackground = configuredOptions.ResilientBackground;
-                    settings.SteerableConversations = configuredOptions.SteerableConversations;
+                    if (hasConfigureCallback)
+                    {
+                        settings.DefaultModel = configuredOptions.DefaultModel;
+                        settings.DefaultFetchHistoryCount = configuredOptions.DefaultFetchHistoryCount;
+                        settings.ResilientBackground = configuredOptions.ResilientBackground;
+                        settings.SteerableConversations = configuredOptions.SteerableConversations;
+                        settings.ResponseAcceptor = configuredOptions.ResponseAcceptor;
+                    }
                 });
 #pragma warning restore SCME0002
         }
@@ -447,12 +452,18 @@ public static class ServiceCollectionExtensions
         {
             services.AddResponsesServer(options =>
             {
-                options.ResilientBackground = configuredOptions.ResilientBackground;
-                options.SteerableConversations = configuredOptions.SteerableConversations;
+                if (hasConfigureCallback)
+                {
+                    options.DefaultModel = configuredOptions.DefaultModel;
+                    options.DefaultFetchHistoryCount = configuredOptions.DefaultFetchHistoryCount;
+                    options.ResilientBackground = configuredOptions.ResilientBackground;
+                    options.SteerableConversations = configuredOptions.SteerableConversations;
+                    options.ResponseAcceptor = configuredOptions.ResponseAcceptor;
+                }
             });
         }
 
-        if (configuredOptions.SteerableConversations)
+        if (steerableConversations)
         {
             services.SetResilientTasksEnabled();
         }

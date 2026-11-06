@@ -43,7 +43,7 @@ internal sealed class AgentFrameworkResponseHandler : ResponseHandler
 
     /// <summary>
     /// Whether the host was configured for durable long-running (resilient) background responses
-    /// (<see cref="FoundryResponsesOptions.ResilientBackground"/>). When <see langword="false"/> the
+    /// (<see cref="ResponsesServerOptions.ResilientBackground"/>). When <see langword="false"/> the
     /// handler never does mid-turn session saves or recovery exit and behaves exactly as a non-resilient host.
     /// </summary>
     private readonly bool _resilientBackground;
