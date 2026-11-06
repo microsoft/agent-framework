@@ -63,7 +63,7 @@ all = [
     "agent-framework-openai>=1.18.0,<2",
     "agent-framework-orchestrations>=1.4.1,<2",
     "agent-framework-purview>=1.0.0b261030,<2",
-    "agent-framework-redis>=1.0.0b261030,<2; python_version < '3.15'",
+    "agent-framework-redis>=1.0.0b261030,<2",
     "agent-framework-tools>=1.0.0b261030,<2",
 ]
 
