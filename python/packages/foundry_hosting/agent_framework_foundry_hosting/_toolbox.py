@@ -239,8 +239,9 @@ class FoundryToolbox(MCPStreamableHTTPTool):
     into the MCP connection's writer task. The complete effective header set is
     bound to the MCP session; when the caller context changes, the Toolbox
     reconnects that session before sending the operation. Tool, prompt and
-    Toolbox skill-resource operations share the same identity lock so concurrent
-    callers cannot overwrite one another's headers.
+    Toolbox skill-resource operations retain their own request headers. Operations
+    with identical effective headers may overlap; identity changes wait for active
+    operations before reconnecting.
 
     Because the toolbox endpoint is a first-party Foundry service, forwarding the
     opaque caller token to it is safe.
@@ -435,6 +436,14 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             _strict_toolbox_header_provider.reset(token)
 
     @override
+    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> str:
+        token = _strict_toolbox_header_provider.set(True)
+        try:
+            return await super().get_prompt(prompt_name, **kwargs)
+        finally:
+            _strict_toolbox_header_provider.reset(token)
+
+    @override
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an authenticated MCP HTTP client.
 
@@ -448,29 +457,29 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         return super().get_mcp_client()
 
     @override
-    async def close(self) -> None:
-        """Close the MCP session and toolbox HTTP client while preserving credentials and timeout for reconnection."""
-        try:
-            await super().close()
-        finally:
-            client = self._httpx_client
-            if client is not None:
-                self._httpx_client = None
-                await client.aclose()
+    async def _close_connection(self) -> None:
+        """Close the MCP session before its HTTP client, including after waiter cancellation."""
+        async with self._exclusive_header_access():
+            try:
+                await super()._close_connection()
+            finally:
+                # The owner may still need HTTP for teardown after its waiter is cancelled.
+                await self._lifecycle_idle.wait()
+                client = self._httpx_client
+                if client is not None:
+                    self._httpx_client = None
+                    await client.aclose()
 
     async def _read_resource(self, uri: AnyUrl) -> ReadResourceResult:
         """Read a Toolbox resource under the current platform-header identity."""
         headers = self._effective_resource_headers()
-        async with self._call_headers_lock:
-            connection = self._require_connection()
-            if headers or connection.is_framework_owned:
-                await self._ensure_session_identity(headers, {})
+        connection = self._connection
+        if not headers and connection is not None and not connection.is_framework_owned:
+            return await connection.read_resource(str(uri))
+        with self._http_headers(headers):
+            async with self._http_operation():
                 connection = self._require_connection()
-            self._active_call_headers = headers
-            try:
-                return await connection.read_resource(cast(str, uri))
-            finally:
-                self._active_call_headers = None
+                return await connection.read_resource(str(uri))
 
     def _effective_resource_headers(self) -> dict[str, str]:
         """Resolve headers for a resource operation without caller runtime kwargs."""
@@ -668,7 +677,7 @@ class _FoundryToolboxSkillsSource(SkillsSource):
     (via the agent or an ``async with`` block) and is **replaced** with a new
     object whenever the toolbox reconnects. Skills are therefore bound to an
     identity-scoped resource adapter that resolves the current session while
-    holding the Toolbox operation lock, so cached skills keep using the live
+    holding a Toolbox operation lease, so cached skills keep using the live
     session instead of a closed one.
     """
 

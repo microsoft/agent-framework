@@ -99,6 +99,7 @@ class _ToolboxLoopbackServer:
     def __init__(self) -> None:
         self.requests: list[httpx.Request] = []
         self._session_count = 0
+        self.before_request: Callable[[httpx.Request], Awaitable[None]] | None = None
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
@@ -107,6 +108,8 @@ class _ToolboxLoopbackServer:
             return httpx.Response(200)
 
         self.requests.append(request)
+        if self.before_request is not None:
+            await self.before_request(request)
         payload = json.loads(request.content)
         method = payload.get("method")
         call_id = request.headers.get("x-agent-foundry-call-id")
@@ -118,7 +121,7 @@ class _ToolboxLoopbackServer:
             headers["mcp-session-id"] = f"session-{self._session_count}-{call_id or 'none'}"
             result = {
                 "protocolVersion": payload["params"]["protocolVersion"],
-                "capabilities": {"tools": {}, "resources": {}},
+                "capabilities": {"tools": {}, "prompts": {}, "resources": {}},
                 "serverInfo": {"name": "toolbox-loopback", "version": "1"},
             }
         elif method == "tools/list":
@@ -135,6 +138,10 @@ class _ToolboxLoopbackServer:
             }
         elif method == "tools/call":
             result = {"content": [{"type": "text", "text": call_id or "none"}]}
+        elif method == "prompts/list":
+            result = {"prompts": [{"name": "request-prompt"}]}
+        elif method == "prompts/get":
+            result = {"messages": [{"role": "user", "content": {"type": "text", "text": call_id or "none"}}]}
         elif method == "resources/read":
             uri = payload["params"]["uri"]
             if uri == "skill://index.json":
@@ -185,6 +192,136 @@ async def _run_with_request_context(call_id: str, action: Callable[[], Awaitable
         return await action()
     finally:
         reset_request_context(token)
+
+
+async def test_same_call_id_overlaps_tool_and_skill_reads_without_freezing_bearer_tokens() -> None:
+    server = _ToolboxLoopbackServer()
+    arrivals: asyncio.Queue[httpx.Request] = asyncio.Queue()
+    release = asyncio.Event()
+
+    async def hold_response(request: httpx.Request) -> None:
+        if json.loads(request.content).get("method") in ("tools/call", "resources/read"):
+            arrivals.put_nowait(request)
+            await release.wait()
+
+    server.before_request = hold_response
+    credential = _FakeCredential("before-refresh")
+    toolbox = FoundryToolbox(credential, url="https://h/toolboxes/tb/mcp")  # type: ignore
+    await _attach_loopback_transport(toolbox, server)
+    try:
+        await _run_with_request_context("parallel-call", toolbox.connect)
+        first = asyncio.create_task(
+            _run_with_request_context("parallel-call", lambda: toolbox.call_tool("record", marker="first"))
+        )
+        first_request = await asyncio.wait_for(arrivals.get(), timeout=5)
+        credential._token = "after-refresh"
+        second = asyncio.create_task(
+            _run_with_request_context("parallel-call", lambda: toolbox.call_tool("record", marker="second"))
+        )
+        resource = asyncio.create_task(
+            _run_with_request_context(
+                "parallel-call", lambda: toolbox._read_resource(AnyUrl("skill://loopback-skill/SKILL.md"))
+            )
+        )
+        try:
+            next_requests = [await asyncio.wait_for(arrivals.get(), timeout=5) for _ in range(2)]
+            assert not first.done() and not second.done() and not resource.done()
+            assert first_request.headers["Authorization"] == "Bearer before-refresh"
+            assert all(request.headers["Authorization"] == "Bearer after-refresh" for request in next_requests)
+            assert all(
+                request.headers["x-agent-foundry-call-id"] == "parallel-call"
+                for request in [first_request, *next_requests]
+            )
+        finally:
+            release.set()
+            await asyncio.gather(first, second, resource)
+        for task in (first, second):
+            result = await task
+            assert isinstance(result, list)
+            assert result[0].text == "parallel-call"
+        assert len(server.requests_for("initialize")) == 1
+    finally:
+        release.set()
+        await toolbox.close()
+
+
+async def test_cancelled_close_keeps_http_client_alive_until_owner_finishes() -> None:
+    toolbox = FoundryToolbox(_FakeCredential(), url="https://h/toolboxes/tb/mcp")  # type: ignore
+    await _attach_loopback_transport(toolbox, _ToolboxLoopbackServer())
+    await _run_with_request_context("closing-call", toolbox.connect)
+    client = toolbox._httpx_client
+    assert client is not None
+    closing = asyncio.Event()
+    release = asyncio.Event()
+    close_on_owner = toolbox._close_on_owner
+
+    async def hold_teardown() -> None:
+        closing.set()
+        await release.wait()
+        await close_on_owner()
+
+    with patch.object(toolbox, "_close_on_owner", side_effect=hold_teardown):
+        task = asyncio.create_task(toolbox.close())
+        try:
+            await asyncio.wait_for(closing.wait(), timeout=5)
+            task.cancel()
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert not task.done()
+            assert not client.is_closed
+        finally:
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=5)
+    assert client.is_closed
+    assert toolbox._httpx_client is None
+    assert not toolbox.is_connected
+
+
+async def test_toolbox_close_fences_recovery_before_waiting_for_its_barrier() -> None:
+    from anyio import ClosedResourceError
+
+    toolbox = FoundryToolbox(_FakeCredential(), url="https://h/toolboxes/tb/mcp")  # type: ignore
+    server = _ToolboxLoopbackServer()
+    await _attach_loopback_transport(toolbox, server)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fail_call(*args: Any, **kwargs: Any) -> None:
+        started.set()
+        await release.wait()
+        raise ClosedResourceError
+
+    tasks: list[asyncio.Task[Any]] = []
+    try:
+        async with asyncio.timeout(5):
+            await _run_with_request_context("closing-call", toolbox.connect)
+            connection = toolbox._require_connection()
+            assert connection.client is not None
+            with patch.object(connection.client, "call_tool", side_effect=fail_call):
+                calling = asyncio.create_task(
+                    _run_with_request_context("closing-call", lambda: toolbox.call_tool("record", marker="no-retry"))
+                )
+                tasks.append(calling)
+                await started.wait()
+                closing = asyncio.create_task(toolbox.close())
+                tasks.append(closing)
+                await asyncio.sleep(0)
+                assert not closing.done()
+                release.set()
+                await closing
+                with pytest.raises(ToolExecutionException, match="interrupted by close"):
+                    await calling
+            assert not toolbox.is_connected
+            assert toolbox._httpx_client is None
+            assert len(server.requests_for("initialize")) == 1
+            assert not server.requests_for("tools/call")
+    finally:
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await toolbox.close()
 
 
 def test_resolve_endpoint_prefers_explicit_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -389,6 +526,57 @@ async def test_toolbox_header_provider_does_not_retain_prior_platform_context() 
     assert "x-agent-foundry-call-id" not in headers
 
 
+@pytest.mark.parametrize("generated", [False, True])
+async def test_prompt_in_detached_child_uses_current_platform_context(generated: bool) -> None:
+    server = _ToolboxLoopbackServer()
+    start_child = asyncio.Event()
+    children: list[asyncio.Task[str]] = []
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://loopback.invalid/mcp",
+        load_prompts=True,
+    )
+    await _attach_loopback_transport(toolbox, server)
+
+    async def call_prompt() -> str:
+        await start_child.wait()
+        token = set_request_context(FoundryAgentRequestContext(call_id="CALL-B", user_id="same-user"))
+        try:
+            if generated:
+                prompt = next(function for function in toolbox.functions if function.name == "request-prompt")
+                context = FunctionInvocationContext(function=prompt, arguments={}, kwargs={})
+                contents = await prompt.invoke(arguments={}, context=context)
+                assert len(contents) == 1
+                assert contents[0].text is not None
+                return contents[0].text
+            return await toolbox.get_prompt("request-prompt")
+        finally:
+            reset_request_context(token)
+
+    async def spawn_child(request: httpx.Request) -> None:
+        if json.loads(request.content).get("method") == "tools/call":
+            children.append(asyncio.create_task(call_prompt()))
+
+    server.before_request = spawn_child
+    try:
+        async with asyncio.timeout(5):
+            await _run_with_request_context("CALL-A", toolbox.connect)
+            await _run_with_request_context("CALL-A", lambda: toolbox.call_tool("record", marker="parent"))
+            assert len(children) == 1
+            start_child.set()
+            assert await children[0] == "CALL-B"
+            request = server.requests_for("prompts/get")[-1]
+            assert request.headers["x-agent-foundry-call-id"] == "CALL-B"
+            assert request.headers["mcp-session-id"].endswith("-CALL-B")
+            assert len(server.requests_for("initialize")) == 2
+    finally:
+        start_child.set()
+        for child in children:
+            child.cancel()
+        await asyncio.gather(*children, return_exceptions=True)
+        await toolbox.close()
+
+
 async def test_custom_header_provider_key_error_does_not_drop_platform_headers() -> None:
     server = _ToolboxLoopbackServer()
     toolbox = FoundryToolbox(
@@ -554,6 +742,58 @@ async def test_toolbox_concurrent_skill_reads_use_their_own_call_id() -> None:
     assert all(request.headers["X-Custom-Header"] == "resource-value" for request in resource_requests)
 
 
+async def test_retained_skill_read_waits_for_replacement_initialization() -> None:
+    server = _ToolboxLoopbackServer()
+    toolbox = FoundryToolbox(_FakeCredential(), url="https://loopback.invalid/mcp")  # type: ignore
+    await _attach_loopback_transport(toolbox, server)
+    source = toolbox.as_skills_provider()._source
+    initializing = asyncio.Event()
+    release = asyncio.Event()
+    tasks: list[asyncio.Task[Any]] = []
+
+    async def block_replacement(request: httpx.Request) -> None:
+        if (
+            json.loads(request.content).get("method") == "initialize"
+            and request.headers.get("x-agent-foundry-call-id") == "CALL-B"
+        ):
+            initializing.set()
+            await release.wait()
+
+    try:
+        async with asyncio.timeout(10):
+            await _run_with_request_context("CALL-A", toolbox.connect)
+            skills = await _run_with_request_context("CALL-A", lambda: source.get_skills(_source_context()))
+            assert len(skills) == 1
+            server.before_request = block_replacement
+            transition = asyncio.create_task(
+                _run_with_request_context("CALL-B", lambda: toolbox.call_tool("record", marker="transition"))
+            )
+            tasks.append(transition)
+            await initializing.wait()
+            read = asyncio.create_task(_run_with_request_context("CALL-B", skills[0].get_content))
+            tasks.append(read)
+            await asyncio.sleep(0)
+            assert not read.done()
+            assert not any(
+                request.headers.get("x-agent-foundry-call-id") == "CALL-B"
+                for request in server.requests_for("resources/read")
+            )
+            release.set()
+            result = await transition
+            assert isinstance(result, list)
+            assert len(result) == 1 and result[0].text == "CALL-B"
+            assert "Call ID: CALL-B" in await read
+            request = server.requests_for("resources/read")[-1]
+            assert request.headers["x-agent-foundry-call-id"] == "CALL-B"
+            assert request.headers["mcp-session-id"].endswith("-CALL-B")
+    finally:
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await toolbox.close()
+
+
 async def test_toolbox_skills_reject_header_provider_that_requires_runtime_kwargs() -> None:
     server = _ToolboxLoopbackServer()
     toolbox = FoundryToolbox(
@@ -675,13 +915,13 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     assert provider() is resource_session
     first_uri = AnyUrl("skill://first")
     await resource_session.read_resource(cast(str, first_uri))
-    sentinel_session.read_resource.assert_awaited_once_with(first_uri)
+    sentinel_session.read_resource.assert_awaited_once_with(str(first_uri))
 
     new_session = AsyncMock()
     toolbox.session = new_session  # type: ignore
     second_uri = AnyUrl("skill://second")
     await resource_session.read_resource(cast(str, second_uri))
-    new_session.read_resource.assert_awaited_once_with(second_uri)
+    new_session.read_resource.assert_awaited_once_with(str(second_uri))
     # No archive options set -> MCPSkillsSource is constructed with defaults.
     assert captured_kwargs == {}
 
