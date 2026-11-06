@@ -12,7 +12,7 @@ informed: []
 Supersedes [ADR-0026](0026-hosted-session-identity-context.md).
 
 > **Update (2026-11-05):** `HostedFoundryMemoryProviderScopes` was removed during pre-stable
-> API cleanup. Hosted memory samples now read `session.GetHostedContext().UserId` directly when
+> API cleanup. Hosted memory samples now read `session.GetHostedUserId()` directly when
 > constructing `FoundryMemoryProvider.State`, keeping the trusted identity-to-memory-scope mapping
 > visible without a memory-specific hosting helper.
 >
