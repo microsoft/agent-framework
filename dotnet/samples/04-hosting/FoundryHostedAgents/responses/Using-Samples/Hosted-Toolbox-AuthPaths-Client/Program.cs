@@ -156,7 +156,12 @@ while (true)
 
             List<ChatMessage> decisions = approvals.ConvertAll(approval =>
             {
-                string name = (approval.ToolCall as FunctionCallContent)?.Name ?? "tool";
+                string name = approval.ToolCall switch
+                {
+                    FunctionCallContent functionCall => functionCall.Name,
+                    McpServerToolCallContent mcpCall => mcpCall.Name,
+                    _ => "tool",
+                };
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.Write($"Approve tool call '{name}'? [Y/N] ");
                 Console.ResetColor();

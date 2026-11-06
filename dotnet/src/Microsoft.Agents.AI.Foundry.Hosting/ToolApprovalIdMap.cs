@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.AI;
@@ -29,6 +31,9 @@ internal static class ToolApprovalIdMap
     /// </summary>
     public const string StateBagKey = "Microsoft.Agents.AI.Foundry.Hosting.ToolApprovalIdMap";
 
+    private const string DecisionIndexStateBagKey =
+        "Microsoft.Agents.AI.Foundry.Hosting.ToolApprovalIdMap.DecisionIndex";
+
     /// <summary>
     /// Captures the data needed to reconstruct the original
     /// <see cref="FunctionCallContent"/> on the inbound (response) side.
@@ -44,6 +49,11 @@ internal static class ToolApprovalIdMap
         public string CallId { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string? Arguments { get; set; }
+        public string? McpServerLabel { get; set; }
+        public string? McpToolName { get; set; }
+        public bool IsMcpToolCall { get; set; }
+        public bool? Approved { get; set; }
+        public bool Consumed { get; set; }
     }
 
     /// <summary>
@@ -73,7 +83,16 @@ internal static class ToolApprovalIdMap
     /// without those fields the entry cannot be used to faithfully reconstruct
     /// the original <see cref="FunctionCallContent"/> on the inbound side.
     /// </summary>
-    public static void Record(AgentSessionStateBag? stateBag, string wireId, string afRequestId, string? callId, string? name, string? argumentsJson)
+    public static void Record(
+        AgentSessionStateBag? stateBag,
+        string wireId,
+        string afRequestId,
+        string? callId,
+        string? name,
+        string? argumentsJson,
+        string? mcpServerLabel = null,
+        string? mcpToolName = null,
+        bool isMcpToolCall = false)
     {
         if (stateBag is null)
         {
@@ -92,8 +111,52 @@ internal static class ToolApprovalIdMap
             CallId = callId!,
             Name = name!,
             Arguments = argumentsJson,
+            McpServerLabel = mcpServerLabel,
+            McpToolName = mcpToolName,
+            IsMcpToolCall = isMcpToolCall,
         };
         stateBag.SetValue(StateBagKey, map);
+    }
+
+    /// <summary>
+    /// Records the caller's decision for an approval request so a later function result can
+    /// distinguish an executed MCP call from a synthetic rejection result. A decision is a
+    /// one-time capability: duplicate or conflicting responses are rejected.
+    /// </summary>
+    /// <returns>The decided approval entry.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// The state bag or approval mapping is unavailable, or the request was already decided.
+    /// </exception>
+    public static ApprovalEntry RecordDecision(AgentSessionStateBag? stateBag, string wireId, bool approved)
+    {
+        if (stateBag is null)
+        {
+            throw new InvalidOperationException(
+                $"No approval mapping recorded for wire id '{wireId}' because no agent session state bag is available.");
+        }
+
+        var map = LoadMap(stateBag);
+        if (!map.TryGetValue(wireId, out var entry))
+        {
+            throw new InvalidOperationException($"No approval mapping recorded for wire id '{wireId}'.");
+        }
+
+        if (entry.Approved is not null)
+        {
+            throw new InvalidOperationException($"Approval request '{wireId}' has already been decided.");
+        }
+
+        entry.Approved = approved;
+        stateBag.SetValue(StateBagKey, map);
+        if (entry.McpServerLabel is not null)
+        {
+            var decisionIndex = stateBag.GetValue<Dictionary<string, string>>(DecisionIndexStateBagKey)
+                ?? new Dictionary<string, string>(StringComparer.Ordinal);
+            decisionIndex[DecisionIndexKey(entry.CallId, entry.IsMcpToolCall)] = wireId;
+            stateBag.SetValue(DecisionIndexStateBagKey, decisionIndex);
+        }
+
+        return entry;
     }
 
     /// <summary>
@@ -126,10 +189,106 @@ internal static class ToolApprovalIdMap
         return null;
     }
 
+    /// <summary>
+    /// Consumes the decided MCP approval entry for an original tool call id.
+    /// </summary>
+    /// <returns>
+    /// The consumed entry, or <see langword="null"/> when the call has no decided MCP approval.
+    /// </returns>
+    /// <exception cref="InvalidOperationException">The approval result was already consumed.</exception>
+    public static ApprovalEntry? ConsumeMcpEntryByCallId(
+        AgentSessionStateBag? stateBag,
+        string callId,
+        bool isMcpToolCall)
+    {
+        if (!TryLoadMap(stateBag, out var map))
+        {
+            return null;
+        }
+
+        string indexKey = DecisionIndexKey(callId, isMcpToolCall);
+        if (stateBag.GetValue<Dictionary<string, string>>(DecisionIndexStateBagKey)
+                ?.TryGetValue(indexKey, out string? wireId) is true
+            && map.TryGetValue(wireId, out ApprovalEntry? indexedEntry)
+            && IsMatchingMcpEntry(indexedEntry, callId, isMcpToolCall))
+        {
+            return ConsumeEntry(stateBag, map, indexedEntry, callId);
+        }
+
+        ApprovalEntry? current = null;
+        bool hasConsumed = false;
+        foreach (var entry in map.Values)
+        {
+            if (!IsMatchingMcpEntry(entry, callId, isMcpToolCall))
+            {
+                continue;
+            }
+
+            if (entry.Consumed)
+            {
+                hasConsumed = true;
+            }
+            else if (entry.Approved is not null)
+            {
+                // Preserve compatibility with sessions written before the decision index existed.
+                // Dictionary serialization retains insertion order, so the last decided entry is current.
+                current = entry;
+            }
+        }
+
+        if (current is not null)
+        {
+            return ConsumeEntry(stateBag!, map, current, callId);
+        }
+
+        if (hasConsumed)
+        {
+            throw new InvalidOperationException(
+                $"Approval result for function call '{callId}' has already been consumed.");
+        }
+
+        return null;
+    }
+
+    private static string DecisionIndexKey(string callId, bool isMcpToolCall) =>
+        $"{(isMcpToolCall ? "native" : "local")}:{callId}";
+
+    private static bool IsMatchingMcpEntry(
+        ApprovalEntry entry,
+        string callId,
+        bool isMcpToolCall) =>
+        entry.McpServerLabel is not null
+        && entry.IsMcpToolCall == isMcpToolCall
+        && string.Equals(entry.CallId, callId, StringComparison.Ordinal);
+
+    private static ApprovalEntry? ConsumeEntry(
+        AgentSessionStateBag stateBag,
+        Dictionary<string, ApprovalEntry> map,
+        ApprovalEntry entry,
+        string callId)
+    {
+        if (entry.Approved is null)
+        {
+            return null;
+        }
+
+        if (entry.Consumed)
+        {
+            throw new InvalidOperationException(
+                $"Approval result for function call '{callId}' has already been consumed.");
+        }
+
+        entry.Consumed = true;
+        stateBag.SetValue(StateBagKey, map);
+        return entry;
+    }
+
     private static Dictionary<string, ApprovalEntry> LoadMap(AgentSessionStateBag stateBag)
         => TryLoadMap(stateBag, out var map) ? map : new Dictionary<string, ApprovalEntry>(StringComparer.Ordinal);
 
-    private static bool TryLoadMap(AgentSessionStateBag? stateBag, out Dictionary<string, ApprovalEntry> map)
+    private static bool TryLoadMap(
+        [NotNullWhen(true)] AgentSessionStateBag? stateBag,
+        out Dictionary<string, ApprovalEntry> map)
     {
         if (stateBag is null)
         {
@@ -143,4 +302,187 @@ internal static class ToolApprovalIdMap
             ?? new Dictionary<string, ApprovalEntry>(StringComparer.Ordinal);
         return true;
     }
+}
+
+/// <summary>
+/// Persists the caller-facing MCP item id for a locally executed function-shaped MCP call so
+/// AgentServer history can be restored to the original function call/result transcript.
+/// </summary>
+internal static class LocalMcpCallIdMap
+{
+    public const string StateBagKey = "Microsoft.Agents.AI.Foundry.Hosting.LocalMcpCallIdMap";
+
+    internal sealed class CallEntry
+    {
+        public string CallId { get; set; } = string.Empty;
+        public string FunctionName { get; set; } = string.Empty;
+        public string ToolName { get; set; } = string.Empty;
+        public string ServerLabel { get; set; } = string.Empty;
+    }
+
+    public static void Record(
+        AgentSessionStateBag? stateBag,
+        string wireId,
+        string callId,
+        string functionName,
+        string toolName,
+        string serverLabel)
+    {
+        if (stateBag is null)
+        {
+            return;
+        }
+
+        var map = LoadMap(stateBag);
+        map[wireId] = new CallEntry
+        {
+            CallId = callId,
+            FunctionName = functionName,
+            ToolName = toolName,
+            ServerLabel = serverLabel,
+        };
+        stateBag.SetValue(StateBagKey, map);
+    }
+
+    public static CallEntry? ResolveEntry(AgentSessionStateBag? stateBag, string wireId)
+    {
+        if (stateBag?.GetValue<Dictionary<string, CallEntry>>(StateBagKey)?.TryGetValue(wireId, out var entry) is true)
+        {
+            return entry;
+        }
+
+        return null;
+    }
+
+    private static Dictionary<string, CallEntry> LoadMap(AgentSessionStateBag stateBag) =>
+        stateBag.GetValue<Dictionary<string, CallEntry>>(StateBagKey)
+            ?? new Dictionary<string, CallEntry>(StringComparer.Ordinal);
+}
+
+/// <summary>
+/// Persists the caller-facing MCP item id for an MCP call that was already represented as native
+/// MCP content inside the agent, preserving its original correlation id across hosted history replay.
+/// </summary>
+internal static class NativeMcpCallIdMap
+{
+    public const string StateBagKey = "Microsoft.Agents.AI.Foundry.Hosting.NativeMcpCallIdMap";
+
+    internal sealed class CallEntry
+    {
+        public string CallId { get; set; } = string.Empty;
+        public string ToolName { get; set; } = string.Empty;
+        public string ServerLabel { get; set; } = string.Empty;
+    }
+
+    public static void Record(
+        AgentSessionStateBag? stateBag,
+        string wireId,
+        string callId,
+        string toolName,
+        string serverLabel)
+    {
+        if (stateBag is null)
+        {
+            return;
+        }
+
+        var map = stateBag.GetValue<Dictionary<string, CallEntry>>(StateBagKey)
+            ?? new Dictionary<string, CallEntry>(StringComparer.Ordinal);
+        map[wireId] = new CallEntry
+        {
+            CallId = callId,
+            ToolName = toolName,
+            ServerLabel = serverLabel,
+        };
+        stateBag.SetValue(StateBagKey, map);
+    }
+
+    public static CallEntry? ResolveEntry(AgentSessionStateBag? stateBag, string wireId)
+    {
+        if (stateBag?.GetValue<Dictionary<string, CallEntry>>(StateBagKey)?.TryGetValue(wireId, out var entry) is true)
+        {
+            return entry;
+        }
+
+        return null;
+    }
+}
+
+/// <summary>
+/// Preserves locally executed MCP call metadata when approval middleware handles the call entirely
+/// inside the agent and removes the call/approval request before Hosting observes the stream.
+/// </summary>
+internal static class LocalMcpInvocationMap
+{
+    public const string StateBagKey = "Microsoft.Agents.AI.Foundry.Hosting.LocalMcpInvocationMap";
+
+    private static readonly ConditionalWeakTable<AgentSessionStateBag, object> s_gates = new();
+
+    internal sealed class CallEntry
+    {
+        public string FunctionName { get; set; } = string.Empty;
+        public string ToolName { get; set; } = string.Empty;
+        public string ServerLabel { get; set; } = string.Empty;
+        public string Arguments { get; set; } = "{}";
+    }
+
+    public static void Record(
+        AgentSessionStateBag stateBag,
+        string callId,
+        string functionName,
+        string toolName,
+        string serverLabel,
+        string arguments)
+    {
+        lock (GetGate(stateBag))
+        {
+            // Copy before mutation so session serialization never observes a dictionary
+            // being changed by another concurrently invoked tool.
+            var map = stateBag.GetValue<Dictionary<string, CallEntry>>(StateBagKey) is { } existing
+                ? new Dictionary<string, CallEntry>(existing, StringComparer.Ordinal)
+                : new Dictionary<string, CallEntry>(StringComparer.Ordinal);
+            map[callId] = new CallEntry
+            {
+                FunctionName = functionName,
+                ToolName = toolName,
+                ServerLabel = serverLabel,
+                Arguments = arguments,
+            };
+            stateBag.SetValue(StateBagKey, map);
+        }
+    }
+
+    public static CallEntry? Consume(AgentSessionStateBag? stateBag, string callId)
+    {
+        if (stateBag is null)
+        {
+            return null;
+        }
+
+        lock (GetGate(stateBag))
+        {
+            Dictionary<string, CallEntry>? existing =
+                stateBag.GetValue<Dictionary<string, CallEntry>>(StateBagKey);
+            if (existing is null || !existing.TryGetValue(callId, out CallEntry? entry))
+            {
+                return null;
+            }
+
+            var map = new Dictionary<string, CallEntry>(existing, StringComparer.Ordinal);
+            _ = map.Remove(callId);
+            if (map.Count == 0)
+            {
+                stateBag.TryRemoveValue(StateBagKey);
+            }
+            else
+            {
+                stateBag.SetValue(StateBagKey, map);
+            }
+
+            return entry;
+        }
+    }
+
+    private static object GetGate(AgentSessionStateBag stateBag) =>
+        s_gates.GetValue(stateBag, static _ => new object());
 }

@@ -110,10 +110,13 @@ public sealed class OAuthConsentToolInvocationTests
         }
 
         var firstOutput = Assert.IsType<ResponseIncompleteEvent>(consentTurns[0][^1]).Response.Output;
-        Assert.Contains(firstOutput.OfType<OutputItemFunctionToolCallOutput>(), o => o.CallId == "call_search" && o.Output.ToString().Contains("discovered", StringComparison.Ordinal));
+        var discovered = Assert.Single(firstOutput.OfType<OutputItemMcpToolCall>(), o => o.Name == "tool_search");
+        Assert.Equal("test-toolbox", discovered.ServerLabel);
+        Assert.Contains("discovered", discovered.Output, StringComparison.Ordinal);
         AssertPairedCalls(completed.Response.Output);
-        var actualResult = Assert.Single(completed.Response.Output.OfType<OutputItemFunctionToolCallOutput>());
-        Assert.Contains("protected result", actualResult.Output.ToString(), StringComparison.Ordinal);
+        var actualResult = Assert.Single(completed.Response.Output.OfType<OutputItemMcpToolCall>(), o => o.Name == "call_tool");
+        Assert.Equal("test-toolbox", actualResult.ServerLabel);
+        Assert.Contains("protected result", actualResult.Output, StringComparison.Ordinal);
         Assert.DoesNotContain(continuation, e => e is ResponseOutputItemAddedEvent { Item: OAuthConsentRequestOutputItem });
         Assert.All(consentTurns.Append(continuation), events =>
         {
@@ -880,6 +883,7 @@ public sealed class OAuthConsentToolInvocationTests
         OutputItemMessage message => message.Id,
         OAuthConsentRequestOutputItem consent => consent.Id,
         OutputItemMcpApprovalRequest approval => approval.Id,
+        OutputItemMcpToolCall mcpCall => mcpCall.Id,
         _ => throw new InvalidOperationException("Unexpected output item."),
     };
 

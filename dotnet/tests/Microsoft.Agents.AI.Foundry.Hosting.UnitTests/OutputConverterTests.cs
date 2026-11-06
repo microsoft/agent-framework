@@ -807,6 +807,405 @@ public class OutputConverterTests
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
     }
 
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ToolboxCallThenResult_EmitsSingleMcpCallAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var stateBag = new AgentSessionStateBag();
+        var localMcpFunctions = new Dictionary<string, LocalMcpExecutionContract>(StringComparer.Ordinal)
+        {
+            ["search"] = new("agent-tools", "search", RequiresApproval: false),
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                Contents = [new FunctionCallContent(
+                    "call_toolbox",
+                    "search",
+                    new Dictionary<string, object?> { ["q"] = "weather" })]
+            },
+            new AgentResponseUpdate { Contents = [new FunctionResultContent("call_toolbox", "sunny")] },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(
+            ToAsync(updates),
+            stream,
+            stateBag,
+            localMcpFunctions))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Single(events.OfType<ResponseMCPCallInProgressEvent>());
+        Assert.Single(events.OfType<ResponseMCPCallArgumentsDeltaEvent>());
+        Assert.Single(events.OfType<ResponseMCPCallArgumentsDoneEvent>());
+        Assert.Single(events.OfType<ResponseMCPCallCompletedEvent>());
+        Assert.DoesNotContain(
+            events.OfType<ResponseOutputItemAddedEvent>(),
+            e => e.Item is OutputItemFunctionToolCall or OutputItemFunctionToolCallOutput);
+
+        var added = Assert.IsType<OutputItemMcpToolCall>(
+            Assert.Single(events.OfType<ResponseOutputItemAddedEvent>()).Item);
+        var done = Assert.IsType<OutputItemMcpToolCall>(
+            Assert.Single(events.OfType<ResponseOutputItemDoneEvent>()).Item);
+        Assert.Equal(added.Id, done.Id);
+        Assert.Equal("agent-tools", done.ServerLabel);
+        Assert.Equal("search", done.Name);
+        Assert.Equal("{\"q\":\"weather\"}", done.Arguments);
+        Assert.Equal("sunny", done.Output);
+        Assert.Equal(MCPToolCallStatus.Completed, done.Status);
+
+        var mapping = Assert.IsType<LocalMcpCallIdMap.CallEntry>(
+            LocalMcpCallIdMap.ResolveEntry(stateBag, done.Id));
+        Assert.Equal("call_toolbox", mapping.CallId);
+        Assert.Equal("search", mapping.FunctionName);
+        Assert.Equal("search", mapping.ToolName);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_NativeMcpCallThenResult_EmitsSingleMcpCallAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var stateBag = new AgentSessionStateBag();
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                Contents =
+                [
+                    new McpServerToolCallContent("mcp_call_1", "search", "remote-server")
+                    {
+                        Arguments = new Dictionary<string, object?> { ["q"] = "Ереван" },
+                    }
+                ]
+            },
+            new AgentResponseUpdate
+            {
+                Contents =
+                [
+                    new McpServerToolResultContent("mcp_call_1")
+                    {
+                        Outputs = [new MeaiTextContent("sunny")],
+                    }
+                ]
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(
+            ToAsync(updates),
+            stream,
+            stateBag))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.Single(events.OfType<ResponseMCPCallInProgressEvent>());
+        Assert.Single(events.OfType<ResponseMCPCallCompletedEvent>());
+        var done = Assert.IsType<OutputItemMcpToolCall>(
+            Assert.Single(events.OfType<ResponseOutputItemDoneEvent>()).Item);
+        Assert.Equal("remote-server", done.ServerLabel);
+        Assert.Equal("search", done.Name);
+        Assert.Equal("""{"q":"Ереван"}""", done.Arguments);
+        Assert.Equal("sunny", done.Output);
+        Assert.DoesNotContain(
+            events.OfType<ResponseOutputItemAddedEvent>(),
+            e => e.Item is OutputItemFunctionToolCall or OutputItemFunctionToolCallOutput);
+
+        var replayMessages = InputConverter.ConvertOutputItemsToMessages([done], stateBag);
+        var replayedCall = Assert.IsType<McpServerToolCallContent>(
+            Assert.Single(replayMessages[0].Contents));
+        Assert.Equal("mcp_call_1", replayedCall.CallId);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ParallelToolboxCalls_CompleteIndependentlyAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var localMcpFunctions = new Dictionary<string, LocalMcpExecutionContract>(StringComparer.Ordinal)
+        {
+            ["search"] = new("agent-tools", "search", RequiresApproval: false),
+            ["lookup"] = new("agent-tools", "lookup", RequiresApproval: false),
+        };
+        var updates = new[]
+        {
+            new AgentResponseUpdate
+            {
+                Contents =
+                [
+                    new FunctionCallContent(
+                        "call_search",
+                        "search",
+                        new Dictionary<string, object?> { ["q"] = "weather" }),
+                    new FunctionCallContent(
+                        "call_lookup",
+                        "lookup",
+                        new Dictionary<string, object?> { ["id"] = 42 }),
+                ]
+            },
+            new AgentResponseUpdate
+            {
+                Contents =
+                [
+                    new FunctionResultContent("call_lookup", "record 42"),
+                    new FunctionResultContent("call_search", "sunny"),
+                ]
+            },
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(
+            ToAsync(updates),
+            stream,
+            localMcpFunctions: localMcpFunctions))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var doneItems = events
+            .OfType<ResponseOutputItemDoneEvent>()
+            .Select(e => Assert.IsType<OutputItemMcpToolCall>(e.Item))
+            .ToArray();
+        Assert.Equal(2, doneItems.Length);
+        Assert.Equal(
+            [("lookup", "record 42"), ("search", "sunny")],
+            doneItems.Select(item => (item.Name, item.Output)).ToArray());
+        Assert.DoesNotContain(
+            events.OfType<ResponseOutputItemAddedEvent>(),
+            e => e.Item is OutputItemFunctionToolCall or OutputItemFunctionToolCallOutput);
+    }
+
+    [Fact]
+    public async Task LocalMcpInvocationMap_ConcurrentRecords_PreservesEveryEntryAsync()
+    {
+        const int ConcurrentCallCount = 32;
+        const int Attempts = 10;
+
+        for (int attempt = 0; attempt < Attempts; attempt++)
+        {
+            // Arrange
+            var stateBag = new AgentSessionStateBag();
+            using var ready = new CountdownEvent(ConcurrentCallCount);
+            using var start = new ManualResetEventSlim();
+            Task[] tasks = Enumerable.Range(0, ConcurrentCallCount)
+                .Select(index => Task.Factory.StartNew(
+                    () =>
+                    {
+                        ready.Signal();
+                        start.Wait();
+                        LocalMcpInvocationMap.Record(
+                            stateBag,
+                            $"call_{index}",
+                            $"function_{index}",
+                            $"tool_{index}",
+                            "server",
+                            "{}");
+                    },
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default))
+                .ToArray();
+
+            // Act
+            bool allWorkersReady = ready.Wait(TimeSpan.FromSeconds(10));
+            start.Set();
+            Assert.True(allWorkersReady);
+            await Task.WhenAll(tasks);
+
+            // Assert
+            for (int index = 0; index < ConcurrentCallCount; index++)
+            {
+                Assert.NotNull(LocalMcpInvocationMap.Consume(stateBag, $"call_{index}"));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ApprovedToolboxResult_EmitsMcpCallAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var stateBag = new AgentSessionStateBag();
+        string wireId = "mcpr_" + "1".PadLeft(50, '0');
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            "ficc_call_toolbox",
+            "call_toolbox",
+            "search",
+            "{\"q\":\"weather\"}",
+            "agent-tools",
+            "search");
+        ToolApprovalIdMap.RecordDecision(stateBag, wireId, approved: true);
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(
+            ToAsync([new AgentResponseUpdate
+            {
+                Contents = [new FunctionResultContent("call_toolbox", "sunny")]
+            }]),
+            stream,
+            stateBag))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var done = Assert.IsType<OutputItemMcpToolCall>(
+            Assert.Single(events.OfType<ResponseOutputItemDoneEvent>()).Item);
+        Assert.Equal("agent-tools", done.ServerLabel);
+        Assert.Equal("search", done.Name);
+        Assert.Equal("sunny", done.Output);
+        Assert.DoesNotContain(
+            events.OfType<ResponseOutputItemAddedEvent>(),
+            e => e.Item is OutputItemFunctionToolCallOutput);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ApprovedToolboxResult_ReplayedResultThrowsAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var stateBag = new AgentSessionStateBag();
+        string wireId = "mcpr_" + "3".PadLeft(50, '0');
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            "ficc_call_toolbox",
+            "call_toolbox",
+            "search",
+            "{\"q\":\"weather\"}",
+            "agent-tools",
+            "search");
+        ToolApprovalIdMap.RecordDecision(stateBag, wireId, approved: true);
+
+        // Act
+        async Task ConvertAsync()
+        {
+            await foreach (var _ in OutputConverter.ConvertUpdatesToEventsAsync(
+                ToAsync(
+                [
+                    new AgentResponseUpdate
+                    {
+                        Contents = [new FunctionResultContent("call_toolbox", "sunny")]
+                    },
+                    new AgentResponseUpdate
+                    {
+                        Contents = [new FunctionResultContent("call_toolbox", "sunny again")]
+                    },
+                ]),
+                stream,
+                stateBag))
+            {
+                // Intentionally empty: enumerate all updates to trigger duplicate-result validation.
+            }
+        }
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(ConvertAsync);
+
+        // Assert
+        Assert.Contains("already been consumed", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_RejectedToolboxResult_DoesNotEmitMcpCallAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var stateBag = new AgentSessionStateBag();
+        string wireId = "mcpr_" + "2".PadLeft(50, '0');
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            "ficc_call_toolbox",
+            "call_toolbox",
+            "search",
+            "{\"q\":\"weather\"}",
+            "agent-tools",
+            "search");
+        ToolApprovalIdMap.RecordDecision(stateBag, wireId, approved: false);
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(
+            ToAsync([new AgentResponseUpdate
+            {
+                Contents = [new FunctionResultContent("call_toolbox", "Tool call rejected by user.")]
+            }]),
+            stream,
+            stateBag))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        Assert.DoesNotContain(events, e => e is ResponseOutputItemAddedEvent or ResponseOutputItemDoneEvent);
+        Assert.IsType<ResponseCompletedEvent>(Assert.Single(events));
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ReusedCallId_UsesLatestDecidedApprovalAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var stateBag = new AgentSessionStateBag();
+        string oldWireId = "mcpr_" + "4".PadLeft(50, '0');
+        ToolApprovalIdMap.Record(
+            stateBag,
+            oldWireId,
+            "ficc_old",
+            "call_reused",
+            "old_search",
+            "{}",
+            "old-server",
+            "old_search");
+        ToolApprovalIdMap.RecordDecision(stateBag, oldWireId, approved: false);
+
+        string currentWireId = "mcpr_" + "5".PadLeft(50, '0');
+        ToolApprovalIdMap.Record(
+            stateBag,
+            currentWireId,
+            "ficc_current",
+            "call_reused",
+            "current_search",
+            """{"q":"weather"}""",
+            "current-server",
+            "current_search");
+        ToolApprovalIdMap.RecordDecision(stateBag, currentWireId, approved: true);
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(
+            ToAsync([new AgentResponseUpdate
+            {
+                Contents = [new FunctionResultContent("call_reused", "sunny")]
+            }]),
+            stream,
+            stateBag))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var done = Assert.IsType<OutputItemMcpToolCall>(
+            Assert.Single(events.OfType<ResponseOutputItemDoneEvent>()).Item);
+        Assert.Equal("current-server", done.ServerLabel);
+        Assert.Equal("current_search", done.Name);
+        Assert.Equal("sunny", done.Output);
+    }
+
     // K-05: An FCC with an empty CallId is dropped without disturbing in-flight text.
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_FunctionCallEmptyCallIdMidText_PreservesTextBoundaryAsync()
@@ -1497,6 +1896,97 @@ public class OutputConverterTests
 
         // Mapping persisted to state bag.
         Assert.Equal(AfRequestId, ToolApprovalIdMap.Resolve(stateBag, item.Id));
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ToolboxApprovalRequest_UsesToolboxMcpIdentityAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var stateBag = new AgentSessionStateBag();
+        var localMcpFunctions = new Dictionary<string, LocalMcpExecutionContract>(StringComparer.Ordinal)
+        {
+            ["delete_resource"] = new("agent-tools", "delete_resource", RequiresApproval: true),
+        };
+        var functionCall = new FunctionCallContent(
+            "call_1",
+            "delete_resource",
+            new Dictionary<string, object?> { ["target"] = "db" });
+        var update = new AgentResponseUpdate
+        {
+            Contents =
+            [
+                functionCall,
+                new ToolApprovalRequestContent("af_request_abc", functionCall),
+            ]
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(
+            ToAsync([update]),
+            stream,
+            stateBag,
+            localMcpFunctions))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var item = Assert.IsType<OutputItemMcpApprovalRequest>(
+            Assert.Single(events.OfType<ResponseOutputItemAddedEvent>()).Item);
+        Assert.Equal("agent-tools", item.ServerLabel);
+        Assert.Equal("delete_resource", item.Name);
+        Assert.DoesNotContain(
+            events.OfType<ResponseOutputItemAddedEvent>(),
+            e => e.Item is OutputItemMcpToolCall or OutputItemFunctionToolCall);
+
+        var mapping = Assert.IsType<ToolApprovalIdMap.ApprovalEntry>(
+            ToolApprovalIdMap.ResolveEntry(stateBag, item.Id));
+        Assert.Equal("agent-tools", mapping.McpServerLabel);
+        Assert.Equal("delete_resource", mapping.McpToolName);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_NativeMcpApprovalRequest_RoundTripsMcpToolCallAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var stateBag = new AgentSessionStateBag();
+        var toolCall = new McpServerToolCallContent("mcp_call_approval", "delete_resource", "remote-server")
+        {
+            Arguments = new Dictionary<string, object?> { ["target"] = "Ереван" },
+        };
+        var update = new AgentResponseUpdate
+        {
+            Contents = [new ToolApprovalRequestContent("mcp_request_approval", toolCall)]
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(
+            ToAsync([update]),
+            stream,
+            stateBag))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var item = Assert.IsType<OutputItemMcpApprovalRequest>(
+            Assert.Single(events.OfType<ResponseOutputItemAddedEvent>()).Item);
+        Assert.Equal("remote-server", item.ServerLabel);
+        Assert.Equal("delete_resource", item.Name);
+        Assert.Equal("""{"target":"Ереван"}""", item.Arguments);
+
+        var messages = InputConverter.ConvertItemsToMessages(
+            [new MCPApprovalResponse(item.Id, approve: true)],
+            stateBag);
+        var response = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(messages[0].Contents));
+        var replayedCall = Assert.IsType<McpServerToolCallContent>(response.ToolCall);
+        Assert.Equal("mcp_call_approval", replayedCall.CallId);
+        Assert.Equal("remote-server", replayedCall.ServerName);
+        Assert.Equal("delete_resource", replayedCall.Name);
     }
 
     [Fact]

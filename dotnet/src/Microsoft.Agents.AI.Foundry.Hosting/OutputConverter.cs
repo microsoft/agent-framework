@@ -51,6 +51,20 @@ internal static class OutputConverter
     // Keep non-ASCII characters as-is while continuing to escape HTML-sensitive characters.
     private static readonly JsonSerializerOptions s_jsonOptions = new() { Encoder = JavaScriptEncoder.Create(UnicodeRanges.All) };
 
+    private sealed class PendingMcpCall(
+        OutputItemMcpCallBuilder builder,
+        LocalMcpExecutionContract contract,
+        string arguments)
+    {
+        public OutputItemMcpCallBuilder Builder { get; } = builder;
+
+        public LocalMcpExecutionContract Contract { get; } = contract;
+
+        public string Arguments { get; } = arguments;
+    }
+
+    private sealed record DeferredLocalMcpCall(string FunctionName, string Arguments);
+
     /// <summary>
     /// Converts a stream of <see cref="AgentResponseUpdate"/> into a stream of
     /// <see cref="ResponseStreamEvent"/> using the SDK builder pattern.
@@ -58,6 +72,7 @@ internal static class OutputConverter
     /// <param name="updates">The agent response updates to convert.</param>
     /// <param name="stream">The SDK event stream builder.</param>
     /// <param name="stateBag">Optional session state bag used to persist tool-approval id mappings across turns.</param>
+    /// <param name="localMcpFunctions">Locally executed function names and their MCP wire identities.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>
     /// An async enumerable of SDK response stream events. Workflow checkpoint boundaries are omitted.
@@ -66,12 +81,14 @@ internal static class OutputConverter
         IAsyncEnumerable<AgentResponseUpdate> updates,
         ResponseEventStream stream,
         AgentSessionStateBag? stateBag = null,
+        IReadOnlyDictionary<string, LocalMcpExecutionContract>? localMcpFunctions = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await foreach (OutputConverterItem item in ConvertUpdatesToItemsAsync(
             updates,
             stream,
             stateBag,
+            localMcpFunctions,
             cancellationToken).ConfigureAwait(false))
         {
             if (item is OutputConverterItem.ResponseEvent responseEvent)
@@ -88,6 +105,7 @@ internal static class OutputConverter
     /// <param name="updates">The agent response updates to convert.</param>
     /// <param name="stream">The SDK event stream builder.</param>
     /// <param name="stateBag">Optional session state bag used to persist tool-approval id mappings across turns.</param>
+    /// <param name="localMcpFunctions">Locally executed function names and their MCP wire identities.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Converted response events and workflow checkpoint boundaries in source order.</returns>
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing function call arguments dictionary.")]
@@ -96,6 +114,7 @@ internal static class OutputConverter
         IAsyncEnumerable<AgentResponseUpdate> updates,
         ResponseEventStream stream,
         AgentSessionStateBag? stateBag = null,
+        IReadOnlyDictionary<string, LocalMcpExecutionContract>? localMcpFunctions = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ResponseUsage? accumulatedUsage = null;
@@ -106,6 +125,8 @@ internal static class OutputConverter
         string? previousMessageId = null;
         bool hasTerminalEvent = false;
         var executorItemIds = new Dictionary<string, string>();
+        var pendingMcpCalls = new Dictionary<string, PendingMcpCall>(StringComparer.Ordinal);
+        var deferredLocalMcpCalls = new Dictionary<string, DeferredLocalMcpCall>(StringComparer.Ordinal);
 
         await foreach (var update in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
@@ -217,11 +238,99 @@ internal static class OutputConverter
                             ? JsonSerializer.Serialize(functionCall.Arguments, s_jsonOptions)
                             : "{}";
 
-                        var fcBuilder = stream.AddOutputItemFunctionCall(functionCall.Name, functionCall.CallId);
-                        yield return fcBuilder.EmitAdded();
-                        yield return fcBuilder.EmitArgumentsDelta(arguments);
-                        yield return fcBuilder.EmitArgumentsDone(arguments);
-                        yield return fcBuilder.EmitDone();
+                        if (localMcpFunctions?.TryGetValue(functionCall.Name, out var localMcpFunction) is true)
+                        {
+                            if (localMcpFunction.DeferProjectionUntilResult)
+                            {
+                                deferredLocalMcpCalls[functionCall.CallId] =
+                                    new DeferredLocalMcpCall(functionCall.Name, arguments);
+                                break;
+                            }
+
+                            // Approval-required local MCP calls surface only as mcp_approval_request until the
+                            // caller approves them. Emitting an mcp_call here would falsely claim execution.
+                            if (localMcpFunction.RequiresApproval)
+                            {
+                                break;
+                            }
+
+                            var mcpBuilder = stream.AddOutputItemMcpCall(
+                                localMcpFunction.ServerLabel,
+                                localMcpFunction.ToolName);
+                            LocalMcpCallIdMap.Record(
+                                stateBag,
+                                mcpBuilder.ItemId,
+                                functionCall.CallId,
+                                functionCall.Name,
+                                localMcpFunction.ToolName,
+                                localMcpFunction.ServerLabel);
+                            pendingMcpCalls[functionCall.CallId] =
+                                new PendingMcpCall(mcpBuilder, localMcpFunction, arguments);
+
+                            yield return mcpBuilder.EmitAdded();
+                            yield return mcpBuilder.EmitInProgress();
+                            yield return mcpBuilder.EmitArgumentsDelta(arguments);
+                            yield return mcpBuilder.EmitArgumentsDone(arguments);
+                            break;
+                        }
+
+                        foreach (var evt in EmitFunctionCall(
+                            stream,
+                            functionCall.Name,
+                            functionCall.CallId,
+                            arguments))
+                        {
+                            yield return evt;
+                        }
+
+                        break;
+                    }
+
+                    case McpServerToolCallContent mcpCall:
+                    {
+                        if (mcpCall.CallId is not { Length: > 0 })
+                        {
+                            break;
+                        }
+
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
+                        {
+                            yield return evt;
+                        }
+
+                        currentTextBuilder = null;
+                        currentMessageBuilder = null;
+                        accumulatedText = null;
+                        accumulatedAnnotations = null;
+                        previousMessageId = null;
+
+                        string serverLabel = mcpCall.ServerName ?? "mcp";
+                        string arguments = mcpCall.Arguments is not null
+                            ? JsonSerializer.Serialize(mcpCall.Arguments, s_jsonOptions)
+                            : "{}";
+                        var contract = new LocalMcpExecutionContract(
+                            serverLabel,
+                            mcpCall.Name,
+                            RequiresApproval: false);
+                        var mcpBuilder = stream.AddOutputItemMcpCall(serverLabel, mcpCall.Name);
+                        NativeMcpCallIdMap.Record(
+                            stateBag,
+                            mcpBuilder.ItemId,
+                            mcpCall.CallId,
+                            mcpCall.Name,
+                            serverLabel);
+                        if (!pendingMcpCalls.TryAdd(
+                            mcpCall.CallId,
+                            new PendingMcpCall(mcpBuilder, contract, arguments)))
+                        {
+                            throw new InvalidOperationException(
+                                $"MCP call id '{mcpCall.CallId}' is already active.");
+                        }
+
+                        yield return mcpBuilder.EmitAdded();
+                        yield return mcpBuilder.EmitInProgress();
+                        yield return mcpBuilder.EmitArgumentsDelta(arguments);
+                        yield return mcpBuilder.EmitArgumentsDone(arguments);
                         break;
                     }
 
@@ -335,6 +444,8 @@ internal static class OutputConverter
                         var approvalArguments = approvalFunctionCall.Arguments is not null
                             ? JsonSerializer.Serialize(approvalFunctionCall.Arguments, s_jsonOptions)
                             : "{}";
+                        LocalMcpExecutionContract? localMcpFunction = null;
+                        _ = localMcpFunctions?.TryGetValue(approvalFunctionCall.Name, out localMcpFunction);
 
                         ToolApprovalIdMap.Record(
                             stateBag,
@@ -342,12 +453,14 @@ internal static class OutputConverter
                             approvalRequest.RequestId,
                             approvalFunctionCall.CallId,
                             approvalFunctionCall.Name,
-                            approvalArguments);
+                            approvalArguments,
+                            localMcpFunction?.ServerLabel,
+                            localMcpFunction?.ToolName);
 
                         var approvalItem = new OutputItemMcpApprovalRequest(
                             wireId,
-                            "agent_framework",
-                            approvalFunctionCall.Name,
+                            localMcpFunction?.ServerLabel ?? "agent_framework",
+                            localMcpFunction?.ToolName ?? approvalFunctionCall.Name,
                             approvalArguments);
 
                         var approvalBuilder = stream.AddOutputItem<OutputItemMcpApprovalRequest>(wireId);
@@ -356,8 +469,48 @@ internal static class OutputConverter
                         break;
                     }
 
+                    case ToolApprovalRequestContent approvalRequest when approvalRequest.ToolCall is McpServerToolCallContent approvalMcpCall:
+                    {
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
+                        {
+                            yield return evt;
+                        }
+
+                        currentTextBuilder = null;
+                        currentMessageBuilder = null;
+                        accumulatedText = null;
+                        accumulatedAnnotations = null;
+                        previousMessageId = null;
+
+                        string wireId = ToolApprovalIdMap.ComputeWireId(approvalRequest.RequestId);
+                        string serverLabel = approvalMcpCall.ServerName ?? "mcp";
+                        string arguments = approvalMcpCall.Arguments is not null
+                            ? JsonSerializer.Serialize(approvalMcpCall.Arguments, s_jsonOptions)
+                            : "{}";
+                        ToolApprovalIdMap.Record(
+                            stateBag,
+                            wireId,
+                            approvalRequest.RequestId,
+                            approvalMcpCall.CallId,
+                            approvalMcpCall.Name,
+                            arguments,
+                            serverLabel,
+                            approvalMcpCall.Name,
+                            isMcpToolCall: true);
+
+                        var approvalItem = new OutputItemMcpApprovalRequest(
+                            wireId,
+                            serverLabel,
+                            approvalMcpCall.Name,
+                            arguments);
+                        var approvalBuilder = stream.AddOutputItem<OutputItemMcpApprovalRequest>(wireId);
+                        yield return approvalBuilder.EmitAdded(approvalItem);
+                        yield return approvalBuilder.EmitDone(approvalItem);
+                        break;
+                    }
+
                     case ToolApprovalRequestContent:
-                        // Approval requests must wrap a FunctionCallContent (handled above).
+                        // Approval requests must wrap a supported function or MCP tool call.
                         // Any other shape has no representation in the Responses wire format.
                         break;
 
@@ -386,6 +539,24 @@ internal static class OutputConverter
                         previousMessageId = null;
                         hasTerminalEvent = true;
 
+                        foreach (var pending in pendingMcpCalls.Values)
+                        {
+                            yield return pending.Builder.EmitFailed();
+                            var item = new OutputItemMcpToolCall(
+                                pending.Builder.ItemId,
+                                pending.Contract.ServerLabel,
+                                pending.Contract.ToolName,
+                                pending.Arguments)
+                            {
+                                Output = string.Empty,
+                                Status = MCPToolCallStatus.Failed,
+                            };
+                            item.Error["message"] = BinaryData.FromObjectAsJson(
+                                errorContent.Message ?? "An error occurred during agent execution.");
+                            yield return pending.Builder.EmitDone(item);
+                        }
+
+                        pendingMcpCalls.Clear();
                         yield return stream.EmitFailed(
                             ResponseErrorCode.ServerError,
                             errorContent.Message ?? "An error occurred during agent execution.",
@@ -418,6 +589,138 @@ internal static class OutputConverter
                         accumulatedAnnotations = null;
                         previousMessageId = null;
 
+                        _ = deferredLocalMcpCalls.Remove(
+                            functionResult.CallId,
+                            out DeferredLocalMcpCall? deferredFunctionCall);
+                        bool consentInterrupted = IsConsentInterruptedResult(functionResult);
+
+                        if (!pendingMcpCalls.Remove(
+                            functionResult.CallId,
+                            out PendingMcpCall? pendingMcpCall))
+                        {
+                            var approvalEntry = ToolApprovalIdMap.ConsumeMcpEntryByCallId(
+                                stateBag,
+                                functionResult.CallId,
+                                isMcpToolCall: false);
+                            if (approvalEntry?.Approved is false)
+                            {
+                                // A rejected approval produces a synthetic function result for the inner
+                                // model transcript. It is not an MCP execution and must not become mcp_call.
+                                break;
+                            }
+
+                            if (approvalEntry is
+                                {
+                                    Approved: true,
+                                    McpServerLabel: { Length: > 0 } serverLabel,
+                                    Name: { Length: > 0 } name
+                                })
+                            {
+                                var arguments = approvalEntry.Arguments ?? "{}";
+                                if (consentInterrupted)
+                                {
+                                    deferredFunctionCall ??= new DeferredLocalMcpCall(name, arguments);
+                                }
+                                else
+                                {
+                                    string toolName = approvalEntry.McpToolName ?? name;
+                                    var contract = new LocalMcpExecutionContract(
+                                        serverLabel,
+                                        toolName,
+                                        RequiresApproval: true);
+                                    var mcpBuilder = stream.AddOutputItemMcpCall(serverLabel, toolName);
+                                    LocalMcpCallIdMap.Record(
+                                        stateBag,
+                                        mcpBuilder.ItemId,
+                                        functionResult.CallId,
+                                        name,
+                                        toolName,
+                                        serverLabel);
+                                    pendingMcpCall = new PendingMcpCall(mcpBuilder, contract, arguments);
+
+                                    yield return mcpBuilder.EmitAdded();
+                                    yield return mcpBuilder.EmitInProgress();
+                                    yield return mcpBuilder.EmitArgumentsDelta(arguments);
+                                    yield return mcpBuilder.EmitArgumentsDone(arguments);
+                                }
+                            }
+                        }
+                        if (pendingMcpCall is null
+                            && LocalMcpInvocationMap.Consume(stateBag, functionResult.CallId) is { } invocation)
+                        {
+                            if (consentInterrupted)
+                            {
+                                deferredFunctionCall ??= new DeferredLocalMcpCall(
+                                    invocation.FunctionName,
+                                    invocation.Arguments);
+                            }
+                            else
+                            {
+                                var contract = new LocalMcpExecutionContract(
+                                    invocation.ServerLabel,
+                                    invocation.ToolName,
+                                    RequiresApproval: true);
+                                var mcpBuilder = stream.AddOutputItemMcpCall(
+                                    invocation.ServerLabel,
+                                    invocation.ToolName);
+                                LocalMcpCallIdMap.Record(
+                                    stateBag,
+                                    mcpBuilder.ItemId,
+                                    functionResult.CallId,
+                                    invocation.FunctionName,
+                                    invocation.ToolName,
+                                    invocation.ServerLabel);
+                                pendingMcpCall = new PendingMcpCall(
+                                    mcpBuilder,
+                                    contract,
+                                    invocation.Arguments);
+
+                                yield return mcpBuilder.EmitAdded();
+                                yield return mcpBuilder.EmitInProgress();
+                                yield return mcpBuilder.EmitArgumentsDelta(invocation.Arguments);
+                                yield return mcpBuilder.EmitArgumentsDone(invocation.Arguments);
+                            }
+                        }
+
+                        if (pendingMcpCall is not null)
+                        {
+                            _ = LocalMcpInvocationMap.Consume(stateBag, functionResult.CallId);
+                            string output = ConvertFunctionResultToText(functionResult.Result);
+                            bool failed = functionResult.Exception is not null;
+                            yield return failed
+                                ? pendingMcpCall.Builder.EmitFailed()
+                                : pendingMcpCall.Builder.EmitCompleted();
+
+                            var item = new OutputItemMcpToolCall(
+                                pendingMcpCall.Builder.ItemId,
+                                pendingMcpCall.Contract.ServerLabel,
+                                pendingMcpCall.Contract.ToolName,
+                                pendingMcpCall.Arguments)
+                            {
+                                Output = output,
+                                Status = failed ? MCPToolCallStatus.Failed : MCPToolCallStatus.Completed,
+                            };
+                            if (functionResult.Exception is not null)
+                            {
+                                item.Error["message"] = BinaryData.FromObjectAsJson(functionResult.Exception.Message);
+                            }
+
+                            yield return pendingMcpCall.Builder.EmitDone(item);
+                            break;
+                        }
+
+                        if (deferredFunctionCall is not null)
+                        {
+                            foreach (var evt in EmitFunctionCall(
+                                stream,
+                                deferredFunctionCall.FunctionName,
+                                functionResult.CallId,
+                                deferredFunctionCall.Arguments))
+                            {
+                                yield return evt;
+                            }
+                        }
+
                         var outputText = EncodeFunctionResultAsJsonStringPayload(functionResult.Result);
 
                         // Use the SDK's convenience method so the OutputItemFunctionToolCallOutput
@@ -433,6 +736,85 @@ internal static class OutputConverter
                             yield return evt;
                         }
 
+                        break;
+                    }
+
+                    case McpServerToolResultContent mcpResult:
+                    {
+                        if (mcpResult.CallId is not { Length: > 0 })
+                        {
+                            break;
+                        }
+
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
+                        {
+                            yield return evt;
+                        }
+
+                        currentTextBuilder = null;
+                        currentMessageBuilder = null;
+                        accumulatedText = null;
+                        accumulatedAnnotations = null;
+                        previousMessageId = null;
+
+                        if (!pendingMcpCalls.Remove(mcpResult.CallId, out PendingMcpCall? pendingMcpCall))
+                        {
+                            var approvalEntry = ToolApprovalIdMap.ConsumeMcpEntryByCallId(
+                                stateBag,
+                                mcpResult.CallId,
+                                isMcpToolCall: true);
+                            if (approvalEntry?.Approved is false)
+                            {
+                                break;
+                            }
+
+                            if (approvalEntry is
+                                {
+                                    Approved: true,
+                                    McpServerLabel: { Length: > 0 } serverLabel,
+                                    Name: { Length: > 0 } name
+                                })
+                            {
+                                string toolName = approvalEntry.McpToolName ?? name;
+                                string arguments = approvalEntry.Arguments ?? "{}";
+                                var contract = new LocalMcpExecutionContract(
+                                    serverLabel,
+                                    toolName,
+                                    RequiresApproval: true);
+                                var mcpBuilder = stream.AddOutputItemMcpCall(serverLabel, toolName);
+                                NativeMcpCallIdMap.Record(
+                                    stateBag,
+                                    mcpBuilder.ItemId,
+                                    mcpResult.CallId,
+                                    toolName,
+                                    serverLabel);
+                                pendingMcpCall = new PendingMcpCall(mcpBuilder, contract, arguments);
+
+                                yield return mcpBuilder.EmitAdded();
+                                yield return mcpBuilder.EmitInProgress();
+                                yield return mcpBuilder.EmitArgumentsDelta(arguments);
+                                yield return mcpBuilder.EmitArgumentsDone(arguments);
+                            }
+                        }
+
+                        if (pendingMcpCall is null)
+                        {
+                            throw new InvalidOperationException(
+                                $"No MCP call was recorded for result '{mcpResult.CallId}'.");
+                        }
+
+                        string output = ConvertMcpResultToText(mcpResult.Outputs);
+                        yield return pendingMcpCall.Builder.EmitCompleted();
+                        var item = new OutputItemMcpToolCall(
+                            pendingMcpCall.Builder.ItemId,
+                            pendingMcpCall.Contract.ServerLabel,
+                            pendingMcpCall.Contract.ToolName,
+                            pendingMcpCall.Arguments)
+                        {
+                            Output = output,
+                            Status = MCPToolCallStatus.Completed,
+                        };
+                        yield return pendingMcpCall.Builder.EmitDone(item);
                         break;
                     }
 
@@ -472,6 +854,22 @@ internal static class OutputConverter
         foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
         {
             yield return evt;
+        }
+
+        foreach (var pending in pendingMcpCalls.Values)
+        {
+            yield return pending.Builder.EmitFailed();
+            var item = new OutputItemMcpToolCall(
+                pending.Builder.ItemId,
+                pending.Contract.ServerLabel,
+                pending.Contract.ToolName,
+                pending.Arguments)
+            {
+                Output = string.Empty,
+                Status = MCPToolCallStatus.Failed,
+            };
+            item.Error["message"] = BinaryData.FromObjectAsJson("Tool execution did not produce a result.");
+            yield return pending.Builder.EmitDone(item);
         }
 
         if (!hasTerminalEvent)
@@ -727,6 +1125,34 @@ internal static class OutputConverter
         }
     }
 
+    private static IEnumerable<ResponseStreamEvent> EmitFunctionCall(
+        ResponseEventStream stream,
+        string functionName,
+        string callId,
+        string arguments)
+    {
+        var builder = stream.AddOutputItemFunctionCall(functionName, callId);
+        yield return builder.EmitAdded();
+        yield return builder.EmitArgumentsDelta(arguments);
+        yield return builder.EmitArgumentsDone(arguments);
+        yield return builder.EmitDone();
+    }
+
+    private static bool IsConsentInterruptedResult(FunctionResultContent result)
+    {
+        if (result.Result is not string text
+            || McpConsentContext.Current.Value is not
+            {
+                HasPendingConsents: true,
+            } consentState)
+        {
+            return false;
+        }
+
+        return string.Equals(text, McpConsentResults.ConsentRequired, StringComparison.Ordinal)
+            || string.Equals(text, consentState.InterruptedToolResult, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// Generates a valid item ID matching the SDK's <c>{prefix}_{50chars}</c> format.
     /// </summary>
@@ -760,9 +1186,14 @@ internal static class OutputConverter
     /// </remarks>
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing function call result payload.")]
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing function call result payload.")]
-    internal static string EncodeFunctionResultAsJsonStringPayload(object? result)
+    internal static string EncodeFunctionResultAsJsonStringPayload(object? result) =>
+        JsonSerializer.Serialize(ConvertFunctionResultToText(result));
+
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing function call result payload.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing function call result payload.")]
+    private static string ConvertFunctionResultToText(object? result)
     {
-        string innerText = result switch
+        return result switch
         {
             null => string.Empty,
             string s => s,
@@ -774,7 +1205,23 @@ internal static class OutputConverter
                 : JsonSerializer.Serialize(jd.RootElement, s_jsonOptions),
             _ => JsonSerializer.Serialize(result, s_jsonOptions),
         };
+    }
 
-        return JsonSerializer.Serialize(innerText, s_jsonOptions);
+    private static string ConvertMcpResultToText(IList<AIContent>? outputs)
+    {
+        if (outputs is not { Count: > 0 })
+        {
+            return string.Empty;
+        }
+
+        return string.Join(
+            "\n",
+            outputs.Select(static output => output switch
+            {
+                MeaiTextContent text => text.Text,
+                DataContent data => data.Uri,
+                UriContent uri => uri.Uri.ToString(),
+                _ => output.ToString(),
+            }));
     }
 }
