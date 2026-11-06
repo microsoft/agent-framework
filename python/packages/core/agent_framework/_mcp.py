@@ -10,8 +10,8 @@ import re
 import sys
 import warnings
 from abc import abstractmethod
-from collections.abc import Awaitable, Callable, Collection, Coroutine, Mapping, Sequence
-from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
+from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Coroutine, Generator, Mapping, Sequence
+from contextlib import AsyncExitStack, _AsyncGeneratorContextManager, asynccontextmanager, contextmanager  # type: ignore
 from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass
@@ -26,6 +26,7 @@ else:
     from typing_extensions import deprecated  # pragma: no cover
 
 
+from opentelemetry import context as otel_context
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
 from pydantic_core import to_jsonable_python
@@ -247,6 +248,7 @@ _mcp_tool_runtime_context: ContextVar[tuple[object, Mapping[str, Any]] | None] =
 )
 _MCP_HEADER_OWNER_EXTENSION = "agent_framework.mcp_header_owner"
 _MCP_INJECTED_HEADER_KEYS_EXTENSION = "agent_framework.mcp_injected_header_keys"
+_MCP_REQUEST_HEADERS_EXTENSION = "agent_framework.mcp_request_headers"
 _MCPHeaderIdentity: TypeAlias = tuple[tuple[str, str], ...]
 _MCP_DEFAULT_READ_TIMEOUT_SECONDS = 30
 MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
@@ -256,6 +258,20 @@ _MCP_SUBSCRIPTION_RETRY_MAX_DELAY = 2.0
 _DEFAULT_MCP_DISCOVERY_MAX_PAGES = 100
 _DEFAULT_MCP_DISCOVERY_MAX_ITEMS = 1_000
 _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES = 1024 * 1024
+
+
+@dataclass
+class _MCPHTTPInvocation:
+    """Track a live network attempt, including callbacks that inherit its context."""
+
+    owner: object
+    parent: _MCPHTTPInvocation | None
+    runtime_kwargs: Mapping[str, Any]
+    connection: _MCPConnection | None = None
+    active: bool = False
+
+
+_mcp_http_invocation: ContextVar[_MCPHTTPInvocation | None] = ContextVar("_mcp_http_invocation", default=None)
 
 
 @dataclass
@@ -1247,6 +1263,10 @@ class MCPTool:
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
+        self._close_generation = 0
+        # Cancelling a lifecycle waiter does not stop the owner's setup or teardown.
+        self._lifecycle_idle = asyncio.Event()
+        self._lifecycle_idle.set()
         self._function_load_lock = asyncio.Lock()
         self._lifecycle_queue: (
             asyncio.Queue[tuple[str, bool, bool, bool, asyncio.Future[None], asyncio.Future[bool]]] | None
@@ -2154,6 +2174,8 @@ class MCPTool:
                 if action == "connect" and future.cancelled():
                     if not self.is_connected and queue.empty():
                         return
+                    if queue.empty():
+                        self._lifecycle_idle.set()
                     continue
 
                 try:
@@ -2211,6 +2233,9 @@ class MCPTool:
                 else:
                     if not future.done():
                         future.set_result(None)
+                finally:
+                    if queue.empty():
+                        self._lifecycle_idle.set()
 
                 if action == "close":
                     return
@@ -2228,6 +2253,7 @@ class MCPTool:
 
             self._lifecycle_queue = None
             self._lifecycle_owner_task = None
+            self._lifecycle_idle.set()
 
     def _is_lifecycle_owner_task(self) -> bool:
         owner_task = self._lifecycle_owner_task
@@ -2262,6 +2288,7 @@ class MCPTool:
 
         future = asyncio.get_running_loop().create_future()
         acknowledged: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        self._lifecycle_idle.clear()
         await queue.put((action, reset, load_configured, reset_discovery, future, acknowledged))
         accepted = False
         try:
@@ -2370,9 +2397,13 @@ class MCPTool:
         operation: str,
         inner_exception: Exception,
         load_configured: bool,
+        failed_connection: _MCPConnection | None = None,
+        close_generation: int | None = None,
     ) -> None:
-        """Recreate a framework-owned connection or fail clearly for a caller-owned connection."""
-        connection = self._connection
+        """Bound recovery and prevent failed operations from undoing an explicit close."""
+        connection = failed_connection if failed_connection is not None else self._connection
+        if close_generation is None:
+            close_generation = self._close_generation
         if connection is not None and not connection.is_framework_owned:
             connection_type = "Client" if connection.client is not None else "ClientSession"
             raise _mcp_tool_execution_exception(
@@ -2381,17 +2412,66 @@ class MCPTool:
                 inner_exception=inner_exception,
             ) from inner_exception
 
-        logger.info("MCP connection was lost during %s. Reconnecting...", operation)
         try:
-            if load_configured:
-                await self.connect(reset=True)
-            else:
-                await self._reconnect_without_loading()
+            async with asyncio.timeout(self.request_timeout):
+                await self._recover_failed_connection(
+                    operation=operation,
+                    failed_connection=connection,
+                    close_generation=close_generation,
+                    load_configured=load_configured,
+                )
+        except TimeoutError as timeout_ex:
+            raise _mcp_tool_execution_exception(
+                f"Timed out recovering the MCP connection after {operation}.",
+                inner_exception=timeout_ex,
+            ) from timeout_ex
+        except ToolExecutionException:
+            raise
         except Exception as reconnect_ex:
             raise _mcp_tool_execution_exception(
                 f"Failed to reconnect to MCP server after {operation}.",
                 inner_exception=reconnect_ex,
             ) from reconnect_ex
+
+    async def _recover_failed_connection(
+        self,
+        *,
+        operation: str,
+        failed_connection: _MCPConnection | None,
+        close_generation: int,
+        load_configured: bool,
+    ) -> None:
+        """Reuse a replacement connection or reconnect under the lifecycle lock."""
+        if self._is_lifecycle_owner_task():
+            self._check_recovery_generation(close_generation)
+            if not self.is_connected or self._connection is failed_connection:
+                await self._reconnect_without_loading()
+        else:
+            async with self._lifecycle_request_lock:
+                self._check_recovery_generation(close_generation)
+                if not self.is_connected or self._connection is failed_connection:
+                    logger.info("MCP connection was lost during %s. Reconnecting...", operation)
+                    await self._reconnect_without_loading()
+
+        # Discovery can recover too; holding the lifecycle request lock here would deadlock.
+        self._check_recovery_generation(close_generation)
+        if load_configured:
+            async with self._function_load_lock:
+                self._check_recovery_generation(close_generation)
+                if (self.load_tools_flag and not self._tools_loaded) or (
+                    self.load_prompts_flag and not self._prompts_loaded
+                ):
+                    try:
+                        await self._load_configured_discovery_locked()
+                    except (Exception, asyncio.CancelledError):
+                        await self.close()
+                        self._reset_session_discovery_state()
+                        raise
+        self._check_recovery_generation(close_generation)
+
+    def _check_recovery_generation(self, close_generation: int) -> None:
+        if close_generation != self._close_generation:
+            raise _mcp_tool_execution_exception("MCP connection recovery was interrupted by close().")
 
     def _is_connection_loss(self, exception: Exception) -> bool:
         """Return whether an exception proves that the active MCP connection ended."""
@@ -3114,6 +3194,8 @@ class MCPTool:
 
         catalog_name = f"{kind}s"
         operation = f"{kind} discovery"
+        failed_connection = self._connection
+        close_generation = self._close_generation
 
         async def recover_connection(retry_state: RetryCallState) -> None:
             outcome = retry_state.outcome
@@ -3126,6 +3208,8 @@ class MCPTool:
                 operation=operation,
                 inner_exception=exception,
                 load_configured=False,
+                failed_connection=failed_connection,
+                close_generation=close_generation,
             )
 
         @retry(
@@ -3135,7 +3219,10 @@ class MCPTool:
             reraise=True,
         )
         async def request_page_with_retry() -> _MCPListResultT | None:
+            nonlocal failed_connection, close_generation
             await self._ensure_connected()
+            failed_connection = self._connection
+            close_generation = self._close_generation
 
             # on reconnect we may have different capabilities.
             is_supported = self._supports_tools if kind == "tool" else self._supports_prompts
@@ -3377,6 +3464,10 @@ class MCPTool:
 
         Closes the connection and cleans up resources.
         """
+        self._close_generation += 1
+        await self._close_connection()
+
+    async def _close_connection(self) -> None:
         if self._is_lifecycle_owner_task():
             await self._close_on_owner()
             return
@@ -3414,8 +3505,10 @@ class MCPTool:
         if not self._ping_available:
             return
 
+        failed_connection = self._connection
+        close_generation = self._close_generation
         try:
-            await self._require_connection().check_connection()
+            await self._check_connection()
         except MCPError as mcp_exc:
             if mcp_exc.error.code == -32601:
                 self._ping_available = False
@@ -3426,6 +3519,8 @@ class MCPTool:
                     operation="connection liveness check",
                     inner_exception=mcp_exc,
                     load_configured=False,
+                    failed_connection=failed_connection,
+                    close_generation=close_generation,
                 )
                 return
             raise _mcp_tool_execution_exception(
@@ -3437,6 +3532,8 @@ class MCPTool:
                 operation="connection liveness check",
                 inner_exception=connection_ex,
                 load_configured=False,
+                failed_connection=failed_connection,
+                close_generation=close_generation,
             )
         except Exception as connection_ex:
             connection = self._connection
@@ -3445,12 +3542,17 @@ class MCPTool:
                     operation="connection liveness check",
                     inner_exception=connection_ex,
                     load_configured=False,
+                    failed_connection=failed_connection,
+                    close_generation=close_generation,
                 )
                 return
             raise _mcp_tool_execution_exception(
                 "MCP connection liveness check failed.",
                 inner_exception=connection_ex,
             ) from connection_ex
+
+    async def _check_connection(self) -> None:
+        await self._require_connection().check_connection()
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool with the given arguments.
@@ -3490,9 +3592,8 @@ class MCPTool:
             raise _mcp_tool_execution_exception(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
             )
-        filtered_kwargs, meta = self._prepare_call_kwargs(tool_name, kwargs)
-
         parser = self.parse_tool_results or self._parse_tool_result_from_mcp
+        trace_context = otel_context.get_current()
 
         # Build MCP span attributes for tools/call
         mcp_span_attrs = self._mcp_base_span_attributes()
@@ -3508,17 +3609,27 @@ class MCPTool:
         ) as span:
             return await self._call_tool_with_retries(
                 tool_name,
-                filtered_kwargs,
-                meta,
+                kwargs,
+                trace_context,
                 parser,
                 span,
             )
 
+    async def _invoke_tool(
+        self, tool_name: str, kwargs: dict[str, Any], trace_context: otel_context.Context
+    ) -> types.CallToolResult:
+        token = otel_context.attach(trace_context)
+        try:
+            filtered_kwargs, meta = self._prepare_call_kwargs(tool_name, kwargs)
+        finally:
+            otel_context.detach(token)
+        return await self._require_connection().call_tool(tool_name, filtered_kwargs, meta=meta)
+
     async def _call_tool_with_retries(
         self,
         tool_name: str,
-        filtered_kwargs: dict[str, Any],
-        meta: types.RequestParamsMeta | None,
+        kwargs: dict[str, Any],
+        trace_context: otel_context.Context,
         parser: Callable[..., str | list[Content]],
         span: otel_trace.Span,
     ) -> str | list[Content]:
@@ -3527,13 +3638,11 @@ class MCPTool:
         from mcp import MCPError
 
         for attempt in range(2):
+            failed_connection = self._connection
+            close_generation = self._close_generation
             span_error_recorded = False
             try:
-                result = await self._require_connection().call_tool(
-                    tool_name,
-                    filtered_kwargs,
-                    meta=meta,
-                )
+                result = await self._invoke_tool(tool_name, kwargs, trace_context)
                 _capture_mcp_tool_result(result)
                 if result.is_error:
                     parsed = parser(result)
@@ -3565,6 +3674,8 @@ class MCPTool:
                             operation="tool call",
                             inner_exception=call_ex,
                             load_configured=True,
+                            failed_connection=failed_connection,
+                            close_generation=close_generation,
                         )
                     except ToolExecutionException as recovery_error:
                         if span.is_recording():
@@ -3686,8 +3797,10 @@ class MCPTool:
             capture_unhandled_exceptions=False,
         ) as span:
             for attempt in range(2):
+                failed_connection = self._connection
+                close_generation = self._close_generation
                 try:
-                    prompt_result = await self._require_connection().get_prompt(prompt_name, kwargs)
+                    prompt_result = await self._invoke_prompt(prompt_name, kwargs)
                     return parser(prompt_result)
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
@@ -3696,6 +3809,8 @@ class MCPTool:
                                 operation="prompt call",
                                 inner_exception=cl_ex,
                                 load_configured=True,
+                                failed_connection=failed_connection,
+                                close_generation=close_generation,
                             )
                         except ToolExecutionException as recovery_error:
                             set_mcp_span_error(span, type(recovery_error).__name__, str(recovery_error))
@@ -3726,6 +3841,9 @@ class MCPTool:
             retries_exhausted = _mcp_tool_execution_exception(f"Failed to get prompt '{prompt_name}' after retries.")
             set_mcp_span_error(span, type(retries_exhausted).__name__, str(retries_exhausted))
             raise retries_exhausted
+
+    async def _invoke_prompt(self, prompt_name: str, kwargs: dict[str, Any]) -> types.GetPromptResult:
+        return await self._require_connection().get_prompt(prompt_name, kwargs)
 
     async def __aenter__(self) -> Self:
         """Enter the async context manager.
@@ -3861,7 +3979,8 @@ class MCPStdioTool(MCPTool):
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
             request_timeout: The timeout in seconds for all requests. Framework-owned clients default to 30 seconds;
-                ``None`` disables the timeout. Caller-owned clients retain their own timeout policy.
+                ``None`` disables the timeout. Connection recovery uses the same timeout as a separate budget.
+                Caller-owned clients retain their own request timeout policy.
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
                 with ``command`` and ``session``. ``request_timeout``, ``args``, ``env``, ``encoding``, and
@@ -4135,7 +4254,9 @@ class MCPStreamableHTTPTool(MCPTool):
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
             request_timeout: The timeout in seconds for all requests. Framework-owned clients default to 30 seconds;
-                ``None`` disables the timeout. Caller-owned clients retain their own timeout policy.
+                ``None`` disables the timeout. HTTP header admission and session reconciliation share one budget;
+                connection recovery has a separate budget using the same value. Neither bounds the entire call.
+                Caller-owned clients retain their own request timeout policy.
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
                 with ``url`` and ``session``. ``request_timeout``, ``terminate_on_close``, ``http_client``,
@@ -4203,8 +4324,7 @@ class MCPStreamableHTTPTool(MCPTool):
             static_headers: Optional fixed HTTP headers to inject into requests to the
                 configured ``url`` origin. The headers are copied at construction, included
                 on connection-lifetime requests and tool calls, retained across same-origin
-                redirects, and removed on cross-origin redirects. Unlike ``header_provider``,
-                fixed headers do not serialize concurrent tool calls. Use ``header_provider``
+                redirects, and removed on cross-origin redirects. Use ``header_provider``
                 instead when header values depend on runtime invocation arguments. When both
                 are provided, dynamic headers override fixed headers with the same name.
             header_provider: Optional callable that receives the runtime keyword arguments
@@ -4218,7 +4338,10 @@ class MCPStreamableHTTPTool(MCPTool):
                 agent middleware) without creating a separate ``httpx2.AsyncClient``.
                 The complete header set used to initialize a connection becomes that session's
                 immutable effective identity. Header names are compared case-insensitively and
-                values case-sensitively. Before an Agent exposes a connected tool's functions for
+                values case-sensitively. Operations with the same effective identity may run
+                concurrently; an identity change waits for active operations before reconnecting.
+                Each outbound HTTP request retains its own header snapshot, including redirects.
+                Before an Agent exposes a connected tool's functions for
                 a run, it reconciles the run's effective headers and reconnects when they differ;
                 generated tool and prompt calls perform the same check before sending. Connection-lifetime
                 requests - including discovery, background pings, and resource and prompt reloads -
@@ -4350,13 +4473,6 @@ class MCPStreamableHTTPTool(MCPTool):
         self._httpx_client: httpx2.AsyncClient | None = http_client
         self._static_headers = dict(static_headers or {})
         self._header_provider = header_provider
-        # Headers for the in-flight call_tool invocation. The streamable HTTP transport
-        # sends requests from tasks spawned at connect time, whose contexts never observe
-        # ContextVar values set later inside call_tool, so the request hook needs this
-        # instance-level snapshot as a cross-task fallback. The lock serializes tool calls
-        # when a header_provider is set: parallel invocations on the same instance would
-        # otherwise overwrite each other's snapshot and attach the wrong per-call headers.
-        self._active_call_headers: dict[str, str] | None = None
         # None means no run seeded this connection, which an empty mapping cannot express:
         # a run that supplies no kwargs still expects a missing provider key to be an error.
         self._connection_kwargs: dict[str, Any] | None = None
@@ -4369,6 +4485,10 @@ class MCPStreamableHTTPTool(MCPTool):
         self._pending_session_headers: dict[str, str] | None = None
         self._pending_connection_kwargs: dict[str, Any] | None = None
         self._call_headers_lock = asyncio.Lock()
+        self._header_operations = 0
+        self._header_operations_idle = asyncio.Event()
+        self._header_operations_idle.set()
+        self._header_exclusive_owner: asyncio.Task[Any] | None = None
         self._header_request_owner = object()
         self._header_hook_client: httpx2.AsyncClient | None = None
 
@@ -4437,26 +4557,26 @@ class MCPStreamableHTTPTool(MCPTool):
                         for key in request.extensions.pop(_MCP_INJECTED_HEADER_KEYS_EXTENSION, ()):
                             request.headers.pop(key, None)
                         return
-                    headers = self._static_headers.copy()
-                    if self._header_provider is not None:
-                        # The transport may send this request from a task whose context was
-                        # captured before call_tool set the ContextVar; fall back to the
-                        # instance-level snapshot of the active call's headers. Context values
-                        # are owner-tagged so a nested tool sharing the client cannot inherit
-                        # another tool's credentials. Both are None only when this is an ambient
-                        # request outside call_tool; an active call that legitimately produced
-                        # no headers yields an empty dict and must not trigger the ambient fallback.
+                    request_header_context = request.extensions.get(_MCP_REQUEST_HEADERS_EXTENSION)
+                    snapshot = (
+                        request_header_context[1]
+                        if request_header_context is not None
+                        and request_header_context[0] is self._header_request_owner
+                        else None
+                    )
+                    headers = self._static_headers.copy() if snapshot is None else dict(snapshot)
+                    if snapshot is None and self._header_provider is not None:
+                        # MCP >=2.2 carries the sender's context into each HTTP request task.
+                        # Copy it onto the request once, so redirects cannot resolve a new caller.
                         call_header_context = _mcp_call_headers.get(None)
                         dynamic_headers = (
                             call_header_context[1]
                             if call_header_context is not None and call_header_context[0] is self._header_request_owner
                             else None
                         )
-                        if dynamic_headers is None:
-                            dynamic_headers = self._active_call_headers
                     else:
                         dynamic_headers = None
-                    if dynamic_headers is None and self._header_provider is not None:
+                    if snapshot is None and dynamic_headers is None and self._header_provider is not None:
                         # Ambient request made outside call_tool (the initialize handshake,
                         # load_tools/load_prompts discovery, or background pings). Invoke the
                         # provider with the kwargs seeded by the run that established this
@@ -4488,6 +4608,7 @@ class MCPStreamableHTTPTool(MCPTool):
                                 dynamic_headers = {}
                     if dynamic_headers is not None:
                         headers.update(dynamic_headers)
+                    request.extensions[_MCP_REQUEST_HEADERS_EXTENSION] = (self._header_request_owner, headers.copy())
                     if self._session_headers is None:
                         self._bind_session_headers(headers)
                     for key in request.extensions.pop(_MCP_INJECTED_HEADER_KEYS_EXTENSION, ()):
@@ -4558,6 +4679,204 @@ class MCPStreamableHTTPTool(MCPTool):
             headers.update(self._header_provider(dict(kwargs)))
         return headers
 
+    @contextmanager
+    def _http_headers(
+        self, headers: Mapping[str, str], runtime_kwargs: Mapping[str, Any] | None = None
+    ) -> Generator[None]:
+        token = _mcp_call_headers.set((self._header_request_owner, dict(headers)))
+        invocation_token = _mcp_http_invocation.set(
+            _MCPHTTPInvocation(self, _mcp_http_invocation.get(), runtime_kwargs or {})
+        )
+        try:
+            yield
+        finally:
+            _mcp_http_invocation.reset(invocation_token)
+            _mcp_call_headers.reset(token)
+
+    def _active_http_invocation(self) -> _MCPHTTPInvocation | None:
+        invocation = _mcp_http_invocation.get()
+        while invocation is not None:
+            if invocation.owner is self and invocation.active:
+                return invocation
+            invocation = invocation.parent
+        return None
+
+    @asynccontextmanager
+    async def _header_admission(self) -> AsyncGenerator[None]:
+        """Bound admission and identity reconciliation, not the admitted network operation."""
+        try:
+            async with asyncio.timeout(self.request_timeout):
+                yield
+        except TimeoutError as timeout_ex:
+            raise _mcp_tool_execution_exception(
+                "Timed out waiting for MCP header admission or session reconciliation.",
+                inner_exception=timeout_ex,
+            ) from timeout_ex
+
+    def _check_exclusive_header_access(self) -> None:
+        if (
+            self._header_provider is not None
+            and not self._is_lifecycle_owner_task()
+            and self._header_exclusive_owner is not asyncio.current_task()
+            and self._active_http_invocation() is not None
+        ):
+            raise _mcp_tool_execution_exception(
+                "Cannot reconnect, discover, reset, or close an MCP tool from its active HTTP operation."
+            )
+
+    @asynccontextmanager
+    async def _exclusive_header_access(self) -> AsyncGenerator[None]:
+        if (
+            self._header_provider is None
+            or self._is_lifecycle_owner_task()
+            or self._header_exclusive_owner is asyncio.current_task()
+        ):
+            yield
+            return
+        self._check_exclusive_header_access()
+        async with self._call_headers_lock:
+            await self._header_operations_idle.wait()
+            await self._lifecycle_idle.wait()
+            self._header_exclusive_owner = asyncio.current_task()
+            try:
+                yield
+            finally:
+                self._header_exclusive_owner = None
+
+    @asynccontextmanager
+    async def _http_operation(self) -> AsyncGenerator[None]:
+        if self._header_provider is None:
+            yield
+            return
+        invocation = _mcp_http_invocation.get()
+        header_context = _mcp_call_headers.get(None)
+        if invocation is None or invocation.owner is not self or header_context is None:
+            raise RuntimeError("MCP HTTP operation requires an invocation header snapshot.")
+        headers = header_context[1]
+        ancestor = self._active_http_invocation()
+        if ancestor is not None:
+            # A queued identity change must not block a callback needed by an active request.
+            if (
+                ancestor.connection is not self._connection
+                or _mcp_header_identity(headers) != self._session_header_identity
+            ):
+                raise _mcp_tool_execution_exception("Cannot change MCP header identity from an active HTTP operation.")
+        else:
+            async with self._header_admission(), self._call_headers_lock:
+                await self._lifecycle_idle.wait()
+                if _mcp_header_identity(headers) != self._session_header_identity:
+                    await self._header_operations_idle.wait()
+                self._header_exclusive_owner = asyncio.current_task()
+                try:
+                    await self._ensure_session_identity(headers, invocation.runtime_kwargs)
+                finally:
+                    self._header_exclusive_owner = None
+                invocation.connection = self._connection
+                invocation.active = True
+                self._header_operations += 1
+                self._header_operations_idle.clear()
+        if ancestor is not None:
+            invocation.connection = self._connection
+            invocation.active = True
+            self._header_operations += 1
+            self._header_operations_idle.clear()
+        try:
+            yield
+        finally:
+            invocation.active = False
+            self._header_operations -= 1
+            if not self._header_operations:
+                self._header_operations_idle.set()
+
+    async def connect(self, *, reset: bool = False) -> None:
+        async with self._exclusive_header_access():
+            await super().connect(reset=reset)
+
+    async def close(self) -> None:
+        self._check_exclusive_header_access()
+        await super().close()
+
+    async def _close_connection(self) -> None:
+        async with self._exclusive_header_access():
+            await super()._close_connection()
+
+    async def load_tools(self) -> None:
+        async with self._exclusive_header_access():
+            await super().load_tools()
+
+    async def load_prompts(self) -> None:
+        async with self._exclusive_header_access():
+            await super().load_prompts()
+
+    async def _check_connection(self) -> None:
+        if (
+            self._header_provider is None
+            or self._is_lifecycle_owner_task()
+            or self._header_exclusive_owner is asyncio.current_task()
+        ):
+            await super()._check_connection()
+            return
+        invocation = _mcp_http_invocation.get()
+        if invocation is not None and invocation.owner is self:
+            async with self._http_operation():
+                await super()._check_connection()
+        else:
+            async with self._exclusive_header_access():
+                await super()._check_connection()
+
+    async def _recover_failed_connection(
+        self,
+        *,
+        operation: str,
+        failed_connection: _MCPConnection | None,
+        close_generation: int,
+        load_configured: bool,
+    ) -> None:
+        invocation = _mcp_http_invocation.get()
+        if (
+            operation in ("tool call", "prompt call", "connection liveness check")
+            and invocation is not None
+            and invocation.owner is self
+            and invocation.connection is not None
+            and self._header_exclusive_owner is not asyncio.current_task()
+            and not self._is_lifecycle_owner_task()
+        ):
+            # Admission can replace the connection after the retry loop records it.
+            failed_connection = invocation.connection
+        async with self._exclusive_header_access():
+            await super()._recover_failed_connection(
+                operation=operation,
+                failed_connection=failed_connection,
+                close_generation=close_generation,
+                load_configured=load_configured,
+            )
+
+    async def _invoke_tool(
+        self, tool_name: str, kwargs: dict[str, Any], trace_context: otel_context.Context
+    ) -> types.CallToolResult:
+        async with self._http_operation():
+            return await super()._invoke_tool(tool_name, kwargs, trace_context)
+
+    async def _invoke_prompt(self, prompt_name: str, kwargs: dict[str, Any]) -> types.GetPromptResult:
+        async with self._http_operation():
+            return await super()._invoke_prompt(prompt_name, kwargs)
+
+    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> str:
+        if self._header_provider is None:
+            return await super().get_prompt(prompt_name, **kwargs)
+        header_context = _mcp_call_headers.get(None)
+        headers = (
+            header_context[1]
+            if header_context is not None and header_context[0] is self._header_request_owner
+            else self._effective_headers({})
+        )
+        invocation = _mcp_http_invocation.get()
+        runtime_kwargs: Mapping[str, Any] = (
+            invocation.runtime_kwargs if invocation is not None and invocation.owner is self else {}
+        )
+        with self._http_headers(headers, runtime_kwargs):
+            return await super().get_prompt(prompt_name, **kwargs)
+
     async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
         if not self.is_connected:
             await super()._prepare_for_run(kwargs)
@@ -4578,7 +4897,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 sensitive_exc_info=True,
             )
             return
-        async with self._call_headers_lock:
+        async with self._header_admission(), self._exclusive_header_access():
             await self._ensure_session_identity(headers, kwargs)
 
     def _bind_session_headers(self, headers: Mapping[str, str]) -> None:
@@ -4675,19 +4994,12 @@ class MCPStreamableHTTPTool(MCPTool):
             return await super()._call_prompt_with_runtime_kwargs(prompt_name, prompt_arguments, runtime_kwargs)
 
         headers = self._effective_headers(runtime_kwargs)
-        async with self._call_headers_lock:
-            await self._ensure_session_identity(headers, runtime_kwargs)
-            token = _mcp_call_headers.set((self._header_request_owner, headers))
-            self._active_call_headers = headers
-            try:
-                return await super()._call_prompt_with_runtime_kwargs(
-                    prompt_name,
-                    prompt_arguments,
-                    runtime_kwargs,
-                )
-            finally:
-                self._active_call_headers = None
-                _mcp_call_headers.reset(token)
+        with self._http_headers(headers, runtime_kwargs):
+            return await super()._call_prompt_with_runtime_kwargs(
+                prompt_name,
+                prompt_arguments,
+                runtime_kwargs,
+            )
 
     def _release_connection_kwargs(self) -> None:
         self._connection_kwargs = None
@@ -4728,15 +5040,8 @@ class MCPStreamableHTTPTool(MCPTool):
             runtime_context = _mcp_tool_runtime_context.get()
             header_kwargs = runtime_context[1] if runtime_context is not None and runtime_context[0] is self else kwargs
             headers = self._effective_headers(header_kwargs)
-            async with self._call_headers_lock:
-                await self._ensure_session_identity(headers, header_kwargs)
-                token = _mcp_call_headers.set((self._header_request_owner, headers))
-                self._active_call_headers = headers
-                try:
-                    return await super().call_tool(tool_name, **kwargs)
-                finally:
-                    self._active_call_headers = None
-                    _mcp_call_headers.reset(token)
+            with self._http_headers(headers, header_kwargs):
+                return await super().call_tool(tool_name, **kwargs)
         return await super().call_tool(tool_name, **kwargs)
 
 

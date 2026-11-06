@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextvars import ContextVar
 from typing import Any, Literal, TypeAlias, cast
 from unittest.mock import AsyncMock, Mock, patch
@@ -16,6 +16,8 @@ from mcp.client.session import ClientSession
 
 from agent_framework import FunctionInvocationContext, MCPStreamableHTTPTool
 from agent_framework.exceptions import ToolException, ToolExecutionException
+
+from .mcp_http_helpers import MCPHTTPBarrier
 
 MCPHTTPServer: TypeAlias = tuple[httpx.AsyncClient, list[httpx.Request], dict[str, list[str]]]
 MCPHTTPClientFactory: TypeAlias = tuple[Callable[..., httpx.AsyncClient], list[httpx.Request], dict[str, list[str]]]
@@ -29,7 +31,7 @@ async def mcp_http_client_factory() -> AsyncIterator[MCPHTTPClientFactory]:
     async def record_request(request: httpx.Request) -> None:
         requests.append(request)
 
-    async def handle(request: httpx.Request) -> httpx.Response:
+    async def handle(request: httpx.Request, protocol_version: str | None) -> httpx.Response:
         if request.url.path == "/unrelated":
             return httpx.Response(200)
         principal = request.headers.get("Authorization", "")
@@ -48,10 +50,12 @@ async def mcp_http_client_factory() -> AsyncIterator[MCPHTTPClientFactory]:
             )
         headers: dict[str, str] = {}
         result: dict[str, Any] = {}
-        if method == "initialize":
+        if method == "server/discover" and protocol_version == "2026-07-28":
+            result = {"supportedVersions": [protocol_version], "capabilities": {"tools": {}, "prompts": {}}}
+        elif method == "initialize":
             headers["mcp-session-id"] = f"session-{principal}"
             result = {
-                "protocolVersion": body["params"]["protocolVersion"],
+                "protocolVersion": protocol_version or body["params"]["protocolVersion"],
                 "capabilities": {"tools": {}, "prompts": {}},
                 "serverInfo": {"name": "auth-test", "version": "1"},
             }
@@ -103,6 +107,10 @@ async def mcp_http_client_factory() -> AsyncIterator[MCPHTTPClientFactory]:
                 "description": principal,
                 "messages": [{"role": "user", "content": {"type": "text", "text": f"{principal}:{topic}"}}],
             }
+        if protocol_version == "2026-07-28" and method in ("tools/list", "prompts/list"):
+            result.update(resultType="complete", cacheScope="private", ttlMs=0)
+        if protocol_version == "2026-07-28" and method in ("tools/call", "prompts/get"):
+            result["resultType"] = "complete"
         if "id" not in body:
             return httpx.Response(202)
         return httpx.Response(200, headers=headers, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
@@ -110,9 +118,17 @@ async def mcp_http_client_factory() -> AsyncIterator[MCPHTTPClientFactory]:
     async_client = httpx.AsyncClient
     clients: list[httpx.AsyncClient] = []
 
-    def create_client(*, response_cookies: dict[str, str] | None = None, **kwargs: Any) -> httpx.AsyncClient:
+    def create_client(
+        *,
+        response_cookies: dict[str, str] | None = None,
+        before_request: Callable[[httpx.Request], Awaitable[None]] | None = None,
+        protocol_version: str | None = None,
+        **kwargs: Any,
+    ) -> httpx.AsyncClient:
         async def handle_with_cookies(request: httpx.Request) -> httpx.Response:
-            response = await handle(request)
+            if before_request is not None:
+                await before_request(request)
+            response = await handle(request, protocol_version)
             if response_cookies and request.method == "POST":
                 method = json.loads(request.content).get("method")
                 if method in response_cookies:
@@ -169,6 +185,629 @@ def _requests_for_method(requests: list[httpx.Request], method: str) -> list[htt
         for request in requests
         if request.method == "POST" and json.loads(request.content).get("method") == method
     ]
+
+
+@pytest.mark.parametrize("protocol_version", ["2025-11-25", "2026-07-28"])
+async def test_same_identity_http_requests_overlap(
+    mcp_http_client_factory: MCPHTTPClientFactory, protocol_version: str
+) -> None:
+    create_client, requests, writes = mcp_http_client_factory
+    barrier = MCPHTTPBarrier("tools/call", "prompts/get")
+    client = create_client(before_request=barrier.before_request, protocol_version=protocol_version)
+    tool = MCPStreamableHTTPTool(
+        name="parallel",
+        url="https://mcp.example/mcp",
+        http_client=client,
+        header_provider=lambda _: {"Authorization": "token-a", "X-Test-Prompts": "enabled"},
+    )
+    async with tool:
+        first = asyncio.create_task(tool.call_tool("record", marker="first"))
+        second = asyncio.create_task(tool.call_tool("record", marker="second"))
+        prompt = asyncio.create_task(tool.get_prompt("principal-prompt", topic="parallel"))
+        try:
+            arrivals = [await barrier.next_request() for _ in range(3)]
+            assert {json.loads(request.content)["method"] for request in arrivals} == {"tools/call", "prompts/get"}
+            assert all(request.headers["Authorization"] == "token-a" for request in arrivals)
+            assert all(not task.done() for task in (first, second, prompt))
+            if protocol_version == "2025-11-25":
+                assert {request.headers["mcp-session-id"] for request in arrivals} == {"session-token-a"}
+        finally:
+            barrier.release.set()
+            await asyncio.gather(first, second, prompt)
+        assert await prompt == "token-a:parallel"
+    assert sorted(writes["token-a"]) == ["first", "second"]
+    assert len(_requests_for_method(requests, "initialize")) == (1 if protocol_version == "2025-11-25" else 0)
+    assert len(_requests_for_method(requests, "server/discover")) == 1
+
+
+@pytest.mark.parametrize("transition", ["identity", "reset", "close", "tools", "prompts"])
+async def test_http_transition_waits_for_active_requests(
+    mcp_http_client_factory: MCPHTTPClientFactory, transition: str
+) -> None:
+    create_client, requests, writes = mcp_http_client_factory
+    barrier = MCPHTTPBarrier("tools/call")
+    tool = _tool(create_client(before_request=barrier.before_request), "token-a")
+    async with tool:
+        active = asyncio.create_task(tool.call_tool("record", marker="active"))
+        await barrier.next_request()
+        waiting: asyncio.Task[object]
+        if transition == "identity":
+            waiting = asyncio.create_task(tool.call_tool("record", marker="new", credential="token-b"))
+        elif transition == "reset":
+            waiting = asyncio.create_task(tool.connect(reset=True))
+        elif transition == "close":
+            waiting = asyncio.create_task(tool.close())
+        elif transition == "tools":
+            waiting = asyncio.create_task(tool.load_tools())
+        else:
+            waiting = asyncio.create_task(tool.load_prompts())
+        try:
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert not waiting.done()
+            assert len(_requests_for_method(requests, "initialize")) == 1
+            assert len(_requests_for_method(requests, "tools/list")) == 1
+            assert not any(request.method == "DELETE" for request in requests)
+        finally:
+            barrier.release.set()
+            await asyncio.gather(active, waiting)
+        if transition == "identity":
+            assert writes["token-b"] == ["new"]
+            assert all(function.name != "token-a-only" for function in tool.functions)
+            assert any(function.name == "token-b-only" for function in tool.functions)
+            assert any(
+                request.method == "DELETE" and request.headers["Authorization"] == "token-a" for request in requests
+            )
+    assert writes["token-a"] == ["active"]
+
+
+async def test_cancelled_identity_waiter_does_not_block_same_identity_calls(
+    mcp_http_client_factory: MCPHTTPClientFactory,
+) -> None:
+    create_client, requests, _ = mcp_http_client_factory
+    barrier = MCPHTTPBarrier("tools/call")
+    tool = _tool(create_client(before_request=barrier.before_request), "token-a")
+    async with tool:
+        first = asyncio.create_task(tool.call_tool("record", marker="first"))
+        await barrier.next_request()
+        changing = asyncio.create_task(tool.call_tool("record", marker="changing", credential="token-b"))
+        for _ in range(10):
+            await asyncio.sleep(0)
+        changing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await changing
+        second = asyncio.create_task(tool.call_tool("record", marker="second"))
+        try:
+            request = await barrier.next_request()
+            assert request.headers["Authorization"] == "token-a"
+            assert not first.done()
+            assert not second.done()
+        finally:
+            barrier.release.set()
+            await asyncio.gather(first, second)
+    assert len(_requests_for_method(requests, "initialize")) == 1
+
+
+@pytest.mark.parametrize("stage", ["lock", "active", "reconcile", "lifecycle"])
+async def test_header_admission_timeout_never_dispatches_the_waiting_call(
+    mcp_http_client_factory: MCPHTTPClientFactory, stage: str
+) -> None:
+    create_client, requests, _ = mcp_http_client_factory
+    barrier = MCPHTTPBarrier("tools/call" if stage == "active" else "initialize")
+    client = create_client()
+    tool = _tool(client, "token-a")
+    async with tool, asyncio.timeout(5):
+        client.event_hooks["request"].append(barrier.before_request)
+        active = None
+        if stage == "active":
+            active = asyncio.create_task(tool.call_tool("record", marker="active"))
+            await barrier.next_request()
+        elif stage == "lifecycle":
+            resetting = asyncio.create_task(tool.connect(reset=True))
+            await barrier.next_request()
+            resetting.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await resetting
+        try:
+            with patch.object(tool, "request_timeout", 0.05):
+                async with contextlib.AsyncExitStack() as stack:
+                    if stage == "lock":
+                        await stack.enter_async_context(tool._call_headers_lock)
+                    with pytest.raises(ToolExecutionException, match="Timed out.*header admission") as error:
+                        await tool.call_tool("record", credential="token-b", marker="must-not-send")
+                    assert isinstance(error.value.__cause__, TimeoutError)
+                assert tool._header_operations == (1 if stage == "active" else 0)
+                assert not any(
+                    json.loads(request.content)["params"]["arguments"].get("marker") == "must-not-send"
+                    for request in _calls(requests)
+                )
+                if active is not None:
+                    assert not active.done()
+        finally:
+            barrier.release.set()
+            if active is not None:
+                await active
+            await tool._lifecycle_idle.wait()
+        if not tool.is_connected:
+            await tool.connect()
+        await tool.call_tool("record", marker="after-timeout")
+        assert _calls(requests)[-1].headers["Authorization"] == "token-a"
+
+
+@pytest.mark.parametrize("prepare", [False, True])
+async def test_header_admission_none_waits_until_identity_transition_can_finish(
+    mcp_http_client_factory: MCPHTTPClientFactory, prepare: bool
+) -> None:
+    create_client, _, writes = mcp_http_client_factory
+    barrier = MCPHTTPBarrier("tools/call")
+    tool = _tool(create_client(before_request=barrier.before_request), "token-a")
+    async with tool, asyncio.timeout(5):
+        active = asyncio.create_task(tool.call_tool("record", marker="active"))
+        await barrier.next_request()
+        with patch.object(tool, "request_timeout", None):
+            waiting = asyncio.create_task(
+                tool._prepare_for_run({"credential": "token-b"})
+                if prepare
+                else tool.call_tool("record", credential="token-b", marker="waiting")
+            )
+            try:
+                for _ in range(10):
+                    await asyncio.sleep(0)
+                assert not waiting.done()
+            finally:
+                barrier.release.set()
+                await asyncio.gather(active, waiting)
+        assert writes["token-a"] == ["active"]
+        assert tool._header_operations == 0
+        assert tool._session_header_identity == (("authorization", "token-b"),)
+
+
+async def test_run_preparation_uses_the_header_admission_budget(mcp_http_server: MCPHTTPServer) -> None:
+    client, requests, _ = mcp_http_server
+    tool = _tool(client, "token-a")
+    async with tool:
+        async with tool._call_headers_lock:
+            with (
+                patch.object(tool, "request_timeout", 0.05),
+                pytest.raises(ToolExecutionException, match="Timed out.*header admission"),
+            ):
+                await tool._prepare_for_run({"credential": "token-b"})
+        assert len(_requests_for_method(requests, "initialize")) == 1
+        await tool.call_tool("record", marker="after-timeout")
+
+
+async def test_header_admission_budget_does_not_wrap_the_admitted_rpc(
+    mcp_http_client_factory: MCPHTTPClientFactory,
+) -> None:
+    create_client, _, writes = mcp_http_client_factory
+    barrier = MCPHTTPBarrier("tools/call")
+    tool = _tool(create_client(before_request=barrier.before_request), "token-a")
+    async with tool, asyncio.timeout(5):
+        with patch.object(tool, "request_timeout", 0.05):
+            calling = asyncio.create_task(tool.call_tool("record", marker="slow-rpc"))
+            try:
+                await barrier.next_request()
+                with pytest.raises(TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(calling), timeout=0.1)
+                assert not calling.done()
+                assert tool._header_operations == 1
+            finally:
+                barrier.release.set()
+                await calling
+        assert writes["token-a"] == ["slow-rpc"]
+
+
+@pytest.mark.parametrize("blocked_method", ["initialize", "tools/list"])
+@pytest.mark.parametrize("dynamic_headers", [False, True])
+async def test_close_interrupts_recovery_without_retry_and_explicit_reconnect_still_works(
+    mcp_http_server: MCPHTTPServer, blocked_method: str, dynamic_headers: bool
+) -> None:
+    from anyio import ClosedResourceError
+
+    client, requests, writes = mcp_http_server
+    tool = (
+        _tool(client, "token-a")
+        if dynamic_headers
+        else MCPStreamableHTTPTool(
+            name="static",
+            url="https://mcp.example/mcp",
+            http_client=client,
+            static_headers={"Authorization": "token-a"},
+            load_prompts=False,
+        )
+    )
+    barrier = MCPHTTPBarrier(blocked_method)
+    tasks: list[asyncio.Task[Any]] = []
+    try:
+        async with asyncio.timeout(5):
+            await tool.connect()
+            client.event_hooks["request"].append(barrier.before_request)
+            with patch.object(_connected_client(tool), "call_tool", side_effect=ClosedResourceError()):
+                call = asyncio.create_task(tool.call_tool("record", marker="must-not-retry"))
+                tasks.append(call)
+                await barrier.next_request()
+                closing = asyncio.create_task(tool.close())
+                tasks.append(closing)
+                await asyncio.sleep(0)
+                barrier.release.set()
+                with pytest.raises(ToolExecutionException, match="interrupted by close|Failed to reconnect"):
+                    await call
+                await closing
+            assert not tool.is_connected
+            assert tool._connection is None
+            assert not tool._tools_loaded
+            assert tool._header_operations == 0
+            assert len(_requests_for_method(requests, "initialize")) == 2
+            assert writes["token-a"] == []
+            await tool.connect()
+            await tool.call_tool("record", marker="explicit-reconnect")
+            assert writes["token-a"] == ["explicit-reconnect"]
+    finally:
+        barrier.release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await tool.close()
+
+
+async def test_close_queued_behind_a_failed_attempt_prevents_recovery(mcp_http_server: MCPHTTPServer) -> None:
+    from anyio import ClosedResourceError
+
+    client, requests, writes = mcp_http_server
+    tool = _tool(client, "token-a")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fail_call(*args: Any, **kwargs: Any) -> None:
+        started.set()
+        await release.wait()
+        raise ClosedResourceError
+
+    async with tool, asyncio.timeout(5):
+        with patch.object(_connected_client(tool), "call_tool", side_effect=fail_call):
+            call = asyncio.create_task(tool.call_tool("record", marker="must-not-retry"))
+            await started.wait()
+            closing = asyncio.create_task(tool.close())
+            try:
+                await asyncio.sleep(0)
+                assert not closing.done()
+            finally:
+                release.set()
+                await closing
+            with pytest.raises(ToolExecutionException, match="interrupted by close"):
+                await call
+        assert len(_requests_for_method(requests, "initialize")) == 1
+        assert not tool.is_connected
+        assert writes["token-a"] == []
+
+
+@pytest.mark.parametrize("timeout", [0.05, None])
+@pytest.mark.parametrize("stage", ["reconnect", "discovery"])
+async def test_recovery_budget_covers_reconnect_and_discovery(
+    mcp_http_server: MCPHTTPServer, timeout: float | None, stage: str
+) -> None:
+    from anyio import ClosedResourceError
+
+    client, _, writes = mcp_http_server
+    tool = _tool(client, "token-a")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    method = "_reconnect_without_loading" if stage == "reconnect" else "_load_configured_discovery_locked"
+    original = getattr(tool, method)
+
+    async def block_recovery() -> None:
+        started.set()
+        await release.wait()
+        await original()
+
+    async with tool, asyncio.timeout(5):
+        with (
+            patch.object(_connected_client(tool), "call_tool", side_effect=ClosedResourceError()),
+            patch.object(tool, method, side_effect=block_recovery),
+            patch.object(tool, "request_timeout", timeout),
+        ):
+            call = asyncio.create_task(tool.call_tool("record", marker="retry"))
+            try:
+                await started.wait()
+                if timeout is None:
+                    for _ in range(10):
+                        await asyncio.sleep(0)
+                    assert not call.done()
+                    release.set()
+                    await call
+                    assert writes["token-a"] == ["retry"]
+                else:
+                    with pytest.raises(ToolExecutionException, match="Timed out recovering") as error:
+                        await call
+                    assert isinstance(error.value.__cause__, TimeoutError)
+                    assert writes["token-a"] == []
+            finally:
+                release.set()
+                call.cancel()
+                await asyncio.gather(call, return_exceptions=True)
+        assert tool._header_operations == 0
+
+
+async def test_recovery_budget_includes_waiting_for_other_active_attempts(
+    mcp_http_client_factory: MCPHTTPClientFactory,
+) -> None:
+    from anyio import ClosedResourceError
+
+    create_client, _, writes = mcp_http_client_factory
+    barrier = MCPHTTPBarrier("tools/call")
+    tool = _tool(create_client(before_request=barrier.before_request), "token-a")
+    async with tool, asyncio.timeout(5):
+        active = asyncio.create_task(tool.call_tool("record", marker="active"))
+        await barrier.next_request()
+        try:
+            with (
+                patch.object(_connected_client(tool), "call_tool", side_effect=ClosedResourceError()),
+                patch.object(tool, "request_timeout", 0.05),
+                pytest.raises(ToolExecutionException, match="Timed out recovering"),
+            ):
+                await tool.call_tool("record", marker="must-not-retry")
+            assert not active.done()
+            assert tool._header_operations == 1
+        finally:
+            barrier.release.set()
+            await active
+        await tool.call_tool("record", marker="after-timeout")
+        assert writes["token-a"] == ["active", "after-timeout"]
+
+
+async def test_direct_prompt_resolves_current_identity_instead_of_reusing_previous_caller(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
+    client, requests, _ = mcp_http_server
+    principal = ContextVar("prompt_principal", default="token-a")
+    tool = MCPStreamableHTTPTool(
+        name="prompt",
+        url="https://mcp.example/mcp",
+        http_client=client,
+        header_provider=lambda _: {"Authorization": principal.get(), "X-Test-Prompts": "enabled"},
+    )
+    async with tool:
+        token = principal.set("token-b")
+        try:
+            assert await tool.get_prompt("principal-prompt", topic="new-caller") == "token-b:new-caller"
+        finally:
+            principal.reset(token)
+    assert _requests_for_method(requests, "prompts/get")[0].headers["Authorization"] == "token-b"
+    assert len(_requests_for_method(requests, "initialize")) == 2
+
+
+async def test_request_header_snapshot_cannot_be_reused_by_another_tool_owner(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
+    from agent_framework._mcp import _MCP_HEADER_OWNER_EXTENSION
+
+    client, requests, _ = mcp_http_server
+    first = MCPStreamableHTTPTool(
+        name="first",
+        url="https://mcp.example/mcp",
+        http_client=client,
+        static_headers={"X-First-Only": "first"},
+        header_provider=lambda _: {"Authorization": "token-a"},
+    )
+    second = _tool(client, "token-b")
+    async with first, second:
+        original = _requests_for_method(requests, "tools/list")[0]
+        reused = httpx.Request(
+            "POST",
+            original.url,
+            headers=original.headers,
+            content=original.content,
+            extensions=original.extensions.copy(),
+        )
+        reused.extensions[_MCP_HEADER_OWNER_EXTENSION] = second._header_request_owner
+        for hook in client.event_hooks["request"]:
+            await hook(reused)
+        assert reused.headers["Authorization"] == "token-b"
+        assert "X-First-Only" not in reused.headers
+
+
+async def test_nested_same_identity_call_can_finish_ahead_of_waiting_identity_change(
+    mcp_http_client_factory: MCPHTTPClientFactory,
+) -> None:
+    create_client, requests, writes = mcp_http_client_factory
+    outer_started = asyncio.Event()
+    start_nested = asyncio.Event()
+
+    async def invoke_nested(request: httpx.Request) -> None:
+        if request.method != "POST":
+            return
+        body = json.loads(request.content)
+        if body.get("method") == "tools/call" and body["params"]["arguments"].get("marker") == "outer":
+            outer_started.set()
+            await start_nested.wait()
+            await tool.call_tool("record", marker="nested")
+
+    tool = _tool(create_client(before_request=invoke_nested), "token-a")
+    async with tool:
+        outer = asyncio.create_task(tool.call_tool("record", marker="outer"))
+        await asyncio.wait_for(outer_started.wait(), timeout=5)
+        changing = asyncio.create_task(tool.call_tool("record", marker="changed", credential="token-b"))
+        try:
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert not changing.done()
+        finally:
+            start_nested.set()
+            await asyncio.wait_for(asyncio.gather(outer, changing), timeout=5)
+    assert writes["token-a"] == ["nested", "outer"]
+    assert writes["token-b"] == ["changed"]
+    assert len(_requests_for_method(requests, "initialize")) == 2
+
+
+@pytest.mark.parametrize("operation", ["identity", "reset", "close", "tools", "prompts", "recovery"])
+async def test_nested_exclusive_operation_fails_instead_of_waiting_on_its_parent(
+    mcp_http_client_factory: MCPHTTPClientFactory, operation: str
+) -> None:
+    from anyio import ClosedResourceError
+
+    create_client, _, writes = mcp_http_client_factory
+
+    async def invoke_nested(request: httpx.Request) -> None:
+        if request.method != "POST" or json.loads(request.content).get("method") != "tools/call":
+            return
+        close_generation = tool._close_generation
+        with pytest.raises(ToolExecutionException, match="active HTTP operation"):
+            if operation == "identity":
+                await tool.call_tool("record", marker="nested", credential="token-b")
+            elif operation == "reset":
+                await tool.connect(reset=True)
+            elif operation == "close":
+                await tool.close()
+            elif operation == "tools":
+                await tool.load_tools()
+            elif operation == "prompts":
+                await tool.load_prompts()
+            else:
+                await tool._recover_connection_after_loss(
+                    operation="tool call", inner_exception=ClosedResourceError(), load_configured=True
+                )
+        assert tool._close_generation == close_generation
+
+    tool = _tool(create_client(before_request=invoke_nested), "token-a")
+    async with tool:
+        await asyncio.wait_for(tool.call_tool("record", marker="outer"), timeout=5)
+    assert writes["token-a"] == ["outer"]
+    assert not writes["token-b"]
+
+
+@pytest.mark.parametrize("dynamic_headers", [False, True])
+async def test_simultaneous_connection_failures_share_one_recovery(
+    mcp_http_server: MCPHTTPServer, dynamic_headers: bool
+) -> None:
+    from anyio import ClosedResourceError
+
+    client, requests, writes = mcp_http_server
+    tool = (
+        _tool(client, "token-a")
+        if dynamic_headers
+        else MCPStreamableHTTPTool(
+            name="static",
+            url="https://mcp.example/mcp",
+            http_client=client,
+            static_headers={"Authorization": "token-a"},
+            load_prompts=False,
+        )
+    )
+    arrivals: asyncio.Queue[None] = asyncio.Queue()
+    fail = asyncio.Event()
+
+    async def fail_call(*args: Any, **kwargs: Any) -> None:
+        arrivals.put_nowait(None)
+        await fail.wait()
+        raise ClosedResourceError
+
+    async with tool:
+        original_connection = tool._connection
+        with patch.object(_connected_client(tool), "call_tool", side_effect=fail_call):
+            first = asyncio.create_task(tool.call_tool("record", marker="first"))
+            second = asyncio.create_task(tool.call_tool("record", marker="second"))
+            try:
+                await asyncio.wait_for(arrivals.get(), timeout=5)
+                await asyncio.wait_for(arrivals.get(), timeout=5)
+            finally:
+                fail.set()
+                await asyncio.wait_for(asyncio.gather(first, second), timeout=5)
+        assert tool._connection is not original_connection
+        assert len(_requests_for_method(requests, "initialize")) == 2
+        assert sorted(writes["token-a"]) == ["first", "second"]
+
+
+async def test_liveness_failure_during_recovery_discovery_recovers_the_replacement_connection(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
+    from anyio import ClosedResourceError
+
+    client, requests, writes = mcp_http_server
+    tool = _tool(client, "token-a")
+    async with tool, asyncio.timeout(5):
+        original_connection = tool._connection
+        original_check = tool._check_connection
+        replacement_failed = False
+
+        async def fail_replacement_once() -> None:
+            nonlocal replacement_failed
+            if tool._connection is not original_connection and not replacement_failed:
+                replacement_failed = True
+                raise ClosedResourceError
+            await original_check()
+
+        with (
+            patch.object(_connected_client(tool), "call_tool", side_effect=ClosedResourceError()),
+            patch.object(tool, "_check_connection", side_effect=fail_replacement_once),
+        ):
+            await tool.call_tool("record", marker="recovered")
+        assert replacement_failed
+        assert len(_requests_for_method(requests, "initialize")) == 3
+        assert writes["token-a"] == ["recovered"]
+
+
+async def test_cancelling_recovery_propagates_and_releases_the_exclusive_barrier(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
+    from anyio import ClosedResourceError
+
+    client, _, writes = mcp_http_server
+    tool = _tool(client, "token-a")
+    started = asyncio.Event()
+
+    async def block_recovery() -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    async with tool, asyncio.timeout(5):
+        with (
+            patch.object(_connected_client(tool), "call_tool", side_effect=ClosedResourceError()),
+            patch.object(tool, "_reconnect_without_loading", side_effect=block_recovery),
+        ):
+            calling = asyncio.create_task(tool.call_tool("record", marker="cancelled"))
+            await started.wait()
+            calling.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await calling
+        assert tool._header_operations == 0
+        assert tool._header_exclusive_owner is None
+        await tool.call_tool("record", marker="after-cancel")
+        assert writes["token-a"] == ["after-cancel"]
+
+
+async def test_cancelled_close_waiter_still_blocks_new_http_operations_until_teardown(
+    mcp_http_client_factory: MCPHTTPClientFactory,
+) -> None:
+    create_client, _, _ = mcp_http_client_factory
+    closing = asyncio.Event()
+    release_close = asyncio.Event()
+
+    async def block_close(request: httpx.Request) -> None:
+        if request.method == "DELETE":
+            closing.set()
+            await release_close.wait()
+
+    tool = _tool(create_client(before_request=block_close), "token-a")
+    await tool.connect()
+    old_connection = tool._connection
+    close = asyncio.create_task(tool.close())
+    await asyncio.wait_for(closing.wait(), timeout=5)
+    close.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await close
+    calling = asyncio.create_task(tool.call_tool("record", marker="after-close"))
+    try:
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert not calling.done()
+    finally:
+        release_close.set()
+        try:
+            with pytest.raises(ToolExecutionException):
+                await asyncio.wait_for(calling, timeout=5)
+            assert tool._connection is not old_connection
+        finally:
+            await tool.close()
 
 
 async def test_owned_client_does_not_replay_response_cookie_across_principals(

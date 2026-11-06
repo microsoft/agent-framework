@@ -3009,7 +3009,7 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
             self.connect_count = 0
             self.sessions: list[Any] = []
 
-        async def connect(self, *, reset: bool = False) -> None:
+        async def _reconnect_without_loading(self) -> None:
             self.connect_count += 1
             mock_session = Mock(spec=ClientSession)
             _set_framework_owned_session(self, mock_session)
@@ -3021,12 +3021,13 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
                     return_value=types.CallToolResult(content=[types.TextContent(type="text", text="recovered")])
                 )
             self.is_connected = True
+            self._tools_loaded = self._prompts_loaded = True
 
         def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
             return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
 
     server = TestServer(name="test_server")
-    await server.connect()
+    await server._reconnect_without_loading()
 
     result = await server.call_tool("test_tool", param="test_value")
 
@@ -7689,15 +7690,13 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
     original_exit_stack = tool._exit_stack
     tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
-    # Mock connect() to avoid trying to start actual process
-    with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
+    with patch.object(tool, "_reconnect_without_loading", new_callable=AsyncMock) as mock_connect:
 
-        async def restore_session(*, reset=False):
-            if reset:
-                await original_exit_stack.aclose()
+        async def restore_session():
+            await original_exit_stack.aclose()
             _set_framework_owned_session(tool, mock_session)
             tool.is_connected = True
-            tool._tools_loaded = True
+            tool._tools_loaded = tool._prompts_loaded = True
 
         mock_connect.side_effect = restore_session
 
@@ -7727,9 +7726,8 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         # This call should trigger reconnection after ClosedResourceError
         result = await tool.call_tool("test_tool", arg1="value2")
         assert result is not None
-        # Verify reconnect was attempted with reset=True
         assert mock_connect.call_count >= 1
-        mock_connect.assert_called_with(reset=True)
+        mock_connect.assert_awaited_once_with()
         # Verify _exit_stack.aclose was called during reconnection
         original_exit_stack.aclose.assert_called()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
@@ -7787,15 +7785,13 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
     original_exit_stack = tool._exit_stack
     tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
-    # Mock connect() to avoid trying to start actual process
-    with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
+    with patch.object(tool, "_reconnect_without_loading", new_callable=AsyncMock) as mock_connect:
 
-        async def restore_session(*, reset=False):
-            if reset:
-                await original_exit_stack.aclose()
+        async def restore_session():
+            await original_exit_stack.aclose()
             _set_framework_owned_session(tool, mock_session)
             tool.is_connected = True
-            tool._prompts_loaded = True
+            tool._tools_loaded = tool._prompts_loaded = True
 
         mock_connect.side_effect = restore_session
 
@@ -7825,9 +7821,8 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
         # This call should trigger reconnection after ClosedResourceError
         result = await tool.get_prompt("test_prompt", arg1="value2")
         assert result is not None
-        # Verify reconnect was attempted with reset=True
         assert mock_connect.call_count >= 1
-        mock_connect.assert_called_with(reset=True)
+        mock_connect.assert_awaited_once_with()
         # Verify _exit_stack.aclose was called during reconnection
         original_exit_stack.aclose.assert_called()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
@@ -7925,15 +7920,16 @@ async def test_mcp_tool_call_tool_raises_after_reconnection_still_fails() -> Non
         tool,
         Mock(call_tool=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()])),
     )
+    tool._tools_loaded = tool._prompts_loaded = True
 
     with (
-        patch.object(tool, "connect", AsyncMock()) as mock_connect,
+        patch.object(tool, "_reconnect_without_loading", AsyncMock()) as mock_connect,
         patch.object(logger, "error") as mock_error,
         pytest.raises(ToolExecutionException, match="connection lost"),
     ):
         await tool.call_tool("remote_tool")
 
-    mock_connect.assert_awaited_once_with(reset=True)
+    mock_connect.assert_awaited_once_with()
     mock_error.assert_called_once()
 
 
@@ -7945,15 +7941,16 @@ async def test_mcp_tool_get_prompt_raises_after_reconnection_still_fails() -> No
         tool,
         Mock(get_prompt=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()])),
     )
+    tool._tools_loaded = tool._prompts_loaded = True
 
     with (
-        patch.object(tool, "connect", AsyncMock()) as mock_connect,
+        patch.object(tool, "_reconnect_without_loading", AsyncMock()) as mock_connect,
         patch.object(logger, "error") as mock_error,
         pytest.raises(ToolExecutionException, match="connection lost"),
     ):
         await tool.get_prompt("remote_prompt")
 
-    mock_connect.assert_awaited_once_with(reset=True)
+    mock_connect.assert_awaited_once_with()
     mock_error.assert_called_once()
 
 
@@ -10439,6 +10436,21 @@ async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
                 assert request.headers.get("X-Custom") == "test-value"
             finally:
                 _mcp_call_headers.reset(token)
+            token = _mcp_call_headers.set((tool._header_request_owner, {"X-Custom": "later-caller"}))
+            try:
+                redirected = Request(
+                    "POST",
+                    "http://example.com/redirected",
+                    headers=request.headers,
+                    extensions=request.extensions.copy(),
+                )
+                await hooks[0](redirected)
+                assert redirected.headers["X-Custom"] == "test-value"
+                fresh = _request_for_mcp_tool(tool)
+                await hooks[0](fresh)
+                assert fresh.headers["X-Custom"] == "later-caller"
+            finally:
+                _mcp_call_headers.reset(token)
     finally:
         # Ensure any created httpx client is properly closed
         if getattr(tool, "_httpx_client", None) is not None:
@@ -10533,9 +10545,8 @@ async def test_mcp_streamable_http_tool_header_provider_empty_active_call_skips_
             hooks = tool._httpx_client.event_hooks.get("request", [])
             assert len(hooks) == 1
 
-            # Simulate an active call whose provider returned {} (both ContextVar and snapshot set).
+            # Simulate an active call whose provider returned {}.
             token = _mcp_call_headers.set((tool._header_request_owner, {}))
-            tool._active_call_headers = {}
             try:
                 call_count = 0
                 request = _request_for_mcp_tool(tool)
@@ -10543,7 +10554,6 @@ async def test_mcp_streamable_http_tool_header_provider_empty_active_call_skips_
                 assert "Authorization" not in request.headers
                 assert call_count == 0, "ambient fallback must not run during a set-but-empty call"
             finally:
-                tool._active_call_headers = None
                 _mcp_call_headers.reset(token)
     finally:
         if getattr(tool, "_httpx_client", None) is not None:
@@ -11735,13 +11745,15 @@ async def test_mcp_streamable_http_tool_header_provider_applies_across_transport
 
 
 async def test_mcp_streamable_http_tool_header_provider_snapshot_restored_after_call():
-    """Test that the instance-level header snapshot is set during a call and cleared after."""
+    """An invocation's header context is scoped to the call rather than shared on the instance."""
+    from agent_framework._mcp import _mcp_call_headers
+
     observed_snapshots: list[dict[str, str] | None] = []
     original_call_tool = MCPTool.call_tool
 
     async def spy_call_tool(self, tool_name, **kwargs):
-        # Capture the snapshot value during the super call
-        observed_snapshots.append(self._active_call_headers)
+        context = _mcp_call_headers.get(None)
+        observed_snapshots.append(context[1] if context is not None else None)
         return await original_call_tool(self, tool_name, **kwargs)
 
     class _TestServer(MCPStreamableHTTPTool):
@@ -11779,20 +11791,21 @@ async def test_mcp_streamable_http_tool_header_provider_snapshot_restored_after_
             await server.call_tool("greet", name="Alice", auth_token="bearer-xyz")
 
     assert observed_snapshots == [{"X-Auth": "bearer-xyz"}]
-    assert server._active_call_headers is None
+    assert _mcp_call_headers.get(None) is None
 
 
 async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_calls():
-    """Concurrent call_tool invocations on the same tool must not mix per-call headers.
-
-    The framework executes parallel tool invocations concurrently, so a second call
-    must not overwrite the active header snapshot while the first call's requests
-    are still in flight (that would attach the wrong credentials).
-    """
+    """Different header identities must wait for the preceding operation to finish."""
     release = asyncio.Event()
     in_call = asyncio.Event()
+    observed_headers: list[dict[str, str]] = []
 
     async def blocking_call_tool(tool_name, *, arguments=None, meta=None):
+        from agent_framework._mcp import _mcp_call_headers
+
+        context = _mcp_call_headers.get(None)
+        assert context is not None
+        observed_headers.append(context[1])
         in_call.set()
         await release.wait()
         return types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
@@ -11833,20 +11846,17 @@ async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_ca
         await server.load_tools()
 
         first = asyncio.create_task(server.call_tool("greet", name="A", auth_token="token-a"))
-        await in_call.wait()
-        assert server._active_call_headers == {"X-Auth": "token-a"}
-
-        second = asyncio.create_task(server.call_tool("greet", name="B", auth_token="token-b"))
-        for _ in range(10):
-            await asyncio.sleep(0)
-        # The second call must be waiting on the first; its headers must not have
-        # replaced the snapshot the request hook reads for the in-flight call.
-        assert server._active_call_headers == {"X-Auth": "token-a"}
-
-        release.set()
+        try:
+            await in_call.wait()
+            second = asyncio.create_task(server.call_tool("greet", name="B", auth_token="token-b"))
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert observed_headers == [{"X-Auth": "token-a"}]
+        finally:
+            release.set()
         await asyncio.gather(first, second)
 
-    assert server._active_call_headers is None
+    assert observed_headers == [{"X-Auth": "token-a"}, {"X-Auth": "token-b"}]
 
 
 # endregion

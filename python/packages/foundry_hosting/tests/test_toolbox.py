@@ -82,6 +82,7 @@ class _ToolboxLoopbackServer:
     def __init__(self) -> None:
         self.requests: list[httpx.Request] = []
         self._session_count = 0
+        self.before_request: Callable[[httpx.Request], Awaitable[None]] | None = None
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
@@ -90,6 +91,8 @@ class _ToolboxLoopbackServer:
             return httpx.Response(200)
 
         self.requests.append(request)
+        if self.before_request is not None:
+            await self.before_request(request)
         payload = json.loads(request.content)
         method = payload.get("method")
         call_id = request.headers.get("x-agent-foundry-call-id")
@@ -168,6 +171,136 @@ async def _run_with_request_context(call_id: str, action: Callable[[], Awaitable
         return await action()
     finally:
         reset_request_context(token)
+
+
+async def test_same_call_id_overlaps_tool_and_skill_reads_without_freezing_bearer_tokens() -> None:
+    server = _ToolboxLoopbackServer()
+    arrivals: asyncio.Queue[httpx.Request] = asyncio.Queue()
+    release = asyncio.Event()
+
+    async def hold_response(request: httpx.Request) -> None:
+        if json.loads(request.content).get("method") in ("tools/call", "resources/read"):
+            arrivals.put_nowait(request)
+            await release.wait()
+
+    server.before_request = hold_response
+    credential = _FakeCredential("before-refresh")
+    toolbox = FoundryToolbox(credential, url="https://h/toolboxes/tb/mcp")  # type: ignore
+    await _attach_loopback_transport(toolbox, server)
+    try:
+        await _run_with_request_context("parallel-call", toolbox.connect)
+        first = asyncio.create_task(
+            _run_with_request_context("parallel-call", lambda: toolbox.call_tool("record", marker="first"))
+        )
+        first_request = await asyncio.wait_for(arrivals.get(), timeout=5)
+        credential._token = "after-refresh"
+        second = asyncio.create_task(
+            _run_with_request_context("parallel-call", lambda: toolbox.call_tool("record", marker="second"))
+        )
+        resource = asyncio.create_task(
+            _run_with_request_context(
+                "parallel-call", lambda: toolbox._read_resource(AnyUrl("skill://loopback-skill/SKILL.md"))
+            )
+        )
+        try:
+            next_requests = [await asyncio.wait_for(arrivals.get(), timeout=5) for _ in range(2)]
+            assert not first.done() and not second.done() and not resource.done()
+            assert first_request.headers["Authorization"] == "Bearer before-refresh"
+            assert all(request.headers["Authorization"] == "Bearer after-refresh" for request in next_requests)
+            assert all(
+                request.headers["x-agent-foundry-call-id"] == "parallel-call"
+                for request in [first_request, *next_requests]
+            )
+        finally:
+            release.set()
+            await asyncio.gather(first, second, resource)
+        for task in (first, second):
+            result = await task
+            assert isinstance(result, list)
+            assert result[0].text == "parallel-call"
+        assert len(server.requests_for("initialize")) == 1
+    finally:
+        release.set()
+        await toolbox.close()
+
+
+async def test_cancelled_close_keeps_http_client_alive_until_owner_finishes() -> None:
+    toolbox = FoundryToolbox(_FakeCredential(), url="https://h/toolboxes/tb/mcp")  # type: ignore
+    await _attach_loopback_transport(toolbox, _ToolboxLoopbackServer())
+    await _run_with_request_context("closing-call", toolbox.connect)
+    client = toolbox._httpx_client
+    assert client is not None
+    closing = asyncio.Event()
+    release = asyncio.Event()
+    close_on_owner = toolbox._close_on_owner
+
+    async def hold_teardown() -> None:
+        closing.set()
+        await release.wait()
+        await close_on_owner()
+
+    with patch.object(toolbox, "_close_on_owner", side_effect=hold_teardown):
+        task = asyncio.create_task(toolbox.close())
+        try:
+            await asyncio.wait_for(closing.wait(), timeout=5)
+            task.cancel()
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert not task.done()
+            assert not client.is_closed
+        finally:
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=5)
+    assert client.is_closed
+    assert toolbox._httpx_client is None
+    assert not toolbox.is_connected
+
+
+async def test_toolbox_close_fences_recovery_before_waiting_for_its_barrier() -> None:
+    from anyio import ClosedResourceError
+
+    toolbox = FoundryToolbox(_FakeCredential(), url="https://h/toolboxes/tb/mcp")  # type: ignore
+    server = _ToolboxLoopbackServer()
+    await _attach_loopback_transport(toolbox, server)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fail_call(*args: Any, **kwargs: Any) -> None:
+        started.set()
+        await release.wait()
+        raise ClosedResourceError
+
+    tasks: list[asyncio.Task[Any]] = []
+    try:
+        async with asyncio.timeout(5):
+            await _run_with_request_context("closing-call", toolbox.connect)
+            connection = toolbox._require_connection()
+            assert connection.client is not None
+            with patch.object(connection.client, "call_tool", side_effect=fail_call):
+                calling = asyncio.create_task(
+                    _run_with_request_context("closing-call", lambda: toolbox.call_tool("record", marker="no-retry"))
+                )
+                tasks.append(calling)
+                await started.wait()
+                closing = asyncio.create_task(toolbox.close())
+                tasks.append(closing)
+                await asyncio.sleep(0)
+                assert not closing.done()
+                release.set()
+                await closing
+                with pytest.raises(ToolExecutionException, match="interrupted by close"):
+                    await calling
+            assert not toolbox.is_connected
+            assert toolbox._httpx_client is None
+            assert len(server.requests_for("initialize")) == 1
+            assert not server.requests_for("tools/call")
+    finally:
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await toolbox.close()
 
 
 def test_resolve_endpoint_prefers_explicit_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -658,13 +791,13 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     assert provider() is resource_session
     first_uri = AnyUrl("skill://first")
     await resource_session.read_resource(cast(str, first_uri))
-    sentinel_session.read_resource.assert_awaited_once_with(first_uri)
+    sentinel_session.read_resource.assert_awaited_once_with(str(first_uri))
 
     new_session = AsyncMock()
     toolbox.session = new_session  # type: ignore
     second_uri = AnyUrl("skill://second")
     await resource_session.read_resource(cast(str, second_uri))
-    new_session.read_resource.assert_awaited_once_with(second_uri)
+    new_session.read_resource.assert_awaited_once_with(str(second_uri))
     # No archive options set -> MCPSkillsSource is constructed with defaults.
     assert captured_kwargs == {}
 

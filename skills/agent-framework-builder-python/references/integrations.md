@@ -31,6 +31,24 @@ For Foundry, the derived OpenAI connection is owned by the connector even when t
 Do not share a connector-owned connection across overlapping agent contexts; inject an externally managed SDK
 client when its lifetime must extend beyond any one agent context. Do not assume a closed SDK connection can reopen.
 
+### MCP HTTP concurrency
+
+`MCPStreamableHTTPTool` and `FoundryToolbox` keep a separate header snapshot on every outgoing HTTP request.
+Calls with identical effective static and dynamic headers can run concurrently on one MCP session. A change to
+any effective header, including the Foundry platform call ID, waits for active operations and reconnects before
+refreshing discovery. Token refresh performed by HTTP authentication remains request-local.
+
+Discovery, reset, close, and connection recovery are exclusive. Do not reset, close, refresh discovery, or change
+header identity from a callback that must finish an active operation on that same tool; it raises an error rather
+than waiting on itself. Concurrent calls still share the server's MCP session state, so applications must order
+state-dependent operations themselves. Cancelling a local call does not guarantee that its remote side effects stop.
+Caller-owned MCP clients and sessions remain caller-owned; Agent Framework does not recreate them.
+
+`request_timeout` supplies separate budgets for header admission/session reconciliation and connection recovery,
+not a deadline for the entire call. `None` disables those budgets; caller-owned MCP clients keep their own RPC
+timeouts. Cleanup may continue after timeout or cancellation. An explicit `close()` interrupts older recovery
+without preventing a later explicit `connect()`.
+
 ## Capability categories
 
 - Use function tools for application-owned code and MCP for external tool services.
