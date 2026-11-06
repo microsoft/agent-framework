@@ -12,8 +12,10 @@ Integration with TypeSafe AI System One models, including Jev.
 ## Behavioral Contract
 
 - Calls always return structured `SystemOneResponse` data. This provider does not generate free-form chat text.
-- Every call requires `response_format` to contain at least one TypeSafe `Noul`, `Choice`, or `Score` question.
-- Streaming and non-text message content are not supported.
+- Every call requires `response_format` to contain at least one TypeSafe `Noul`, `Choice`, `Score`, or `Box` question.
+- Streaming is not supported. Non-text message content is rejected, except inline image data content, which is
+  sent as TypeSafe image assets. Requests with an image or a `Box` question send the
+  `TypeSafe-Danger-Zone-Images: true` opt-in header. Remote image URIs are rejected.
 - Tool calling defaults to one call per run; callers can opt into sequential round trips with
   `FunctionInvocationConfiguration.max_function_calls`. Closed-set schemas support constants, enums/Literals,
   booleans, and arrays of enums/Literals. Optional supported arguments use a presence question so omitted values
