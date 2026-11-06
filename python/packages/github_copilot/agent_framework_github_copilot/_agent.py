@@ -744,6 +744,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # are forwarded verbatim to the Copilot SDK by _build_session_kwargs.
         self._default_options = opts
         self._started = False
+        self._start_lock = asyncio.Lock()
         self._file_hooks_warning_emitted = False
 
     async def __aenter__(self) -> Self:
@@ -769,39 +770,45 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if self._started:
             return
 
-        if self._client is None:
-            cli_path = self._settings.get("cli_path") or None
-            log_level = self._settings.get("log_level") or None
-            base_directory = self._settings.get("base_directory") or None
-            telemetry = self._settings.get("telemetry") or None
-            if isinstance(telemetry, str):
-                telemetry = _parse_telemetry_config(telemetry)
+        # Only one start may run at a time, so a failed check can't stop a client that another
+        # concurrent start has already accepted.
+        async with self._start_lock:
+            if self._started:
+                return
 
-            client_kwargs: dict[str, Any] = {}
-            if cli_path:
-                client_kwargs["connection"] = RuntimeConnection.for_stdio(path=cli_path)
-            if log_level:
-                client_kwargs["log_level"] = log_level
-            if base_directory:
-                client_kwargs["base_directory"] = base_directory
-            if telemetry:
-                client_kwargs["telemetry"] = telemetry
-            self._client = CopilotClient(**client_kwargs)
+            if self._client is None:
+                cli_path = self._settings.get("cli_path") or None
+                log_level = self._settings.get("log_level") or None
+                base_directory = self._settings.get("base_directory") or None
+                telemetry = self._settings.get("telemetry") or None
+                if isinstance(telemetry, str):
+                    telemetry = _parse_telemetry_config(telemetry)
 
-        try:
-            await self._client.start()
-        except Exception as ex:
-            raise AgentException(f"Failed to start GitHub Copilot client: {ex}") from ex
+                client_kwargs: dict[str, Any] = {}
+                if cli_path:
+                    client_kwargs["connection"] = RuntimeConnection.for_stdio(path=cli_path)
+                if log_level:
+                    client_kwargs["log_level"] = log_level
+                if base_directory:
+                    client_kwargs["base_directory"] = base_directory
+                if telemetry:
+                    client_kwargs["telemetry"] = telemetry
+                self._client = CopilotClient(**client_kwargs)
 
-        try:
-            await _ensure_supported_cli_version(self._client)
-        except AgentException:
-            if self._owns_client:
-                with contextlib.suppress(Exception):
-                    await self._client.stop()
-            raise
+            try:
+                await self._client.start()
+            except Exception as ex:
+                raise AgentException(f"Failed to start GitHub Copilot client: {ex}") from ex
 
-        self._started = True
+            try:
+                await _ensure_supported_cli_version(self._client)
+            except BaseException:
+                if self._owns_client:
+                    with contextlib.suppress(Exception):
+                        await self._client.stop()
+                raise
+
+            self._started = True
 
     async def stop(self) -> None:
         """Stop the Copilot client and clean up resources.

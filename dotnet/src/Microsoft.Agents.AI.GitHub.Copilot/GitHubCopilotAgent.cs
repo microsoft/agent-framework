@@ -39,6 +39,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     private readonly bool _ownsClient;
     private readonly JsonSerializerOptions _jsonSerializerOptions;
     private readonly ILogger _logger;
+    private readonly SemaphoreSlim _startLock = new(1, 1);
     private volatile bool _cliVersionChecked;
 
     /// <summary>
@@ -312,32 +313,71 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         {
             await this._copilotClient.DisposeAsync().ConfigureAwait(false);
         }
+
+        this._startLock.Dispose();
     }
 
     private async Task EnsureClientStartedAsync(CancellationToken cancellationToken)
     {
-        await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
-
         if (this._cliVersionChecked)
         {
+            await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        string? version;
+        // Only one start and version check may run at a time, so a failed check can't stop a client
+        // that another concurrent run has already accepted.
+        await this._startLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            GetStatusResponse status = await this._copilotClient.GetStatusAsync(cancellationToken).ConfigureAwait(false);
-            version = status?.Version;
+            await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
+
+            if (this._cliVersionChecked)
+            {
+                return;
+            }
+
+            try
+            {
+                string? version;
+                try
+                {
+                    GetStatusResponse status = await this._copilotClient.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+                    version = status?.Version;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    throw CopilotCliVersionGuard.CreateUndeterminedVersionException(ex);
+                }
+
+                CopilotCliVersionGuard.EnsureSupported(version);
+            }
+            catch (InvalidOperationException) when (this._ownsClient)
+            {
+                await this.StopOwnedClientAfterFailedCheckAsync().ConfigureAwait(false);
+                throw;
+            }
+
+            // Only a successful check is remembered, so a failed check is repeated on the next run.
+            this._cliVersionChecked = true;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        finally
         {
-            throw CopilotCliVersionGuard.CreateUndeterminedVersionException(ex);
+            this._startLock.Release();
         }
+    }
 
-        CopilotCliVersionGuard.EnsureSupported(version);
-
-        // Only a successful check is remembered, so a failed check is repeated on the next run.
-        this._cliVersionChecked = true;
+    private async Task StopOwnedClientAfterFailedCheckAsync()
+    {
+        try
+        {
+            await this._copilotClient.StopAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Keep the original version check error; a failure to stop is only logged.
+            this._logger.LogFailedToStopClientAfterVersionCheck(ex);
+        }
     }
 
     /// <summary>

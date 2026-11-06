@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import base64
 import inspect
 import json
@@ -452,6 +453,45 @@ class TestGitHubCopilotAgentLifecycle:
                 await agent.start()
 
             mock_client.stop.assert_called_once()
+
+    async def test_start_stops_owned_client_when_cancelled_during_version_check(self) -> None:
+        """Test that an agent-owned client is stopped when start is cancelled during the version check."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            mock_client.stop = AsyncMock()
+            mock_client.get_status = AsyncMock(side_effect=asyncio.CancelledError())
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            with pytest.raises(asyncio.CancelledError):
+                await agent.start()
+
+            mock_client.stop.assert_called_once()
+            assert agent._started is False  # type: ignore
+
+    async def test_start_concurrent_calls_check_version_once(self) -> None:
+        """Test that concurrent start calls start the client and check the CLI version only once."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            mock_client.stop = AsyncMock()
+
+            async def get_status() -> MagicMock:
+                await asyncio.sleep(0)
+                return MagicMock(version=SUPPORTED_CLI_VERSION)
+
+            mock_client.get_status = AsyncMock(side_effect=get_status)
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await asyncio.gather(agent.start(), agent.start())
+
+            MockClient.assert_called_once()
+            mock_client.start.assert_called_once()
+            mock_client.get_status.assert_called_once()
+            mock_client.stop.assert_not_called()
+            assert agent._started is True  # type: ignore
 
     async def test_start_creates_client_with_options(self) -> None:
         """Test that start creates client with cli_path and log_level from settings."""
