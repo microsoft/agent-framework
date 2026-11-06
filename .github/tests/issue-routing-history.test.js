@@ -21,8 +21,9 @@ function published({ job = 'success', step = 'success' } = {}) {
   return [{ name: 'safe_outputs', conclusion: job, steps: [{ name: ROUTED_STEP, conclusion: step }] }];
 }
 
-function mocks(runs, jobsById, { eventName = 'issues', comment } = {}) {
+function mocks(runs, jobsById, { eventName = 'issues', comment, totalCount = runs.length } = {}) {
   const jobCalls = [];
+  const runPage = Object.assign([...runs], { total_count: totalCount });
   return {
     jobCalls,
     context: {
@@ -32,10 +33,13 @@ function mocks(runs, jobsById, { eventName = 'issues', comment } = {}) {
       payload: comment ? { comment } : {},
     },
     github: {
-      paginate: async (endpoint, params) => endpoint(params),
+      paginate: async (endpoint, params, map) => {
+        const data = await endpoint(params);
+        return map ? map({ data }) : data;
+      },
       rest: {
         actions: {
-          listWorkflowRuns: async () => runs,
+          listWorkflowRuns: async () => runPage,
           listJobsForWorkflowRun: async ({ run_id }) => {
             jobCalls.push(run_id);
             return jobsById[run_id] ?? [];
@@ -68,6 +72,12 @@ describe('Issue routing history', () => {
     const routed = await findRoutedRuns({ ...input, issue });
     assert.deepEqual(routed.map(entry => entry.id), [1, 5]);
     assert.deepEqual(input.jobCalls, [1, 4, 5, 6]);
+  });
+
+  it('stops when GitHub cannot return the full run history', async () => {
+    const input = mocks([run(1)], { 1: published() }, { totalCount: 1001 });
+    await assert.rejects(findRoutedRuns({ ...input, issue }), /Too many workflow runs \(1001\)/);
+    assert.deepEqual(input.jobCalls, []);
   });
 
   it('requires the reply time for comment events', async () => {

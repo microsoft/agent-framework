@@ -1,19 +1,29 @@
 // Copyright (c) Microsoft. All rights reserved.
 
-// This step only runs when publication is allowed and the run is not a preview,
+// This step only runs when issue updates are allowed and the run is not a preview,
 // so a successful result means the run really routed the issue.
 const ROUTED_STEP = "Find this run's checked evidence";
 const MAX_REPLY_RUNS = 3;
+// GitHub returns at most this many runs for a filtered search.
+const MAX_SEARCH_RESULTS = 1000;
 
 // Find earlier runs of this workflow that routed the issue, oldest first.
 // Runs queue one at a time, so every earlier run has finished by now.
 async function findRoutedRuns({ github, context, issue }) {
+  let total = 0;
   const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
     ...context.repo,
     workflow_id: 'issue-routing.lock.yml',
     created: `>=${issue.created_at}`,
     per_page: 100,
+  }, response => {
+    total = response.data.total_count ?? 0;
+    return response.data;
   });
+  // Missing runs could hide an earlier routing, so stop rather than guess.
+  if (total > MAX_SEARCH_RESULTS) {
+    throw new Error(`Too many workflow runs (${total}) since this issue was opened to check its routing history. Run the workflow manually instead.`);
+  }
   const candidates = runs
     .filter(run => run.id !== context.runId &&
       run.display_title === `Issue Routing #${issue.number}` &&

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft. All rights reserved.
 
-// Search all repository runs for history, or just one run for a temporary transfer.
-// Both paths read every results page and ignore unrelated or expired artifacts.
+// Search all runs for evidence saved earlier, or only this run for its temporary copy.
+// Both read every page of results and ignore unrelated or expired uploads.
 async function listMatchingArtifacts({ github, context, name, runId }) {
   const endpoint = runId === undefined
     ? github.rest.actions.listArtifactsForRepo
@@ -17,13 +17,13 @@ async function listMatchingArtifacts({ github, context, name, runId }) {
 function artifactSize(artifact) {
   const size = artifact.size_in_bytes;
   if (!Number.isSafeInteger(size) || size < 1) {
-    throw new Error(`Routing artifact ${artifact.id} has an invalid size.`);
+    throw new Error(`Evidence upload ${artifact.id} has an invalid size.`);
   }
   return size;
 }
 
 // Before investigation, find the newest usable evidence from an earlier issue run.
-async function findPreviousRoutingArtifact({ github, context, core, issueNumber }) {
+async function findEarlierEvidence({ github, context, core, issueNumber }) {
   const number = String(issueNumber);
   if (!/^[1-9][0-9]*$/.test(number) || !Number.isSafeInteger(Number(number))) {
     throw new Error('Issue number must be a positive, safe integer.');
@@ -34,7 +34,7 @@ async function findPreviousRoutingArtifact({ github, context, core, issueNumber 
   const artifacts = await listMatchingArtifacts({ github, context, name });
   artifacts.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id);
 
-  // Artifact names alone cannot prove which issue or workflow produced the files.
+  // Upload names alone cannot prove which issue or workflow produced the files.
   for (const artifact of artifacts) {
     if (artifact.workflow_run?.repository_id !== repository.id ||
         artifact.workflow_run.id >= context.runId) {
@@ -42,7 +42,7 @@ async function findPreviousRoutingArtifact({ github, context, core, issueNumber 
     }
 
     // Earlier evidence must come from a successful default-branch run for this issue,
-    // not merely an artifact with a familiar name.
+    // not merely an upload with a familiar name.
     const { data: run } = await github.rest.actions.getWorkflowRun({
       ...context.repo,
       run_id: artifact.workflow_run.id,
@@ -55,13 +55,13 @@ async function findPreviousRoutingArtifact({ github, context, core, issueNumber 
         run.status !== 'completed' || run.conclusion !== 'success' ||
         !/^[a-f0-9]{40}$/.test(run.head_sha) ||
         artifact.workflow_run.head_sha !== run.head_sha) {
-      core.warning(`Ignoring artifact ${artifact.id}: its source run does not match this issue's trusted routing workflow.`);
+      core.warning(`Ignoring evidence upload ${artifact.id}: its source run does not match this issue's trusted routing workflow.`);
       continue;
     }
 
     // ZIP metadata can exceed this budget even when the original files fit.
     if (artifactSize(artifact) > 11 * 1024 * 1024) {
-      core.warning(`Ignoring artifact ${artifact.id}: it exceeds the 11 MiB download limit.`);
+      core.warning(`Ignoring evidence upload ${artifact.id}: it exceeds the 11 MiB download limit.`);
       continue;
     }
     core.info(`Using ${name} from run ${run.id}, commit ${run.head_sha}.`);
@@ -78,12 +78,12 @@ async function findPreviousRoutingArtifact({ github, context, core, issueNumber 
     };
   }
 
-  core.info(`No retained bundle from an earlier successful routing run was found for issue #${number}.`);
+  core.info(`No evidence saved by an earlier successful run was found for issue #${number}.`);
   return null;
 }
 
-// During publishing, retrieve this run's checked files, not an earlier issue bundle.
-async function findTransferredRoutingArtifact({ github, context, core }) {
+// When publishing, get this run's checked evidence, not evidence saved by an earlier run.
+async function findThisRunsEvidence({ github, context, core }) {
   if (!Number.isSafeInteger(context.runId) || context.runId < 1) {
     throw new Error('The current workflow run ID must be a positive, safe integer.');
   }
@@ -96,9 +96,9 @@ async function findTransferredRoutingArtifact({ github, context, core }) {
   }
   // Bound the ZIP too, allowing space for the checked file/path metadata.
   if (artifactSize(artifact) > 14 * 1024 * 1024) {
-    throw new Error('The transferred routing bundle has an excessive archive size.');
+    throw new Error('The evidence copy from the agent job is too large.');
   }
   return artifact.id;
 }
 
-module.exports = { findPreviousRoutingArtifact, findTransferredRoutingArtifact };
+module.exports = { findEarlierEvidence, findThisRunsEvidence };
