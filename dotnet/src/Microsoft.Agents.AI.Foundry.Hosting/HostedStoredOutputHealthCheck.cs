@@ -158,5 +158,5 @@ internal sealed class HostedStoredOutputHealthCheck : IHealthCheck
     /// <summary>
     /// Every agent this container can serve: the ones registered under a name, plus the default.
     /// </summary>
-    private List<AIAgent> ResolveAgents() => FoundryHostingExtensions.ResolveRegisteredAgents(this._serviceProvider);
+    private List<AIAgent> ResolveAgents() => ServiceCollectionExtensions.ResolveRegisteredAgents(this._serviceProvider);
 }

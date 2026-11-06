@@ -239,7 +239,7 @@ public class ServiceCollectionExtensionsTests
     public void AddFoundryResponses_NullServices_ThrowsArgumentNullException()
     {
         Assert.Throws<ArgumentNullException>(
-            () => FoundryHostingExtensions.AddFoundryResponses((IServiceCollection)null!));
+            () => ServiceCollectionExtensions.AddFoundryResponses(null!));
     }
 
     [Fact]
@@ -313,7 +313,7 @@ public class ServiceCollectionExtensionsTests
     {
         var mockAgent = new Mock<AIAgent>();
 
-        var result = FoundryHostingExtensions.ApplyOpenTelemetry(mockAgent.Object);
+        var result = ServiceCollectionExtensions.ApplyOpenTelemetry(mockAgent.Object);
 
         Assert.NotNull(result.GetService<OpenTelemetryAgent>());
     }
@@ -326,7 +326,7 @@ public class ServiceCollectionExtensionsTests
             .UseOpenTelemetry()
             .Build();
 
-        var result = FoundryHostingExtensions.ApplyOpenTelemetry(instrumented);
+        var result = ServiceCollectionExtensions.ApplyOpenTelemetry(instrumented);
 
         Assert.Same(instrumented, result);
     }
@@ -338,7 +338,7 @@ public class ServiceCollectionExtensionsTests
         var mockAgent = new Mock<AIAgent>();
 
         // Act
-        var result = FoundryHostingExtensions.TryApplyUserAgent(mockAgent.Object);
+        var result = ServiceCollectionExtensions.TryApplyUserAgent(mockAgent.Object);
 
         // Assert
         Assert.Same(mockAgent.Object, result);
@@ -355,7 +355,7 @@ public class ServiceCollectionExtensionsTests
         mockAgent.Setup(a => a.GetService(typeof(IChatClient), It.IsAny<object?>())).Returns(mockChatClient.Object);
 
         // Act
-        var result = FoundryHostingExtensions.TryApplyUserAgent(mockAgent.Object);
+        var result = ServiceCollectionExtensions.TryApplyUserAgent(mockAgent.Object);
 
         // Assert
         Assert.Same(mockAgent.Object, result);
@@ -436,7 +436,7 @@ public class ServiceCollectionExtensionsTests
             static builder => builder.Configuration.AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
-                    [FoundryHostingExtensions.FoundryHostingEnvironmentKey] = "true",
+                    [ServiceCollectionExtensions.FoundryHostingEnvironmentKey] = "true",
                 }));
         using var request = new HttpRequestMessage(HttpMethod.Post, "/responses")
         {

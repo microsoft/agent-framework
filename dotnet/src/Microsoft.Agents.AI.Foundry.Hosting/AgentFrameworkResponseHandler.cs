@@ -963,14 +963,14 @@ internal sealed class AgentFrameworkResponseHandler : ResponseHandler
 
     private AIAgent PrepareResolvedAgent(AIAgent agent, string sessionStorageIdentity)
     {
-        FoundryHostingExtensions.TryApplyUserAgent(agent);
+        ServiceCollectionExtensions.TryApplyUserAgent(agent);
 
-        AIAgent prepared = FoundryHostingExtensions.ApplyWorkflowCheckpointing(
+        AIAgent prepared = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(
             agent,
             this._serviceProvider.GetService<ILoggerFactory>());
         prepared = new FoundryHostingAgent(prepared, sessionStorageIdentity);
 
-        return FoundryHostingExtensions.ApplyOpenTelemetry(prepared);
+        return ServiceCollectionExtensions.ApplyOpenTelemetry(prepared);
     }
 
     /// <summary>

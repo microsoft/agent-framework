@@ -23,7 +23,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 /// <summary>
 /// Tests that verify OTel spans are actually emitted and captured through the
 /// <see cref="AgentFrameworkResponseHandler"/> pipeline when
-/// <see cref="FoundryHostingExtensions.ApplyOpenTelemetry"/> wraps the resolved agent.
+/// <see cref="ServiceCollectionExtensions.ApplyOpenTelemetry"/> wraps the resolved agent.
 /// </summary>
 public class AgentFrameworkResponseHandlerTelemetryTests
 {

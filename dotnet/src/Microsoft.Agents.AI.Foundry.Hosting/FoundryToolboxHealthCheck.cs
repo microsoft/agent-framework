@@ -15,9 +15,9 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <summary>
 /// Adapts <see cref="FoundryToolboxService.StartupStatus"/> to the AspNetCore
 /// HealthChecks pipeline so the <c>GET /readiness</c> probe (mapped by
-/// <see cref="FoundryHostingExtensions.MapFoundryResponses"/>) reflects whether
+/// <see cref="EndpointRouteBuilderExtensions.MapFoundryResponses"/>) reflects whether
 /// pre-registered toolbox connections are usable. Registered automatically by
-/// <see cref="FoundryHostingExtensions.AddFoundryToolboxes(IServiceCollection, TokenCredential, string[])"/>
+/// <see cref="ServiceCollectionExtensions.AddFoundryToolboxes(IServiceCollection, TokenCredential, string[])"/>
 /// and its overloads.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]

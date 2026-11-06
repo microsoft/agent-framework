@@ -67,7 +67,7 @@ internal sealed class HostedWorkflowCheckpointingHealthCheck : IHealthCheck
         List<string> incompatibleAgents = [];
         var checkedAgents = 0;
 
-        foreach (var agent in FoundryHostingExtensions.ResolveRegisteredAgents(this._serviceProvider))
+        foreach (var agent in ServiceCollectionExtensions.ResolveRegisteredAgents(this._serviceProvider))
         {
             if (agent.GetService<WorkflowAgentMetadata>() is not { } metadata)
             {
@@ -75,7 +75,7 @@ internal sealed class HostedWorkflowCheckpointingHealthCheck : IHealthCheck
             }
 
             checkedAgents++;
-            AIAgent redirected = FoundryHostingExtensions.ApplyWorkflowCheckpointing(
+            AIAgent redirected = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(
                 agent,
                 this._serviceProvider.GetService<ILoggerFactory>());
 

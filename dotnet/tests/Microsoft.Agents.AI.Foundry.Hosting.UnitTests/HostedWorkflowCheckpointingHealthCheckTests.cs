@@ -113,7 +113,7 @@ public class HostedWorkflowCheckpointingHealthCheckTests
         AIAgent agent = BuildWorkflowAgent(executionEnvironment: null);
 
         // Act
-        AIAgent result = FoundryHostingExtensions.ApplyWorkflowCheckpointing(agent);
+        AIAgent result = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(agent);
 
         // Assert: a redirected copy is returned even locally; the SDK chooses its local backend.
         Assert.NotSame(agent, result);

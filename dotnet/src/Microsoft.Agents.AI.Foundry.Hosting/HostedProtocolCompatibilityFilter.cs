@@ -32,7 +32,7 @@ internal sealed class HostedProtocolCompatibilityFilter : IEndpointFilter
         _ = Throw.IfNull(configuration);
         this._logger = Throw.IfNull(logger);
         this._isHosted = !string.IsNullOrEmpty(
-            configuration[FoundryHostingExtensions.FoundryHostingEnvironmentKey]);
+            configuration[ServiceCollectionExtensions.FoundryHostingEnvironmentKey]);
     }
 
     /// <inheritdoc/>

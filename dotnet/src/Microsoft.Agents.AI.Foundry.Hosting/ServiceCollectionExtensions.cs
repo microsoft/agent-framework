@@ -32,9 +32,9 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// using the Azure AI Responses Server SDK.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public static partial class FoundryHostingExtensions
+public static class ServiceCollectionExtensions
 {
-    private const string ResponsesServerSettingsSectionName = "ResponsesServer";
+    internal const string ResponsesServerSettingsSectionName = "ResponsesServer";
 
     /// <summary>
     /// Registers the Azure AI Responses Server SDK and the Agent Framework response handler
@@ -44,7 +44,7 @@ public static partial class FoundryHostingExtensions
     /// <remarks>
     /// <para>
     /// This overload is for local or non-hosted scenarios. Foundry hosted applications must call
-    /// <see cref="AddFoundryResponses(IHostApplicationBuilder, FoundryResponsesOptions)"/>
+    /// <see cref="HostApplicationBuilderExtensions.AddFoundryResponses(IHostApplicationBuilder, FoundryResponsesOptions)"/>
     /// so AgentServer can bind response and task storage from the host configuration.
     /// </para>
     /// <para>
@@ -162,7 +162,8 @@ public static partial class FoundryHostingExtensions
     /// and a workflow agent writing its checkpoints somewhere hosting does not manage.
     /// </summary>
     /// <remarks>
-    /// The checks are registered on the same <c>/readiness</c> pipeline that <see cref="MapFoundryResponses"/>
+    /// The checks are registered on the same <c>/readiness</c> pipeline that
+    /// <see cref="EndpointRouteBuilderExtensions.MapFoundryResponses"/>
     /// maps, so such a container never takes traffic.
     /// <c>AddCheck</c> does not dedupe by name, so a repeated registration is guarded here.
     /// Resilience flags on <see cref="FoundryResponsesOptions"/> are forwarded to
@@ -194,7 +195,7 @@ public static partial class FoundryHostingExtensions
         return copy;
     }
 
-    private static void RegisterResponseHandler(IServiceCollection services)
+    internal static void RegisterResponseHandler(IServiceCollection services)
     {
         services.TryAddSingleton<ResponseHandler>(serviceProvider =>
             new AgentFrameworkResponseHandler(
@@ -204,7 +205,7 @@ public static partial class FoundryHostingExtensions
                 serviceProvider.GetService<FoundryToolboxService>()));
     }
 
-    private static void ConfigureFoundryResponsesOptions(
+    internal static void ConfigureFoundryResponsesOptions(
         IServiceCollection services,
         FoundryResponsesOptions configuredOptions,
         bool includeServerOptions,
@@ -373,7 +374,7 @@ public static partial class FoundryHostingExtensions
         return copy;
     }
 
-    private static void MarkFeatureUsed(FeatureIndex feature = FeatureIndex.FoundryHosting)
+    internal static void MarkFeatureUsed(FeatureIndex feature = FeatureIndex.FoundryHosting)
     {
 #pragma warning disable MAAI001
         FeatureUsage.MarkUsed((int)feature);
@@ -407,7 +408,7 @@ public static partial class FoundryHostingExtensions
     /// a host that registers several agents naturally does, so the second and later calls are
     /// skipped here.
     /// </remarks>
-    private static bool AddResponsesServerOnce(
+    internal static bool AddResponsesServerOnce(
         IServiceCollection services,
         IHostApplicationBuilder? host,
         FoundryResponsesOptions configuredOptions,
@@ -470,7 +471,7 @@ public static partial class FoundryHostingExtensions
     /// durable state store, which survives replacement and is readable by every instance. Anywhere
     /// else it uses the SDK's local state-store fallback under <c>~/.agentserver/state_stores</c>.
     /// </remarks>
-    private static FoundryAgentSessionStore CreateDefaultAgentSessionStore() =>
+    internal static FoundryAgentSessionStore CreateDefaultAgentSessionStore() =>
         new(credential: CreateStateStoreCredential());
 
     /// <summary>
@@ -537,7 +538,7 @@ public static partial class FoundryHostingExtensions
     /// server. Registration is idempotent across repeated <c>AddFoundryResponses</c> calls.
     /// </para>
     /// </remarks>
-    private static void ConfigureFoundryListenPort(IServiceCollection services)
+    internal static void ConfigureFoundryListenPort(IServiceCollection services)
     {
         if (services.Any(static d => d.ServiceType == typeof(FoundryListenPortMarker)))
         {

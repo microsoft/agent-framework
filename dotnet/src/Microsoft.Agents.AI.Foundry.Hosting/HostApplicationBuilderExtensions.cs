@@ -1,14 +1,20 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
-public static partial class FoundryHostingExtensions
+/// <summary>
+/// Extension methods for registering Foundry Responses hosting on an <see cref="IHostApplicationBuilder"/>.
+/// </summary>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+public static class HostApplicationBuilderExtensions
 {
     /// <summary>
     /// Registers the Azure AI Responses Server SDK and the Agent Framework response handler
@@ -32,21 +38,21 @@ public static partial class FoundryHostingExtensions
     {
         _ = Throw.IfNull(host);
         FoundryResponsesOptions configuredOptions = ResolveFoundryResponsesOptions(host, options);
-        bool serverAdded = AddResponsesServerOnce(
+        bool serverAdded = ServiceCollectionExtensions.AddResponsesServerOnce(
             host.Services,
             host,
             configuredOptions,
             options is not null);
         host.Services.AddHealthChecks();
-        ConfigureFoundryListenPort(host.Services);
-        ConfigureFoundryResponsesOptions(
+        ServiceCollectionExtensions.ConfigureFoundryListenPort(host.Services);
+        ServiceCollectionExtensions.ConfigureFoundryResponsesOptions(
             host.Services,
             configuredOptions,
             includeServerOptions: serverAdded,
             applyOptions: serverAdded || options is not null);
-        host.Services.TryAddSingleton<AgentSessionStore>(_ => CreateDefaultAgentSessionStore());
-        RegisterResponseHandler(host.Services);
-        MarkFeatureUsed();
+        host.Services.TryAddSingleton<AgentSessionStore>(_ => ServiceCollectionExtensions.CreateDefaultAgentSessionStore());
+        ServiceCollectionExtensions.RegisterResponseHandler(host.Services);
+        ServiceCollectionExtensions.MarkFeatureUsed();
         return host;
     }
 
@@ -74,19 +80,19 @@ public static partial class FoundryHostingExtensions
         _ = Throw.IfNull(agent);
 
         FoundryResponsesOptions configuredOptions = ResolveFoundryResponsesOptions(host, options);
-        bool serverAdded = AddResponsesServerOnce(
+        bool serverAdded = ServiceCollectionExtensions.AddResponsesServerOnce(
             host.Services,
             host,
             configuredOptions,
             options is not null);
         host.Services.AddHealthChecks();
-        ConfigureFoundryListenPort(host.Services);
-        ConfigureFoundryResponsesOptions(
+        ServiceCollectionExtensions.ConfigureFoundryListenPort(host.Services);
+        ServiceCollectionExtensions.ConfigureFoundryResponsesOptions(
             host.Services,
             configuredOptions,
             includeServerOptions: serverAdded,
             applyOptions: serverAdded || options is not null);
-        agentSessionStore ??= CreateDefaultAgentSessionStore();
+        agentSessionStore ??= ServiceCollectionExtensions.CreateDefaultAgentSessionStore();
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
         {
@@ -97,8 +103,8 @@ public static partial class FoundryHostingExtensions
         host.Services.TryAddSingleton(agent);
         host.Services.TryAddSingleton(agentSessionStore);
 
-        RegisterResponseHandler(host.Services);
-        MarkFeatureUsed();
+        ServiceCollectionExtensions.RegisterResponseHandler(host.Services);
+        ServiceCollectionExtensions.MarkFeatureUsed();
         return host;
     }
 
@@ -108,7 +114,7 @@ public static partial class FoundryHostingExtensions
     {
         FoundryResponsesOptions options = new();
         IConfigurationSection section =
-            host.Configuration.GetSection(ResponsesServerSettingsSectionName);
+            host.Configuration.GetSection(ServiceCollectionExtensions.ResponsesServerSettingsSectionName);
         if (bool.TryParse(section[nameof(FoundryResponsesOptions.ResilientBackground)], out bool resilientBackground))
         {
             options.ResilientBackground = resilientBackground;

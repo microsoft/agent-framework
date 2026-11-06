@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using Azure.AI.AgentServer.Responses;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -8,11 +9,16 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
-public static partial class FoundryHostingExtensions
+/// <summary>
+/// Extension methods for mapping Foundry Responses endpoints.
+/// </summary>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+public static class EndpointRouteBuilderExtensions
 {
     /// <summary>
     /// Maps the Responses API routes for the agent-framework handler to the endpoint routing pipeline.
@@ -53,7 +59,7 @@ public static partial class FoundryHostingExtensions
             endpoints.ServiceProvider.GetRequiredService<ILogger<HostedProtocolCompatibilityFilter>>()));
         responsesEndpoints.MapResponsesServer(prefix);
         MapReadinessIfMissing(endpoints);
-        MarkFeatureUsed();
+        ServiceCollectionExtensions.MarkFeatureUsed();
         return endpoints;
     }
 
