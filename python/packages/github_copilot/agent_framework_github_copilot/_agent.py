@@ -209,8 +209,8 @@ _MCP_TOOL_MESSAGE = (
     "connects to MCP servers itself, so a framework-managed MCPTool would keep none of its "
     "framework behavior. Configure the server natively instead, for example "
     "default_options={{'mcp_servers': {{'{name}': {{'type': 'stdio', 'command': 'python', "
-    "'args': ['server.py'], 'tools': ['*']}}}}}}, or use a ChatAgent, where the framework owns "
-    "the connection."
+    "'args': ['server.py'], 'tools': ['*']}}}}}}, or use an Agent with a chat client, where the "
+    "framework owns the connection."
 )
 
 

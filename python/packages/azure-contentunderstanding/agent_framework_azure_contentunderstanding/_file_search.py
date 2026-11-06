@@ -75,7 +75,7 @@ class _OpenAICompatBackend(FileSearchBackend):
 class OpenAIFileSearchBackend(_OpenAICompatBackend):
     """File search backend for OpenAI Responses API.
 
-    Use with ``OpenAIChatClient`` or ``AzureOpenAIResponsesClient``.
+    Use with ``OpenAIChatClient``, including when it targets Azure OpenAI through ``azure_endpoint``.
     Requires an ``AsyncOpenAI`` or ``AsyncAzureOpenAI`` client.
 
     Args:
