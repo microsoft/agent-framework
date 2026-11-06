@@ -249,7 +249,7 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
     """An Azure Search index with batch CRUD and vector/keyword-hybrid retrieval.
 
     Credentials are always caller-owned. Clients created here are closed by ``close()``
-    or the async context manager; injected clients are borrowed unless ``managed_client=True``.
+    or the async context manager; injected clients are always borrowed.
     Existing indexes are never updated by ``ensure_collection_exists``.
     """
 
@@ -289,9 +289,9 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
             credential: Caller-owned async Azure token or key credential.
             api_key: API key, falling back to AZURE_SEARCH_API_KEY.
             search_client: Borrowed document client; may be used without an index client.
-                Injected clients bypass settings and cannot be combined with connection or file overrides.
-            index_client: Borrowed index administration client, mutually exclusive with connection/file overrides.
-            managed_client: Explicitly take ownership of injected clients when True.
+                Injected clients take precedence over connection and file settings.
+            index_client: Borrowed index administration client; takes precedence over connection and file settings.
+            managed_client: Retained for compatibility; injected clients remain caller-owned.
             vector_search: Native SDK profiles, algorithms, vectorizers and compression.
             index_options: Native SDK SearchIndex configuration, excluding name/fields/vector_search.
             is_alias: Use an existing index alias; disallow index creation/deletion.
@@ -302,18 +302,12 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
         """
         if query_source_credential is not None and not callable(getattr(query_source_credential, "get_token", None)):
             raise TypeError("query_source_credential must be an Azure TokenCredential or AsyncTokenCredential.")
-        if (index_client is not None or search_client is not None) and any(
-            value is not None for value in (endpoint, credential, api_key, env_file_path, env_file_encoding)
-        ):
-            raise ValueError(
-                "Injected clients cannot be combined with endpoint, credential, api_key, or env_file options."
-            )
         super().__init__(
             record_type,
             definition=definition,
             collection_name=collection_name,
             embedding_generator=embedding_generator,
-            managed_client=managed_client if managed_client is not None else False,
+            managed_client=False,
         )
         if self.definition.key_field.is_auto_generated:
             raise NotImplementedError("Azure Search requires application-provided string keys.")
@@ -344,15 +338,11 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
                 env_file_encoding=env_file_encoding,
             )
             self._owned_clients.append(index_client)
-        elif index_client is not None and managed_client:
-            self._owned_clients.append(index_client)
         self.index_client = index_client
         if search_client is None:
             if index_client is None:
                 raise ValueError("An index_client or search_client is required.")
             search_client = index_client.get_search_client(self.collection_name, user_agent=get_user_agent())
-            self._owned_clients.append(search_client)
-        elif managed_client:
             self._owned_clients.append(search_client)
         self.search_client = search_client
         self.managed_client = bool(self._owned_clients)
@@ -908,7 +898,7 @@ class AzureAISearchStore(BaseVectorStore):
     """Factory and index administration for an Azure AI Search service.
 
     Closing a store closes its collection clients and its owned index client.
-    Injected index clients and credentials remain caller-owned by default.
+    Injected index clients and credentials remain caller-owned.
     """
 
     def __init__(
@@ -931,10 +921,10 @@ class AzureAISearchStore(BaseVectorStore):
             endpoint: Service URL, or AZURE_SEARCH_ENDPOINT.
             credential: Caller-owned async token or key credential.
             api_key: Plain or masked key, or AZURE_SEARCH_API_KEY.
-            index_client: Borrowed SDK index client, mutually exclusive with connection/file overrides.
+            index_client: Borrowed SDK index client; takes precedence over connection and file settings.
                 Bypasses environment and file settings.
             embedding_generator: Default local embedding client for collections.
-            managed_client: Take ownership of an injected index client when True.
+            managed_client: Retained for compatibility; injected index clients remain caller-owned.
             allow_preview: Permit explicitly requested, SDK-supported preview capabilities.
             query_source_credential: Caller identity forwarded on every collection read.
             env_file_path: Optional settings file.
@@ -942,13 +932,7 @@ class AzureAISearchStore(BaseVectorStore):
         """
         if query_source_credential is not None and not callable(getattr(query_source_credential, "get_token", None)):
             raise TypeError("query_source_credential must be an Azure TokenCredential or AsyncTokenCredential.")
-        if index_client is not None and any(
-            value is not None for value in (endpoint, credential, api_key, env_file_path, env_file_encoding)
-        ):
-            raise ValueError(
-                "Injected clients cannot be combined with endpoint, credential, api_key, or env_file options."
-            )
-        owned = index_client is None or managed_client is True
+        owned = index_client is None
         super().__init__(embedding_generator=embedding_generator, managed_client=owned)
         self.index_client = (
             index_client
