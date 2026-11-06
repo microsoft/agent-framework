@@ -26,7 +26,8 @@ dotnet/samples/
 │   │   ├── google-gemini/             # Google Gemini provider sample
 │   │   ├── ollama/                    # Ollama provider sample
 │   │   ├── onnx/                      # ONNX Runtime provider sample
-│   │   └── openai/                    # OpenAI provider samples
+│   │   ├── openai/                    # OpenAI provider samples
+│   │   └── typesafe/                  # TypeSafe (Jev) chat client samples
 │   ├── AgentOpenTelemetry/            # OpenTelemetry integration
 │   ├── AgentSkills/                   # Agent skills patterns
 │   ├── AgentWithMemory/               # Memory providers (chat history, Mem0, Valkey, Foundry, AgentMemory)
