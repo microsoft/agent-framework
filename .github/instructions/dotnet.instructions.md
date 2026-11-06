@@ -21,7 +21,10 @@ other required CI checks will report.
   boundaries permit.
 - Group hosting extensions by receiver: service collection, host application builder, and endpoint route builder.
   Follow neighboring receiver-specific class names.
-- Name a service's options type `<ServiceName>Options`, using the full service type name; for example,
+- For methods or constructors whose optional parameters may grow over time, prefer an options object for those
+  parameters. Keep required parameters directly on the signature. Keep `CancellationToken` and `ILoggerFactory`
+  directly on the signature even when they are optional.
+- Name a class's options type `<ClassName>Options`, using the full class type name; for example,
   `FoundryToolboxService` uses `FoundryToolboxServiceOptions`.
 - Give boolean options a direct, unambiguous predicate. Avoid redundant combinations such as `Allow...Enabled`;
   distinguish similarly named concepts such as agent-service response storage versus hosting response storage.
@@ -35,15 +38,3 @@ other required CI checks will report.
 - Do not flag inherited or overridden names dictated by external contracts. Do not recommend breaking renames solely
   for stylistic consistency; explain the concrete discoverability or semantic problem. Treat unresolved namespace
   ordering or prefix choices as design questions, not established convention violations.
-
-## Service Options Review
-
-- For new or materially edited service APIs, accept the concrete options type rather than `IOptions<TOptions>`,
-  `IOptionsSnapshot<TOptions>`, or `IOptionsMonitor<TOptions>`. Resolve configuration in the registration layer and
-  pass the resulting options to the service.
-- Keep effective settings stable for the lifetime of a service, especially when it owns state initialized from
-  those settings. Do not introduce configuration-change subscriptions or re-read changing options during operations
-  unless live reconfiguration is an explicitly designed contract that preserves state consistency.
-- `IOptions<TOptions>` does not itself reload options; `IOptionsMonitor<TOptions>` supports change notifications,
-  and `IOptionsSnapshot<TOptions>` recomputes options per scope. The concrete-options convention keeps service APIs
-  independent of these mechanisms; it does not make mutable options objects immutable.
