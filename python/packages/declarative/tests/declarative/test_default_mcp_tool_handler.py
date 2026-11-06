@@ -310,6 +310,18 @@ def test_invalid_discovery_limit_raises(option: str, value: int) -> None:
             DefaultMCPToolHandler(max_discovery_items=value)
 
 
+def test_default_cache_size_does_not_warn(recwarn: pytest.WarningsRecorder) -> None:
+    DefaultMCPToolHandler()
+    DefaultMCPToolHandler(cache_max_size=None)
+    assert not recwarn
+
+
+@pytest.mark.parametrize("cache_max_size", [-1, 0, 1, 32])
+def test_deprecated_cache_size_warns(cache_max_size: int) -> None:
+    with pytest.warns(DeprecationWarning, match="cache_max_size is deprecated and has no effect"):
+        DefaultMCPToolHandler(cache_max_size=cache_max_size)
+
+
 async def test_list_tools_rejects_arguments_before_provider(mcp_tool_constructor: MagicMock) -> None:
     provider = AsyncMock()
     with pytest.raises(ValueError, match="The reserved MCP 'tools/list' operation does not accept tool arguments"):
