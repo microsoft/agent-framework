@@ -29,6 +29,10 @@ def _annotation_batch_from_update(
     update: ChatResponseUpdate | AgentResponseUpdate,
 ) -> tuple[str, list[Annotation]] | None:
     """Extract a message-linked annotation batch produced by this converter."""
+    # Replacement snapshots must keep their message identity during aggregation.
+    if update.merge_mode == "replace":
+        return None
+
     custom_event = (update.additional_properties or {}).get("ag_ui_custom_event")
     if not isinstance(custom_event, dict) or custom_event.get("name") != "annotations" or not update.message_id:
         return None

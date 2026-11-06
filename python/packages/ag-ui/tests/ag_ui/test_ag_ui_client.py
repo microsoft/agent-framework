@@ -1478,6 +1478,77 @@ class TestAGUIChatClient:
         assert isinstance(response.value, Answer)
         assert response.value.reply == "Second"
 
+    @pytest.mark.parametrize("as_agent", [False, True], ids=["client", "agent"])
+    @pytest.mark.parametrize("consume_stream", [False, True], ids=["final_only", "iterated"])
+    @pytest.mark.parametrize("replacement", [False, True], ids=["default_merge", "replace"])
+    async def test_buffered_final_message_redaction_preserves_previous_text_and_citations(
+        self, as_agent: bool, consume_stream: bool, replacement: bool
+    ) -> None:
+        """An authoritative empty final message must not replace an earlier message."""
+
+        class RedactFinalMessage(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                context.stream_buffer_updates = True
+
+                def to_updates(response: ChatResponse[Any]) -> list[ChatResponseUpdate]:
+                    updates = response.to_updates()
+                    if replacement:
+                        for update in updates:
+                            update.merge_mode = "replace"
+                    return updates
+
+                context.stream_result_to_updates = to_updates
+
+                def redact(response: ChatResponse[Any]) -> ChatResponse[Any]:
+                    for message in response.messages:
+                        if message.message_id == "m2":
+                            for content in message.contents:
+                                if content.type == "text":
+                                    content.text = ""
+                    return response
+
+                context.stream_result_transforms.append(redact)
+
+        annotations = [{"type": "citation", "url": "https://example.test/final-source"}]
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(await request.aread())
+            events: list[dict[str, Any]] = [
+                {"type": "RUN_STARTED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+                {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
+                {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "First"},
+                {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
+                {"type": "TEXT_MESSAGE_START", "messageId": "m2", "role": "assistant"},
+                {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "Second"},
+                {"type": "TEXT_MESSAGE_END", "messageId": "m2"},
+                {"type": "CUSTOM", "name": "annotations", "value": {"messageId": "m2", "annotations": annotations}},
+                {"type": "RUN_FINISHED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+            ]
+            wire = "".join("data: " + json.dumps(event) + "\n\n" for event in events).encode()
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=wire)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            async with AGUIChatClient(
+                endpoint="https://agui.example.test/", http_client=http_client, middleware=[RedactFinalMessage()]
+            ) as client:
+                run = Agent(client=client).run if as_agent else client.get_response
+                messages: list[Message] = [Message(role="user", contents=["Question"])]
+                stream = run(messages, stream=True)
+                updates = [update async for update in stream] if consume_stream else []
+                response = await stream.get_final_response()
+
+        actual = [(message.message_id, message.text) for message in response.messages]
+        assert actual == [("m1", "First"), ("m2", "")], actual
+        assert response.messages[0].contents[0].annotations is None
+        assert response.messages[1].contents[0].annotations == annotations
+        assert response.additional_properties["ag_ui_custom_event"]["value"] == {
+            "messageId": "m2",
+            "annotations": annotations,
+        }
+        if consume_stream:
+            assert "".join(update.text for update in updates) == "First"
+
     @pytest.mark.parametrize("transform_mode", ["uppercase", "redacted", "replacement"])
     @pytest.mark.parametrize("message_count", [1, 2], ids=["same_message", "later_message"])
     @pytest.mark.parametrize("batch_count", [1, 2], ids=["one_batch", "two_batches"])
