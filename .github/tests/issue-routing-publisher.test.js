@@ -5,12 +5,12 @@ const { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require(
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 const { beforeEach, describe, it } = require('node:test');
-const stageBundle = require('../scripts/gaw-issue-triage-bundle.js');
-const { validateRequests } = require('../scripts/gaw-issue-triage-publish.js');
+const stageBundle = require('../scripts/issue-routing-bundle.js');
+const { validateRequests } = require('../scripts/issue-routing-publish.js');
 
 const runtime = process.env.GH_AW_TEST_RUNTIME;
 
-describe('Issue triage pinned publisher', { skip: runtime ? false : 'Set GH_AW_TEST_RUNTIME to the pinned gh-aw setup scripts; CI runs these tests.' }, () => {
+describe('Issue routing pinned publisher', { skip: runtime ? false : 'Set GH_AW_TEST_RUNTIME to the pinned gh-aw setup scripts; CI runs these tests.' }, () => {
   let main;
   let requests;
   const record = {
@@ -27,7 +27,7 @@ describe('Issue triage pinned publisher', { skip: runtime ? false : 'Set GH_AW_T
     observed: 'Assertion failed: got an empty result.',
     source_files: ['python/packages/core/agent_framework/_agents.py'],
     test_files: ['artifact:tests/test_repro.py'],
-    artifact_name: 'gaw-issue-triage-issue-42',
+    artifact_name: 'issue-routing-issue-42',
     documentation: null,
   };
 
@@ -40,7 +40,7 @@ describe('Issue triage pinned publisher', { skip: runtime ? false : 'Set GH_AW_T
       GITHUB_RUN_ATTEMPT: '1',
       GITHUB_JOB: 'safe_outputs',
       GH_AW_JOB_CHECK_RUN_ID: '456',
-      GH_AW_WORKFLOW_ID: 'gaw-issue-triage',
+      GH_AW_WORKFLOW_ID: 'issue-routing',
       GH_AW_SAFE_OUTPUTS_STAGED: 'false',
     });
     ({ main } = require(resolve(runtime, 'add_comment.cjs')));
@@ -59,7 +59,7 @@ describe('Issue triage pinned publisher', { skip: runtime ? false : 'Set GH_AW_T
       serverUrl: 'https://github.com',
       runId: 123,
       runNumber: 1,
-      workflow: 'GAW Issue Triage',
+      workflow: 'Issue Routing',
     };
     global.github = {
       rest: {
@@ -74,7 +74,7 @@ describe('Issue triage pinned publisher', { skip: runtime ? false : 'Set GH_AW_T
   });
 
   function configuredComment() {
-    const compiled = readFileSync(resolve(__dirname, '../workflows/gaw-issue-triage.lock.yml'), 'utf8');
+    const compiled = readFileSync(resolve(__dirname, '../workflows/issue-routing.lock.yml'), 'utf8');
     const value = compiled.match(/GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: (.+)/)[1];
     const config = JSON.parse(JSON.parse(value)).add_comment;
     assert.equal(config.target, '${{ needs.prepare.outputs.issue_number }}');
@@ -131,7 +131,7 @@ describe('Issue triage pinned publisher', { skip: runtime ? false : 'Set GH_AW_T
   });
 
   it('guards the pinned type publisher before any write, while preserving Feature updates', async () => {
-    const compiled = readFileSync(resolve(__dirname, '../workflows/gaw-issue-triage.lock.yml'), 'utf8');
+    const compiled = readFileSync(resolve(__dirname, '../workflows/issue-routing.lock.yml'), 'utf8');
     const config = JSON.parse(JSON.parse(compiled.match(/GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: (.+)/)[1])).set_issue_type;
     const { main: typePublisher } = require(resolve(runtime, 'set_issue_type.cjs'));
     global.github.rest.issues.update = async request => { requests.push(request); return { data: {} }; };
@@ -166,14 +166,14 @@ describe('Issue triage pinned publisher', { skip: runtime ? false : 'Set GH_AW_T
   });
 
   function checkArtifactUpload(confirmed) {
-    const directory = mkdtempSync(join(tmpdir(), 'gaw-triage-upload-'));
+    const directory = mkdtempSync(join(tmpdir(), 'issue-routing-upload-'));
     try {
       const staging = join(directory, 'evidence');
       for (const issue of ['42', '43']) {
-        mkdirSync(join(staging, `gaw-issue-triage-issue-${issue}`), { recursive: true });
-        writeFileSync(join(staging, `gaw-issue-triage-issue-${issue}`, 'report.md'), 'Observed failure.');
+        mkdirSync(join(staging, `issue-routing-issue-${issue}`), { recursive: true });
+        writeFileSync(join(staging, `issue-routing-issue-${issue}`, 'report.md'), 'Observed failure.');
       }
-      const bundle = join(staging, 'gaw-issue-triage-issue-42');
+      const bundle = join(staging, 'issue-routing-issue-42');
       const historical = { ...record, run_url: record.run_url.replace('/123', '/100'), commit: 'b'.repeat(40) };
       mkdirSync(join(bundle, 'history', '100'), { recursive: true });
       writeFileSync(join(bundle, 'history', '100', 'reproduction.json'), JSON.stringify(historical, null, 2));

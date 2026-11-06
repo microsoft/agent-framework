@@ -17,19 +17,19 @@ async function listMatchingArtifacts({ github, context, name, runId }) {
 function artifactSize(artifact) {
   const size = artifact.size_in_bytes;
   if (!Number.isSafeInteger(size) || size < 1) {
-    throw new Error(`Triage artifact ${artifact.id} has an invalid size.`);
+    throw new Error(`Routing artifact ${artifact.id} has an invalid size.`);
   }
   return size;
 }
 
 // Before investigation, find the newest usable evidence from an earlier issue run.
-async function findPreviousTriageArtifact({ github, context, core, issueNumber }) {
+async function findPreviousRoutingArtifact({ github, context, core, issueNumber }) {
   const number = String(issueNumber);
   if (!/^[1-9][0-9]*$/.test(number) || !Number.isSafeInteger(Number(number))) {
     throw new Error('Issue number must be a positive, safe integer.');
   }
 
-  const name = `gaw-issue-triage-issue-${number}`;
+  const name = `issue-routing-issue-${number}`;
   const { data: repository } = await github.rest.repos.get(context.repo);
   const artifacts = await listMatchingArtifacts({ github, context, name });
   artifacts.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id);
@@ -47,15 +47,15 @@ async function findPreviousTriageArtifact({ github, context, core, issueNumber }
       ...context.repo,
       run_id: artifact.workflow_run.id,
     });
-    if (run.path !== '.github/workflows/gaw-issue-triage.lock.yml' ||
+    if (run.path !== '.github/workflows/issue-routing.lock.yml' ||
         run.repository.id !== repository.id || run.head_repository?.id !== repository.id ||
         run.head_branch !== repository.default_branch ||
-        run.display_title !== `GAW Issue Triage #${number}` ||
+        run.display_title !== `Issue Routing #${number}` ||
         !['workflow_dispatch', 'issues'].includes(run.event) ||
         run.status !== 'completed' || run.conclusion !== 'success' ||
         !/^[a-f0-9]{40}$/.test(run.head_sha) ||
         artifact.workflow_run.head_sha !== run.head_sha) {
-      core.warning(`Ignoring artifact ${artifact.id}: its source run does not match this issue's trusted triage workflow.`);
+      core.warning(`Ignoring artifact ${artifact.id}: its source run does not match this issue's trusted routing workflow.`);
       continue;
     }
 
@@ -78,17 +78,17 @@ async function findPreviousTriageArtifact({ github, context, core, issueNumber }
     };
   }
 
-  core.info(`No retained bundle from an earlier successful triage run was found for issue #${number}.`);
+  core.info(`No retained bundle from an earlier successful routing run was found for issue #${number}.`);
   return null;
 }
 
 // During publishing, retrieve this run's checked files, not an earlier issue bundle.
-async function findTransferredTriageArtifact({ github, context, core }) {
+async function findTransferredRoutingArtifact({ github, context, core }) {
   if (!Number.isSafeInteger(context.runId) || context.runId < 1) {
     throw new Error('The current workflow run ID must be a positive, safe integer.');
   }
   const [artifact] = await listMatchingArtifacts({
-    github, context, name: 'gaw-issue-triage-transfer', runId: context.runId,
+    github, context, name: 'issue-routing-transfer', runId: context.runId,
   });
   if (!artifact) {
     core.info('This run has no checked evidence to publish.');
@@ -96,9 +96,9 @@ async function findTransferredTriageArtifact({ github, context, core }) {
   }
   // Bound the ZIP too, allowing space for the checked file/path metadata.
   if (artifactSize(artifact) > 14 * 1024 * 1024) {
-    throw new Error('The transferred triage bundle has an excessive archive size.');
+    throw new Error('The transferred routing bundle has an excessive archive size.');
   }
   return artifact.id;
 }
 
-module.exports = { findPreviousTriageArtifact, findTransferredTriageArtifact };
+module.exports = { findPreviousRoutingArtifact, findTransferredRoutingArtifact };

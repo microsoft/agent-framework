@@ -5,9 +5,9 @@ const { existsSync, readFileSync, readdirSync } = require('node:fs');
 const { posix, resolve } = require('node:path');
 const { describe, it } = require('node:test');
 
-const source = readFileSync(resolve(__dirname, '../workflows/gaw-issue-triage.md'), 'utf8');
-const compiled = readFileSync(resolve(__dirname, '../workflows/gaw-issue-triage.lock.yml'), 'utf8');
-const owners = readFileSync(resolve(__dirname, '../gaw-issue-triage-owners.yaml'), 'utf8');
+const source = readFileSync(resolve(__dirname, '../workflows/issue-routing.md'), 'utf8');
+const compiled = readFileSync(resolve(__dirname, '../workflows/issue-routing.lock.yml'), 'utf8');
+const owners = readFileSync(resolve(__dirname, '../issue-routing-owners.yaml'), 'utf8');
 const manifest = JSON.parse(compiled.match(/^# gh-aw-manifest: (.+)$/m)[1]);
 
 function job(name) {
@@ -23,15 +23,15 @@ function configFor(name, variable) {
 
 const handlers = configFor('safe_outputs', 'GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG');
 
-describe('Issue triage workflow', () => {
-  it('keeps agentic triage manual-only alongside the legacy workflow', () => {
+describe('Issue routing workflow', () => {
+  it('keeps agentic routing manual-only alongside the legacy workflow', () => {
     const triggers = compiled.match(/^on:\n([\s\S]*?)^permissions:/m)[1];
     assert.match(triggers, /workflow_dispatch:/);
     assert.doesNotMatch(triggers, /^  issues:/m);
     assert.ok(existsSync(resolve(__dirname, '../workflows/issue-triage.yml')));
     assert.equal(existsSync(resolve(__dirname, '../workflows/issue-triage.md')), false);
     assert.equal(existsSync(resolve(__dirname, '../workflows/issue-triage.lock.yml')), false);
-    assert.match(source, /name: GAW Issue Triage/);
+    assert.match(source, /name: Issue Routing/);
     const preview = triggers.match(/      preview:\n((?:        .+\n)+)/)[1];
     assert.match(preview, /default: true/);
     assert.match(preview, /required: true/);
@@ -44,10 +44,10 @@ describe('Issue triage workflow', () => {
     assert.match(job('pre_activation'), /^    needs: prepare$/m);
     assert.doesNotMatch(job('pre_activation'), /check_membership|GH_AW_REQUIRED_ROLES/);
     for (const name of ['activation', 'agent']) {
-      assert.match(job(name), /needs\.prepare\.outputs\.should_triage == 'true'/);
+      assert.match(job(name), /needs\.prepare\.outputs\.should_route == 'true'/);
       assert.match(job(name), /^      - prepare$/m);
     }
-    assert.match(job('prepare'), /require\('\.\/\.github\/scripts\/gaw-issue-triage-prepare\.js'\)/);
+    assert.match(job('prepare'), /require\('\.\/\.github\/scripts\/issue-routing-prepare\.js'\)/);
     assert.match(job('prepare'), /ISSUE_NUMBER: \$\{\{ inputs.issue_number \}\}/);
     assert.doesNotMatch(job('prepare'), /\$\{\{ github\.event\.issue\.(?:body|title) \}\}/);
   });
@@ -62,7 +62,7 @@ describe('Issue triage workflow', () => {
     assert.match(prepare, /TEAM_NAME: \$\{\{ secrets.DEVELOPER_TEAM \}\}/);
     const exported = prepare.match(/^    outputs:\n((?:      .+\n)+)/m)[1];
     assert.deepEqual([...exported.matchAll(/^      (\w+):/gm)].map(match => match[1]).sort(),
-      ['issue_number', 'issue_type', 'should_triage']);
+      ['issue_number', 'issue_type', 'should_route']);
     for (const name of ['activation', 'agent', 'detection', 'safe_outputs', 'conclusion']) {
       assert.doesNotMatch(job(name), /secrets\.(?:DEVELOPER_TEAM|GH_APP_|GH_ACTIONS_PR_WRITE|AZURE_|OPENAI_|ANTHROPIC_)/);
       assert.doesNotMatch(job(name), /id-token: write|azure\/login|actions\/cache@/);
@@ -106,21 +106,21 @@ describe('Issue triage workflow', () => {
     const automation = readFileSync(resolve(__dirname, '../workflows/github-automation-tests.yml'), 'utf8');
     const setup = manifest.actions.find(action => action.repo === 'github/gh-aw-actions/setup');
     assert.ok(automation.includes(`uses: ${setup.repo}@${setup.sha}`), 'Publisher tests must use the compiled runtime version');
-    assert.match(automation, /GH_AW_TEST_RUNTIME: \$\{\{ runner.temp \}\}\/triage-publisher/);
+    assert.match(automation, /GH_AW_TEST_RUNTIME: \$\{\{ runner.temp \}\}\/routing-publisher/);
   });
 
   it('pins every issue writer to the validated number in manual runs too', () => {
     assert.match(job('safe_outputs'), /^      - prepare$/m);
-    const names = ['add_comment', 'add_labels', 'remove_labels', 'assign_to_user', 'set_issue_type'];
+    const names = ['add_comment', 'add_labels', 'assign_to_user', 'set_issue_type'];
     const agentConfig = configFor('agent', 'GH_AW_SAFE_OUTPUTS_CONFIG');
     for (const name of names) {
       assert.equal(handlers[name].target, '${{ needs.prepare.outputs.issue_number }}', name);
       assert.equal(agentConfig[name].target, handlers[name].target, name);
       assert.equal(handlers[name].max, 1, name);
     }
-    assert.deepEqual(handlers.remove_labels.allowed, ['triage']);
+    assert.equal(handlers.remove_labels, undefined, 'Routing must leave the triage label and all other labels for maintainers');
     assert.deepEqual(handlers.set_issue_type.allowed, ['Feature']);
-    assert.equal(handlers.set_issue_field, undefined, 'Triage must not change issue fields such as Priority');
+    assert.equal(handlers.set_issue_field, undefined, 'Routing must not change issue fields such as Priority');
     assert.equal(handlers.add_comment.hide_older_comments, false);
     assert.notEqual(handlers.assign_to_user.unassign_first, true);
     const tools = manifest.mcp_servers.find(server => server.name === 'safeoutputs').tools;
@@ -175,7 +175,7 @@ describe('Issue triage workflow', () => {
     assert.match(outcome, /route the package owner\/labels/);
     assert.doesNotMatch(outcome, /assign `/);
     assert.doesNotMatch(owners, /likely-fixed-owner:/);
-    assert.match(source, /gaw-issue-triage-owners\.yaml` for routing, including for reports that\nget the `likely-fixed` label/);
+    assert.match(source, /issue-routing-owners\.yaml` for routing, including for reports that\nget the `likely-fixed` label/);
   });
 
   it('blocks publishing after detection findings or errors, without failure issues', () => {
@@ -186,7 +186,7 @@ describe('Issue triage workflow', () => {
     assert.match(job('conclusion'), /GH_AW_MISSING_TOOL_CREATE_ISSUE: "false"/);
     assert.match(job('conclusion'), /GH_AW_REPORT_INCOMPLETE_CREATE_ISSUE: "false"/);
     assert.doesNotMatch(job('conclusion'), /GH_AW_REPORT_FAILED_JOBS: "true"/);
-    assert.match(compiled, /group: gaw-issue-triage\n  queue: max/);
+    assert.match(compiled, /group: issue-routing\n  queue: max/);
     assert.match(job('activation'), /Check daily workflow token guardrail/);
     assert.match(job('agent'), /timeout-minutes: 60/);
   });
@@ -197,11 +197,11 @@ describe('Issue triage workflow', () => {
     const agent = job('agent');
     assert.ok(agent.indexOf('Preserve the trusted evidence checker') < agent.indexOf('id: agentic_execution'));
     assert.match(agent, /--mount "\$\{RUNNER_TEMP\}\/gh-aw:\$\{RUNNER_TEMP\}\/gh-aw:ro"/);
-    assert.match(agent, /gh-aw\/triage-helpers\/bundle.js/);
+    assert.match(agent, /gh-aw\/routing-helpers\/bundle.js/);
     assert.ok(agent.indexOf('Check evidence before transfer') < agent.indexOf('Transfer checked evidence'));
     const transfer = agent.split(/^      - /m).find(step => step.includes('name: Transfer checked evidence'));
-    assert.match(transfer, /if: success\(\) && steps.triage-bundle.outputs.ready == 'true'/);
-    assert.match(transfer, /path: \$\{\{ runner.temp \}\}\/gh-aw\/triage-evidence\//);
+    assert.match(transfer, /if: success\(\) && steps.routing-bundle.outputs.ready == 'true'/);
+    assert.match(transfer, /path: \$\{\{ runner.temp \}\}\/gh-aw\/routing-evidence\//);
     assert.match(transfer, /if-no-files-found: error/);
     assert.doesNotMatch(transfer, /always\(\)|continue-on-error/);
     assert.ok(source.indexOf('## 1. Check for spam') < source.indexOf('## 2. Route a Feature'));
@@ -226,12 +226,12 @@ describe('Issue triage workflow', () => {
     assert.ok(writer.indexOf('name: Check issue requests') < writer.indexOf('name: Publish issue evidence'));
     assert.ok(writer.indexOf('name: Publish issue evidence') < writer.indexOf('name: Recheck stop labels immediately'));
     assert.ok(writer.indexOf('name: Recheck stop labels immediately') < writer.indexOf('name: Process Safe Outputs'));
-    assert.match(writer, /require\('\.\/\.github\/scripts\/gaw-issue-triage-publish\.js'\)/);
+    assert.match(writer, /require\('\.\/\.github\/scripts\/issue-routing-publish\.js'\)/);
     const upload = writer.split(/^      - /m).find(step => step.includes('name: Publish issue evidence'));
-    assert.match(upload, /steps.triage-evidence.outputs.allowed == 'true'/);
+    assert.match(upload, /steps.routing-evidence.outputs.allowed == 'true'/);
     assert.match(upload, /!\(github.event_name == 'workflow_dispatch' && inputs.preview\)/);
-    assert.match(upload, /name: gaw-issue-triage-issue-\$\{\{ needs.prepare.outputs.issue_number \}\}/);
-    assert.match(upload, /path: \$\{\{ runner.temp \}\}\/triage-final\//);
+    assert.match(upload, /name: issue-routing-issue-\$\{\{ needs.prepare.outputs.issue_number \}\}/);
+    assert.match(upload, /path: \$\{\{ runner.temp \}\}\/routing-final\//);
     assert.match(upload, /retention-days: .*'7'/);
     assert.doesNotMatch(upload, /always\(\)|continue-on-error/);
     const processor = writer.split(/^      - /m).find(step => step.includes('name: Process Safe Outputs'));
@@ -240,19 +240,19 @@ describe('Issue triage workflow', () => {
 
   it('downloads the selected prior bundle by validated artifact and run IDs without running its files', () => {
     const agent = job('agent');
-    assert.match(compiled, /^run-name: .*GAW Issue Triage #\$\{\{ inputs.issue_number \|\| github.event.issue.number \}\}/m);
-    assert.match(agent, /require\('\.\/\.github\/scripts\/gaw-issue-triage-artifacts\.js'\)/);
+    assert.match(compiled, /^run-name: .*Issue Routing #\$\{\{ inputs.issue_number \|\| github.event.issue.number \}\}/m);
+    assert.match(agent, /require\('\.\/\.github\/scripts\/issue-routing-artifacts\.js'\)/);
     assert.match(agent, /ISSUE_NUMBER: \$\{\{ needs.prepare.outputs.issue_number \}\}/);
     const download = agent.split(/^      - /m).find(step => /^\s+name: Download the previous issue bundle$/m.test(step));
     assert.ok(download, 'Missing previous-bundle download step');
-    assert.match(download, /if: needs.prepare.outputs.issue_type != 'Feature' && steps.previous-triage.outputs.artifact_id != ''/);
-    assert.match(download, /artifact-ids: \$\{\{ steps.previous-triage.outputs.artifact_id \}\}/);
-    assert.match(download, /run-id: \$\{\{ steps.previous-triage.outputs.run_id \}\}/);
+    assert.match(download, /if: needs.prepare.outputs.issue_type != 'Feature' && steps.previous-routing.outputs.artifact_id != ''/);
+    assert.match(download, /artifact-ids: \$\{\{ steps.previous-routing.outputs.artifact_id \}\}/);
+    assert.match(download, /run-id: \$\{\{ steps.previous-routing.outputs.run_id \}\}/);
     assert.match(download, /github-token: \$\{\{ github.token \}\}/);
-    assert.match(download, /path: \/tmp\/gh-aw\/agent\/previous-triage\/files/);
+    assert.match(download, /path: \/tmp\/gh-aw\/agent\/previous-routing\/files/);
     assert.doesNotMatch(download, /continue-on-error: true|\n\s+run:/);
     assert.match(source, /never execute\ndownloaded scripts, install hooks, or commands automatically/);
-    assert.match(source, /gaw-issue-triage-issue-\$\{\{ needs.prepare.outputs.issue_number \}\}/);
+    assert.match(source, /issue-routing-issue-\$\{\{ needs.prepare.outputs.issue_number \}\}/);
   });
 
   it('carries forward reviewed evidence so the latest bundle is useful to a third run', () => {

@@ -5,15 +5,15 @@ const fs = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { afterEach, beforeEach, describe, it } = require('node:test');
-const { checkPublication, validateRequests } = require('../scripts/gaw-issue-triage-publish.js');
+const { checkPublication, validateRequests } = require('../scripts/issue-routing-publish.js');
 
-describe('Issue triage publication checks', () => {
+describe('Issue routing publication checks', () => {
   let directory;
   let input;
   let outputs;
   let notices;
   beforeEach(() => {
-    directory = fs.mkdtempSync(join(tmpdir(), 'triage-publish-'));
+    directory = fs.mkdtempSync(join(tmpdir(), 'routing-publish-'));
     outputs = {};
     notices = [];
     input = {
@@ -61,7 +61,7 @@ describe('Issue triage publication checks', () => {
       const { items } = JSON.parse(fs.readFileSync(input.outputPath, 'utf8'));
       assert.equal(items.length, 1);
       assert.equal(items[0].type, 'noop');
-      assert.match(notices.at(-1), /Skipping triage publication/);
+      assert.match(notices.at(-1), /Skipping routing publication/);
     }
   });
 

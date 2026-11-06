@@ -1,5 +1,5 @@
-# gh-aw-metadata: {"schema_version":"v4","frontmatter_hash":"040abf47c86c1ffea7a0e9f32b84ff971f9ff41bc1632f9a3e592b7d71b70fbf","body_hash":"146ca1970aca8ceab5e9fc8f0fba734ead7f6fcc28136038ffc7948ec40a27fe","compiler_version":"v1.0.1","strict":true,"agent_id":"copilot","engine_versions":{"copilot":"1.0.103"}}
-# gh-aw-manifest: {"version":1,"secrets":["DEVELOPER_TEAM","GH_ACTIONS_PR_WRITE","GH_APP_AZURE_CLIENT_ID","GH_APP_AZURE_SUBSCRIPTION_ID","GH_APP_AZURE_TENANT_ID","GH_APP_CLIENT_ID","GH_APP_INSTALLATION_ID","GH_APP_KEY_NAME","GH_APP_KEY_VAULT_NAME","GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN"],"actions":[{"repo":"actions/checkout","sha":"3d3c42e5aac5ba805825da76410c181273ba90b1","version":"v7.0.1"},{"repo":"actions/download-artifact","sha":"9000827ccba6bdab643e8b6fd33ac0654aef8333","version":"v8.0.2"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"v9.0.0"},{"repo":"actions/setup-dotnet","sha":"a98b56852c35b8e3190ac28c8c2271da59106c68","version":"v6.0.0"},{"repo":"actions/setup-node","sha":"949feb2413d6458794dcd2491c4babbbce0c15c1","version":"v7.1.0"},{"repo":"actions/setup-python","sha":"6d4fd22b20465ccc0f7354476588e8df7c9ca0e0","version":"v7.1.0"},{"repo":"actions/upload-artifact","sha":"cf430e030ddbb5b0abf93d22962f4752f3646cd9","version":"v7.0.2"},{"repo":"astral-sh/setup-uv","sha":"07a047e608db84b3d8c06cd9a7c7dcc9c355c18e","version":"v10.3.2"},{"repo":"github/gh-aw-actions/setup","sha":"221ba4f4319de6b8e809d1a15528b3ae6a818aa5","version":"v1.0.1"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.29.0","digest":"sha256:b14bd399376180b5649a9324be3b50fbfc82bfe8f0c80045840416b5a4e65b96","pinned_image":"ghcr.io/github/gh-aw-firewall/agent:0.29.0@sha256:b14bd399376180b5649a9324be3b50fbfc82bfe8f0c80045840416b5a4e65b96"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.29.0","digest":"sha256:baff00b856a4bdc93bce134928c70af3d3492f2e518757115042040674d56b0b","pinned_image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.29.0@sha256:baff00b856a4bdc93bce134928c70af3d3492f2e518757115042040674d56b0b"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.29.0","digest":"sha256:6e0cbf7f980beb78b5461563a8164f6439ca959bc93733d5a6b52972e523ed50","pinned_image":"ghcr.io/github/gh-aw-firewall/squid:0.29.0@sha256:6e0cbf7f980beb78b5461563a8164f6439ca959bc93733d5a6b52972e523ed50"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.5.0","digest":"sha256:d3544a4222e7efeeeb38669d8a1af0c72691c55b8f6506b15aa5920f7f31b7bc","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.5.0@sha256:d3544a4222e7efeeeb38669d8a1af0c72691c55b8f6506b15aa5920f7f31b7bc"},{"image":"ghcr.io/github/gh-aw-node","digest":"sha256:2c2ea524e648b91c8333ce246e3838fcf5b19ac70e45baac1a51b9207299749f","pinned_image":"ghcr.io/github/gh-aw-node@sha256:2c2ea524e648b91c8333ce246e3838fcf5b19ac70e45baac1a51b9207299749f"},{"image":"ghcr.io/github/github-mcp-server:v2.0.3","digest":"sha256:250bc6ce70788207608ef74cef4397230ff2e8481218da74d6093e4bd9101132","pinned_image":"ghcr.io/github/github-mcp-server:v2.0.3@sha256:250bc6ce70788207608ef74cef4397230ff2e8481218da74d6093e4bd9101132"}],"mcp_servers":[{"name":"github","tools":["get_commit","get_file_contents","get_latest_release","get_pull_request","get_pull_request_comments","get_pull_request_diff","get_pull_request_files","get_pull_request_review_comments","get_pull_request_reviews","get_pull_request_status","get_release_by_tag","get_tag","issue_read","list_branches","list_commits","list_issue_types","list_issues","list_pull_requests","list_releases","list_starred_repositories","list_tags","pull_request_read","search_code","search_issues","search_pull_requests","search_repositories"]},{"name":"safeoutputs","tools":["add_comment","add_labels","assign_to_user","noop","remove_labels","report_incomplete","report_missing_data","report_missing_tool","set_issue_type"]}],"threat_detection":{"mode":"enabled"},"admission":false}
+# gh-aw-metadata: {"schema_version":"v4","frontmatter_hash":"1f2b23a240b66c8d405bab56789a66b59b6d2dcef7aa9d32b3ecd98dfec4131c","body_hash":"2fa95c64a06f1302f2469a38a381ef1403b0122929fb1de35bdbb46a01d3c579","compiler_version":"v1.0.1","strict":true,"agent_id":"copilot","engine_versions":{"copilot":"1.0.103"}}
+# gh-aw-manifest: {"version":1,"secrets":["DEVELOPER_TEAM","GH_ACTIONS_PR_WRITE","GH_APP_AZURE_CLIENT_ID","GH_APP_AZURE_SUBSCRIPTION_ID","GH_APP_AZURE_TENANT_ID","GH_APP_CLIENT_ID","GH_APP_INSTALLATION_ID","GH_APP_KEY_NAME","GH_APP_KEY_VAULT_NAME","GH_AW_GITHUB_MCP_SERVER_TOKEN","GH_AW_GITHUB_TOKEN","GITHUB_TOKEN"],"actions":[{"repo":"actions/checkout","sha":"3d3c42e5aac5ba805825da76410c181273ba90b1","version":"v7.0.1"},{"repo":"actions/download-artifact","sha":"9000827ccba6bdab643e8b6fd33ac0654aef8333","version":"v8.0.2"},{"repo":"actions/github-script","sha":"3a2844b7e9c422d3c10d287c895573f7108da1b3","version":"v9.0.0"},{"repo":"actions/setup-dotnet","sha":"a98b56852c35b8e3190ac28c8c2271da59106c68","version":"v6.0.0"},{"repo":"actions/setup-node","sha":"949feb2413d6458794dcd2491c4babbbce0c15c1","version":"v7.1.0"},{"repo":"actions/setup-python","sha":"6d4fd22b20465ccc0f7354476588e8df7c9ca0e0","version":"v7.1.0"},{"repo":"actions/upload-artifact","sha":"cf430e030ddbb5b0abf93d22962f4752f3646cd9","version":"v7.0.2"},{"repo":"astral-sh/setup-uv","sha":"07a047e608db84b3d8c06cd9a7c7dcc9c355c18e","version":"v10.3.2"},{"repo":"github/gh-aw-actions/setup","sha":"221ba4f4319de6b8e809d1a15528b3ae6a818aa5","version":"v1.0.1"}],"containers":[{"image":"ghcr.io/github/gh-aw-firewall/agent:0.29.0","digest":"sha256:b14bd399376180b5649a9324be3b50fbfc82bfe8f0c80045840416b5a4e65b96","pinned_image":"ghcr.io/github/gh-aw-firewall/agent:0.29.0@sha256:b14bd399376180b5649a9324be3b50fbfc82bfe8f0c80045840416b5a4e65b96"},{"image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.29.0","digest":"sha256:baff00b856a4bdc93bce134928c70af3d3492f2e518757115042040674d56b0b","pinned_image":"ghcr.io/github/gh-aw-firewall/api-proxy:0.29.0@sha256:baff00b856a4bdc93bce134928c70af3d3492f2e518757115042040674d56b0b"},{"image":"ghcr.io/github/gh-aw-firewall/squid:0.29.0","digest":"sha256:6e0cbf7f980beb78b5461563a8164f6439ca959bc93733d5a6b52972e523ed50","pinned_image":"ghcr.io/github/gh-aw-firewall/squid:0.29.0@sha256:6e0cbf7f980beb78b5461563a8164f6439ca959bc93733d5a6b52972e523ed50"},{"image":"ghcr.io/github/gh-aw-mcpg:v0.5.0","digest":"sha256:d3544a4222e7efeeeb38669d8a1af0c72691c55b8f6506b15aa5920f7f31b7bc","pinned_image":"ghcr.io/github/gh-aw-mcpg:v0.5.0@sha256:d3544a4222e7efeeeb38669d8a1af0c72691c55b8f6506b15aa5920f7f31b7bc"},{"image":"ghcr.io/github/gh-aw-node","digest":"sha256:2c2ea524e648b91c8333ce246e3838fcf5b19ac70e45baac1a51b9207299749f","pinned_image":"ghcr.io/github/gh-aw-node@sha256:2c2ea524e648b91c8333ce246e3838fcf5b19ac70e45baac1a51b9207299749f"},{"image":"ghcr.io/github/github-mcp-server:v2.0.3","digest":"sha256:250bc6ce70788207608ef74cef4397230ff2e8481218da74d6093e4bd9101132","pinned_image":"ghcr.io/github/github-mcp-server:v2.0.3@sha256:250bc6ce70788207608ef74cef4397230ff2e8481218da74d6093e4bd9101132"}],"mcp_servers":[{"name":"github","tools":["get_commit","get_file_contents","get_latest_release","get_pull_request","get_pull_request_comments","get_pull_request_diff","get_pull_request_files","get_pull_request_review_comments","get_pull_request_reviews","get_pull_request_status","get_release_by_tag","get_tag","issue_read","list_branches","list_commits","list_issue_types","list_issues","list_pull_requests","list_releases","list_starred_repositories","list_tags","pull_request_read","search_code","search_issues","search_pull_requests","search_repositories"]},{"name":"safeoutputs","tools":["add_comment","add_labels","assign_to_user","noop","report_incomplete","report_missing_data","report_missing_tool","set_issue_type"]}],"threat_detection":{"mode":"enabled"},"admission":false}
 # This file was automatically generated by gh-aw (v1.0.1). DO NOT EDIT. To debug this workflow, load the skill at https://github.com/github/gh-aw/blob/main/debug.md
 #
 #    ___                   _   _
@@ -63,7 +63,7 @@
 #   - ghcr.io/github/gh-aw-node@sha256:2c2ea524e648b91c8333ce246e3838fcf5b19ac70e45baac1a51b9207299749f
 #   - ghcr.io/github/github-mcp-server:v2.0.3@sha256:250bc6ce70788207608ef74cef4397230ff2e8481218da74d6093e4bd9101132
 
-name: "GAW Issue Triage"
+name: "Issue Routing"
 on:
   # roles: all # Roles processed as role check in pre-activation job
   workflow_dispatch:
@@ -74,7 +74,7 @@ on:
         required: false
         type: string
       issue_number:
-        description: Issue number to triage
+        description: Issue number to route
         required: true
         type: string
       preview:
@@ -88,17 +88,17 @@ permissions: {}
 
 concurrency:
   cancel-in-progress: false
-  group: gaw-issue-triage
+  group: issue-routing
   queue: max
 
-run-name: "GAW Issue Triage #${{ inputs.issue_number || github.event.issue.number }}"
+run-name: "Issue Routing #${{ inputs.issue_number || github.event.issue.number }}"
 
 env:
   GH_AW_OTLP_ENDPOINTS: "[]"
   OTEL_EXPORTER_OTLP_ENDPOINT: ""
   OTEL_EXPORTER_OTLP_HEADERS: ""
-  OTEL_SERVICE_NAME: gh-aw.gaw-issue-triage
-  OTEL_RESOURCE_ATTRIBUTES: 'gh-aw.workflow.name=GAW%20Issue%20Triage,gh-aw.repository=${{ github.repository }},gh-aw.run.id=${{ github.run_id }},github.run_id=${{ github.run_id }},gh-aw.engine.id=copilot'
+  OTEL_SERVICE_NAME: gh-aw.issue-routing
+  OTEL_RESOURCE_ATTRIBUTES: 'gh-aw.workflow.name=Issue%20Routing,gh-aw.repository=${{ github.repository }},gh-aw.run.id=${{ github.run_id }},github.run_id=${{ github.run_id }},gh-aw.engine.id=copilot'
   GH_AW_OTLP_IF_MISSING: ignore
 
 jobs:
@@ -107,7 +107,7 @@ jobs:
     needs:
       - pre_activation
       - prepare
-    if: needs.pre_activation.outputs.activated == 'true' && (needs.prepare.outputs.should_triage == 'true')
+    if: needs.pre_activation.outputs.activated == 'true' && (needs.prepare.outputs.should_route == 'true')
     runs-on: ubuntu-slim
     # Permissions for the activation job (workflow permissions default to none).
     permissions:
@@ -145,8 +145,8 @@ jobs:
           parent-span-id: ${{ needs.pre_activation.outputs.setup-parent-span-id || needs.pre_activation.outputs.setup-span-id }}
           safe-output-artifact-client: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
         env:
-          GH_AW_SETUP_WORKFLOW_NAME: "GAW Issue Triage"
-          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/gaw-issue-triage.lock.yml@${{ github.ref }}
+          GH_AW_SETUP_WORKFLOW_NAME: "Issue Routing"
+          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/issue-routing.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "1.0.103"
           GH_AW_INFO_AWF_VERSION: "v0.29.0"
           GH_AW_INFO_ENGINE_ID: "copilot"
@@ -162,7 +162,7 @@ jobs:
           GH_AW_INFO_VERSION: "1.0.103"
           GH_AW_INFO_AGENT_VERSION: "1.0.103"
           GH_AW_INFO_CLI_VERSION: "v1.0.1"
-          GH_AW_INFO_WORKFLOW_NAME: "GAW Issue Triage"
+          GH_AW_INFO_WORKFLOW_NAME: "Issue Routing"
           GH_AW_INFO_WORKFLOW_ID: ${{ job.workflow_ref }}
           GH_AW_INFO_EXPERIMENTAL: "false"
           GH_AW_INFO_SUPPORTS_TOOLS_ALLOWLIST: "true"
@@ -207,8 +207,8 @@ jobs:
         if: ${{ env.GH_AW_ADMISSION_RESULT != 'admitted' && env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          GH_AW_WORKFLOW_NAME: "GAW Issue Triage"
-          GH_AW_WORKFLOW_ID: "gaw-issue-triage"
+          GH_AW_WORKFLOW_NAME: "Issue Routing"
+          GH_AW_WORKFLOW_ID: "issue-routing"
           GH_AW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_AW_WORKFLOW_DISPATCH_AW_CONTEXT: ${{ github.event.inputs.aw_context || '' }}
           GH_AW_HAS_SLASH_COMMAND: "false"
@@ -264,7 +264,7 @@ jobs:
         id: check-lock-file
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          GH_AW_WORKFLOW_FILE: "gaw-issue-triage.lock.yml"
+          GH_AW_WORKFLOW_FILE: "issue-routing.lock.yml"
           GH_AW_CONTEXT_WORKFLOW_REF: "${{ github.workflow_ref }}"
         with:
           script: |
@@ -280,7 +280,7 @@ jobs:
           GH_AW_COMPILED_VERSION: "v1.0.1"
           GH_AW_HAS_SAFE_OUTPUTS: "true"
           GH_AW_BLOCKED_VERSION_REPORT_AS_ISSUE: "false"
-          GH_AW_WORKFLOW_NAME: "GAW Issue Triage"
+          GH_AW_WORKFLOW_NAME: "Issue Routing"
         with:
           script: |
             const path = require('path');
@@ -311,11 +311,11 @@ jobs:
           GH_AW_NEEDS_PREPARE_OUTPUTS_ISSUE_NUMBER: ${{ needs.prepare.outputs.issue_number }}
           GH_AW_NEEDS_PREPARE_OUTPUTS_ISSUE_TYPE: ${{ needs.prepare.outputs.issue_type }}
           GH_AW_PROMPT_CONTENT_0000: "<system>\n"
-          GH_AW_PROMPT_CONTENT_0001: "<safe-output-tools>\nTools: add_comment, add_labels, remove_labels, assign_to_user, set_issue_type, report_missing_tool, report_missing_data, noop(max:2)\n"
+          GH_AW_PROMPT_CONTENT_0001: "<safe-output-tools>\nTools: add_comment, add_labels, assign_to_user, set_issue_type, report_missing_tool, report_missing_data, noop(max:2)\n"
           GH_AW_PROMPT_CONTENT_0002: "</safe-output-tools>\n"
           GH_AW_PROMPT_CONTENT_0003: "<github-context>\nThe following GitHub context information is available for this workflow:\n{{#if github.actor}}\n- **actor**: __GH_AW_GITHUB_ACTOR__\n{{/if}}\n{{#if github.repository}}\n- **repository**: __GH_AW_GITHUB_REPOSITORY__\n{{/if}}\n{{#if github.workspace}}\n- **workspace**: __GH_AW_GITHUB_WORKSPACE__\n{{/if}}\n{{#if github.event.issue.number || (github.aw.context.item_type == 'issue' && github.aw.context.item_number)}}\n- **issue-number**: #__GH_AW_EXPR_7C248226__\n{{/if}}\n{{#if github.event.discussion.number || (github.aw.context.item_type == 'discussion' && github.aw.context.item_number)}}\n- **discussion-number**: #__GH_AW_EXPR_C19C384F__\n{{/if}}\n{{#if github.event.pull_request.number || (github.aw.context.item_type == 'pull_request' && github.aw.context.item_number)}}\n- **pull-request-number**: #__GH_AW_EXPR_76DF9333__\n{{/if}}\n{{#if github.event.comment.id || github.aw.context.comment_id}}\n- **comment-id**: __GH_AW_EXPR_77C1A4D2__\n{{/if}}\n{{#if github.run_id}}\n- **workflow-run-id**: __GH_AW_GITHUB_RUN_ID__\n{{/if}}\n</github-context>\n\n"
           GH_AW_PROMPT_CONTENT_0004: "</system>\n"
-          GH_AW_PROMPT_CONTENT_0005: "{{#runtime-import .github/workflows/gaw-issue-triage.md}}\n"
+          GH_AW_PROMPT_CONTENT_0005: "{{#runtime-import .github/workflows/issue-routing.md}}\n"
         with:
           script: |
             const { setupGlobals } = require(process.env.GH_AW_ACTIONS_DIR + '/setup_globals.cjs');
@@ -451,7 +451,7 @@ jobs:
     needs:
       - activation
       - prepare
-    if: (needs.prepare.outputs.should_triage == 'true') && (needs.activation.outputs.daily_ai_credits_exceeded != 'true')
+    if: (needs.prepare.outputs.should_route == 'true') && (needs.activation.outputs.daily_ai_credits_exceeded != 'true')
     runs-on: ubuntu-latest
     # Permissions for the agent job (workflow permissions default to none).
     permissions:
@@ -475,7 +475,7 @@ jobs:
       GH_AW_PR_HEAD_REPO: ""
       GH_AW_RUNTIME_FEATURES: ${{ vars.GH_AW_RUNTIME_FEATURES }}
       GH_AW_TARGET_REPO_SLUG: ""
-      GH_AW_WORKFLOW_ID_SANITIZED: gawissuetriage
+      GH_AW_WORKFLOW_ID_SANITIZED: issuerouting
     outputs:
       agentic_engine_timeout: ${{ steps.detect-agent-errors.outputs.agentic_engine_timeout || 'false' }}
       ai_credits_rate_limit_error: ${{ steps.parse-mcp-gateway.outputs.ai_credits_rate_limit_error || 'false' }}
@@ -511,8 +511,8 @@ jobs:
           trace-id: ${{ needs.activation.outputs.setup-trace-id }}
           parent-span-id: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
         env:
-          GH_AW_SETUP_WORKFLOW_NAME: "GAW Issue Triage"
-          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/gaw-issue-triage.lock.yml@${{ github.ref }}
+          GH_AW_SETUP_WORKFLOW_NAME: "Issue Routing"
+          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/issue-routing.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "1.0.103"
           GH_AW_INFO_AWF_VERSION: "v0.29.0"
           GH_AW_INFO_ENGINE_ID: "copilot"
@@ -557,24 +557,24 @@ jobs:
           path: /tmp/gh-aw
       - name: Preserve the trusted evidence checker
         run: |
-          mkdir -p "$RUNNER_TEMP/gh-aw/triage-helpers"
-          cp .github/scripts/gaw-issue-triage-bundle.js "$RUNNER_TEMP/gh-aw/triage-helpers/bundle.js"
+          mkdir -p "$RUNNER_TEMP/gh-aw/routing-helpers"
+          cp .github/scripts/issue-routing-bundle.js "$RUNNER_TEMP/gh-aw/routing-helpers/bundle.js"
       - env:
           ISSUE_NUMBER: ${{ needs.prepare.outputs.issue_number }}
-        id: previous-triage
+        id: previous-routing
         if: needs.prepare.outputs.issue_type != 'Feature'
         name: Find the latest bundle for this issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          script: "const { findPreviousTriageArtifact } = require('./.github/scripts/gaw-issue-triage-artifacts.js');\nconst previous = await findPreviousTriageArtifact({\n  github, context, core, issueNumber: process.env.ISSUE_NUMBER,\n});\nif (previous) {\n  core.setOutput('artifact_id', String(previous.artifact_id));\n  core.setOutput('run_id', String(previous.run_id));\n  const fs = require('node:fs');\n  fs.mkdirSync('/tmp/gh-aw/agent/previous-triage', { recursive: true });\n  fs.writeFileSync('/tmp/gh-aw/agent/previous-triage/source.json', JSON.stringify(previous, null, 2));\n}\n"
-      - if: needs.prepare.outputs.issue_type != 'Feature' && steps.previous-triage.outputs.artifact_id != ''
+          script: "const { findPreviousRoutingArtifact } = require('./.github/scripts/issue-routing-artifacts.js');\nconst previous = await findPreviousRoutingArtifact({\n  github, context, core, issueNumber: process.env.ISSUE_NUMBER,\n});\nif (previous) {\n  core.setOutput('artifact_id', String(previous.artifact_id));\n  core.setOutput('run_id', String(previous.run_id));\n  const fs = require('node:fs');\n  fs.mkdirSync('/tmp/gh-aw/agent/previous-routing', { recursive: true });\n  fs.writeFileSync('/tmp/gh-aw/agent/previous-routing/source.json', JSON.stringify(previous, null, 2));\n}\n"
+      - if: needs.prepare.outputs.issue_type != 'Feature' && steps.previous-routing.outputs.artifact_id != ''
         name: Download the previous issue bundle
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          artifact-ids: ${{ steps.previous-triage.outputs.artifact_id }}
+          artifact-ids: ${{ steps.previous-routing.outputs.artifact_id }}
           github-token: ${{ github.token }}
-          path: /tmp/gh-aw/agent/previous-triage/files
-          run-id: ${{ steps.previous-triage.outputs.run_id }}
+          path: /tmp/gh-aw/agent/previous-routing/files
+          run-id: ${{ steps.previous-routing.outputs.run_id }}
       - if: needs.prepare.outputs.issue_type != 'Feature'
         name: Set up Python for local reproduction
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -669,7 +669,7 @@ jobs:
         env:
           GH_AW_FILE_ROOT: "${{ runner.temp }}/gh-aw"
           GH_AW_FILE_CONFIG: "{\"files\":[{\"path\":\"safeoutputs/config.json\",\"content_env\":\"GH_AW_SAFE_OUTPUTS_CONFIG\"}]}"
-          GH_AW_SAFE_OUTPUTS_CONFIG: "{\"add_comment\":{\"hide_older_comments\":false,\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"add_labels\":{\"allowed\":[\"reproduced\",\"requested-info\",\"likely-fixed\",\"needs-maintainer-triage\",\"a2a\",\"ag-ui\",\"agents\",\"chat-kit\",\"compaction\",\"declarative\",\"devui\",\"foundry\",\"harness\",\"hosting\",\"lab\",\"mcp\",\"memory\",\"middleware\",\"observability\",\"orchestration\",\"security\",\"skills\",\"workflows\"],\"max\":1,\"max_labels\":10,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"assign_to_user\":{\"allowed\":[\"eavanvalkenburg\",\"westey-m\",\"rogerbarreto\",\"SergeyMenshykh\",\"baywet\",\"dargilco\",\"jpalvarezl\"],\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"noop\":{\"max\":2,\"report-as-issue\":\"false\"},\"remove_labels\":{\"allowed\":[\"triage\"],\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"report_incomplete\":{},\"report_missing_data\":{},\"report_missing_tool\":{},\"set_issue_type\":{\"allowed\":[\"Feature\"],\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"}}"
+          GH_AW_SAFE_OUTPUTS_CONFIG: "{\"add_comment\":{\"hide_older_comments\":false,\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"add_labels\":{\"allowed\":[\"reproduced\",\"requested-info\",\"likely-fixed\",\"needs-maintainer-triage\",\"a2a\",\"ag-ui\",\"agents\",\"chat-kit\",\"compaction\",\"declarative\",\"devui\",\"foundry\",\"harness\",\"hosting\",\"lab\",\"mcp\",\"memory\",\"middleware\",\"observability\",\"orchestration\",\"security\",\"skills\",\"workflows\"],\"max\":1,\"max_labels\":10,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"assign_to_user\":{\"allowed\":[\"eavanvalkenburg\",\"westey-m\",\"rogerbarreto\",\"SergeyMenshykh\",\"baywet\",\"dargilco\",\"jpalvarezl\"],\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"noop\":{\"max\":2,\"report-as-issue\":\"false\"},\"report_incomplete\":{},\"report_missing_data\":{},\"report_missing_tool\":{},\"set_issue_type\":{\"allowed\":[\"Feature\"],\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"}}"
         with:
           script: |
             const path = require('path');
@@ -684,8 +684,7 @@ jobs:
             {
               "description_suffixes": {
                 "add_comment": " CONSTRAINTS: Maximum 1 comment(s) can be added. Target: ${GH_AW_NEEDS_PREPARE_OUTPUTS_ISSUE_NUMBER}. Supports reply_to_id for discussion threading.",
-                "add_labels": " CONSTRAINTS: Maximum 1 add_labels call(s) allowed. Maximum 10 label(s) per call. Only these labels are allowed: [\"reproduced\" \"requested-info\" \"likely-fixed\" \"needs-maintainer-triage\" \"a2a\" \"ag-ui\" \"agents\" \"chat-kit\" \"compaction\" \"declarative\" \"devui\" \"foundry\" \"harness\" \"hosting\" \"lab\" \"mcp\" \"memory\" \"middleware\" \"observability\" \"orchestration\" \"security\" \"skills\" \"workflows\"]. Target: ${GH_AW_NEEDS_PREPARE_OUTPUTS_ISSUE_NUMBER}.",
-                "remove_labels": " CONSTRAINTS: Maximum 1 label(s) can be removed. Only these labels can be removed: [triage]. Target: ${GH_AW_NEEDS_PREPARE_OUTPUTS_ISSUE_NUMBER}."
+                "add_labels": " CONSTRAINTS: Maximum 1 add_labels call(s) allowed. Maximum 10 label(s) per call. Only these labels are allowed: [\"reproduced\" \"requested-info\" \"likely-fixed\" \"needs-maintainer-triage\" \"a2a\" \"ag-ui\" \"agents\" \"chat-kit\" \"compaction\" \"declarative\" \"devui\" \"foundry\" \"harness\" \"hosting\" \"lab\" \"mcp\" \"memory\" \"middleware\" \"observability\" \"orchestration\" \"security\" \"skills\" \"workflows\"]. Target: ${GH_AW_NEEDS_PREPARE_OUTPUTS_ISSUE_NUMBER}."
               },
               "repo_params": {},
               "dynamic_tools": []
@@ -797,22 +796,6 @@ jobs:
                     "type": "string",
                     "sanitize": true,
                     "maxLength": 65000
-                  }
-                }
-              },
-              "remove_labels": {
-                "defaultMax": 5,
-                "fields": {
-                  "item_number": {
-                    "issueNumberOrTemporaryId": true
-                  },
-                  "labels": {
-                    "required": true,
-                    "type": "array"
-                  },
-                  "repo": {
-                    "type": "string",
-                    "maxLength": 256
                   }
                 }
               },
@@ -1405,21 +1388,21 @@ jobs:
           fi
       - env:
           ISSUE_NUMBER: ${{ needs.prepare.outputs.issue_number }}
-        id: triage-bundle
+        id: routing-bundle
         if: always() && needs.prepare.outputs.issue_type != 'Feature'
         name: Check evidence before transfer
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          script: "const path = require('node:path');\nconst stageBundle = require(path.join(process.env.RUNNER_TEMP, 'gh-aw/triage-helpers/bundle.js'));\nconst ready = stageBundle({\n  source: `/tmp/gh-aw/agent/triage/gaw-issue-triage-issue-${process.env.ISSUE_NUMBER}`,\n  destination: path.join(process.env.RUNNER_TEMP, 'gh-aw/triage-evidence'),\n  core,\n});\ncore.setOutput('ready', String(ready));\n"
-      - id: triage-transfer
-        if: success() && steps.triage-bundle.outputs.ready == 'true'
+          script: "const path = require('node:path');\nconst stageBundle = require(path.join(process.env.RUNNER_TEMP, 'gh-aw/routing-helpers/bundle.js'));\nconst ready = stageBundle({\n  source: `/tmp/gh-aw/agent/routing/issue-routing-issue-${process.env.ISSUE_NUMBER}`,\n  destination: path.join(process.env.RUNNER_TEMP, 'gh-aw/routing-evidence'),\n  core,\n});\ncore.setOutput('ready', String(ready));\n"
+      - id: routing-transfer
+        if: success() && steps.routing-bundle.outputs.ready == 'true'
         name: Transfer checked evidence
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           if-no-files-found: error
           include-hidden-files: true
-          name: gaw-issue-triage-transfer
-          path: ${{ runner.temp }}/gh-aw/triage-evidence/
+          name: issue-routing-transfer
+          path: ${{ runner.temp }}/gh-aw/routing-evidence/
           retention-days: ${{ vars.GH_AW_DEFAULT_ARTIFACT_RETENTION_DAYS || '1' }}
 
       # Small dedicated copy of the agent output so safe-output processing
@@ -1512,7 +1495,7 @@ jobs:
       issues: write
       pull-requests: write
     concurrency:
-      group: "gh-aw-conclusion-gaw-issue-triage-${{ github.run_id }}"
+      group: "gh-aw-conclusion-issue-routing-${{ github.run_id }}"
       cancel-in-progress: false
       queue: max
     env:
@@ -1536,8 +1519,8 @@ jobs:
           trace-id: ${{ needs.activation.outputs.setup-trace-id }}
           parent-span-id: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
         env:
-          GH_AW_SETUP_WORKFLOW_NAME: "GAW Issue Triage"
-          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/gaw-issue-triage.lock.yml@${{ github.ref }}
+          GH_AW_SETUP_WORKFLOW_NAME: "Issue Routing"
+          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/issue-routing.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "1.0.103"
           GH_AW_INFO_AWF_VERSION: "v0.29.0"
           GH_AW_INFO_ENGINE_ID: "copilot"
@@ -1588,8 +1571,8 @@ jobs:
         env:
           GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
           GH_AW_NOOP_MAX: "2"
-          GH_AW_WORKFLOW_NAME: "GAW Issue Triage"
-          GH_AW_WORKFLOW_SOURCE_URL: "${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/.github/workflows/gaw-issue-triage.md"
+          GH_AW_WORKFLOW_NAME: "Issue Routing"
+          GH_AW_WORKFLOW_SOURCE_URL: "${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/.github/workflows/issue-routing.md"
           GH_AW_ENGINE_ID: "copilot"
           GH_AW_ENGINE_MODEL: ${{ needs.agent.outputs.model }}
           GH_AW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -1598,7 +1581,7 @@ jobs:
           GH_AW_AIC: ${{ needs.agent.outputs.aic }}
           GH_AW_THREAT_DETECTION_AIC: ${{ needs.detection.outputs.aic }}
           GH_AW_AMBIENT_CONTEXT: ${{ needs.agent.outputs.ambient_context }}
-          GH_AW_WORKFLOW_ID: "gaw-issue-triage"
+          GH_AW_WORKFLOW_ID: "issue-routing"
         with:
           github-token: ${{ secrets.GH_AW_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -1615,8 +1598,8 @@ jobs:
           GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
           GH_AW_MISSING_TOOL_CREATE_ISSUE: "false"
           GH_AW_MISSING_TOOL_TITLE_PREFIX: "[missing tool]"
-          GH_AW_WORKFLOW_NAME: "GAW Issue Triage"
-          GH_AW_WORKFLOW_SOURCE_URL: "${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/.github/workflows/gaw-issue-triage.md"
+          GH_AW_WORKFLOW_NAME: "Issue Routing"
+          GH_AW_WORKFLOW_SOURCE_URL: "${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/.github/workflows/issue-routing.md"
           GH_AW_ENGINE_ID: "copilot"
           GH_AW_ENGINE_MODEL: ${{ needs.agent.outputs.model }}
         with:
@@ -1635,8 +1618,8 @@ jobs:
           GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
           GH_AW_REPORT_INCOMPLETE_CREATE_ISSUE: "false"
           GH_AW_REPORT_INCOMPLETE_TITLE_PREFIX: "[incomplete]"
-          GH_AW_WORKFLOW_NAME: "GAW Issue Triage"
-          GH_AW_WORKFLOW_SOURCE_URL: "${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/.github/workflows/gaw-issue-triage.md"
+          GH_AW_WORKFLOW_NAME: "Issue Routing"
+          GH_AW_WORKFLOW_SOURCE_URL: "${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/.github/workflows/issue-routing.md"
           GH_AW_ENGINE_ID: "copilot"
           GH_AW_ENGINE_MODEL: ${{ needs.agent.outputs.model }}
         with:
@@ -1654,11 +1637,11 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           GH_AW_AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
-          GH_AW_WORKFLOW_NAME: "GAW Issue Triage"
-          GH_AW_WORKFLOW_SOURCE_URL: "${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/.github/workflows/gaw-issue-triage.md"
+          GH_AW_WORKFLOW_NAME: "Issue Routing"
+          GH_AW_WORKFLOW_SOURCE_URL: "${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/.github/workflows/issue-routing.md"
           GH_AW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_AW_AGENT_CONCLUSION: ${{ needs.agent.result }}
-          GH_AW_WORKFLOW_ID: "gaw-issue-triage"
+          GH_AW_WORKFLOW_ID: "issue-routing"
           GH_AW_ACTION_FAILURE_ISSUE_EXPIRES_HOURS: "0"
           GH_AW_ENGINE_ID: "copilot"
           GH_AW_CHECKOUT_PR_SUCCESS: ${{ needs.agent.outputs.checkout_pr_success }}
@@ -1836,8 +1819,8 @@ jobs:
           trace-id: ${{ needs.activation.outputs.setup-trace-id }}
           parent-span-id: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
         env:
-          GH_AW_SETUP_WORKFLOW_NAME: "GAW Issue Triage"
-          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/gaw-issue-triage.lock.yml@${{ github.ref }}
+          GH_AW_SETUP_WORKFLOW_NAME: "Issue Routing"
+          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/issue-routing.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "1.0.103"
           GH_AW_INFO_AWF_VERSION: "v0.29.0"
           GH_AW_INFO_ENGINE_ID: "copilot"
@@ -1917,7 +1900,7 @@ jobs:
         if: always() && steps.detection_guard.outputs.run_detection == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          WORKFLOW_NAME: "GAW Issue Triage"
+          WORKFLOW_NAME: "Issue Routing"
           WORKFLOW_DESCRIPTION: "Screen issue reports, route Features, and attempt local Bug reproduction without service credentials."
           HAS_PATCH: ${{ needs.agent.outputs.has_patch }}
           GH_AW_DETECTION_CONTINUE_ON_ERROR: "false"
@@ -1988,7 +1971,7 @@ jobs:
           RUNNER_TEMP: ${{ runner.temp }}
           S2STOKENS: true
           TRACEPARENT: ${{ env.GITHUB_AW_OTEL_TRACE_ID != '' && env.GITHUB_AW_OTEL_PARENT_SPAN_ID != '' && format('00-{0}-{1}-01', env.GITHUB_AW_OTEL_TRACE_ID, env.GITHUB_AW_OTEL_PARENT_SPAN_ID) || '' }}
-          WORKFLOW_NAME: "GAW Issue Triage"
+          WORKFLOW_NAME: "Issue Routing"
           WORKFLOW_DESCRIPTION: "Screen issue reports, route Features, and attempt local Bug reproduction without service credentials."
           HAS_PATCH: ${{ needs.agent.outputs.has_patch }}
           GH_AW_DETECTION_CONTINUE_ON_ERROR: "false"
@@ -2168,8 +2151,8 @@ jobs:
           destination: ${{ runner.temp }}/gh-aw/actions
           job-name: ${{ github.job }}
         env:
-          GH_AW_SETUP_WORKFLOW_NAME: "GAW Issue Triage"
-          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/gaw-issue-triage.lock.yml@${{ github.ref }}
+          GH_AW_SETUP_WORKFLOW_NAME: "Issue Routing"
+          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/issue-routing.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "1.0.103"
           GH_AW_INFO_AWF_VERSION: "v0.29.0"
           GH_AW_INFO_ENGINE_ID: "copilot"
@@ -2187,7 +2170,7 @@ jobs:
     outputs:
       issue_number: ${{ steps.issue.outputs.issue_number }}
       issue_type: ${{ steps.issue.outputs.issue_type }}
-      should_triage: ${{ steps.issue.outputs.should_triage }}
+      should_route: ${{ steps.issue.outputs.should_route }}
     steps:
       - name: Configure GH_HOST for enterprise compatibility
         id: ghes-host-config
@@ -2230,8 +2213,8 @@ jobs:
         with:
           github-token: ${{ steps.github-auth.outputs.token }}
           script: |
-            const prepareIssueTriage = require('./.github/scripts/gaw-issue-triage-prepare.js');
-            await prepareIssueTriage({
+            const prepareIssueRouting = require('./.github/scripts/issue-routing-prepare.js');
+            await prepareIssueRouting({
               github,
               context,
               core,
@@ -2261,7 +2244,7 @@ jobs:
       GH_AW_AGENT_AIC: ${{ needs.agent.outputs.aic }}
       GH_AW_AIC: ${{ needs.agent.outputs.aic }}
       GH_AW_AMBIENT_CONTEXT: ${{ needs.agent.outputs.ambient_context }}
-      GH_AW_CALLER_WORKFLOW_ID: "${{ github.repository }}/gaw-issue-triage"
+      GH_AW_CALLER_WORKFLOW_ID: "${{ github.repository }}/issue-routing"
       GH_AW_DETECTION_CONCLUSION: ${{ needs.detection.outputs.detection_conclusion }}
       GH_AW_DETECTION_REASON: ${{ needs.detection.outputs.detection_reason }}
       GH_AW_ENGINE_ID: "copilot"
@@ -2270,9 +2253,9 @@ jobs:
       GH_AW_RUN_DETECTION: ${{ needs.detection.outputs.run_detection }}
       GH_AW_SAFE_OUTPUTS_STAGED: ${{ github.event_name == 'workflow_dispatch' && inputs.preview }}
       GH_AW_THREAT_DETECTION_AIC: ${{ needs.detection.outputs.aic }}
-      GH_AW_WORKFLOW_ID: "gaw-issue-triage"
-      GH_AW_WORKFLOW_NAME: "GAW Issue Triage"
-      GH_AW_WORKFLOW_SOURCE_URL: "${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/.github/workflows/gaw-issue-triage.md"
+      GH_AW_WORKFLOW_ID: "issue-routing"
+      GH_AW_WORKFLOW_NAME: "Issue Routing"
+      GH_AW_WORKFLOW_SOURCE_URL: "${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/.github/workflows/issue-routing.md"
     outputs:
       assign_to_user_assigned: ${{ steps.process_safe_outputs.outputs.assigned }}
       code_push_failure_count: ${{ steps.process_safe_outputs.outputs.code_push_failure_count }}
@@ -2300,8 +2283,8 @@ jobs:
           trace-id: ${{ needs.activation.outputs.setup-trace-id }}
           parent-span-id: ${{ needs.activation.outputs.setup-parent-span-id || needs.activation.outputs.setup-span-id }}
         env:
-          GH_AW_SETUP_WORKFLOW_NAME: "GAW Issue Triage"
-          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/gaw-issue-triage.lock.yml@${{ github.ref }}
+          GH_AW_SETUP_WORKFLOW_NAME: "Issue Routing"
+          GH_AW_CURRENT_WORKFLOW_REF: ${{ github.repository }}/.github/workflows/issue-routing.lock.yml@${{ github.ref }}
           GH_AW_INFO_VERSION: "1.0.103"
           GH_AW_INFO_AWF_VERSION: "v0.29.0"
           GH_AW_INFO_ENGINE_ID: "copilot"
@@ -2341,37 +2324,37 @@ jobs:
           ref: ${{ github.workflow_sha }}
           sparse-checkout: .github/scripts
       - name: Check issue requests and current stop labels
-        id: triage-policy
+        id: routing-policy
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
           ISSUE_NUMBER: ${{ needs.prepare.outputs.issue_number }}
         with:
           script: |
-            const { checkPublication } = require('./.github/scripts/gaw-issue-triage-publish.js');
+            const { checkPublication } = require('./.github/scripts/issue-routing-publish.js');
             await checkPublication({
               github, context, core,
               issueNumber: process.env.ISSUE_NUMBER,
               outputPath: process.env.AGENT_OUTPUT,
             });
       - name: Find this run's checked evidence
-        id: triage-transfer
-        if: steps.triage-policy.outputs.allowed == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.preview)
+        id: routing-transfer
+        if: steps.routing-policy.outputs.allowed == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.preview)
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const { findTransferredTriageArtifact } = require('./.github/scripts/gaw-issue-triage-artifacts.js');
-            const id = await findTransferredTriageArtifact({ github, context, core });
+            const { findTransferredRoutingArtifact } = require('./.github/scripts/issue-routing-artifacts.js');
+            const id = await findTransferredRoutingArtifact({ github, context, core });
             if (id !== null) core.setOutput('artifact_id', String(id));
       - name: Download checked evidence
-        if: steps.triage-transfer.outputs.artifact_id != ''
+        if: steps.routing-transfer.outputs.artifact_id != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          artifact-ids: ${{ steps.triage-transfer.outputs.artifact_id }}
-          path: ${{ runner.temp }}/triage-download
+          artifact-ids: ${{ steps.routing-transfer.outputs.artifact_id }}
+          path: ${{ runner.temp }}/routing-download
       - name: Recheck evidence and stop labels
-        id: triage-evidence
-        if: steps.triage-transfer.outputs.artifact_id != ''
+        id: routing-evidence
+        if: steps.routing-transfer.outputs.artifact_id != ''
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           AGENT_OUTPUT: ${{ steps.setup-agent-output-env.outputs.GH_AW_AGENT_OUTPUT }}
@@ -2379,11 +2362,11 @@ jobs:
         with:
           script: |
             const path = require('node:path');
-            const stageBundle = require('./.github/scripts/gaw-issue-triage-bundle.js');
-            const { checkPublication } = require('./.github/scripts/gaw-issue-triage-publish.js');
+            const stageBundle = require('./.github/scripts/issue-routing-bundle.js');
+            const { checkPublication } = require('./.github/scripts/issue-routing-publish.js');
             const ready = stageBundle({
-              source: path.join(process.env.RUNNER_TEMP, 'triage-download'),
-              destination: path.join(process.env.RUNNER_TEMP, 'triage-final'),
+              source: path.join(process.env.RUNNER_TEMP, 'routing-download'),
+              destination: path.join(process.env.RUNNER_TEMP, 'routing-final'),
               core,
             });
             if (!ready) throw new Error('The transferred evidence bundle is empty.');
@@ -2393,13 +2376,13 @@ jobs:
               outputPath: process.env.AGENT_OUTPUT,
             });
       - name: Publish issue evidence
-        if: steps.triage-evidence.outputs.allowed == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.preview)
+        if: steps.routing-evidence.outputs.allowed == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.preview)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           if-no-files-found: error
           include-hidden-files: true
-          name: gaw-issue-triage-issue-${{ needs.prepare.outputs.issue_number }}
-          path: ${{ runner.temp }}/triage-final/
+          name: issue-routing-issue-${{ needs.prepare.outputs.issue_number }}
+          path: ${{ runner.temp }}/routing-final/
           retention-days: ${{ vars.GH_AW_DEFAULT_ARTIFACT_RETENTION_DAYS || (env.GH_AW_DEFAULT_ARTIFACT_RETENTION_DAYS || '7') }}
       - name: Recheck stop labels immediately before issue updates
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -2408,7 +2391,7 @@ jobs:
           ISSUE_NUMBER: ${{ needs.prepare.outputs.issue_number }}
         with:
           script: |
-            const { checkPublication } = require('./.github/scripts/gaw-issue-triage-publish.js');
+            const { checkPublication } = require('./.github/scripts/issue-routing-publish.js');
             await checkPublication({
               github, context, core,
               issueNumber: process.env.ISSUE_NUMBER,
@@ -2425,7 +2408,7 @@ jobs:
           GH_AW_ALLOWED_DOMAINS: "*.githubusercontent.com,*.pythonhosted.org,*.vsblob.vsassets.io,anaconda.org,api.nuget.org,api.snapcraft.io,archive.ubuntu.com,azure.archive.ubuntu.com,azuresearch-usnc.nuget.org,azuresearch-ussc.nuget.org,binstar.org,bootstrap.pypa.io,builds.dotnet.microsoft.com,ci.dot.net,codeload.github.com,conda.anaconda.org,conda.binstar.org,crl.geotrust.com,crl.globalsign.com,crl.identrust.com,crl.sectigo.com,crl.thawte.com,crl.usertrust.com,crl.verisign.com,crl3.digicert.com,crl4.digicert.com,crls.ssl.com,dc.services.visualstudio.com,dist.nuget.org,docs.github.com,dot.net,dotnet.microsoft.com,dotnetcli.blob.core.windows.net,files.pythonhosted.org,github-cloud.githubusercontent.com,github-cloud.s3.amazonaws.com,github.blog,github.com,github.githubassets.com,json-schema.org,json.schemastore.org,keyserver.ubuntu.com,lfs.github.com,nuget.org,nuget.pkg.github.com,nugetregistryv2prod.blob.core.windows.net,objects.githubusercontent.com,ocsp.digicert.com,ocsp.geotrust.com,ocsp.globalsign.com,ocsp.identrust.com,ocsp.sectigo.com,ocsp.ssl.com,ocsp.thawte.com,ocsp.usertrust.com,ocsp.verisign.com,oneocsp.microsoft.com,packagecloud.io,packages.cloud.google.com,packages.microsoft.com,patch-diff.githubusercontent.com,patchdiff.githubusercontent.com,pip.pypa.io,pkgs.dev.azure.com,ppa.launchpad.net,pypi.org,pypi.python.org,raw.githubusercontent.com,repo.anaconda.com,repo.continuum.io,s.symcb.com,s.symcd.com,security.ubuntu.com,ts-crl.ws.symantec.com,ts-ocsp.ws.symantec.com,www.googleapis.com,www.microsoft.com"
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_API_URL: ${{ github.api_url }}
-          GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "{\"add_comment\":{\"hide_older_comments\":false,\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"add_labels\":{\"allowed\":[\"reproduced\",\"requested-info\",\"likely-fixed\",\"needs-maintainer-triage\",\"a2a\",\"ag-ui\",\"agents\",\"chat-kit\",\"compaction\",\"declarative\",\"devui\",\"foundry\",\"harness\",\"hosting\",\"lab\",\"mcp\",\"memory\",\"middleware\",\"observability\",\"orchestration\",\"security\",\"skills\",\"workflows\"],\"max\":1,\"max_labels\":10,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"assign_to_user\":{\"allowed\":[\"eavanvalkenburg\",\"westey-m\",\"rogerbarreto\",\"SergeyMenshykh\",\"baywet\",\"dargilco\",\"jpalvarezl\"],\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"noop\":{\"max\":2,\"report-as-issue\":\"false\"},\"remove_labels\":{\"allowed\":[\"triage\"],\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"report_incomplete\":{},\"report_missing_data\":{},\"report_missing_tool\":{},\"set_issue_type\":{\"allowed\":[\"Feature\"],\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"}}"
+          GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG: "{\"add_comment\":{\"hide_older_comments\":false,\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"add_labels\":{\"allowed\":[\"reproduced\",\"requested-info\",\"likely-fixed\",\"needs-maintainer-triage\",\"a2a\",\"ag-ui\",\"agents\",\"chat-kit\",\"compaction\",\"declarative\",\"devui\",\"foundry\",\"harness\",\"hosting\",\"lab\",\"mcp\",\"memory\",\"middleware\",\"observability\",\"orchestration\",\"security\",\"skills\",\"workflows\"],\"max\":1,\"max_labels\":10,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"assign_to_user\":{\"allowed\":[\"eavanvalkenburg\",\"westey-m\",\"rogerbarreto\",\"SergeyMenshykh\",\"baywet\",\"dargilco\",\"jpalvarezl\"],\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"},\"noop\":{\"max\":2,\"report-as-issue\":\"false\"},\"report_incomplete\":{},\"report_missing_data\":{},\"report_missing_tool\":{},\"set_issue_type\":{\"allowed\":[\"Feature\"],\"max\":1,\"target\":\"${{ needs.prepare.outputs.issue_number }}\"}}"
           GH_AW_SAFE_OUTPUTS_STAGED: ${{ github.event_name == 'workflow_dispatch' && inputs.preview }}
           GH_AW_GITHUB_TOKEN_SOURCE: ${{ secrets.GH_AW_GITHUB_TOKEN != '' && 'pat' || 'github_actions' }}
         with:

@@ -5,15 +5,15 @@ const fs = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { afterEach, beforeEach, describe, it } = require('node:test');
-const stageBundle = require('../scripts/gaw-issue-triage-bundle.js');
+const stageBundle = require('../scripts/issue-routing-bundle.js');
 
-describe('Checked issue triage bundles', () => {
+describe('Checked issue routing bundles', () => {
   let directory;
   let source;
   let destination;
   let input;
   beforeEach(() => {
-    directory = fs.mkdtempSync(join(tmpdir(), 'triage-bundle-'));
+    directory = fs.mkdtempSync(join(tmpdir(), 'routing-bundle-'));
     source = join(directory, 'source');
     destination = join(directory, 'checked');
     fs.mkdirSync(source);

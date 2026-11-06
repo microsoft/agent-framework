@@ -13,11 +13,11 @@ function stageBundle({ source, destination, core }) {
     parent = path.join(parent, component);
     const stat = fs.lstatSync(parent, { throwIfNoEntry: false });
     if (!stat) {
-      core.info('No current triage bundle was saved.');
+      core.info('No current routing bundle was saved.');
       return false;
     }
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw new Error('Triage bundle paths must be directories, not links.');
+      throw new Error('Routing bundle paths must be directories, not links.');
     }
   }
 
@@ -33,13 +33,13 @@ function stageBundle({ source, destination, core }) {
       let entry;
       while ((entry = handle.readSync()) !== null) {
         if (/[\\\x00-\x1f]/.test(entry.name)) {
-          throw new Error('Triage filenames must not contain backslashes or control characters.');
+          throw new Error('Routing filenames must not contain backslashes or control characters.');
         }
         const file = path.join(directory, entry.name);
         const relative = path.relative(root, file);
         pathBytes += Buffer.byteLength(relative);
         if (++entries > 2000 || pathBytes > 1024 * 1024) {
-          throw new Error('Triage bundle exceeds the folder or path metadata limit.');
+          throw new Error('Routing bundle exceeds the folder or path metadata limit.');
         }
         const stat = fs.lstatSync(file);
         if (stat.isDirectory()) {
@@ -47,11 +47,11 @@ function stageBundle({ source, destination, core }) {
         } else if (stat.isFile() && stat.nlink === 1) {
           bytes += stat.size;
           if (bytes > 10 * 1024 * 1024 || files.length >= 1000) {
-            throw new Error('Triage bundle exceeds 10 MiB or 1,000 files.');
+            throw new Error('Routing bundle exceeds 10 MiB or 1,000 files.');
           }
           files.push({ file, relative, size: stat.size });
         } else {
-          throw new Error('Triage bundles may contain only ordinary files and directories, not links.');
+          throw new Error('Routing bundles may contain only ordinary files and directories, not links.');
         }
       }
     } finally {
@@ -60,12 +60,12 @@ function stageBundle({ source, destination, core }) {
   }
   collect(root);
   if (!files.length) {
-    core.info('The current triage bundle has no files.');
+    core.info('The current routing bundle has no files.');
     return false;
   }
   // Retained history still needs a report describing the current run's findings.
   if (!files.some(file => file.relative === 'report.md')) {
-    throw new Error('Triage bundles require a current report.md.');
+    throw new Error('Routing bundles require a current report.md.');
   }
 
   // Callers place this fresh copy outside the agent's writable folders.
@@ -80,7 +80,7 @@ function stageBundle({ source, destination, core }) {
     try {
       const stat = fs.fstatSync(input);
       if (!stat.isFile() || stat.nlink !== 1) {
-        throw new Error('Triage evidence changed into a link or unsupported file.');
+        throw new Error('Routing evidence changed into a link or unsupported file.');
       }
       const output = fs.openSync(target, 'wx', 0o600);
       try {
@@ -91,11 +91,11 @@ function stageBundle({ source, destination, core }) {
           copied += length;
           fileBytes += length;
           if (copied > 10 * 1024 * 1024 || fileBytes > file.size) {
-            throw new Error('Triage evidence grew beyond its checked size.');
+            throw new Error('Routing evidence grew beyond its checked size.');
           }
           fs.writeFileSync(output, buffer.subarray(0, length));
         }
-        if (fileBytes !== file.size) throw new Error('Triage evidence changed while preparing the upload.');
+        if (fileBytes !== file.size) throw new Error('Routing evidence changed while preparing the upload.');
       } finally {
         fs.closeSync(output);
       }
@@ -103,7 +103,7 @@ function stageBundle({ source, destination, core }) {
       fs.closeSync(input);
     }
   }
-  core.info(`Checked ${files.length} triage files (${copied} bytes).`);
+  core.info(`Checked ${files.length} routing files (${copied} bytes).`);
   return true;
 }
 

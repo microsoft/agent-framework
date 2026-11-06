@@ -20,14 +20,14 @@ function stopReason(issue) {
 // type change after earlier requests have already updated the issue.
 function validateRequests(output) {
   if (!Array.isArray(output.items)) {
-    throw new Error('Triage publication requires an items array.');
+    throw new Error('Routing publication requires an items array.');
   }
   for (const item of output.items) {
     if (!item || typeof item.type !== 'string') {
-      throw new Error('Invalid triage publication request.');
+      throw new Error('Invalid routing publication request.');
     }
     if (item.type === 'set_issue_type' && item.issue_type !== 'Feature') {
-      throw new Error('Triage may only set the issue type to Feature; clearing it is not allowed.');
+      throw new Error('Routing may only set the issue type to Feature; clearing it is not allowed.');
     }
   }
 }
@@ -52,7 +52,7 @@ async function checkPublication({ github, context, core, issueNumber, outputPath
   }
   const reason = stopReason(issue);
   if (reason) {
-    core.notice(`Skipping triage publication: ${reason}`);
+    core.notice(`Skipping routing publication: ${reason}`);
     // Keep an explicit no-op for the publisher instead of leaving an ambiguous empty result.
     output.items = [{ type: 'noop', reason: `Publication stopped: ${reason}` }];
     fs.writeFileSync(outputPath, JSON.stringify(output));

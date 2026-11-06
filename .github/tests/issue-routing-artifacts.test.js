@@ -3,20 +3,20 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const {
-  findPreviousTriageArtifact,
-  findTransferredTriageArtifact,
-} = require('../scripts/gaw-issue-triage-artifacts.js');
+  findPreviousRoutingArtifact,
+  findTransferredRoutingArtifact,
+} = require('../scripts/issue-routing-artifacts.js');
 
 function mocks() {
   const calls = [];
   const warnings = [];
   const run = {
     id: 100,
-    path: '.github/workflows/gaw-issue-triage.lock.yml',
+    path: '.github/workflows/issue-routing.lock.yml',
     repository: { id: 7 },
     head_repository: { id: 7 },
     head_branch: 'main',
-    display_title: 'GAW Issue Triage #42',
+    display_title: 'Issue Routing #42',
     event: 'workflow_dispatch',
     status: 'completed',
     conclusion: 'success',
@@ -25,7 +25,7 @@ function mocks() {
   };
   const artifact = {
     id: 700,
-    name: 'gaw-issue-triage-issue-42',
+    name: 'issue-routing-issue-42',
     expired: false,
     created_at: '2026-11-03T10:00:00Z',
     size_in_bytes: 100,
@@ -56,14 +56,14 @@ function mocks() {
   };
 }
 
-describe('Previous issue triage artifacts', () => {
+describe('Previous issue routing artifacts', () => {
   it('finds an issue-specific bundle and records its actual source run and commit', async () => {
     const input = mocks();
-    const result = await findPreviousTriageArtifact(input);
+    const result = await findPreviousRoutingArtifact(input);
     assert.deepEqual(result, {
       repository: 'microsoft/agent-framework',
       issue_number: 42,
-      artifact_name: 'gaw-issue-triage-issue-42',
+      artifact_name: 'issue-routing-issue-42',
       artifact_id: 700,
       run_id: 100,
       run_url: input.run.html_url,
@@ -81,9 +81,9 @@ describe('Previous issue triage artifacts', () => {
     input.artifacts.push(
       { ...input.artifact, id: 701, created_at: '2026-11-03T11:00:00Z' },
       { ...input.artifact, id: 702, expired: true, created_at: '2026-11-03T12:00:00Z' },
-      { ...input.artifact, id: 703, name: 'gaw-issue-triage-issue-420', created_at: '2026-11-03T13:00:00Z' },
+      { ...input.artifact, id: 703, name: 'issue-routing-issue-420', created_at: '2026-11-03T13:00:00Z' },
     );
-    assert.equal((await findPreviousTriageArtifact(input)).artifact_id, 701);
+    assert.equal((await findPreviousRoutingArtifact(input)).artifact_id, 701);
     assert.equal(input.calls.filter(([kind]) => kind === 'run').length, 1);
   });
 
@@ -96,7 +96,7 @@ describe('Previous issue triage artifacts', () => {
     ]) {
       const input = mocks();
       input.artifact.workflow_run = workflow_run;
-      assert.equal(await findPreviousTriageArtifact(input), null);
+      assert.equal(await findPreviousRoutingArtifact(input), null);
       assert.equal(input.calls.some(([kind]) => kind === 'run'), false);
     }
   });
@@ -108,7 +108,7 @@ describe('Previous issue triage artifacts', () => {
       { head_repository: { id: 8 } },
       { head_repository: null },
       { head_branch: 'untrusted-branch' },
-      { display_title: 'GAW Issue Triage #43' },
+      { display_title: 'Issue Routing #43' },
       { event: 'pull_request' },
       { status: 'in_progress' },
       { conclusion: 'failure' },
@@ -118,7 +118,7 @@ describe('Previous issue triage artifacts', () => {
     ]) {
       const input = mocks();
       Object.assign(input.run, changes);
-      assert.equal(await findPreviousTriageArtifact(input), null, JSON.stringify(changes));
+      assert.equal(await findPreviousRoutingArtifact(input), null, JSON.stringify(changes));
       assert.equal(input.warnings.length, 1);
     }
   });
@@ -132,20 +132,20 @@ describe('Previous issue triage artifacts', () => {
     input.github.rest.actions.getWorkflowRun = async ({ run_id }) => ({
       data: run_id === 101 ? { ...input.run, id: 101, conclusion: 'failure' } : input.run,
     });
-    assert.equal((await findPreviousTriageArtifact(input)).artifact_id, 700);
+    assert.equal((await findPreviousRoutingArtifact(input)).artifact_id, 700);
   });
 
   it('continues normally when no retained bundle exists', async () => {
     const input = mocks();
     input.artifacts.length = 0;
-    assert.equal(await findPreviousTriageArtifact(input), null);
+    assert.equal(await findPreviousRoutingArtifact(input), null);
   });
 
   it('rejects invalid bundle metadata instead of downloading it', async () => {
     for (const size of [0, -1, '100']) {
       const input = mocks();
       input.artifact.size_in_bytes = size;
-      await assert.rejects(findPreviousTriageArtifact(input), /download size limit|invalid size/);
+      await assert.rejects(findPreviousRoutingArtifact(input), /download size limit|invalid size/);
     }
   });
 
@@ -155,10 +155,10 @@ describe('Previous issue triage artifacts', () => {
       ...input.artifact, id: 701, created_at: '2026-11-03T11:00:00Z',
       size_in_bytes: 11 * 1024 * 1024 + 1,
     });
-    assert.equal((await findPreviousTriageArtifact(input)).artifact_id, 700);
+    assert.equal((await findPreviousRoutingArtifact(input)).artifact_id, 700);
     assert.match(input.warnings[0], /exceeds the 11 MiB/);
     input.artifact.size_in_bytes = 12 * 1024 * 1024;
-    assert.equal(await findPreviousTriageArtifact(input), null);
+    assert.equal(await findPreviousRoutingArtifact(input), null);
   });
 
   it('finds only this run\'s checked transfer and rejects excessive archives and API errors', async () => {
@@ -169,26 +169,26 @@ describe('Previous issue triage artifacts', () => {
       assert.equal(params.run_id, 1000);
       return input.artifacts;
     };
-    assert.equal(await findTransferredTriageArtifact(input), null);
-    input.artifact.name = 'gaw-issue-triage-transfer';
-    assert.equal(await findTransferredTriageArtifact(input), 700);
+    assert.equal(await findTransferredRoutingArtifact(input), null);
+    input.artifact.name = 'issue-routing-transfer';
+    assert.equal(await findTransferredRoutingArtifact(input), 700);
     input.artifact.expired = true;
-    assert.equal(await findTransferredTriageArtifact(input), null);
+    assert.equal(await findTransferredRoutingArtifact(input), null);
     input.artifact.expired = false;
     for (const size of [0, -1, '100']) {
       input.artifact.size_in_bytes = size;
-      await assert.rejects(findTransferredTriageArtifact(input), /invalid size/);
+      await assert.rejects(findTransferredRoutingArtifact(input), /invalid size/);
     }
     input.artifact.size_in_bytes = 14 * 1024 * 1024 + 1;
-    await assert.rejects(findTransferredTriageArtifact(input), /archive size/);
+    await assert.rejects(findTransferredRoutingArtifact(input), /archive size/);
     input.github.paginate = async () => { throw new Error('Access denied'); };
-    await assert.rejects(findTransferredTriageArtifact(input), /Access denied/);
+    await assert.rejects(findTransferredRoutingArtifact(input), /Access denied/);
   });
 
   it('validates issue numbers before calling GitHub', async () => {
     for (const issueNumber of ['', '0', '-1', '042', '42\n', '42/../43', '9007199254740992']) {
       const input = { ...mocks(), issueNumber };
-      await assert.rejects(findPreviousTriageArtifact(input), /positive, safe integer/);
+      await assert.rejects(findPreviousRoutingArtifact(input), /positive, safe integer/);
       assert.equal(input.calls.length, 0);
     }
   });
@@ -197,7 +197,7 @@ describe('Previous issue triage artifacts', () => {
     for (const runId of [undefined, 0, '1000']) {
       const input = mocks();
       input.context.runId = runId;
-      await assert.rejects(findTransferredTriageArtifact(input), /current workflow run ID/);
+      await assert.rejects(findTransferredRoutingArtifact(input), /current workflow run ID/);
       assert.equal(input.calls.length, 0);
     }
   });
@@ -209,7 +209,7 @@ describe('Previous issue triage artifacts', () => {
       if (endpoint === 'repository') input.github.rest.repos.get = fail;
       if (endpoint === 'list') input.github.paginate = fail;
       if (endpoint === 'run') input.github.rest.actions.getWorkflowRun = fail;
-      await assert.rejects(findPreviousTriageArtifact(input), /GitHub access denied/);
+      await assert.rejects(findPreviousRoutingArtifact(input), /GitHub access denied/);
     }
   });
 });
