@@ -28,13 +28,10 @@
 
   <ItemGroup Condition="'$(UseLocalAgentFramework)' == 'true'">
     <ProjectReference Include="$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj" />
-    <ProjectReference Include="$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(UseLocalAgentFramework)' != 'true'">
     <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="$(AgentFrameworkVersion)" />
-    <!-- Workflows ships as a stable package, so it has no -preview build matching AgentFrameworkVersion. -->
-    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.27.0" />
   </ItemGroup>
 
   <ItemGroup>
