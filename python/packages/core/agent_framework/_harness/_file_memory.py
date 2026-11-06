@@ -4,8 +4,9 @@
 
 :class:`FileMemoryProvider` gives an agent a session-scoped, file-based memory
 system. Each memory is stored as an individual file with a meaningful name, and
-large files can carry a companion description file (suffixed with
-``_description.md``) that provides a short summary used for discovery. A
+large files can carry a companion description file (the memory file name with
+``_description.md`` appended, so the sidecar of ``notes.md`` is
+``notes.md_description.md``) that provides a short summary used for discovery. A
 ``memories.md`` index file is maintained automatically and injected into the
 agent's context so the model knows what memories already exist.
 
@@ -42,6 +43,7 @@ per-invocation :class:`~agent_framework.SessionContext` in
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Annotated, Any
 
@@ -86,22 +88,48 @@ DEFAULT_FILE_MEMORY_INSTRUCTIONS = (
 _DESCRIPTION_SUFFIX = "_description.md"
 _MEMORY_INDEX_FILE_NAME = "memories.md"
 _MAX_INDEX_ENTRIES = 50
+# Filesystem name limits are commonly 255 bytes; the sidecar derivation must stay
+# within that budget so every valid memory file name also gets a writable sidecar.
+_MAX_DESCRIPTION_FILE_NAME_BYTES = 255
 # Prefix for scopes that are not usable verbatim as a folder name. Kept distinct
 # from the other harness prefixes so the same value under a different component
 # never lands in the same directory.
 _ENCODED_SCOPE_PREFIX = "~scope-"
+# Prefix for description sidecars of memory file names too long to carry the
+# suffix verbatim. Distinct from the other prefixes for the same reason.
+# Memory file names that already start with this prefix also take the digest
+# branch, so the verbatim namespace never contains the prefix and the two
+# branches cannot produce the same sidecar.
+_DIGEST_DESCRIPTION_PREFIX = "~memory-desc-"
 
 
 def _description_file_name(file_name: str) -> str:
     """Return the companion description file name for ``file_name``.
 
-    The suffix replaces the original extension when present (so ``notes.md``
-    becomes ``notes_description.md``); otherwise it is appended.
+    The suffix is appended to the *whole* memory file name, so ``notes.md``
+    becomes ``notes.md_description.md`` while ``notes`` becomes
+    ``notes_description.md``. Keeping the extension in the derivation makes
+    the mapping injective: distinct memory files always get distinct sidecars,
+    so writes and deletes can never clobber another memory's description.
+
+    A memory file name long enough to push the appended sidecar past the
+    filesystem's name limit cannot carry the suffix verbatim, so such names
+    fall back to a SHA-256 digest (still suffixed, still injective in
+    practice). Names that already start with the reserved digest prefix take
+    the digest branch too: otherwise a short memory named after another name's
+    digest stem would share that name's sidecar without any hash collision.
+    The prefix is matched case-insensitively because the default APFS and NTFS
+    filesystems are case-insensitive, so an uppercase or mixed-case reserved
+    prefix would otherwise alias a long name's digest sidecar on disk.
     """
-    dot_index = file_name.rfind(".")
-    if dot_index > 0:
-        return f"{file_name[:dot_index]}{_DESCRIPTION_SUFFIX}"
-    return f"{file_name}{_DESCRIPTION_SUFFIX}"
+    sidecar = f"{file_name}{_DESCRIPTION_SUFFIX}"
+    if (
+        not file_name.lower().startswith(_DIGEST_DESCRIPTION_PREFIX)
+        and len(sidecar.encode("utf-8")) <= _MAX_DESCRIPTION_FILE_NAME_BYTES
+    ):
+        return sidecar
+    digest = hashlib.sha256(file_name.encode("utf-8")).hexdigest()
+    return f"{_DIGEST_DESCRIPTION_PREFIX}{digest}{_DESCRIPTION_SUFFIX}"
 
 
 def _is_internal_file(file_name: str) -> bool:
