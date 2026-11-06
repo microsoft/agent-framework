@@ -2,8 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -14,7 +12,6 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// This type contains optional toolbox behavior only. The required credential and toolbox names are
 /// supplied directly to <c>AddFoundryToolboxes</c>.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FoundryToolboxOptions
 {
     internal const string ApiVersion = "v1";

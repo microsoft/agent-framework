@@ -14,7 +14,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
@@ -46,7 +45,6 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// retain their normal invocation behavior.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
 {
     private readonly FoundryToolboxOptions _options;

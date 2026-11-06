@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -13,7 +11,6 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// optional replacement <see cref="AgentSessionStore"/>, are supplied directly to
 /// <c>AddFoundryResponses</c>.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FoundryResponsesOptions
 {
     /// <summary>

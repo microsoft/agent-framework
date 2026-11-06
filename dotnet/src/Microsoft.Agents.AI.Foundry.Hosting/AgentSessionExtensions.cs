@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -10,7 +8,6 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <summary>
 /// Extension methods for reading Foundry hosted request state from an <see cref="AgentSession"/>.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class AgentSessionExtensions
 {
     private const string HostedUserIdStateKey = "Microsoft.Agents.AI.Foundry.Hosting.HostedUserId";

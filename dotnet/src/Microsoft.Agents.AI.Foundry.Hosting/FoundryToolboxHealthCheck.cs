@@ -2,13 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -20,7 +18,6 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <see cref="ServiceCollectionExtensions.AddFoundryToolboxes(IServiceCollection, TokenCredential, string[])"/>
 /// and its overloads.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal sealed class FoundryToolboxHealthCheck : IHealthCheck
 {
     private readonly FoundryToolboxService _toolboxService;

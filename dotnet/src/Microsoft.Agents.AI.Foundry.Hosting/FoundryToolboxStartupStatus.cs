@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -11,7 +9,6 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Foundry hosted runtime does not start routing traffic before pre-registered toolbox
 /// connections are confirmed open (per <c>container-image-spec.md</c> §3.1).
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal enum FoundryToolboxStartupStatus
 {
     /// <summary>

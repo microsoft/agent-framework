@@ -12,7 +12,6 @@
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
-    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectSharedRedaction>true</InjectSharedRedaction>
     <InjectSharedOriginPinning>true</InjectSharedOriginPinning>
     <NoWarn>$(NoWarn);OPENAI001;MEAI001;MAAI001</NoWarn>
