@@ -290,7 +290,6 @@ public static partial class FoundryHostingExtensions
     /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
     /// <param name="options">
     /// Optional <see cref="FoundryToolboxOptions"/>, such as
-    /// <see cref="FoundryToolboxOptions.StrictMode"/>,
     /// <see cref="FoundryToolboxOptions.TokenScope"/>, or
     /// <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>.
     /// </param>
@@ -346,6 +345,7 @@ public static partial class FoundryHostingExtensions
                 tags: ["foundry", "toolbox", "readiness"]));
         });
 
+        MarkFeatureUsed(FeatureIndex.FoundryToolbox);
         return services;
     }
 
@@ -356,9 +356,7 @@ public static partial class FoundryHostingExtensions
         var copy = new FoundryToolboxOptions();
         if (source is not null)
         {
-            copy.ApiVersion = source.ApiVersion;
             copy.TokenScope = source.TokenScope;
-            copy.StrictMode = source.StrictMode;
             copy.AllowedOAuthConsentOrigins = source.AllowedOAuthConsentOrigins is null
                 ? null
                 : [.. source.AllowedOAuthConsentOrigins];
@@ -375,10 +373,10 @@ public static partial class FoundryHostingExtensions
         return copy;
     }
 
-    private static void MarkFeatureUsed()
+    private static void MarkFeatureUsed(FeatureIndex feature = FeatureIndex.FoundryHosting)
     {
 #pragma warning disable MAAI001
-        FeatureUsage.MarkUsed((int)FeatureIndex.FoundryHosting);
+        FeatureUsage.MarkUsed((int)feature);
 #pragma warning restore MAAI001
     }
 

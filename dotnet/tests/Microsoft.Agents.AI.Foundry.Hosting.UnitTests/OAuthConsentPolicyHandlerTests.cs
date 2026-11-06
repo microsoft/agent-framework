@@ -71,27 +71,6 @@ public class OAuthConsentPolicyHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_MarkerConsentOutsideAllowlist_FailsWithoutSurfacingLinkAsync()
-    {
-        // Arrange
-        await using var service = await CreateStartedServiceAsync(
-            [AllowedOrigin],
-            toolboxNames: [],
-            opener: (name, _, _) => Task.FromResult(
-                new FoundryToolboxService.ToolboxOpenResult(
-                    Cached: null,
-                    Consents: [new McpConsentInfo(name, $"{name}.tool", OtherLink)])));
-        var request = CreateRequest();
-        request.Tools.Add(new MCPTool("marker") { ServerUrl = new Uri("foundry-toolbox://marker-a") });
-
-        // Act
-        var events = await RunAsync(new TestAgent(), service, request);
-
-        // Assert
-        AssertFailedWithoutLink(events, OtherLink);
-    }
-
-    [Fact]
     public async Task CreateAsync_PerCallConsentOutsideAllowlist_FailsWithoutSurfacingLinkAsync()
     {
         // Arrange
@@ -192,7 +171,7 @@ public class OAuthConsentPolicyHandlerTests
         => CreateStartedServiceAsync(
             allowedOrigins,
             toolboxNames: ["tb"],
-            opener: (name, _, _) => Task.FromResult(
+            opener: (name, _) => Task.FromResult(
                 new FoundryToolboxService.ToolboxOpenResult(
                     Cached: null,
                     Consents: [new McpConsentInfo(name, $"{name}.tool", consentLink)])));
@@ -200,11 +179,10 @@ public class OAuthConsentPolicyHandlerTests
     private static async Task<FoundryToolboxService> CreateStartedServiceAsync(
         IList<string>? allowedOrigins,
         IList<string> toolboxNames,
-        Func<string, string?, CancellationToken, Task<FoundryToolboxService.ToolboxOpenResult>>? opener)
+        Func<string, CancellationToken, Task<FoundryToolboxService.ToolboxOpenResult>>? opener)
     {
         var options = new FoundryToolboxOptions
         {
-            StrictMode = false,
             EndpointOverride = "http://127.0.0.1:1/unused",
             AllowedOAuthConsentOrigins = allowedOrigins,
         };

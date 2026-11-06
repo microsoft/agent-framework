@@ -46,6 +46,19 @@ public class ServiceCollectionExtensionsTests
         AssertFeatureUsed(53);
     }
 
+    [Fact]
+    public void AddFoundryToolboxes_MarksFeatureUsed()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+
+        // Act
+        services.AddFoundryToolboxes(Mock.Of<TokenCredential>(), "toolbox");
+
+        // Assert
+        AssertFeatureUsed(52);
+    }
+
     private static void AssertFeatureUsed(int featureIndex)
     {
 #pragma warning disable MAAI001
@@ -264,9 +277,7 @@ public class ServiceCollectionExtensionsTests
         var services = new ServiceCollection();
         var suppliedOptions = new FoundryToolboxOptions
         {
-            ApiVersion = "v2",
             TokenScope = "https://example.test/.default",
-            StrictMode = false,
             AllowedOAuthConsentOrigins = ["https://login.example.test"],
         };
 
@@ -277,7 +288,6 @@ public class ServiceCollectionExtensionsTests
             "first-toolbox",
             " ",
             "second-toolbox");
-        suppliedOptions.ApiVersion = "mutated";
         suppliedOptions.AllowedOAuthConsentOrigins[0] = "https://mutated.example.test";
         await using ServiceProvider provider = services.BuildServiceProvider();
         FoundryToolboxService service = provider.GetRequiredService<FoundryToolboxService>();
@@ -289,9 +299,7 @@ public class ServiceCollectionExtensionsTests
             Assert.IsType<FoundryToolboxOptions>(optionsField.GetValue(service));
 
         // Assert
-        Assert.Equal("v2", registeredOptions.ApiVersion);
         Assert.Equal("https://example.test/.default", registeredOptions.TokenScope);
-        Assert.False(registeredOptions.StrictMode);
         Assert.Equal(["https://login.example.test"], registeredOptions.AllowedOAuthConsentOrigins);
         Assert.Equal(["first-toolbox", "second-toolbox"], registeredOptions.ToolboxNames);
     }

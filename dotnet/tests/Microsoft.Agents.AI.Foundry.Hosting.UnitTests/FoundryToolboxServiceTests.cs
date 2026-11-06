@@ -46,37 +46,6 @@ public class FoundryToolboxServiceTests
     }
 
     [Fact]
-    public async Task GetToolboxToolsAsync_StrictMode_ThrowsForUnknownToolboxAsync()
-    {
-        var options = new FoundryToolboxOptions { StrictMode = true };
-        var service = new FoundryToolboxService(
-            options,
-            Mock.Of<TokenCredential>());
-
-        // Act + Assert: no StartAsync so Tools is empty; unknown name in strict mode throws.
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await service.GetToolboxToolsAsync("missing", version: null, CancellationToken.None));
-
-        Assert.Contains("missing", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("StrictMode", ex.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task GetToolboxToolsAsync_NonStrictMode_RequiresEndpointAsync()
-    {
-        var options = new FoundryToolboxOptions { StrictMode = false };
-        var service = new FoundryToolboxService(
-            options,
-            Mock.Of<TokenCredential>());
-
-        // Without calling StartAsync, endpoint is not resolved so lazy-open fails clearly.
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await service.GetToolboxToolsAsync("missing", version: null, CancellationToken.None));
-
-        Assert.Contains("FOUNDRY_PROJECT_ENDPOINT", ex.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public async Task StartAsync_WithoutEndpoint_LeavesToolsEmptyAsync()
     {
         // Ensure neither env var is set (tests may run in any CI environment)
@@ -117,7 +86,7 @@ public class FoundryToolboxServiceTests
             "https://example.invalid/api/projects/proj");
         try
         {
-            var options = new FoundryToolboxOptions { ApiVersion = "v1" };
+            var options = new FoundryToolboxOptions();
             options.ToolboxNames.Add("my-toolbox");
             var service = new FoundryToolboxService(
                 options,
@@ -303,35 +272,39 @@ public class FoundryToolboxServiceTests
     [InlineData("bad%3fx=1")]
     [InlineData("tb%23frag")]
     [InlineData("a%2fb")]
-    public async Task GetToolboxToolsAsync_RejectsNonSingleSegmentToolboxNameAsync(string unsafeName)
+    public async Task StartAsync_RejectsNonSingleSegmentToolboxNameAsync(string unsafeName)
     {
-        // Arrange: non-strict mode with a resolved endpoint and a benign opener seam, so a
-        // well-formed single-segment name would resolve successfully. A name that would move the
-        // request target — path separators, relative-path segments, a query/fragment delimiter that
-        // ends the path early, or any of their percent-encoded forms — must be rejected before any
+        // Arrange: a name that would move the request target — path separators, relative-path
+        // segments, a query/fragment delimiter that ends the path early, or any of their
+        // percent-encoded forms — must be rejected before any
         // request URL is built, so it can never carry the managed-identity token to an unintended
         // endpoint.
         var options = new FoundryToolboxOptions
         {
-            StrictMode = false,
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
+        options.ToolboxNames.Add(unsafeName);
+        var openCount = 0;
         await using var service = new FoundryToolboxService(
             options,
             Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (name, _, _) => Task.FromResult(
-                new FoundryToolboxService.ToolboxOpenResult(
-                    new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), []),
-                    Consents: null)),
+            ToolboxOpener = (_, _) =>
+            {
+                openCount++;
+                return Task.FromResult(
+                    new FoundryToolboxService.ToolboxOpenResult(
+                        new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), []),
+                        Consents: null));
+            },
         };
+
+        // Act
         await service.StartAsync(CancellationToken.None);
 
-        // Act + Assert: resolution is refused for the caller-influenced marker name.
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await service.GetToolboxToolsAsync(unsafeName, version: null, CancellationToken.None));
-
-        Assert.Contains(unsafeName, ex.Message, StringComparison.Ordinal);
+        // Assert: validation runs before the opener and keeps the unsafe toolbox deferred.
+        Assert.Equal(0, openCount);
+        Assert.Contains(unsafeName, service.DeferredToolboxNames);
     }
 
     [Theory]
@@ -342,7 +315,7 @@ public class FoundryToolboxServiceTests
     [InlineData("tb:v1")]
     [InlineData("tb@1")]
     [InlineData("a(b)")]
-    public async Task GetToolboxToolsAsync_AllowsWellFormedSingleSegmentNameAsync(string validName)
+    public async Task StartAsync_AllowsWellFormedSingleSegmentNameAsync(string validName)
     {
         // Arrange: a well-formed single-segment name — including names that merely contain a
         // character which stays inside the path segment (a dot that is not a standalone relative-path
@@ -352,101 +325,24 @@ public class FoundryToolboxServiceTests
         AITool tool = AIFunctionFactory.Create(() => "ok", name: "some_tool");
         var options = new FoundryToolboxOptions
         {
-            StrictMode = false,
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
+        options.ToolboxNames.Add(validName);
         await using var service = new FoundryToolboxService(
             options,
             Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (name, _, _) => Task.FromResult(
+            ToolboxOpener = (_, _) => Task.FromResult(
                 new FoundryToolboxService.ToolboxOpenResult(
                     new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), [tool]),
                     Consents: null)),
         };
-        await service.StartAsync(CancellationToken.None);
-        HostedCallContext.CallId = $"request-{validName}";
 
         // Act
-        var resolution = await service.GetToolboxToolsAsync(validName, version: null, CancellationToken.None);
-
-        // Assert
-        Assert.Empty(resolution.Consents);
-        Assert.Single(resolution.Tools);
-        Assert.Same(tool, resolution.Tools[0]);
-    }
-
-    [Fact]
-    public async Task GetToolboxToolsAsync_DifferentRequestContexts_DoNotReuseCachedToolsAsync()
-    {
-        // Arrange
-        var options = new FoundryToolboxOptions
-        {
-            StrictMode = false,
-            EndpointOverride = "https://proj.example/api/projects/proj",
-        };
-        var openCount = 0;
-        await using var service = new FoundryToolboxService(
-            options,
-            Mock.Of<TokenCredential>())
-        {
-            ToolboxOpener = (_, _, _) =>
-            {
-                openCount++;
-                AITool tool = AIFunctionFactory.Create(() => HostedCallContext.CallId, name: $"tool_{openCount}");
-                return Task.FromResult(
-                    new FoundryToolboxService.ToolboxOpenResult(
-                        new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), [tool]),
-                        Consents: null));
-            },
-        };
         await service.StartAsync(CancellationToken.None);
 
-        // Act
-        HostedCallContext.CallId = "request-a";
-        var first = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
-        HostedCallContext.CallId = "request-b";
-        var second = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
-
         // Assert
-        Assert.Equal(2, openCount);
-        Assert.NotSame(first.Tools[0], second.Tools[0]);
-    }
-
-    [Fact]
-    public async Task GetToolboxToolsAsync_SameRequestContext_ReusesCachedToolsAsync()
-    {
-        // Arrange
-        var options = new FoundryToolboxOptions
-        {
-            StrictMode = false,
-            EndpointOverride = "https://proj.example/api/projects/proj",
-        };
-        var openCount = 0;
-        await using var service = new FoundryToolboxService(
-            options,
-            Mock.Of<TokenCredential>())
-        {
-            ToolboxOpener = (_, _, _) =>
-            {
-                openCount++;
-                AITool tool = AIFunctionFactory.Create(() => "ok", name: "shared_tool");
-                return Task.FromResult(
-                    new FoundryToolboxService.ToolboxOpenResult(
-                        new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), [tool]),
-                        Consents: null));
-            },
-        };
-        await service.StartAsync(CancellationToken.None);
-
-        // Act
-        HostedCallContext.CallId = "request-a";
-        var first = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
-        var second = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
-
-        // Assert
-        Assert.Equal(1, openCount);
-        Assert.Same(first.Tools[0], second.Tools[0]);
+        Assert.Same(tool, Assert.Single(service.Tools));
     }
 
     [Fact]
@@ -463,7 +359,7 @@ public class FoundryToolboxServiceTests
             options,
             Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (_, _, _) =>
+            ToolboxOpener = (_, _) =>
             {
                 openCount++;
                 if (HostedCallContext.CallId is null)
@@ -504,7 +400,7 @@ public class FoundryToolboxServiceTests
             options,
             Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (_, _, _) =>
+            ToolboxOpener = (_, _) =>
             {
                 openCount++;
                 if (HostedCallContext.CallId is null)
@@ -539,7 +435,7 @@ public class FoundryToolboxServiceTests
     }
 
     [Fact]
-    public async Task GetToolboxToolsAsync_StartupOpenedToolbox_ReusesContainerCacheAcrossRequestsAsync()
+    public async Task RequestToolboxScope_Dispose_ReleasesScopedClientAsync()
     {
         // Arrange
         var options = new FoundryToolboxOptions
@@ -547,50 +443,19 @@ public class FoundryToolboxServiceTests
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
         options.ToolboxNames.Add("shared-toolbox");
-        var openCount = 0;
-        await using var service = new FoundryToolboxService(
-            options,
-            Mock.Of<TokenCredential>())
-        {
-            ToolboxOpener = (_, _, _) =>
-            {
-                openCount++;
-                AITool tool = AIFunctionFactory.Create(() => "ok", name: "shared_tool");
-                return Task.FromResult(
-                    new FoundryToolboxService.ToolboxOpenResult(
-                        new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), [tool]),
-                        Consents: null));
-            },
-        };
-        await service.StartAsync(CancellationToken.None);
-
-        // Act
-        HostedCallContext.CallId = "request-a";
-        var first = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
-        HostedCallContext.CallId = "request-b";
-        var second = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
-
-        // Assert
-        Assert.Equal(1, openCount);
-        Assert.Same(first.Tools[0], second.Tools[0]);
-    }
-
-    [Fact]
-    public async Task RequestToolboxScope_Dispose_ReleasesScopedClientAsync()
-    {
-        // Arrange
-        var options = new FoundryToolboxOptions
-        {
-            StrictMode = false,
-            EndpointOverride = "https://proj.example/api/projects/proj",
-        };
         var handler = new TrackingHttpMessageHandler();
+        HostedCallContext.ToolboxCacheScopeId = null;
         await using var service = new FoundryToolboxService(
             options,
             Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (_, _, _) =>
+            ToolboxOpener = (_, _) =>
             {
+                if (HostedCallContext.ToolboxCacheScopeId is null)
+                {
+                    throw new InvalidOperationException("A request scope is required.");
+                }
+
                 AITool tool = AIFunctionFactory.Create(() => "ok", name: "shared_tool");
                 return Task.FromResult(
                     new FoundryToolboxService.ToolboxOpenResult(
@@ -604,7 +469,7 @@ public class FoundryToolboxServiceTests
         await service.StartAsync(CancellationToken.None);
         var scope = service.CreateRequestScope();
         HostedCallContext.ToolboxCacheScopeId = scope.Id;
-        _ = await service.GetToolboxToolsAsync("shared-toolbox", version: null, CancellationToken.None);
+        await service.RetryDeferredToolboxesAsync(CancellationToken.None);
 
         // Act
         await scope.DisposeAsync();
@@ -614,26 +479,28 @@ public class FoundryToolboxServiceTests
     }
 
     [Fact]
-    public async Task GetToolboxToolsAsync_ConcurrentOpaqueScopes_DoNotCollideAsync()
+    public async Task RetryDeferredToolboxesAsync_ConcurrentOpaqueScopes_DoNotCollideAsync()
     {
         // Arrange
         var options = new FoundryToolboxOptions
         {
-            StrictMode = false,
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
+        options.ToolboxNames.Add("shared-toolbox");
         var openedScopes = new ConcurrentBag<string>();
         var handlers = new ConcurrentBag<TrackingHttpMessageHandler>();
         var bothOpenersEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var concurrentOpenCount = 0;
         var openCount = 0;
+        HostedCallContext.ToolboxCacheScopeId = null;
         await using var service = new FoundryToolboxService(
             options,
             Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = async (_, _, cancellationToken) =>
+            ToolboxOpener = async (_, cancellationToken) =>
             {
-                var scopeId = Assert.IsType<string>(HostedCallContext.ToolboxCacheScopeId);
+                var scopeId = HostedCallContext.ToolboxCacheScopeId
+                    ?? throw new InvalidOperationException("A request scope is required.");
                 if (Interlocked.Increment(ref concurrentOpenCount) == 2)
                 {
                     bothOpenersEntered.TrySetResult();
@@ -655,14 +522,12 @@ public class FoundryToolboxServiceTests
         };
         await service.StartAsync(CancellationToken.None);
 
-        async Task<FoundryToolboxService.ToolboxResolution> ResolveInOwnScopeAsync()
+        async Task<AITool> ResolveInOwnScopeAsync()
         {
             await using var scope = service.CreateRequestScope();
             HostedCallContext.ToolboxCacheScopeId = scope.Id;
-            return await service.GetToolboxToolsAsync(
-                "shared-toolbox",
-                version: null,
-                CancellationToken.None);
+            await service.RetryDeferredToolboxesAsync(CancellationToken.None);
+            return Assert.Single(service.GetCurrentRequestTools());
         }
 
         // Act
@@ -673,7 +538,7 @@ public class FoundryToolboxServiceTests
         // Assert
         Assert.Equal(2, openCount);
         Assert.Equal(2, openedScopes.Distinct(StringComparer.Ordinal).Count());
-        Assert.NotSame(resolutions[0].Tools[0], resolutions[1].Tools[0]);
+        Assert.NotSame(resolutions[0], resolutions[1]);
         Assert.Equal(2, handlers.Count);
         Assert.All(handlers, static item => Assert.True(item.IsDisposed));
     }
@@ -686,16 +551,23 @@ public class FoundryToolboxServiceTests
         var handlers = new ConcurrentDictionary<string, TrackingHttpMessageHandler>(StringComparer.Ordinal);
         var options = new FoundryToolboxOptions
         {
-            StrictMode = false,
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
+        options.ToolboxNames.Add("throws");
+        options.ToolboxNames.Add("continues");
+        HostedCallContext.ToolboxCacheScopeId = null;
         var service = new FoundryToolboxService(
             options,
             Mock.Of<TokenCredential>(),
             logger)
         {
-            ToolboxOpener = (name, _, _) =>
+            ToolboxOpener = (name, _) =>
             {
+                if (HostedCallContext.ToolboxCacheScopeId is null)
+                {
+                    throw new InvalidOperationException("A request scope is required.");
+                }
+
                 var handler = new TrackingHttpMessageHandler(throwOnDispose: name == "throws");
                 handlers[name] = handler;
                 AITool tool = AIFunctionFactory.Create(() => "ok", name: $"{name}_tool");
@@ -709,10 +581,10 @@ public class FoundryToolboxServiceTests
             },
         };
         await service.StartAsync(CancellationToken.None);
+        logger.Exceptions.Clear();
         var scope = service.CreateRequestScope();
         HostedCallContext.ToolboxCacheScopeId = scope.Id;
-        _ = await service.GetToolboxToolsAsync("throws", version: null, CancellationToken.None);
-        _ = await service.GetToolboxToolsAsync("continues", version: null, CancellationToken.None);
+        await service.RetryDeferredToolboxesAsync(CancellationToken.None);
 
         // Act
         var exception = await Record.ExceptionAsync(async () => await scope.DisposeAsync());
@@ -735,16 +607,23 @@ public class FoundryToolboxServiceTests
         var handlers = new ConcurrentDictionary<string, TrackingHttpMessageHandler>(StringComparer.Ordinal);
         var options = new FoundryToolboxOptions
         {
-            StrictMode = false,
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
+        options.ToolboxNames.Add("throws");
+        options.ToolboxNames.Add("continues");
+        HostedCallContext.ToolboxCacheScopeId = null;
         var service = new FoundryToolboxService(
             options,
             Mock.Of<TokenCredential>(),
             logger)
         {
-            ToolboxOpener = (name, _, _) =>
+            ToolboxOpener = (name, _) =>
             {
+                if (HostedCallContext.ToolboxCacheScopeId is null)
+                {
+                    throw new InvalidOperationException("A request scope is required.");
+                }
+
                 var handler = new TrackingHttpMessageHandler(throwOnDispose: name == "throws");
                 handlers[name] = handler;
                 AITool tool = AIFunctionFactory.Create(() => "ok", name: $"{name}_tool");
@@ -758,10 +637,10 @@ public class FoundryToolboxServiceTests
             },
         };
         await service.StartAsync(CancellationToken.None);
+        logger.Exceptions.Clear();
         var scope = service.CreateRequestScope();
         HostedCallContext.ToolboxCacheScopeId = scope.Id;
-        _ = await service.GetToolboxToolsAsync("throws", version: null, CancellationToken.None);
-        _ = await service.GetToolboxToolsAsync("continues", version: null, CancellationToken.None);
+        await service.RetryDeferredToolboxesAsync(CancellationToken.None);
 
         // Act
         var exception = await Assert.ThrowsAsync<AggregateException>(

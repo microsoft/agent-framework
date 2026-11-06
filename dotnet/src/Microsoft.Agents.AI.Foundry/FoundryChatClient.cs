@@ -212,7 +212,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
         var effectiveOptions = this._agentReference is not null
             ? this.GetAgentEnabledChatOptions(options)
             : options;
-        MarkRequestFeatures(effectiveOptions);
+        MarkRequestFeature();
 
         var box = new StrongBox<string?>(null);
         var previous = ServedModelScope.Current;
@@ -241,7 +241,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
         var effectiveOptions = this._agentReference is not null
             ? this.GetAgentEnabledChatOptions(options)
             : options;
-        MarkRequestFeatures(effectiveOptions);
+        MarkRequestFeature();
 
         var box = new StrongBox<string?>(null);
         var previous = ServedModelScope.Current;
@@ -472,24 +472,8 @@ public sealed class FoundryChatClient : DelegatingChatClient
 
     #endregion
 
-    private static void MarkRequestFeatures(ChatOptions? options)
-    {
+    private static void MarkRequestFeature() =>
         FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryChatClient);
-
-        if (options?.Tools is null)
-        {
-            return;
-        }
-
-        foreach (AITool tool in options.Tools)
-        {
-            if (tool is HostedMcpToolboxAITool)
-            {
-                FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryToolbox);
-                return;
-            }
-        }
-    }
 
     /// <summary>
     /// Parses an agent endpoint URI of shape
