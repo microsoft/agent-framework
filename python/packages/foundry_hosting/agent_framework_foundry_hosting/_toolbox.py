@@ -174,9 +174,10 @@ class FoundryToolbox(MCPStreamableHTTPTool):
     Platform headers are resolved at each operation boundary before work crosses
     into the MCP connection's writer task. The complete effective header set is
     bound to the MCP session; when the caller context changes, the Toolbox
-    reconnects that session before sending the operation. Tool, prompt and
-    Toolbox skill-resource operations share the same identity lock so concurrent
-    callers cannot overwrite one another's headers.
+    waits for active operations to finish and reconnects that session before
+    sending the operation. Tool, prompt and Toolbox skill-resource operations
+    with the same effective headers can run concurrently without overwriting
+    one another's headers.
 
     Because the toolbox endpoint is a first-party Foundry service, forwarding the
     opaque caller token to it is safe.
@@ -360,16 +361,11 @@ class FoundryToolbox(MCPStreamableHTTPTool):
     async def _read_resource(self, uri: AnyUrl) -> ReadResourceResult:
         """Read a Toolbox resource under the current platform-header identity."""
         headers = self._effective_resource_headers()
-        async with self._call_headers_lock:
-            connection = self._require_connection()
-            if headers or connection.is_framework_owned:
-                await self._ensure_session_identity(headers, {})
-                connection = self._require_connection()
-            self._active_call_headers = headers
-            try:
-                return await connection.read_resource(cast(str, uri))
-            finally:
-                self._active_call_headers = None
+        connection = self._connection
+        if not headers and connection is not None and not connection.is_framework_owned:
+            return await connection.read_resource(cast(str, uri))
+        async with self._use_call_headers(headers, {}):
+            return await self._require_connection().read_resource(cast(str, uri))
 
     def _effective_resource_headers(self) -> dict[str, str]:
         """Resolve headers for a resource operation without caller runtime kwargs."""
@@ -567,7 +563,7 @@ class _FoundryToolboxSkillsSource(SkillsSource):
     (via the agent or an ``async with`` block) and is **replaced** with a new
     object whenever the toolbox reconnects. Skills are therefore bound to an
     identity-scoped resource adapter that resolves the current session while
-    holding the Toolbox operation lock, so cached skills keep using the live
+    holding the Toolbox header identity, so cached skills keep using the live
     session instead of a closed one.
     """
 

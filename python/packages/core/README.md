@@ -179,6 +179,22 @@ asyncio.run(main())
 
 You can explore additional agent samples [here](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents).
 
+### MCP HTTP concurrency and timeouts
+
+`MCPStreamableHTTPTool` permits concurrent tool calls and generated prompt calls when
+their effective HTTP headers match. Fixed and dynamic headers together identify the
+MCP session; header names are compared case-insensitively and values case-sensitively.
+A caller with different headers waits for active operations to finish before the
+framework reconnects and refreshes session discovery. Foundry Toolbox resource reads
+use the same coordination.
+
+Header admission, session reconciliation, and connection recovery use `request_timeout`
+as separate budgets (30 seconds by default; `None` disables them). These budgets do
+not form an end-to-end deadline. Admission timeout does not cancel another caller's
+active tool call. Concurrent failures from one connection reuse its replacement.
+Calling `close()` interrupts in-flight recovery; it does not permit that recovery
+to reopen the session. Subsequent explicit connection or discovery remains supported.
+
 ### MCP HTTP client ownership and cookies
 
 **Breaking change:** HTTP clients created by `MCPStreamableHTTPTool` no longer persist

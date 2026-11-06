@@ -31,6 +31,12 @@ For Foundry, the derived OpenAI connection is owned by the connector even when t
 Do not share a connector-owned connection across overlapping agent contexts; inject an externally managed SDK
 client when its lifetime must extend beyond any one agent context. Do not assume a closed SDK connection can reopen.
 
+For `MCPStreamableHTTPTool` and Foundry Toolbox, tool calls and generated prompts with the same effective HTTP
+headers can run concurrently. Different headers require the current operations to finish before the MCP session
+is replaced; do not bypass that boundary to share caller-specific sessions or catalogs. `request_timeout` also
+bounds header admission and recovery separately from the RPC timeout. See the
+[MCP HTTP concurrency guidance](https://github.com/microsoft/agent-framework/blob/main/python/packages/core/README.md#mcp-http-concurrency-and-timeouts).
+
 ## Capability categories
 
 - Use function tools for application-owned code and MCP for external tool services.

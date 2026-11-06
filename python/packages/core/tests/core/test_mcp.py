@@ -3009,7 +3009,7 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
             self.connect_count = 0
             self.sessions: list[Any] = []
 
-        async def connect(self, *, reset: bool = False) -> None:
+        async def _reconnect_without_loading(self) -> None:
             self.connect_count += 1
             mock_session = Mock(spec=ClientSession)
             _set_framework_owned_session(self, mock_session)
@@ -3021,12 +3021,14 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
                     return_value=types.CallToolResult(content=[types.TextContent(type="text", text="recovered")])
                 )
             self.is_connected = True
+            self._tools_loaded = True
+            self._prompts_loaded = True
 
         def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
             return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
 
     server = TestServer(name="test_server")
-    await server.connect()
+    await server._reconnect_without_loading()
 
     result = await server.call_tool("test_tool", param="test_value")
 
@@ -7689,15 +7691,15 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
     original_exit_stack = tool._exit_stack
     tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
-    # Mock connect() to avoid trying to start actual process
-    with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
+    # Mock transport replacement to avoid starting an actual process.
+    with patch.object(tool, "_reconnect_without_loading", new_callable=AsyncMock) as mock_connect:
 
-        async def restore_session(*, reset=False):
-            if reset:
-                await original_exit_stack.aclose()
+        async def restore_session():
+            await original_exit_stack.aclose()
             _set_framework_owned_session(tool, mock_session)
             tool.is_connected = True
             tool._tools_loaded = True
+            tool._prompts_loaded = True
 
         mock_connect.side_effect = restore_session
 
@@ -7727,9 +7729,9 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         # This call should trigger reconnection after ClosedResourceError
         result = await tool.call_tool("test_tool", arg1="value2")
         assert result is not None
-        # Verify reconnect was attempted with reset=True
+        # Verify the failed transport was replaced.
         assert mock_connect.call_count >= 1
-        mock_connect.assert_called_with(reset=True)
+        mock_connect.assert_called_with()
         # Verify _exit_stack.aclose was called during reconnection
         original_exit_stack.aclose.assert_called()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
@@ -7787,15 +7789,15 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
     original_exit_stack = tool._exit_stack
     tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
-    # Mock connect() to avoid trying to start actual process
-    with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
+    # Mock transport replacement to avoid starting an actual process.
+    with patch.object(tool, "_reconnect_without_loading", new_callable=AsyncMock) as mock_connect:
 
-        async def restore_session(*, reset=False):
-            if reset:
-                await original_exit_stack.aclose()
+        async def restore_session():
+            await original_exit_stack.aclose()
             _set_framework_owned_session(tool, mock_session)
             tool.is_connected = True
             tool._prompts_loaded = True
+            tool._tools_loaded = True
 
         mock_connect.side_effect = restore_session
 
@@ -7825,9 +7827,9 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
         # This call should trigger reconnection after ClosedResourceError
         result = await tool.get_prompt("test_prompt", arg1="value2")
         assert result is not None
-        # Verify reconnect was attempted with reset=True
+        # Verify the failed transport was replaced.
         assert mock_connect.call_count >= 1
-        mock_connect.assert_called_with(reset=True)
+        mock_connect.assert_called_with()
         # Verify _exit_stack.aclose was called during reconnection
         original_exit_stack.aclose.assert_called()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
@@ -7925,15 +7927,17 @@ async def test_mcp_tool_call_tool_raises_after_reconnection_still_fails() -> Non
         tool,
         Mock(call_tool=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()])),
     )
+    tool._tools_loaded = True
+    tool._prompts_loaded = True
 
     with (
-        patch.object(tool, "connect", AsyncMock()) as mock_connect,
+        patch.object(tool, "_reconnect_without_loading", AsyncMock()) as mock_connect,
         patch.object(logger, "error") as mock_error,
         pytest.raises(ToolExecutionException, match="connection lost"),
     ):
         await tool.call_tool("remote_tool")
 
-    mock_connect.assert_awaited_once_with(reset=True)
+    mock_connect.assert_awaited_once_with()
     mock_error.assert_called_once()
 
 
@@ -7945,15 +7949,17 @@ async def test_mcp_tool_get_prompt_raises_after_reconnection_still_fails() -> No
         tool,
         Mock(get_prompt=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()])),
     )
+    tool._tools_loaded = True
+    tool._prompts_loaded = True
 
     with (
-        patch.object(tool, "connect", AsyncMock()) as mock_connect,
+        patch.object(tool, "_reconnect_without_loading", AsyncMock()) as mock_connect,
         patch.object(logger, "error") as mock_error,
         pytest.raises(ToolExecutionException, match="connection lost"),
     ):
         await tool.get_prompt("remote_prompt")
 
-    mock_connect.assert_awaited_once_with(reset=True)
+    mock_connect.assert_awaited_once_with()
     mock_error.assert_called_once()
 
 

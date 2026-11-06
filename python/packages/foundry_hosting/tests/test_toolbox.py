@@ -537,6 +537,47 @@ async def test_toolbox_concurrent_skill_reads_use_their_own_call_id() -> None:
     assert all(request.headers["X-Custom-Header"] == "resource-value" for request in resource_requests)
 
 
+async def test_toolbox_skill_read_waits_for_in_progress_identity_reconnect() -> None:
+    server = _ToolboxLoopbackServer()
+    toolbox = FoundryToolbox(_FakeCredential(), url="https://loopback.invalid/mcp")  # type: ignore
+    await _attach_loopback_transport(toolbox, server)
+    source = toolbox.as_skills_provider()._source
+    reconnect_started = asyncio.Event()
+    release_reconnect = asyncio.Event()
+
+    async def pause_initialize(request: httpx.Request) -> None:
+        if request.method == "POST" and json.loads(request.content).get("method") == "initialize":
+            reconnect_started.set()
+            await release_reconnect.wait()
+
+    try:
+        await _run_with_request_context("CALL-A", toolbox.connect)
+        skills = await _run_with_request_context("CALL-A", lambda: source.get_skills(_source_context()))
+        client = toolbox._httpx_client
+        assert client is not None
+        client.event_hooks["request"].append(pause_initialize)
+
+        async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
+            call = tasks.create_task(
+                _run_with_request_context("CALL-B", lambda: toolbox.call_tool("record", marker="reconnect"))
+            )
+            await reconnect_started.wait()
+            read = tasks.create_task(_run_with_request_context("CALL-B", skills[0].get_content))
+            await asyncio.sleep(0)
+            assert not read.done()
+            release_reconnect.set()
+
+        assert call.result() is not None
+        assert "Call ID: CALL-B" in read.result()
+        assert len(server.requests_for("initialize")) == 2
+        request = server.requests_for("resources/read")[-1]
+        assert request.headers["x-agent-foundry-call-id"] == "CALL-B"
+        assert request.headers["mcp-session-id"].endswith("-CALL-B")
+    finally:
+        release_reconnect.set()
+        await toolbox.close()
+
+
 async def test_toolbox_skills_reject_header_provider_that_requires_runtime_kwargs() -> None:
     server = _ToolboxLoopbackServer()
     toolbox = FoundryToolbox(
