@@ -1601,6 +1601,57 @@ class TestMCPSkillsSourceArchiveCollisions:
         assert caplog.records[0].levelname == "WARNING"
         assert "Failed to extract archive" in caplog.text
 
+    @pytest.mark.parametrize(
+        ("manifest", "variant"),
+        [
+            ("SKILL.md", "skill.md"),
+            ("SKILL.md", "Skill.MD"),
+            ("nested/SKILL.md", "nested/skill.md"),
+            ("nested/SKILL.md", "NESTED/SKILL.md"),
+        ],
+    )
+    @pytest.mark.parametrize("variant_first", [False, True])
+    async def test_case_variant_manifests_skip_only_affected_skill(
+        self, manifest: str, variant: str, variant_first: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        manifests = [
+            (manifest, ARCHIVE_SKILL_MD.encode()),
+            (variant, ARCHIVE_SKILL_MD.replace("Instructions from an archive.", "Other instructions.").encode()),
+        ]
+        if variant_first:
+            manifests.reverse()
+        archive = _make_zip(manifests)
+        index_data = json.loads(SAMPLE_SKILL_INDEX)
+        index_data["skills"].extend(json.loads(_make_archive_index("packaged-skill", url))["skills"])
+        client = _archive_client(json.dumps(index_data), url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert [skill.frontmatter.name for skill in skills] == ["unit-converter"]
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "WARNING"
+        assert "'packaged-skill'" in caplog.text
+        assert "SKILL.md paths that differ only by case" in caplog.text
+
+    @pytest.mark.parametrize(
+        ("manifest", "other"),
+        [("SKILL.md", "nested/skill.md"), ("a/SKILL.md", "b/skill.md")],
+    )
+    async def test_manifests_in_distinct_directories_are_not_case_variants(self, manifest: str, other: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip([
+            (manifest, ARCHIVE_SKILL_MD.encode()),
+            (other, ARCHIVE_SKILL_MD.encode()),
+        ])
+        index = _make_archive_index("packaged-skill", url)
+
+        skills = await MCPSkillsSource(client=_archive_client(index, url, archive, "application/zip")).get_skills(
+            _SOURCE_CTX
+        )
+
+        assert [skill.frontmatter.name for skill in skills] == ["packaged-skill"]
+
     @pytest.mark.parametrize("duplicate", ["./reference.md", "REFERENCE.md"])
     async def test_collision_does_not_skip_other_skills(self, duplicate: str, caplog: pytest.LogCaptureFixture) -> None:
         url = "skill://archives/packaged-skill.zip"

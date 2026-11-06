@@ -5292,7 +5292,11 @@ class _ArchiveEntryLoader:
 
     def _skill_from_files(self, entry: _McpSkillIndexEntry, files: dict[str, bytes]) -> FileSkill | None:
         """Assemble an in-memory :class:`FileSkill` from the archive's extracted files."""
-        skill_md_key = self._find_skill_md(files)
+        try:
+            skill_md_key = self._find_skill_md(files)
+        except ValueError as exc:
+            logger.warning("Skipping skill '%s': %s", entry.name, exc)
+            return None
         if skill_md_key is None:
             logger.warning("Skipping skill '%s': archive contains no SKILL.md", entry.name)
             return None
@@ -5338,10 +5342,12 @@ class _ArchiveEntryLoader:
 
     @staticmethod
     def _find_skill_md(files: dict[str, bytes]) -> str | None:
-        """Return the key of the shallowest ``SKILL.md`` (case-insensitive), or ``None``."""
+        """Return the shallowest ``SKILL.md`` key, rejecting manifest paths that differ only by case."""
         candidates = [key for key in files if key.rsplit("/", 1)[-1].upper() == SKILL_FILE_NAME.upper()]
         if not candidates:
             return None
+        if len({key.lower() for key in candidates}) != len(candidates):
+            raise ValueError("Archive contains SKILL.md paths that differ only by case.")
         # Prefer the shallowest SKILL.md; break ties deterministically by name.
         return min(candidates, key=lambda key: (key.count("/"), key))
 

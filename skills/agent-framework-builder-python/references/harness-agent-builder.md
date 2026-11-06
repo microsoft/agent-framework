@@ -36,7 +36,7 @@ complete option list.
 - Load skills and background agents only from trusted sources; their content crosses the model and tool boundary.
 - File-backed skill resource and script lookup is case-insensitive, so a skill whose resource or script names differ
   only by case (for example `readme.md` and `README.md`) is skipped with a warning. ZIP archives with two members that
-  normalize to the same path are also skipped.
+  normalize to the same path, or with manifest paths differing only by case (`SKILL.md` and `skill.md`), are also skipped.
 - Bound autonomous loops and stop for unresolved approvals or user input.
 - Treat shell command filters as a usability guard, not a security boundary. The host owns sandboxing and executor
   lifecycle. Apply resource limits to the host agent process as well as the shell container; container memory
