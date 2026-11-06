@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -28,6 +27,8 @@ internal abstract class McpSkillResources;
 /// </remarks>
 internal sealed class McpSkillManifestResources : McpSkillResources
 {
+    private readonly Dictionary<string, McpSkillResourceEntry> _entriesByUri;
+
     /// <summary>
     /// Initializes the file list used to restrict reads and verify fetched content.
     /// </summary>
@@ -35,6 +36,16 @@ internal sealed class McpSkillManifestResources : McpSkillResources
     public McpSkillManifestResources(IReadOnlyList<McpSkillResourceEntry> entries)
     {
         this.Entries = Throw.IfNull(entries);
+        this._entriesByUri = new(entries.Count, StringComparer.Ordinal);
+
+        // Keep the original list so the catalog can report null entries and duplicate URIs.
+        foreach (McpSkillResourceEntry? entry in entries)
+        {
+            if (entry?.Uri is string uri)
+            {
+                this._entriesByUri.TryAdd(uri, entry);
+            }
+        }
     }
 
     /// <summary>
@@ -48,7 +59,7 @@ internal sealed class McpSkillManifestResources : McpSkillResources
     /// <param name="uri">The resource URI to look up.</param>
     /// <returns>The matching entry, or <see langword="null"/> if the file is not listed.</returns>
     public McpSkillResourceEntry? FindEntry(string uri) =>
-        this.Entries.FirstOrDefault(resource => string.Equals(resource.Uri, uri, StringComparison.Ordinal));
+        this._entriesByUri.TryGetValue(uri, out McpSkillResourceEntry? entry) ? entry : null;
 }
 
 /// <summary>

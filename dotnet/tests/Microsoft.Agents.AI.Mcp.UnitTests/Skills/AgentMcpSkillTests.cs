@@ -27,6 +27,49 @@ public sealed partial class AgentMcpSkillTests
     private const string SkillUri = SkillRootUri + "SKILL.md";
     private const string SkillContent = "---\nname: unit-converter\ndescription: Convert units.\n---\nInstructions.";
 
+    [Theory]
+    [InlineData(SkillUri, true)]
+    [InlineData(SkillRootUri + "references/checklist.md", true)]
+    [InlineData(SkillRootUri + "references/Checklist.md", false)]
+    [InlineData(SkillRootUri + "missing.md", false)]
+    public void ManifestResources_FindEntry_UsesOrdinalUriLookup(string uri, bool exists)
+    {
+        // Arrange
+        McpSkillResourceEntry instructions = Resource(SkillUri, SkillContent);
+        McpSkillResourceEntry supporting = Resource(SkillRootUri + "references/checklist.md", "Checklist.");
+        var manifest = new McpSkillManifestResources([instructions, supporting]);
+
+        // Act
+        McpSkillResourceEntry? entry = manifest.FindEntry(uri);
+
+        // Assert
+        if (exists)
+        {
+            Assert.Same(uri == SkillUri ? instructions : supporting, entry);
+        }
+        else
+        {
+            Assert.Null(entry);
+        }
+    }
+
+    [Fact]
+    public void ManifestResources_DuplicateUris_PreservesEntriesAndFindsFirst()
+    {
+        // Arrange
+        McpSkillResourceEntry first = Resource(SkillUri, SkillContent);
+        McpSkillResourceEntry duplicate = Resource(SkillUri, "Different content.");
+        var manifest = new McpSkillManifestResources([first, duplicate]);
+
+        // Act
+        McpSkillResourceEntry? entry = manifest.FindEntry(SkillUri);
+
+        // Assert
+        Assert.Same(first, entry);
+        Assert.Equal(2, manifest.Entries.Count);
+        Assert.Same(duplicate, manifest.Entries[1]);
+    }
+
     [Fact]
     public void Constructor_NullResources_Throws()
     {
