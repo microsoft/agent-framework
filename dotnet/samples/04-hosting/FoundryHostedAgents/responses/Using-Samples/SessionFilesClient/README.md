@@ -1,6 +1,6 @@
 ﻿# SessionFilesClient
 
-A thin chat REPL that connects to a deployed [`Hosted-Files`](../../Hosted-Files/) agent via `FoundryAgent` and lets you ask questions whose answers come from the files bundled with that agent. Same shape as [`SimpleAgent`](../SimpleAgent/) — point it at an `AGENT_ENDPOINT`, build a `FoundryAgent`, run.
+A thin chat REPL that connects to a deployed [`Hosted-Files`](../../Hosted-Files/) agent via `FoundryAgent` and lets you ask questions whose answers come from the files bundled with that agent. Same shape as [`SimpleAgent`](../SimpleAgent/) — point it at your Foundry project and agent name, build a `FoundryAgent`, run.
 
 The agent's container-side `ListFiles` and `ReadFile` tools surface the bundled file contents to the model. The client knows nothing about files; that is entirely the agent's concern.
 

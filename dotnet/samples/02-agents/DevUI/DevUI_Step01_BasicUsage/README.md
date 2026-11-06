@@ -59,8 +59,11 @@ To add DevUI to your ASP.NET Core application:
    // Register workflows
    var agent1Builder = builder.AddAIAgent("workflow-agent1", "You are agent 1.");
    var agent2Builder = builder.AddAIAgent("workflow-agent2", "You are agent 2.");
-   builder.AddSequentialWorkflow("my-workflow", [agent1Builder, agent2Builder])
-       .AddAsAIAgent(includeWorkflowOutputsInResponse: true);
+   builder.AddWorkflow("my-workflow", (sp, key) =>
+   {
+       var agents = new[] { agent1Builder, agent2Builder }.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
+       return AgentWorkflowBuilder.BuildSequential(workflowName: key, agents: agents);
+   }).AddAsAIAgent(includeWorkflowOutputsInResponse: true);
    ```
 
    Set `includeWorkflowOutputsInResponse` to `true` to include the workflow's final output in the
