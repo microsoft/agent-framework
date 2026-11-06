@@ -6,6 +6,8 @@ import logging
 import threading
 from contextvars import ContextVar
 from datetime import date, datetime
+from enum import Enum
+from functools import partial
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
@@ -762,6 +764,75 @@ def test_tool_without_args():
         "type": "object",
     }
     assert test_tool() == 3
+
+
+def search_index(query: str, index: str) -> str:
+    """Search an index."""
+    return f"{index}: {query}"
+
+
+def undocumented(value: int) -> int:
+    return value
+
+
+class Lookup:
+    def __call__(self, key: str) -> str:
+        """Look up a key."""
+        return key
+
+
+class DocumentedLookup:
+    """Look up a documented key."""
+
+    def __call__(self, key: str) -> str:
+        """Look up a key."""
+        return key
+
+
+class Color(Enum):
+    RED = "red"
+
+
+named_search = partial(search_index, index="docs")
+named_search.__name__ = "search_docs"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+documented_search = partial(search_index, index="docs")
+documented_search.__doc__ = "Search the docs index."  # type: ignore[assignment]
+
+
+@pytest.mark.parametrize(
+    ("func", "expected_name", "expected_description"),
+    [
+        (partial(search_index, index="docs"), "search_index", "Search an index."),
+        (Lookup(), "Lookup", "Look up a key."),
+        (DocumentedLookup(), "DocumentedLookup", "Look up a documented key."),
+        (named_search, "search_docs", "Search an index."),
+        (documented_search, "search_index", "Search the docs index."),
+        (partial(named_search), "search_docs", "Search an index."),
+        (partial(documented_search), "search_index", "Search the docs index."),
+        (partial(Lookup()), "Lookup", "Look up a key."),
+        (Color, "Color", ""),
+        (undocumented, "undocumented", ""),
+    ],
+    ids=[
+        "partial",
+        "call_docstring",
+        "class_docstring",
+        "partial_own_name",
+        "partial_own_docstring",
+        "nested_partial_own_name",
+        "nested_partial_own_docstring",
+        "partial_instance",
+        "class_object",
+        "no_docstring",
+    ],
+)
+def test_tool_default_name_and_description(func: Any, expected_name: str, expected_description: str) -> None:
+    """Test the default name and description of partials, callable instances, and classes."""
+    func_tool = tool(func)
+
+    assert func_tool.name == expected_name
+    assert func_tool.description == expected_description
+    assert func_tool.func is func
 
 
 async def test_tool_decorator_with_async():
