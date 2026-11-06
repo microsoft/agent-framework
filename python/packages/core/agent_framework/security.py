@@ -1553,7 +1553,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
     Examples:
         .. code-block:: python
 
-            from agent_framework import Agent, LabelTrackingFunctionMiddleware, tool
+            from agent_framework import Agent, tool
+            from agent_framework.security import LabelTrackingFunctionMiddleware
 
 
             @tool(additional_properties={"source_integrity": "trusted"})
@@ -1568,7 +1569,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             agent = Agent(client=client, name="assistant", tools=[get_weather], middleware=[middleware])
 
             # Run agent - untrusted tool results are automatically hidden
-            response = await agent.run(messages=[{"role": "user", "content": "What's the weather?"}])
+            response = await agent.run("What's the weather?")
     """
 
     _requires_session_state = True
@@ -4675,7 +4676,7 @@ def get_security_tools() -> list[FunctionTool]:
             from agent_framework.security import get_security_tools
 
             agent = Agent(
-                chat_client=client,
+                client=client,
                 instructions="You are a helpful assistant.",
                 tools=[my_tool, *get_security_tools()],
             )
@@ -4829,10 +4830,10 @@ async def apply_mcp_security_labels(  # ruff: ignore[unused-async]
 
             async with MCPStdioTool(name="github", command="gh-mcp", args=["stdio"]) as mcp:
                 await apply_mcp_security_labels(mcp)
-                agent = ChatCompletionAgent(
-                    chat_client=client,
+                agent = Agent(
+                    client=client,
                     tools=[mcp],
-                    context_providers=[SecureAgentConfig(chat_client=client)],
+                    context_providers=[SecureAgentConfig(quarantine_chat_client=client)],
                 )
     """
     if not getattr(mcp_tool, "is_connected", False):

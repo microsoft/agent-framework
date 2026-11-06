@@ -17,13 +17,14 @@ Cloud evaluator example:
 
     evals = FoundryEvals(project_client=client, model="gpt-4o")
     results = await evaluate_agent(agent=agent, queries=["Hello"], evaluators=evals)
-    results.raise_for_status()
+    for result in results:
+        result.raise_for_status()
 
 Local evaluator example:
 
 .. code-block:: python
 
-    from agent_framework import LocalEvaluator, keyword_check, evaluate_agent
+    from agent_framework import LocalEvaluator, evaluate_agent, keyword_check, tool_called_check
 
     local = LocalEvaluator(
         keyword_check("weather", "temperature"),
@@ -1537,7 +1538,7 @@ class LocalEvaluator:
 
         .. code-block:: python
 
-            from agent_framework import LocalEvaluator, keyword_check, evaluate_agent
+            from agent_framework import LocalEvaluator, evaluate_agent, keyword_check, tool_called_check
 
             local = LocalEvaluator(
                 keyword_check("weather"),
