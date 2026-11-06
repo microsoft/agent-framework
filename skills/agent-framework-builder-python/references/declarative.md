@@ -25,9 +25,7 @@ maturity. Check current package status and public docstrings before making compa
 - Review the documented HTTP body limits and handler ownership rules; use a custom handler when host policy requires
   different authentication, retries, SSRF controls, or transport behavior.
 - `DefaultMCPToolHandler` opens and closes a fresh MCP session per invocation, including `tools/list`.
-  Instantiate it normally, not with `async with`; it has no `aclose()`.
-  The legacy `cache_max_size` parameter is deprecated and ignored. Positive values emit `DeprecationWarning`;
-  non-positive values raise `ValueError`. Omit it in new code; it cannot restore session sharing.
+  Instantiate it normally, not with `async with`; it has no `cache_max_size` or `aclose()`.
   Its optional `client_provider` may return a borrowed, reusable HTTP client, but protocol state is never shared.
   Cancel and await active calls before closing borrowed clients. Implicit server state does not survive later calls,
   approval waits, or checkpoint resumes; use explicit remote state handles or a custom scoped handler if needed.

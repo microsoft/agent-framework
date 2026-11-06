@@ -104,8 +104,8 @@ class DefaultMCPToolHandler:
 
     Keyword Args:
         client_provider: Optional per-invocation provider of a borrowed HTTP client.
-        cache_max_size: Deprecated compatibility parameter. Positive values are
-            accepted with a warning but ignored; sessions are never cached.
+        cache_max_size: Deprecated compatibility parameter. Non-``None`` values
+            emit a warning but are ignored; sessions are never cached.
         max_discovery_pages: Maximum pages accepted per tool catalog fetch.
             Defaults to 100; ``None`` disables the limit.
         max_discovery_items: Maximum tools accepted per tool catalog fetch.
@@ -129,8 +129,6 @@ class DefaultMCPToolHandler:
         max_discovery_items: int | None = 1_000,
     ) -> None:
         if cache_max_size is not None:
-            if cache_max_size <= 0:
-                raise ValueError(f"cache_max_size must be positive, got {cache_max_size}")
             warnings.warn(
                 "cache_max_size is deprecated and has no effect. Each invocation uses a new MCP session.",
                 DeprecationWarning,

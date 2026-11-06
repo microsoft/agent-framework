@@ -92,8 +92,8 @@ string. Custom handlers should return error results only for tool-level errors;
 raised exceptions are not converted into workflow results.
 
 The legacy `cache_max_size` parameter is accepted for compatibility, but is
-deprecated and ignored. Passing a positive value emits `DeprecationWarning`;
-zero and negative values still raise `ValueError`. Omitting it emits no warning.
+deprecated and ignored. Passing any non-`None` value emits `DeprecationWarning`;
+the value is not validated. Omitting it or passing `None` emits no warning.
 It cannot restore session caching or sharing.
 
 The handler no longer implements `aclose()` or an async context manager.
