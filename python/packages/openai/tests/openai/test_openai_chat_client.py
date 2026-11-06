@@ -10922,6 +10922,7 @@ async def test_background_poll_retry_does_not_repeat_completed_tools(
         assert request_call.kwargs["previous_response_id"] == "resp_bg"
 
 
+@pytest.mark.parametrize("mode", ["non-streaming", "iterate", "final-only"])
 @pytest.mark.parametrize(
     "retry_change",
     [
@@ -10937,7 +10938,12 @@ async def test_background_poll_retry_does_not_repeat_completed_tools(
         "cancelled-submission",
     ],
 )
-async def test_background_recovery_rejects_unsafe_retries(retry_change: str) -> None:
+async def test_background_recovery_rejects_unsafe_retries(
+    retry_change: str,
+    mode: str,
+    consume_response: Callable[[Any, str], Awaitable[Any]],
+    response_stream_factory: Callable[[Any], MagicMock],
+) -> None:
     executions: list[str] = []
 
     @tool(approval_mode="never_require")
@@ -10958,7 +10964,8 @@ async def test_background_recovery_rejects_unsafe_retries(retry_change: str) -> 
     elif retry_change == "cancelled-submission":
         request_error = asyncio.CancelledError()
 
-    retrieve = AsyncMock(return_value=_completed_response("resp_bg", "function_call"))
+    completed = _completed_response("resp_bg", "function_call")
+    retrieve = AsyncMock(return_value=response_stream_factory(completed) if mode != "non-streaming" else completed)
     create = AsyncMock(side_effect=request_error)
     with (
         patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
@@ -10967,7 +10974,12 @@ async def test_background_recovery_rejects_unsafe_retries(retry_change: str) -> 
         with pytest.raises(
             asyncio.CancelledError if isinstance(request_error, asyncio.CancelledError) else ChatClientException
         ):
-            await client.get_response([], options=options, client_kwargs={"session": session})
+            await consume_response(
+                client.get_response(  # type: ignore[call-overload]
+                    [], stream=mode != "non-streaming", options=options, client_kwargs={"session": session}
+                ),
+                mode,
+            )
         session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
         state = session.state["_background_tool_recovery"]
         messages: list[Message] = []
@@ -10988,7 +11000,12 @@ async def test_background_recovery_rejects_unsafe_retries(retry_change: str) -> 
         elif retry_change == "busy":
             state["busy"] = True
         with pytest.raises(ChatClientException):
-            await client.get_response(messages, options=options, client_kwargs={"session": session})
+            await consume_response(
+                client.get_response(  # type: ignore[call-overload]
+                    messages, stream=mode != "non-streaming", options=options, client_kwargs={"session": session}
+                ),
+                mode,
+            )
     assert executions == ["bob"]
     assert retrieve.await_count == create.await_count == 1
 
@@ -11049,7 +11066,12 @@ async def test_background_tools_without_a_reusable_session_remain_supported(stre
     assert create.await_count == 2
 
 
-async def test_background_partial_batch_and_concurrent_poll_fail_closed() -> None:
+@pytest.mark.parametrize("mode", ["non-streaming", "iterate", "final-only"])
+async def test_background_partial_batch_and_concurrent_poll_fail_closed(
+    mode: str,
+    consume_response: Callable[[Any, str], Awaitable[Any]],
+    response_stream_factory: Callable[[Any], MagicMock],
+) -> None:
     executions: list[str] = []
     waiting = asyncio.Event()
 
@@ -11072,20 +11094,37 @@ async def test_background_partial_batch_and_concurrent_poll_fail_closed() -> Non
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     session = AgentSession()
     options = OpenAIChatOptions(continuation_token={"response_id": "resp_bg"}, tools=[send_email])
-    retrieve = AsyncMock(return_value=completed)
+    retrieve = AsyncMock(return_value=response_stream_factory(completed) if mode != "non-streaming" else completed)
     with patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve):
-        first_poll = asyncio.ensure_future(client.get_response([], options=options, client_kwargs={"session": session}))
+        first_poll = asyncio.ensure_future(
+            consume_response(
+                client.get_response(  # type: ignore[call-overload]
+                    [], stream=mode != "non-streaming", options=options, client_kwargs={"session": session}
+                ),
+                mode,
+            )
+        )
         try:
             await asyncio.wait_for(waiting.wait(), timeout=5)
             with pytest.raises(ChatClientInvalidRequestException, match="concurrent"):
-                await client.get_response([], options=options, client_kwargs={"session": session})
+                await consume_response(
+                    client.get_response(  # type: ignore[call-overload]
+                        [], stream=mode != "non-streaming", options=options, client_kwargs={"session": session}
+                    ),
+                    mode,
+                )
         finally:
             first_poll.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await first_poll
         session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
         with pytest.raises(ChatClientException, match="indeterminate"):
-            await client.get_response([], options=options, client_kwargs={"session": session})
+            await consume_response(
+                client.get_response(  # type: ignore[call-overload]
+                    [], stream=mode != "non-streaming", options=options, client_kwargs={"session": session}
+                ),
+                mode,
+            )
     assert executions == ["completed", "waiting"]
     assert retrieve.await_count == 1
     recorded_results = list(session.state["_background_tool_recovery"]["pending"]["calls"].values())
@@ -11093,7 +11132,12 @@ async def test_background_partial_batch_and_concurrent_poll_fail_closed() -> Non
     assert recorded_results[1] is None
 
 
-async def test_background_recovery_preserves_reused_call_ids_reasoning_and_limits() -> None:
+@pytest.mark.parametrize("mode", ["non-streaming", "iterate", "final-only"])
+async def test_background_recovery_preserves_reused_call_ids_reasoning_and_limits(
+    mode: str,
+    consume_response: Callable[[Any, str], Awaitable[Any]],
+    response_stream_factory: Callable[[Any], MagicMock],
+) -> None:
     from agent_framework import FunctionInvocationContext, FunctionMiddleware
 
     executions: list[str] = []
@@ -11123,20 +11167,42 @@ async def test_background_recovery_preserves_reused_call_ids_reasoning_and_limit
     second_response = _completed_response("resp_second", "function_call")
     client = OpenAIChatClient(model="test-model", api_key="test-key", middleware=[CountInvocations()])
     client.function_invocation_configuration.update({"max_iterations": 2, "max_function_calls": 2})
+    history = InMemoryHistoryProvider(load_messages=False)
+    agent = Agent(client=client, tools=[send_email], context_providers=[history])
     session = AgentSession()
-    options = OpenAIChatOptions(continuation_token={"response_id": "resp_bg"}, tools=[send_email])
+    options = OpenAIChatOptions(continuation_token={"response_id": "resp_bg"})
     request = _OPENAI_HTTPX.Request("POST", "https://unit-test.invalid/v1/responses")
     error = RateLimitError("Rejected", response=_OPENAI_HTTPX.Response(429, request=request), body=None)
-    retrieve = AsyncMock(return_value=first_response)
-    create = AsyncMock(side_effect=[second_response, error, _completed_response("resp_final", "message")])
+    final_response = _completed_response("resp_final", "message")
+    usage = SimpleNamespace(
+        input_tokens=3, output_tokens=2, total_tokens=5, input_tokens_details=None, output_tokens_details=None
+    )
+    for response in (first_response, second_response, final_response):
+        response.usage = usage
+    retrieve = AsyncMock(
+        return_value=response_stream_factory(first_response) if mode != "non-streaming" else first_response
+    )
+    create = AsyncMock(
+        side_effect=[
+            response_stream_factory(second_response) if mode != "non-streaming" else second_response,
+            error,
+            response_stream_factory(final_response) if mode != "non-streaming" else final_response,
+        ]
+    )
     with (
         patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
         patch.object(client.client.responses.with_raw_response, "create", new=create),
     ):
         with pytest.raises(ChatClientException):
-            await client.get_response([], options=options, client_kwargs={"session": session})
+            await consume_response(
+                agent.run(session=session, stream=mode != "non-streaming", options=options),  # type: ignore[call-overload]
+                mode,
+            )
         session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
-        final = await client.get_response([], options=options, client_kwargs={"session": session})
+        final = await consume_response(
+            agent.run(session=session, stream=mode != "non-streaming", options=options),  # type: ignore[call-overload]
+            mode,
+        )
 
     assert executions == ["bob", "bob"]
     assert middleware_calls == ["send_email", "send_email"]
@@ -11150,6 +11216,13 @@ async def test_background_recovery_preserves_reused_call_ids_reasoning_and_limit
     assert [content.id for content in results] == [content.id for content in calls]
     assert [content.result for content in results] == ["sent-1", "sent-2"]
     assert "opaque-reasoning" in final.to_json()
+    assert final.usage_details["total_token_count"] == 15
+    stored = session.state[history.source_id]["messages"]
+    stored_results = [
+        content for message in stored for content in message.contents if content.type == "function_result"
+    ]
+    assert [content.id for content in stored_results] == [content.id for content in results]
+    assert [content.result for content in stored_results] == ["sent-1", "sent-2"]
     assert create.await_args_list[1].kwargs["tool_choice"] == "none"
     assert create.await_args_list[2].kwargs["tool_choice"] == "none"
     assert create.await_args_list[2].kwargs["previous_response_id"] == "resp_second"

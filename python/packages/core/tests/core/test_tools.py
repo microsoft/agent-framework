@@ -212,6 +212,88 @@ def test_format_tool_parameters_rejects_unknown_format(parameter_format):
         _format_tool_parameters({"type": "object", "properties": {}}, parameter_format=parameter_format)
 
 
+@pytest.mark.parametrize("invalid", ["missing-response", "missing-occurrence", "repeated-occurrence"])
+@pytest.mark.parametrize("allow_concurrent_invocation", [False, True])
+async def test_background_recovery_rejects_malformed_execution_identity(
+    invalid: str, allow_concurrent_invocation: bool
+) -> None:
+    from agent_framework import AgentSession, ChatResponse
+    from agent_framework._middleware import FunctionMiddlewarePipeline
+    from agent_framework._tool_recovery import BackgroundToolRecovery
+    from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
+
+    executions: list[str] = []
+    middleware_calls: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def record_action() -> str:
+        """Record one local action."""
+        executions.append("done")
+        return "done"
+
+    async def record_middleware(context: FunctionInvocationContext, call_next: Any) -> None:
+        middleware_calls.append(context.function.name)
+        await call_next()
+
+    session = AgentSession()
+    options = {"continuation_token": {"response_id": "resp_bg"}}
+    recovery = BackgroundToolRecovery(
+        scope="test-scope", session=session, authoritative=True, options=options, messages=[], model="test-model"
+    )
+    function_call = Content.from_function_call(call_id="call_1", name="record_action", arguments="{}")
+    function_call.id = None if invalid == "missing-occurrence" else "occurrence_1"
+    pipeline = FunctionMiddlewarePipeline(record_middleware)
+    config = normalize_function_invocation_configuration({"allow_concurrent_invocation": allow_concurrent_invocation})
+    expected_error = "response identity" if invalid == "missing-response" else "occurrence"
+    with pytest.raises(ChatClientInvalidRequestException, match=expected_error), recovery:
+        recovery.observe_response(
+            ChatResponse(messages=[], response_id=None if invalid == "missing-response" else "resp_bg")
+        )
+        if invalid == "repeated-occurrence":
+            await _try_execute_function_call_groups(
+                custom_args={},
+                function_calls=[function_call],
+                tools=[record_action],
+                config=config,
+                invocation_session=session,
+                middleware_pipeline=pipeline,
+                recovery=recovery,
+            )
+        await _try_execute_function_call_groups(
+            custom_args={},
+            function_calls=[function_call],
+            tools=[record_action],
+            config=config,
+            invocation_session=session,
+            middleware_pipeline=pipeline,
+            recovery=recovery,
+        )
+
+    assert executions == (["done"] if invalid == "repeated-occurrence" else [])
+    assert middleware_calls == (["record_action"] if invalid == "repeated-occurrence" else [])
+    restored = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    state = restored.state["_background_tool_recovery"]
+    assert state["busy"] is False
+    if invalid != "missing-response":
+        assert state["pending"]["status"] == "indeterminate"
+        with (
+            pytest.raises(ChatClientException, match="indeterminate"),
+            BackgroundToolRecovery(
+                scope="test-scope",
+                session=restored,
+                authoritative=True,
+                options=options,
+                messages=[],
+                model="test-model",
+            ),
+        ):
+            pytest.fail("Malformed execution evidence must not become replayable.")
+    if invalid == "repeated-occurrence":
+        result = json.loads(state["pending"]["calls"]["occurrence_1"][0])
+        assert result["result"] == "done"
+        assert result["id"] == "occurrence_1"
+
+
 async def test_sequential_function_invocation_runs_calls_in_model_order() -> None:
     execution_order: list[str] = []
 

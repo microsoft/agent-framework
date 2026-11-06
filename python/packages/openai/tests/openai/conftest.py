@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import Callable, Generator
+from collections.abc import Awaitable, Callable, Generator
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from openai import AsyncAzureOpenAI
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter
@@ -14,6 +14,49 @@ from pytest import FixtureRequest, fixture, skip
 OPENAI_INTEGRATION_TESTS_SKIP_REASON: str | None = (
     "OpenAI integration tests are temporarily disabled: the CI OpenAI API key is invalid."
 )
+
+
+@fixture
+def consume_response() -> Callable[[Any, str], Awaitable[Any]]:
+    async def consume(response: Any, mode: str) -> Any:
+        if mode == "non-streaming":
+            return await response
+        if mode == "iterate":
+            async for _ in response:
+                pass
+        return await response.get_final_response()
+
+    return consume
+
+
+@fixture
+def response_stream_factory() -> Callable[[Any], MagicMock]:
+    def create(response: Any) -> MagicMock:
+        events: list[Any] = []
+        for index, item in enumerate(response.output):
+            events.append(MagicMock(type="response.output_item.added", output_index=index, item=item))
+            if item.type == "function_call":
+                events.append(
+                    MagicMock(
+                        type="response.function_call_arguments.done",
+                        output_index=index,
+                        item_id=item.id,
+                        arguments=item.arguments,
+                    )
+                )
+            elif item.type == "message":
+                for part in item.content:
+                    events.append(MagicMock(type="response.output_text.delta", delta=part.text, logprobs=None))
+            events.append(MagicMock(type="response.output_item.done", output_index=index, item=item))
+        events.append(MagicMock(type="response.completed", response=response))
+        stream = MagicMock(headers={})
+        stream.parse.return_value = stream
+        stream.__aiter__.return_value = events
+        stream.__aenter__ = AsyncMock(return_value=stream)
+        stream.__aexit__ = AsyncMock(return_value=False)
+        return stream
+
+    return create
 
 
 @fixture(autouse=True)
