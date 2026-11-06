@@ -102,6 +102,23 @@ else:
 logger = logging.getLogger("agent_framework")
 
 
+def _update_function_invocation_metadata(
+    context: FunctionInvocationContext,
+    *,
+    call_id: str | None,
+    occurrence_id: str | None = None,
+) -> None:
+    """Replace invocation identity metadata without retaining missing values."""
+    if call_id is None:
+        context.metadata.pop("call_id", None)
+    else:
+        context.metadata["call_id"] = call_id
+    if occurrence_id is None:
+        context.metadata.pop("function_call_occurrence_id", None)
+    else:
+        context.metadata["function_call_occurrence_id"] = occurrence_id
+
+
 def _generate_function_call_occurrence_id() -> str:
     """Generate an Agent Framework identity for one function-call occurrence."""
     return f"af-call-{uuid4().hex}"
@@ -1155,7 +1172,11 @@ class FunctionTool(SerializationMixin):
         Keyword Args:
             arguments: A mapping or model instance containing the arguments for the function.
             context: Explicit function invocation context carrying runtime kwargs.
-            tool_call_id: Optional tool call identifier used for telemetry and tracing.
+            tool_call_id: Optional provider call identifier used for telemetry, tracing, and
+                ``context.metadata["call_id"]``. Omitting it clears the context's call identity.
+                Occurrence metadata supplied with a matching context call ID is preserved;
+                changing or omitting the call ID clears it. Identity metadata is updated before
+                argument and security validation, including when invocation fails.
             skip_parsing: When ``True``, bypass parsing and return the wrapped function's
                 raw value instead of a ``list[Content]``. Defaults to ``False``.
             kwargs: Direct function argument values. When provided, every keyword
@@ -1170,6 +1191,13 @@ class FunctionTool(SerializationMixin):
         Raises:
             TypeError: If arguments is not mapping-like or fails schema checks.
         """
+        if context is not None:
+            occurrence_id = (
+                context.metadata.get("function_call_occurrence_id")
+                if tool_call_id is not None and context.metadata.get("call_id") == tool_call_id
+                else None
+            )
+            _update_function_invocation_metadata(context, call_id=tool_call_id, occurrence_id=occurrence_id)
         if self.declaration_only:
             raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
         global OBSERVABILITY_SETTINGS
@@ -1229,6 +1257,7 @@ class FunctionTool(SerializationMixin):
                 arguments=validated_arguments,
                 kwargs=runtime_kwargs,
             )
+            _update_function_invocation_metadata(effective_context, call_id=tool_call_id)
         if effective_context is not None:
             effective_context.function = self
             effective_context.arguments = validated_arguments
@@ -2374,6 +2403,9 @@ async def _auto_invoke_function(
                     parent_service_session_state_keys=parent_service_session_state_keys,
                     tools=live_tools,
                 )
+                _update_function_invocation_metadata(
+                    direct_context, call_id=function_call_content.call_id, occurrence_id=function_call_content.id
+                )
                 direct_context.metadata[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = parent_approval_source_ids
                 if host_payload_budget is not None:
                     direct_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
@@ -2429,10 +2461,7 @@ async def _auto_invoke_function(
     if call_id is None:
         raise KeyError(f'Function "{function_call_content.name}" is missing call_id.')
 
-    # Pass both provider correlation and framework occurrence identity to middleware.
-    middleware_context.metadata["call_id"] = call_id
-    if function_call_content.id is not None:
-        middleware_context.metadata["function_call_occurrence_id"] = function_call_content.id
+    _update_function_invocation_metadata(middleware_context, call_id=call_id, occurrence_id=function_call_content.id)
 
     # Pass through the original approval response so middleware can decide whether
     # this replay corresponds to a middleware-specific approval flow.

@@ -971,6 +971,134 @@ def _force_tool_content_tool_choice_none_stream(
     chat_client_base._get_streaming_response = _get_streaming_response
 
 
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("with_middleware", [False, True], ids=["direct", "middleware"])
+@pytest.mark.parametrize("requires_approval", [False, True], ids=["immediate", "approved"])
+@pytest.mark.parametrize("reused_provider_id", [False, True], ids=["distinct-call-ids", "reused-call-id"])
+async def test_tool_context_exposes_call_identity_metadata(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+    with_middleware: bool,
+    requires_approval: bool,
+    reused_provider_id: bool,
+) -> None:
+    """Tools and middleware receive provider and occurrence identities across execution paths."""
+    observed_identities: list[tuple[str, str]] = []
+    middleware_identities: list[tuple[str, str]] = []
+    expected_identities = [
+        ("provider-shared" if reused_provider_id else f"provider-{index}", f"occurrence-{index}") for index in (1, 2)
+    ]
+
+    class ObserveCall(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            middleware_identities.append((context.metadata["call_id"], context.metadata["function_call_occurrence_id"]))
+            await call_next()
+
+    @tool(name="lookup", approval_mode="always_require" if requires_approval else "never_require")
+    async def lookup(context: FunctionInvocationContext, value: str) -> str:
+        await asyncio.sleep(0)
+        observed_identities.append((context.metadata["call_id"], context.metadata["function_call_occurrence_id"]))
+        return value
+
+    calls = [
+        Content.from_function_call(
+            call_id="provider-shared" if reused_provider_id else f"provider-{index}",
+            name="lookup",
+            arguments='{"value":"same"}',
+            id=f"occurrence-{index}",
+            additional_properties={"provider": {"item_id": f"item-{index}"}},
+        )
+        for index in (1, 2)
+    ]
+    responses = [
+        ChatResponse(messages=Message(role="assistant", contents=calls)),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [
+                ChatResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="provider-shared" if reused_provider_id else f"provider-{index}",
+                            name="lookup",
+                            arguments='{"value":',
+                            id=f"occurrence-{index}",
+                            additional_properties={"provider": {"item_id": f"item-{index}"}},
+                        )
+                        for index in (1, 2)
+                    ],
+                ),
+                ChatResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="provider-shared" if reused_provider_id else f"provider-{index}",
+                            name="",
+                            arguments='"same"}',
+                            id=f"occurrence-{index}",
+                        )
+                        for index in (1, 2)
+                    ],
+                ),
+            ],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = responses  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    agent = Agent(client=chat_client_base, tools=[lookup], middleware=[ObserveCall()] if with_middleware else [])
+    session = agent.create_session()
+
+    async def run(messages: str | list[Message]) -> list[Message]:
+        if streaming:
+            response_stream = agent.run(messages, session=session, stream=True)
+            updates = [update async for update in response_stream]
+            response = await response_stream.get_final_response()
+            assert [
+                content.call_id
+                for update in updates
+                for content in update.contents
+                if content.type == "function_result"
+            ] == [
+                content.call_id
+                for message in response.messages
+                for content in message.contents
+                if content.type == "function_result"
+            ]
+        else:
+            response = await agent.run(messages, session=session)
+        return response.messages
+
+    messages = await run("look up the same value twice")
+    if requires_approval:
+        assert observed_identities == []
+        assert middleware_identities == []
+        requests = [
+            content
+            for message in messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        ]
+        assert len(requests) == 2
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        messages = await run([
+            Message(
+                role="user", contents=[request.to_function_approval_response(approved=True) for request in requests]
+            )
+        ])
+
+    assert sorted(observed_identities) == expected_identities
+    assert middleware_identities == (expected_identities if with_middleware else [])
+    assert [
+        (content.call_id, content.id, content.result)
+        for message in messages
+        for content in message.contents
+        if content.type == "function_result"
+    ] == [(provider_call_id, occurrence_id, "same") for provider_call_id, occurrence_id in expected_identities]
+
+
 async def test_base_client_with_function_calling(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
 
