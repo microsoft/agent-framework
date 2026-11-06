@@ -1,1 +1,6 @@
-#nullable enable
+﻿#nullable enable
+[MAAI001]Microsoft.Agents.AI.ChatClientAgentOptions.PersistPartialMessagesOnCancellation.get -> bool
+[MAAI001]Microsoft.Agents.AI.ChatClientAgentOptions.PersistPartialMessagesOnCancellation.set -> void
+[MAAI001]Microsoft.Agents.AI.ChatClientAgentRunOptions.PersistPartialMessagesOnCancellation.get -> bool?
+[MAAI001]Microsoft.Agents.AI.ChatClientAgentRunOptions.PersistPartialMessagesOnCancellation.set -> void
+[MAAI001]const Microsoft.Agents.AI.ChatClientAgent.PartialResponseMarkerKey = "agent_framework.partial_response" -> string!
