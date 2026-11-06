@@ -3504,3 +3504,77 @@ async def test_streaming_tool_approval_defers_structured_parse_error_to_value_ac
     assert response.text == bad_text
     with pytest.raises(ValueError):
         _ = response.value
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_tool_approval_clears_budget_on_turn_failure(
+    chat_client_base: MockBaseChatClient,
+    streaming: bool,
+) -> None:
+    """A failed turn must clear per-attempt budget state from session so retries get full budget."""
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    def sample_tool(value: str) -> str:
+        return f"tool:{value}"
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[sample_tool],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[lambda _: True])],
+    )
+    session = AgentSession(session_id="retry-budget-test")
+
+    if streaming:
+        chat_client_base.streaming_responses = [
+            [
+                ChatResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="c1",
+                            name="sample_tool",
+                            arguments='{"value": "1"}',
+                        )
+                    ],
+                )
+            ]
+        ]
+        orig_stream = chat_client_base._get_streaming_response
+
+        def failing_stream(**kwargs: Any) -> Any:
+            if chat_client_base.call_count == 1:
+                raise RuntimeError("transient provider error")
+            return orig_stream(**kwargs)
+
+        chat_client_base._get_streaming_response = failing_stream
+        with pytest.raises(RuntimeError, match="transient provider error"):
+            stream = agent.run("call tool", stream=True, session=session)
+            async for _ in stream:
+                pass
+    else:
+        chat_client_base.run_responses = [
+            ChatResponse(
+                messages=Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="c1",
+                            name="sample_tool",
+                            arguments='{"value": "1"}',
+                        )
+                    ],
+                )
+            )
+        ]
+        orig_non_stream = chat_client_base._get_non_streaming_response
+
+        async def failing_non_stream(**kwargs: Any) -> Any:
+            if chat_client_base.call_count == 1:
+                raise RuntimeError("transient provider error")
+            return await orig_non_stream(**kwargs)
+
+        chat_client_base._get_non_streaming_response = failing_non_stream
+        with pytest.raises(RuntimeError, match="transient provider error"):
+            await agent.run("call tool", session=session)
+
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
