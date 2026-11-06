@@ -1179,7 +1179,12 @@ class MCPTool:
         self,
         name: str,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
+        approval_mode: (
+            Literal["always_require", "never_require"]
+            | MCPSpecificApproval
+            | Callable[[types.Tool | types.Prompt], Literal["always_require", "never_require"]]
+            | None
+        ) = None,
         allowed_tools: Collection[str] | None = None,
         tool_name_prefix: str | None = None,
         load_tools: bool = True,
@@ -1244,7 +1249,7 @@ class MCPTool:
             raise ValueError(
                 f"tool_result_content must be one of {sorted(allowed_modes)}, got {tool_result_content!r}."
             )
-        if isinstance(approval_mode, dict):
+        if not callable(approval_mode) and isinstance(approval_mode, dict):
             _mcp_approval_default(approval_mode, warn_stacklevel=_mcp_constructor_stacklevel(self))
         self.name = name
         self.description = description or ""
@@ -1697,7 +1702,7 @@ class MCPTool:
     def _validate_config_names(self, functions: Sequence[FunctionTool]) -> None:
         """Reject configured names that identify more than one raw remote name."""
         configured_names = set(self.allowed_tools or ())
-        if isinstance(self.approval_mode, dict):
+        if not callable(self.approval_mode) and isinstance(self.approval_mode, dict):
             configured_names.update(_mcp_approval_names(self.approval_mode.get("always_require_approval")))
             configured_names.update(_mcp_approval_names(self.approval_mode.get("never_require_approval")))
         if not configured_names:
@@ -2651,6 +2656,10 @@ class MCPTool:
         elif connection.client is None:
             raise RuntimeError("MCP connection has neither a Client nor a ClientSession.")
         functions_before_discovery = self._functions.copy()
+        approval_modes_before_discovery = [
+            (function, function.approval_mode) for function in functions_before_discovery
+        ]
+        progressive_loaded_names_before_discovery = self._progressive_loaded_tool_names.copy()
         call_meta_before_discovery = self._tool_call_meta_by_name
         param_names_before_discovery = self._tool_param_names_by_name
         annotations_before_discovery = self._tool_annotations_by_name
@@ -2686,10 +2695,14 @@ class MCPTool:
             try:
                 await self._close_on_owner()
             finally:
+                for function, approval_mode in approval_modes_before_discovery:
+                    function.approval_mode = approval_mode
                 self._functions[:] = functions_before_discovery
                 self._tool_call_meta_by_name = call_meta_before_discovery
                 self._tool_param_names_by_name = param_names_before_discovery
                 self._tool_annotations_by_name = annotations_before_discovery
+                self._progressive_loaded_tool_names.clear()
+                self._progressive_loaded_tool_names.update(progressive_loaded_names_before_discovery)
             raise
 
     async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
@@ -3028,8 +3041,23 @@ class MCPTool:
     def _determine_approval_mode(
         self,
         *candidate_names: str,
+        item: types.Tool | types.Prompt | None = None,
+        is_retained: bool = False,
     ) -> Literal["always_require", "never_require"] | None:
+        """Resolve discovery policy, preserving retained functions under static policies."""
         approval_mode = self.approval_mode
+        if callable(approval_mode):
+            if item is None:
+                raise ValueError("A discovered MCP tool or prompt is required for callable approval_mode.")
+            resolved_mode = approval_mode(item)
+            if resolved_mode not in _MCP_APPROVAL_MODES:
+                raise ToolExecutionException(
+                    f"approval_mode callable for MCP item {item.name!r} must return "
+                    "'always_require' or 'never_require', including its default decision."
+                )
+            return resolved_mode
+        if is_retained:
+            return None
         if not isinstance(approval_mode, dict):
             return approval_mode  # type: ignore[return-value]
         always_require = _mcp_approval_names(approval_mode.get("always_require_approval"))
@@ -3083,6 +3111,7 @@ class MCPTool:
         prompt_functions: list[FunctionTool] = []
         retained_prompt_names: set[str] = set()
         new_functions: list[FunctionTool] = []
+        prompt_approval_updates: dict[str, Literal["always_require", "never_require"]] = {}
         items_loaded = 0
 
         def stage_prompt_page(prompt_list: types.ListPromptsResult) -> None:
@@ -3109,7 +3138,8 @@ class MCPTool:
                         local_name=local_name,
                         normalized_name=normalized_name,
                         remote_name=prompt.name,
-                    )
+                    ),
+                    item=prompt,
                 )
                 func: FunctionTool = FunctionTool(
                     func=_make_mcp_prompt_caller(self, prompt.name),
@@ -3135,6 +3165,8 @@ class MCPTool:
                         and existing_prompt.parameters() == func.parameters()
                     ):
                         # Keep the unchanged prompt function so local customizations survive a refresh.
+                        if callable(self.approval_mode) and approval_mode is not None:
+                            prompt_approval_updates[local_name] = approval_mode
                         prompt_functions.append(existing_prompt)
                         continue
                 prompt_functions.append(func)
@@ -3176,6 +3208,9 @@ class MCPTool:
         if self._function_load_callback is not None:
             for function in new_functions:
                 self._function_load_callback(function, None)
+        for function in prompt_functions:
+            if function.name in prompt_approval_updates:
+                function.approval_mode = prompt_approval_updates[function.name]
         self._functions[:] = current_functions
         # Only prompts that keep the same remote identity retain their progressive-load state; a
         # different remote prompt that normalizes to the same local name must start unloaded.
@@ -3296,6 +3331,7 @@ class MCPTool:
         tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         tool_param_names_by_name: dict[str, set[str]] = {}
         tool_annotations_by_name: dict[str, Any] = {}
+        tool_approval_updates: dict[str, Literal["always_require", "never_require"]] = {}
         items_loaded = 0
 
         def stage_tool_page(tool_list: types.ListToolsResult) -> None:
@@ -3357,18 +3393,25 @@ class MCPTool:
                 existing_tool = existing_tools.get(local_name)
                 if (
                     existing_tool is not None
-                    and (existing_tool.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY) == tool.name
+                    and (existing_tool.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY) != tool.name
                 ):
-                    reused_tool_names.add(local_name)
-                    continue
+                    existing_tool = None
 
                 approval_mode = self._determine_approval_mode(
                     *_mcp_config_candidate_names(
                         local_name=local_name,
                         normalized_name=normalized_name,
                         remote_name=tool.name,
-                    )
+                    ),
+                    item=tool,
+                    is_retained=existing_tool is not None,
                 )
+
+                if existing_tool is not None:
+                    reused_tool_names.add(local_name)
+                    if approval_mode is not None:
+                        tool_approval_updates[local_name] = approval_mode
+                    continue
 
                 # Create FunctionTools out of each tool
                 func: FunctionTool = FunctionTool(
@@ -3433,6 +3476,9 @@ class MCPTool:
                 and self._function_load_callback is not None
             ):
                 self._function_load_callback(function, tool_annotations_by_name[remote_name])
+        for function in current_functions:
+            if function.name in tool_approval_updates:
+                function.approval_mode = tool_approval_updates[function.name]
         self._functions[:] = current_functions
         self._tool_call_meta_by_name = tool_call_meta_by_name
         self._tool_param_names_by_name = tool_param_names_by_name
@@ -3926,7 +3972,12 @@ class MCPStdioTool(MCPTool):
         mcp_client: Client | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
+        approval_mode: (
+            Literal["always_require", "never_require"]
+            | MCPSpecificApproval
+            | Callable[[types.Tool | types.Prompt], Literal["always_require", "never_require"]]
+            | None
+        ) = None,
         allowed_tools: Collection[str] | None = None,
         use_progressive_disclosure: bool = False,
         always_load: Collection[str] | None = None,
@@ -3999,6 +4050,11 @@ class MCPStdioTool(MCPTool):
                   "never_require") for tools and prompts named in neither list. Without `default`, those tools
                   and prompts do not require approval, and setting `never_require_approval` without `default`
                   emits a ``FutureWarning``.
+                - A synchronous callable receiving the discovered ``mcp.types.Tool`` or ``mcp.types.Prompt``
+                  and returning "always_require" or "never_require", including its default decision. It runs once
+                  per item on each discovery refresh, including retained functions, before publication.
+                  Invalid results raise ``ToolExecutionException``; callback exceptions propagate.
+                  Callbacks should not mutate the discovery item or perform side effects.
                 A tool listed in both lists requires approval. ``None`` (the default) does not require approval.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
@@ -4198,7 +4254,12 @@ class MCPStreamableHTTPTool(MCPTool):
         mcp_client: Client | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
+        approval_mode: (
+            Literal["always_require", "never_require"]
+            | MCPSpecificApproval
+            | Callable[[types.Tool | types.Prompt], Literal["always_require", "never_require"]]
+            | None
+        ) = None,
         allowed_tools: Collection[str] | None = None,
         use_progressive_disclosure: bool = False,
         always_load: Collection[str] | None = None,
@@ -4275,6 +4336,11 @@ class MCPStreamableHTTPTool(MCPTool):
                   "never_require") for tools and prompts named in neither list. Without `default`, those tools
                   and prompts do not require approval, and setting `never_require_approval` without `default`
                   emits a ``FutureWarning``.
+                - A synchronous callable receiving the discovered ``mcp.types.Tool`` or ``mcp.types.Prompt``
+                  and returning "always_require" or "never_require", including its default decision. It runs once
+                  per item on each discovery refresh, including retained functions, before publication.
+                  Invalid results raise ``ToolExecutionException``; callback exceptions propagate.
+                  Callbacks should not mutate the discovery item or perform side effects.
                 A tool listed in both lists requires approval. ``None`` (the default) does not require approval.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
@@ -5044,7 +5110,12 @@ class MCPWebsocketTool(MCPTool):
         request_timeout: int | None = _MCP_DEFAULT_READ_TIMEOUT_SECONDS,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
+        approval_mode: (
+            Literal["always_require", "never_require"]
+            | MCPSpecificApproval
+            | Callable[[types.Tool | types.Prompt], Literal["always_require", "never_require"]]
+            | None
+        ) = None,
         allowed_tools: Collection[str] | None = None,
         use_progressive_disclosure: bool = False,
         always_load: Collection[str] | None = None,
@@ -5101,6 +5172,11 @@ class MCPWebsocketTool(MCPTool):
                   "never_require") for tools and prompts named in neither list. Without `default`, those tools
                   and prompts do not require approval, and setting `never_require_approval` without `default`
                   emits a ``FutureWarning``.
+                - A synchronous callable receiving the discovered ``mcp.types.Tool`` or ``mcp.types.Prompt``
+                  and returning "always_require" or "never_require", including its default decision. It runs once
+                  per item on each discovery refresh, including retained functions, before publication.
+                  Invalid results raise ``ToolExecutionException``; callback exceptions propagate.
+                  Callbacks should not mutate the discovery item or perform side effects.
                 A tool listed in both lists requires approval. ``None`` (the default) does not require approval.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.

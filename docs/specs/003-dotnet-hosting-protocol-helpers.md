@@ -9,7 +9,7 @@ informed: []
 
 # .NET hosting: OpenAI Responses protocol helpers and optional execution state
 
-Implements [ADR-0032](../decisions/0032-dotnet-hosting-protocol-helpers.md), which realizes the
+Implements [ADR-0036](../decisions/0036-dotnet-hosting-protocol-helpers.md), which realizes the
 helper-first direction of [ADR-0027](../decisions/0027-hosting-channels.md) for .NET.
 
 ## What is the goal of this feature?

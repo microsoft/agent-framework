@@ -3,16 +3,16 @@ revision = 5
 requires-python = ">=3.11, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'darwin'",
-    "python_full_version >= '3.14' and sys_platform == 'linux'",
-    "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'darwin'",
-    "python_full_version == '3.13.*' and sys_platform == 'linux'",
-    "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'darwin'",
-    "python_full_version == '3.12.*' and sys_platform == 'linux'",
-    "python_full_version == '3.12.*' and sys_platform == 'win32'",
     "python_full_version < '3.12' and sys_platform == 'darwin'",
+    "python_full_version >= '3.14' and sys_platform == 'linux'",
+    "python_full_version == '3.13.*' and sys_platform == 'linux'",
+    "python_full_version == '3.12.*' and sys_platform == 'linux'",
     "python_full_version < '3.12' and sys_platform == 'linux'",
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
     "python_full_version < '3.12' and sys_platform == 'win32'",
 ]
 supported-markers = [
@@ -541,7 +541,7 @@ requires-dist = [
     { name = "agent-framework-openai", marker = "extra == 'all'", editable = "packages/openai" },
     { name = "agent-framework-orchestrations", marker = "extra == 'all'", editable = "packages/orchestrations" },
     { name = "agent-framework-purview", marker = "extra == 'all'", editable = "packages/purview" },
-    { name = "agent-framework-redis", marker = "python_full_version < '3.15' and extra == 'all'", editable = "packages/redis" },
+    { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },
     { name = "agent-framework-tools", marker = "extra == 'all'", editable = "packages/tools" },
     { name = "mcp", marker = "extra == 'all'", specifier = ">=2.2.0,<3" },
     { name = "msgspec", specifier = ">=0.20.0,<0.23" },
@@ -1129,7 +1129,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "numpy", specifier = ">=2.2.6,<3" },
     { name = "redis", specifier = ">=6.4.0,<7.2.1" },
-    { name = "redisvl", specifier = ">=0.11.0,<0.16" },
+    { name = "redisvl", specifier = ">=0.11.0,<0.32" },
 ]
 
 [[package]]
@@ -3675,13 +3675,13 @@ version = "2.5.4"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'darwin'",
-    "python_full_version >= '3.14' and sys_platform == 'linux'",
-    "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'darwin'",
-    "python_full_version == '3.13.*' and sys_platform == 'linux'",
-    "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'darwin'",
+    "python_full_version >= '3.14' and sys_platform == 'linux'",
+    "python_full_version == '3.13.*' and sys_platform == 'linux'",
     "python_full_version == '3.12.*' and sys_platform == 'linux'",
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/95/b0/c7453d0b6e2073c3264468b106ee1563750cecc910965e67357e3698c83e/numpy-2.5.4.tar.gz", hash = "sha256:9a94cf751c9ad8ebaa835bcd3d40dacf8534ad086b88c38029b65123c7999d2a", size = 20866315, upload-time = "2026-10-10T20:05:31.422Z" }
@@ -5251,7 +5251,7 @@ wheels = [
 
 [[package]]
 name = "redisvl"
-version = "0.15.0"
+version = "0.31.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonpath-ng" },
@@ -5264,9 +5264,9 @@ dependencies = [
     { name = "redis" },
     { name = "tenacity" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/72/1a/f1f0ff963622c34a9e9a9f2a0c6ad82bfbd05c082ecc89e38e092e3e9069/redisvl-0.15.0.tar.gz", hash = "sha256:0e382e9b6cd8378dfe1515b18f92d125cfba905f6f3c5fe9b8904b3ca840d1ca", size = 861480, upload-time = "2026-02-27T14:02:33.366Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4e/83/34f856484eb79ec90e6e323cb0d23cedcc222d26c6b504591a6e1b4a2215/redisvl-0.31.0.tar.gz", hash = "sha256:6a69e8ba12b27caad212234c25ea54ff1848a58503989a68f9595bdeaa2926e4", size = 1526140, upload-time = "2026-11-06T09:07:03.91Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cc/23/5c5263a3cfc66957fa3bb154ef9441fbbcfb2f4eae910eb18e316db168b1/redisvl-0.15.0-py3-none-any.whl", hash = "sha256:aff716b9a9c4aef9c81de9a12d9939a0170ff3b3a1fe9d4164e94b131a754290", size = 197935, upload-time = "2026-02-27T14:02:31.262Z" },
+    { url = "https://files.pythonhosted.org/packages/16/86/049516467c514183478ecdeb0e2f24ea688a32ef2d9a6668b528368c5951/redisvl-0.31.0-py3-none-any.whl", hash = "sha256:fb20dc06f02a99bbc3d61512bb5e8261b5630e70e744e2cd8046c0e86df3490e", size = 456685, upload-time = "2026-11-06T09:07:01.946Z" },
 ]
 
 [[package]]

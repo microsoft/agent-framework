@@ -11,7 +11,7 @@ informed: []
 
 Realizes the helper-first direction of [ADR-0027](0027-hosting-channels.md) for .NET.
 
-> **Update (2026-09-01):** [ADR-0039](0039-shared-agent-session-store.md) supersedes the
+> **Update (2026-09-01):** [ADR-0045](0045-shared-agent-session-store.md) supersedes the
 > `AgentSessionStore` portion of this decision. The protocol helper and workflow decisions remain accepted.
 
 ## Context and Problem Statement
