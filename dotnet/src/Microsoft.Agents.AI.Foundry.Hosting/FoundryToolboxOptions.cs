@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Shared.DiagnosticIds;
@@ -39,22 +40,23 @@ public sealed class FoundryToolboxOptions
     public string TokenScope { get; set; } = DefaultTokenScope;
 
     /// <summary>
-    /// Gets or sets the optional exact HTTPS origins allowed for OAuth consent links.
+    /// Gets or sets the exact HTTPS origins allowed for OAuth consent links.
+    /// <see langword="null"/> does not restrict the origin; an empty set rejects every origin.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Every surfaced consent link must be a safe absolute HTTPS URL, whatever this property is set to.
-    /// Leave this property <see langword="null"/> to accept any such link without restricting its origin.
-    /// When a collection is provided, every consent link must also match one of its normalized origins,
-    /// so an empty collection rejects every consent link. Duplicate entries are ignored after normalization.
+    /// Every surfaced consent link must pass absolute HTTPS URL validation, whatever this property is
+    /// set to. Leave this property <see langword="null"/> to skip only the origin restriction. When a
+    /// collection is provided, every consent link must also match one of its normalized origins, so an
+    /// empty collection rejects every consent link. Duplicate entries are ignored after normalization.
     /// </para>
     /// <para>
-    /// Configure origins such as <c>https://auth.example.com</c>; entries with a path, query, or fragment
-    /// are rejected when the toolbox service is constructed. A consent link that fails the policy fails
-    /// the response instead of being surfaced.
+    /// Configure absolute <see cref="Uri"/> instances such as <c>https://auth.example.com</c>; entries
+    /// with a path, query, or fragment are rejected when the toolbox service is constructed. A consent
+    /// link that fails the policy fails the response instead of being surfaced.
     /// </para>
     /// </remarks>
-    public IList<string>? AllowedOAuthConsentOrigins { get; set; }
+    public ISet<Uri>? AllowedOAuthConsentOrigins { get; set; }
 
     /// <summary>
     /// For testing only: overrides the toolbox proxy base URL (skipping the

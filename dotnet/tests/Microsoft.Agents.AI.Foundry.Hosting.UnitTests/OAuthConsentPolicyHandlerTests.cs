@@ -26,7 +26,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 [Collection(FoundryProjectEndpointEnvFixture.Name)]
 public class OAuthConsentPolicyHandlerTests
 {
-    private const string AllowedOrigin = "https://auth.example.com";
+    private static readonly Uri s_allowedOrigin = new("https://auth.example.com");
     private const string AllowedLink = "https://auth.example.com/authorize?state=1";
     private const string OtherLink = "https://other.example.com/authorize?state=1";
 
@@ -34,7 +34,9 @@ public class OAuthConsentPolicyHandlerTests
     public async Task CreateAsync_PendingConsentOutsideAllowlist_FailsWithoutSurfacingLinkAsync()
     {
         // Arrange
-        await using var service = await CreatePendingConsentServiceAsync(OtherLink, [AllowedOrigin]);
+        await using var service = await CreatePendingConsentServiceAsync(
+            OtherLink,
+            new HashSet<Uri> { s_allowedOrigin });
 
         // Act
         var events = await RunAsync(new TestAgent(), service);
@@ -47,7 +49,9 @@ public class OAuthConsentPolicyHandlerTests
     public async Task CreateAsync_PendingConsentMatchingAllowlist_SurfacesConsentRequestAsync()
     {
         // Arrange
-        await using var service = await CreatePendingConsentServiceAsync(AllowedLink, [AllowedOrigin]);
+        await using var service = await CreatePendingConsentServiceAsync(
+            AllowedLink,
+            new HashSet<Uri> { s_allowedOrigin });
 
         // Act
         var events = await RunAsync(new TestAgent(), service);
@@ -57,24 +61,27 @@ public class OAuthConsentPolicyHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_PendingUnsafeConsentWithoutAllowlist_FailsWithoutSurfacingLinkAsync()
+    public async Task CreateAsync_PendingInvalidConsentWithoutAllowlist_FailsWithoutSurfacingLinkAsync()
     {
-        // Arrange: without an allowlist the safe-HTTPS check still applies.
-        const string UnsafeLink = "http://external.example/authorize";
-        await using var service = await CreatePendingConsentServiceAsync(UnsafeLink, allowedOrigins: null);
+        // Arrange: without an allowlist the absolute HTTPS URL validation still applies.
+        const string InvalidLink = "http://external.example/authorize";
+        await using var service = await CreatePendingConsentServiceAsync(InvalidLink, allowedOrigins: null);
 
         // Act
         var events = await RunAsync(new TestAgent(), service);
 
         // Assert
-        AssertFailedWithoutLink(events, UnsafeLink);
+        AssertFailedWithoutLink(events, InvalidLink);
     }
 
     [Fact]
     public async Task CreateAsync_PerCallConsentOutsideAllowlist_FailsWithoutSurfacingLinkAsync()
     {
         // Arrange
-        await using var service = await CreateStartedServiceAsync([AllowedOrigin], toolboxNames: [], opener: null);
+        await using var service = await CreateStartedServiceAsync(
+            new HashSet<Uri> { s_allowedOrigin },
+            toolboxNames: [],
+            opener: null);
 
         // Act
         var events = await RunAsync(new ConsentRequiringAgent(OtherLink), service);
@@ -100,7 +107,10 @@ public class OAuthConsentPolicyHandlerTests
     public async Task CreateAsync_PerCallConsentOutsideAllowlist_DoesNotSaveSessionAsync()
     {
         // Arrange
-        await using var service = await CreateStartedServiceAsync([AllowedOrigin], toolboxNames: [], opener: null);
+        await using var service = await CreateStartedServiceAsync(
+            new HashSet<Uri> { s_allowedOrigin },
+            toolboxNames: [],
+            opener: null);
         var sessionStore = new CountingSessionStore();
 
         // Act
@@ -115,7 +125,10 @@ public class OAuthConsentPolicyHandlerTests
     public async Task CreateAsync_PerCallConsentMatchingAllowlist_SavesSessionAsync()
     {
         // Arrange
-        await using var service = await CreateStartedServiceAsync([AllowedOrigin], toolboxNames: [], opener: null);
+        await using var service = await CreateStartedServiceAsync(
+            new HashSet<Uri> { s_allowedOrigin },
+            toolboxNames: [],
+            opener: null);
         var sessionStore = new CountingSessionStore();
 
         // Act
@@ -167,7 +180,7 @@ public class OAuthConsentPolicyHandlerTests
         Assert.IsType<ResponseIncompleteEvent>(events[^1]);
     }
 
-    private static Task<FoundryToolboxService> CreatePendingConsentServiceAsync(string consentLink, IList<string>? allowedOrigins)
+    private static Task<FoundryToolboxService> CreatePendingConsentServiceAsync(string consentLink, ISet<Uri>? allowedOrigins)
         => CreateStartedServiceAsync(
             allowedOrigins,
             toolboxNames: ["tb"],
@@ -177,7 +190,7 @@ public class OAuthConsentPolicyHandlerTests
                     Consents: [new McpConsentInfo(name, $"{name}.tool", consentLink)])));
 
     private static async Task<FoundryToolboxService> CreateStartedServiceAsync(
-        IList<string>? allowedOrigins,
+        ISet<Uri>? allowedOrigins,
         IList<string> toolboxNames,
         Func<string, CancellationToken, Task<FoundryToolboxService.ToolboxOpenResult>>? opener)
     {

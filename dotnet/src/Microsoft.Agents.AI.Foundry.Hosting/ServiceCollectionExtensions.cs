@@ -359,7 +359,7 @@ public static partial class FoundryHostingExtensions
             copy.TokenScope = source.TokenScope;
             copy.AllowedOAuthConsentOrigins = source.AllowedOAuthConsentOrigins is null
                 ? null
-                : [.. source.AllowedOAuthConsentOrigins];
+                : new HashSet<Uri>(source.AllowedOAuthConsentOrigins);
         }
 
         foreach (string name in toolboxNames)

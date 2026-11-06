@@ -33,7 +33,8 @@ public class FoundryToolboxServiceTests
         // Arrange
         var options = new FoundryToolboxOptions
         {
-            AllowedOAuthConsentOrigins = ["https://auth.example.com/path"],
+            AllowedOAuthConsentOrigins =
+                new HashSet<Uri> { new("https://auth.example.com/path") },
         };
 
         // Act

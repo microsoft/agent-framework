@@ -278,7 +278,8 @@ public class ServiceCollectionExtensionsTests
         var suppliedOptions = new FoundryToolboxOptions
         {
             TokenScope = "https://example.test/.default",
-            AllowedOAuthConsentOrigins = ["https://login.example.test"],
+            AllowedOAuthConsentOrigins =
+                new HashSet<Uri> { new("https://login.example.test") },
         };
 
         // Act
@@ -288,7 +289,8 @@ public class ServiceCollectionExtensionsTests
             "first-toolbox",
             " ",
             "second-toolbox");
-        suppliedOptions.AllowedOAuthConsentOrigins[0] = "https://mutated.example.test";
+        suppliedOptions.AllowedOAuthConsentOrigins.Clear();
+        suppliedOptions.AllowedOAuthConsentOrigins.Add(new Uri("https://mutated.example.test"));
         await using ServiceProvider provider = services.BuildServiceProvider();
         FoundryToolboxService service = provider.GetRequiredService<FoundryToolboxService>();
         FieldInfo optionsField = typeof(FoundryToolboxService).GetField(
@@ -300,7 +302,9 @@ public class ServiceCollectionExtensionsTests
 
         // Assert
         Assert.Equal("https://example.test/.default", registeredOptions.TokenScope);
-        Assert.Equal(["https://login.example.test"], registeredOptions.AllowedOAuthConsentOrigins);
+        ISet<Uri> allowedOrigins = Assert.IsAssignableFrom<ISet<Uri>>(registeredOptions.AllowedOAuthConsentOrigins);
+        Assert.Contains(new Uri("https://login.example.test"), allowedOrigins);
+        Assert.DoesNotContain(new Uri("https://mutated.example.test"), allowedOrigins);
         Assert.Equal(["first-toolbox", "second-toolbox"], registeredOptions.ToolboxNames);
     }
 

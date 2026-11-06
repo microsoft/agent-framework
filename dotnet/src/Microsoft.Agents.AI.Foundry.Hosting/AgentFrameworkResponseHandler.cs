@@ -730,8 +730,8 @@ internal sealed class AgentFrameworkResponseHandler : ResponseHandler
     /// <param name="serverLabel">The tool source / server label that requires consent.</param>
     /// <param name="consentUrl">The OAuth consent URL the user must visit.</param>
     /// <param name="consentLinkPolicy">
-    /// The consent link policy to enforce. When <see langword="null"/>, <see cref="OAuthConsentLinkPolicy.AnySafeOrigin"/>
-    /// is used, so the link must still be a safe absolute HTTPS URL.
+    /// The consent link policy to enforce. When <see langword="null"/>, <see cref="OAuthConsentLinkPolicy.UnrestrictedOrigin"/>
+    /// is used, so the link must still pass absolute HTTPS URL validation.
     /// </param>
     /// <returns>An enumerable of events: <c>output_item.added</c> → <c>output_item.done</c>.</returns>
     /// <exception cref="InvalidOperationException">The consent link does not satisfy the policy.</exception>
@@ -743,7 +743,7 @@ internal sealed class AgentFrameworkResponseHandler : ResponseHandler
     {
         // Callers validate first so they can fail the response cleanly; this is the last line of
         // defense and never skips validation, even when no policy is supplied.
-        if (!(consentLinkPolicy ?? OAuthConsentLinkPolicy.AnySafeOrigin).IsAllowed(consentUrl))
+        if (!(consentLinkPolicy ?? OAuthConsentLinkPolicy.UnrestrictedOrigin).IsAllowed(consentUrl))
         {
             throw new InvalidOperationException(ConsentLinkRejectedMessage);
         }
@@ -873,7 +873,7 @@ internal sealed class AgentFrameworkResponseHandler : ResponseHandler
     /// </summary>
     private bool AreConsentLinksAllowed(IEnumerable<McpConsentInfo> consents, string responseId)
     {
-        var policy = this._toolboxService?.ConsentLinkPolicy ?? OAuthConsentLinkPolicy.AnySafeOrigin;
+        var policy = this._toolboxService?.ConsentLinkPolicy ?? OAuthConsentLinkPolicy.UnrestrictedOrigin;
         foreach (var consent in consents)
         {
             if (!policy.IsAllowed(consent.ConsentUrl))
