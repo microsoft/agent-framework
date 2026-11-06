@@ -53,6 +53,14 @@ public sealed partial class AgentMcpSkillTests
     [InlineData("https://example.com/escape.md")]
     [InlineData("references/guide.md?value=%00")]
     [InlineData("SKILL.md")]
+    [InlineData("./SKILL.md")]
+    [InlineData("././SKILL.md")]
+    [InlineData("%53KILL.md")]
+    [InlineData("%2553KILL.md")]
+    [InlineData("%2e%2fSKILL.md")]
+    [InlineData(".\\SKILL.md")]
+    [InlineData("SKILL.md?version=1")]
+    [InlineData("SKILL.md#instructions")]
     public async Task DynamicSkill_UnsafeOrInstructionResourceName_DoesNotReadAsync(string name)
     {
         // Arrange
@@ -71,6 +79,31 @@ public sealed partial class AgentMcpSkillTests
         // Assert
         Assert.Null(resource);
         Assert.Equal(0, reads);
+    }
+
+    [Theory]
+    [InlineData("references/SKILL.md")]
+    [InlineData("references/%53KILL.md")]
+    [InlineData("./references/guide.md?version=1")]
+    public async Task DynamicSkill_SupportingResource_PreservesRequestedUriAsync(string name)
+    {
+        // Arrange
+        List<string> reads = [];
+        await using var server = CreateServer((uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Supporting content."));
+        });
+        await using var client = await server.CreateClientAsync();
+        var skill = CreateDynamicSkill(client);
+
+        // Act
+        var resource = await skill.GetResourceAsync(name);
+
+        // Assert
+        Assert.NotNull(resource);
+        Assert.Equal("Supporting content.", await resource.ReadAsync());
+        Assert.Equal([SkillRootUri + name], reads);
     }
 
     [Theory]

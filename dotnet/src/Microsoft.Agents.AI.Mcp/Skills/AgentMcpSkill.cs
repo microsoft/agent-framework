@@ -173,7 +173,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         string uri = this._skillRootUri + normalized;
 
         // Exclude SKILL.md, which should be loaded via GetContentAsync.
-        if (string.Equals(uri, this.Uri, StringComparison.Ordinal))
+        if (this.IsInstructionsResource(uri))
         {
             return null;
         }
@@ -247,8 +247,8 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             return new(cached.Value, McpCacheLifetime.Infinite);
         }
 
-        // Verify all frontmatter fields before the instructions can enter the resource cache.
-        if (string.Equals(uri, this.Uri, StringComparison.Ordinal))
+        // Verify all frontmatter fields before the SKILL.md instructions can enter the resource cache.
+        if (this.IsInstructionsResource(uri))
         {
             this.VerifyInstructions(content);
         }
@@ -282,7 +282,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         }
 
         // SKILL.md contains the skill's instructions and must be returned as text.
-        if (string.Equals(uri, this.Uri, StringComparison.Ordinal) && content is not TextResourceContents)
+        if (this.IsInstructionsResource(uri) && content is not TextResourceContents)
         {
             throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this.Uri}'.");
         }
@@ -447,6 +447,43 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         {
             throw new InvalidOperationException($"Resource '{uri}' exceeds the maximum allowed size ({this._maxResourceSizeBytes} bytes).");
         }
+    }
+
+    /// <summary>
+    /// Determines whether a resource URI refers to this skill's root <c>SKILL.md</c> instructions file.
+    /// </summary>
+    /// <param name="uri">The resource URI to identify.</param>
+    /// <returns>
+    /// <see langword="true"/> for the root instructions file or a recognized alias;
+    /// <see langword="false"/> for other resources.
+    /// </returns>
+    /// <remarks>
+    /// Recognizes aliases such as <c>./SKILL.md</c> and <c>%53KILL.md</c> by decoding the relative path
+    /// and ignoring empty and <c>.</c> segments. Query strings and fragments are excluded before decoding.
+    /// This shared check prevents supporting reads of the instructions file and selects its text-only
+    /// and frontmatter validation. It does not replace path-safety checks or change request URIs or cache keys.
+    /// </remarks>
+    private bool IsInstructionsResource(string uri)
+    {
+        // Require this skill's directory, e.g. skill://my-skill/, not skill://other-skill/.
+        if (!uri.StartsWith(this._skillRootUri, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // Strip ?v=1 or #intro, then decode aliases: %53KILL.md becomes SKILL.md.
+        string? path = FullyUnescape(uri[this._skillRootUri.Length..].Split(['?', '#'], 2)[0]);
+        if (path is null)
+        {
+            // Reject identification beyond the decoding limit, e.g. deeply nested %2525... escapes.
+            return false;
+        }
+
+        // Ignore empty and "." segments: ./SKILL.md matches; references/SKILL.md does not.
+        // Keep the original URI for requests and cache keys.
+        string name = string.Join("/", path.Split('/').Where(segment => segment.Length > 0 && segment != "."));
+
+        return string.Equals(name, "SKILL.md", StringComparison.Ordinal);
     }
 
     /// <summary>
