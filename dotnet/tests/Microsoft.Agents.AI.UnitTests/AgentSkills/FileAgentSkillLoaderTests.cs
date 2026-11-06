@@ -2151,6 +2151,35 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Equal("f1/f2/f3/data.json", skill.GetTestResources()![0].Name);
     }
 
+    [Theory]
+    [InlineData("test.md", "TEST.md")]
+    [InlineData("refs/test.md", "REFS/test.md")]
+    [InlineData("scripts/run.py", "scripts/RUN.py")]
+    public async Task GetSkillsAsync_NamesDifferOnlyByCase_SkipsSkillAsync(string firstName, string secondName)
+    {
+        // Arrange
+        string skillDir = this.CreateSkillDirectory("case-skill", "A skill", "Body.");
+        string firstPath = Path.Combine(skillDir, firstName);
+        string secondPath = Path.Combine(skillDir, secondName);
+        Directory.CreateDirectory(Path.GetDirectoryName(firstPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(secondPath)!);
+        File.WriteAllText(firstPath, "first");
+        File.WriteAllText(secondPath, "second");
+        if (Directory.EnumerateFiles(skillDir, "*", SearchOption.AllDirectories).Count() != 3)
+        {
+            Assert.Skip("The filesystem is not case-sensitive.");
+        }
+
+        this.CreateSkillDirectory("other-skill", "A skill", "Body.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Equal("other-skill", Assert.Single(skills).Frontmatter.Name);
+    }
+
     private string CreateSkillDirectory(string name, string description, string body)
     {
         string skillDir = Path.Combine(this._testRoot, name);

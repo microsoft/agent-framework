@@ -259,7 +259,6 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
             };
             if (OperatingSystem.IsWindows())
             {
-                aliases.Add("refs/POLICY.md");
                 aliases.Add("refs/policy.md.");
             }
 
@@ -312,8 +311,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         for (int i = 0; i < 2; i++)
         {
             var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
-            string resourceName = aliasFirst && alias == "refs/POLICY.md" ? alias : "refs/policy.md";
-            var resource = await skill.GetResourceAsync(resourceName);
+            var resource = await skill.GetResourceAsync("refs/policy.md");
             Assert.NotNull(resource);
             Assert.Equal("First resource.", await resource.ReadAsync());
             var other = await skill.GetResourceAsync("refs/other.md");
@@ -332,6 +330,46 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Exactly(2));
+    }
+
+    [Theory]
+    [InlineData("refs/policy.md", "refs/POLICY.md", false)]
+    [InlineData("refs/policy.md", "refs/POLICY.md", true)]
+    [InlineData("refs/policy.md", "REFS/policy.md", false)]
+    [InlineData("refs/policy.md", "REFS/policy.md", true)]
+    [InlineData("scripts/run.py", "scripts/RUN.py", false)]
+    [InlineData("scripts/run.py", "scripts/RUN.py", true)]
+    [InlineData("SKILL.md", "skill.md", false)]
+    [InlineData("SKILL.md", "skill.md", true)]
+    public async Task GetSkillsAsync_CaseVariantArchiveNames_SkipsSkillAsync(string name, string variant, bool variantFirst)
+    {
+        // Arrange
+        var files = new List<(string Path, string Content)>
+        {
+            (variantFirst ? variant : name, ArchivedSkillMd),
+            (variantFirst ? name : variant, ArchivedSkillMd),
+        };
+        if (!string.Equals(name, "SKILL.md", StringComparison.Ordinal))
+        {
+            files.Add(("SKILL.md", ArchivedSkillMd));
+        }
+
+        byte[] archive = BuildZip(files.ToArray());
+        await using var server = CreateArchiveServer(
+            ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip"),
+            new Dictionary<string, byte[]> { ["archived-skill"] = archive });
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        for (int i = 0; i < 2; i++)
+        {
+            // Act
+            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+            // Assert
+            Assert.Empty(skills);
+            Assert.False(Directory.Exists(Path.Combine(this._extractionRoot, "archived-skill")));
+        }
     }
 
     [Theory]
