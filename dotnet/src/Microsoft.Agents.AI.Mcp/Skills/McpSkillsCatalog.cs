@@ -41,7 +41,7 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// Resource retrieval, verification, and content caching remain the responsibility of each skill object.
-/// A size or digest mismatch marks the skill for metadata refresh through <see cref="AgentMcpSkill.NeedsRefresh"/>.
+/// A size or digest mismatch marks a manifest-backed skill for metadata refresh through <see cref="AgentMcpSkill.NeedsRefresh"/>.
 /// </para>
 /// <para>
 /// Only one caller can fetch or update the skill list at a time; other callers wait and then check the cache again.
@@ -249,9 +249,13 @@ internal sealed partial class McpSkillsCatalog
     {
         AgentSkillFrontmatter frontmatter = CreateFrontmatter(entry);
 
-        List<McpSkillResourceEntry> resources = this.CreateSupportingResources(entry);
+        // Manifest resources provide a file list to validate; dynamic resources do not.
+        if (entry.Resources is McpSkillManifestResources manifest)
+        {
+            this.ValidateResourceManifest(entry.Uri, manifest.Entries);
+        }
 
-        return new AgentMcpSkill(frontmatter, entry.Frontmatter.OriginalJson, entry.Uri, resources, this._client, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver, this._hasIsolationKey);
+        return new AgentMcpSkill(frontmatter, entry.Frontmatter.OriginalJson, entry.Uri, entry.Resources, this._client, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver, this._hasIsolationKey);
     }
 
     /// <summary>
@@ -424,17 +428,14 @@ internal sealed partial class McpSkillsCatalog
     /// <summary>
     /// Checks the server's resource list, including the required <c>SKILL.md</c> entry.
     /// </summary>
-    private List<McpSkillResourceEntry> CreateSupportingResources(McpSkillEntry entry)
+    private void ValidateResourceManifest(string skillUri, IReadOnlyList<McpSkillResourceEntry> manifest)
     {
-        string skillUri = entry.Uri;
-
         // skill://unit-converter/SKILL.md -> skill://unit-converter/ (keep the trailing slash).
         string skillRootUri = skillUri[..^"SKILL.md".Length];
 
-        List<McpSkillResourceEntry> resources = [];
         HashSet<string> resourceUris = new(StringComparer.Ordinal);
 
-        foreach (McpSkillResourceEntry? resource in entry.Resources)
+        foreach (McpSkillResourceEntry? resource in manifest)
         {
             this.ValidateResourceManifestEntry(resource, skillUri, skillRootUri);
 
@@ -443,16 +444,12 @@ internal sealed partial class McpSkillsCatalog
             {
                 throw new InvalidOperationException($"Skill '{skillUri}' contains a duplicate resource URI '{resource.Uri}'.");
             }
-
-            resources.Add(resource);
         }
 
         if (!resourceUris.Contains(skillUri))
         {
             throw new InvalidOperationException($"Skill '{skillUri}' must include SKILL.md in its resource manifest.");
         }
-
-        return resources;
     }
 
     /// <summary>

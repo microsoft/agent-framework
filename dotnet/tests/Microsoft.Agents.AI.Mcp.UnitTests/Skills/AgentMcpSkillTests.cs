@@ -27,6 +27,63 @@ public sealed partial class AgentMcpSkillTests
     private const string SkillUri = SkillRootUri + "SKILL.md";
     private const string SkillContent = "---\nname: unit-converter\ndescription: Convert units.\n---\nInstructions.";
 
+    [Theory]
+    [InlineData(SkillUri, true)]
+    [InlineData(SkillRootUri + "references/checklist.md", true)]
+    [InlineData(SkillRootUri + "references/Checklist.md", false)]
+    [InlineData(SkillRootUri + "missing.md", false)]
+    public void ManifestResources_FindEntry_UsesOrdinalUriLookup(string uri, bool exists)
+    {
+        // Arrange
+        McpSkillResourceEntry instructions = Resource(SkillUri, SkillContent);
+        McpSkillResourceEntry supporting = Resource(SkillRootUri + "references/checklist.md", "Checklist.");
+        var manifest = new McpSkillManifestResources([instructions, supporting]);
+
+        // Act
+        McpSkillResourceEntry? entry = manifest.FindEntry(uri);
+
+        // Assert
+        if (exists)
+        {
+            Assert.Same(uri == SkillUri ? instructions : supporting, entry);
+        }
+        else
+        {
+            Assert.Null(entry);
+        }
+    }
+
+    [Fact]
+    public void ManifestResources_DuplicateUris_PreservesEntriesAndFindsFirst()
+    {
+        // Arrange
+        McpSkillResourceEntry first = Resource(SkillUri, SkillContent);
+        McpSkillResourceEntry duplicate = Resource(SkillUri, "Different content.");
+        var manifest = new McpSkillManifestResources([first, duplicate]);
+
+        // Act
+        McpSkillResourceEntry? entry = manifest.FindEntry(SkillUri);
+
+        // Assert
+        Assert.Same(first, entry);
+        Assert.Equal(2, manifest.Entries.Count);
+        Assert.Same(duplicate, manifest.Entries[1]);
+    }
+
+    [Fact]
+    public void Constructor_NullResources_Throws()
+    {
+        // Arrange
+        var client = Moq.Mock.Of<McpClient>();
+
+        // Act
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri, null!, client));
+
+        // Assert
+        Assert.Equal("resources", exception.ParamName);
+    }
+
     [Fact]
     public void Constructor_PreservesProvidedFrontmatter()
     {
@@ -48,7 +105,7 @@ public sealed partial class AgentMcpSkillTests
         };
 
         // Act
-        var skill = new AgentMcpSkill(frontmatter, document.RootElement.Clone(), SkillUri, [], Moq.Mock.Of<McpClient>());
+        var skill = new AgentMcpSkill(frontmatter, document.RootElement.Clone(), SkillUri, new McpSkillManifestResources([]), Moq.Mock.Of<McpClient>());
         document.Dispose();
         frontmatter.License = "Apache-2.0";
         frontmatter.Metadata["Owner"] = "Changed";
@@ -70,7 +127,7 @@ public sealed partial class AgentMcpSkillTests
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
 
         // Act
-        var skill = new AgentMcpSkill(frontmatter, CreateAdvertisedFrontmatter(), SkillUri, [Resource(SkillUri, SkillContent)], client);
+        var skill = new AgentMcpSkill(frontmatter, CreateAdvertisedFrontmatter(), SkillUri, new McpSkillManifestResources([Resource(SkillUri, SkillContent)]), client);
 
         // Assert
         Assert.Same(frontmatter, skill.Frontmatter);
@@ -90,7 +147,7 @@ public sealed partial class AgentMcpSkillTests
 
         // Act
         var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
-            [Resource(SkillUri, SkillContent)], client, metadataLifetime: lifetime);
+            new McpSkillManifestResources([Resource(SkillUri, SkillContent)]), client, metadataLifetime: lifetime);
 
         // Assert
         Assert.Same(lifetime ?? McpCacheLifetime.Infinite, skill.MetadataLifetime);
@@ -109,10 +166,11 @@ public sealed partial class AgentMcpSkillTests
         });
         await using var client = await server.CreateClientAsync();
         var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
-        [
-            Resource(NestedUri, "Nested instructions."),
-            Resource(SkillUri, SkillContent),
-        ], client);
+            new McpSkillManifestResources(
+            [
+                Resource(NestedUri, "Nested instructions."),
+                Resource(SkillUri, SkillContent),
+            ]), client);
 
         // Act
         string instructions = await skill.GetContentAsync();
@@ -142,7 +200,7 @@ public sealed partial class AgentMcpSkillTests
         McpSkillResourceEntry[] resources = includeNestedInstructions
             ? [Resource(SkillRootUri + "nested/SKILL.md", SkillContent)]
             : [];
-        var skill = new AgentMcpSkill(frontmatter, CreateAdvertisedFrontmatter(), SkillUri, resources, client);
+        var skill = new AgentMcpSkill(frontmatter, CreateAdvertisedFrontmatter(), SkillUri, new McpSkillManifestResources(resources), client);
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
@@ -512,7 +570,7 @@ public sealed partial class AgentMcpSkillTests
             """);
         var frontmatter = CreateFrontmatter();
         frontmatter.License = "MIT";
-        var skill = new AgentMcpSkill(frontmatter, frontmatterJson, SkillUri, [Resource(SkillUri, Content)], client);
+        var skill = new AgentMcpSkill(frontmatter, frontmatterJson, SkillUri, new McpSkillManifestResources([Resource(SkillUri, Content)]), client);
 
         // Act
         string verified = await skill.GetContentAsync();
@@ -548,7 +606,7 @@ public sealed partial class AgentMcpSkillTests
         {
             Metadata = new() { ["Owner"] = "Example" },
         };
-        var skill = new AgentMcpSkill(frontmatter, document.RootElement.Clone(), SkillUri, [Resource(SkillUri, content)], client);
+        var skill = new AgentMcpSkill(frontmatter, document.RootElement.Clone(), SkillUri, new McpSkillManifestResources([Resource(SkillUri, content)]), client);
         document.Dispose();
 
         // Act
@@ -603,7 +661,7 @@ public sealed partial class AgentMcpSkillTests
             return ValueTask.FromResult(Text(uri, SkillContent));
         });
         await using var client = await server.CreateClientAsync();
-        var skill = new AgentMcpSkill(frontmatter, snapshot, SkillUri, [Resource(SkillUri, SkillContent)], client);
+        var skill = new AgentMcpSkill(frontmatter, snapshot, SkillUri, new McpSkillManifestResources([Resource(SkillUri, SkillContent)]), client);
 
         // Act & Assert
         for (int i = 0; i < 2; i++)
@@ -761,16 +819,67 @@ public sealed partial class AgentMcpSkillTests
         Assert.Empty(reads);
     }
 
-    [Fact]
-    public async Task GetResourceAsync_ReadFailure_PropagatesAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetResourceAsync_ResourceNotFound_ReturnsNullWithoutCachingAsync(bool dynamicResources)
     {
         // Arrange
-        await using var server = CreateServer((_, _) => throw new McpProtocolException("Resource unavailable.", McpErrorCode.ResourceNotFound));
+        int reads = 0;
+        await using var server = CreateServer((uri, _) =>
+        {
+            if (++reads == 1)
+            {
+                throw new McpProtocolException("Resource unavailable.", McpErrorCode.ResourceNotFound);
+            }
+
+            return ValueTask.FromResult(Text(uri, "Checklist."));
+        });
+        await using var client = await server.CreateClientAsync();
+        var skill = dynamicResources ? CreateDynamicSkill(client) : CreateSkill(client);
+
+        // Act
+        var missing = await skill.GetResourceAsync("references/checklist.md");
+        var available = await skill.GetResourceAsync("references/checklist.md");
+
+        // Assert
+        Assert.Null(missing);
+        Assert.NotNull(available);
+        Assert.Equal("Checklist.", await available.ReadAsync());
+        Assert.Equal(2, reads);
+        Assert.False(skill.NeedsRefresh);
+    }
+
+    [Theory]
+    [InlineData(false, McpErrorCode.ResourceNotFound)]
+    [InlineData(true, McpErrorCode.ResourceNotFound)]
+    [InlineData(false, McpErrorCode.InternalError)]
+    [InlineData(true, McpErrorCode.InternalError)]
+    public async Task GetContentAsync_ReadFailure_PropagatesAsync(bool dynamicResources, McpErrorCode errorCode)
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => throw new McpProtocolException("Read failed.", errorCode));
+        await using var client = await server.CreateClientAsync();
+        var skill = dynamicResources ? CreateDynamicSkill(client) : CreateSkill(client);
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<McpProtocolException>(async () => await skill.GetContentAsync());
+        Assert.Equal(errorCode, exception.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(McpErrorCode.InternalError)]
+    [InlineData(McpErrorCode.InvalidParams)]
+    public async Task GetResourceAsync_ReadFailure_PropagatesAsync(McpErrorCode errorCode)
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => throw new McpProtocolException("Resource unavailable.", errorCode));
         await using var client = await server.CreateClientAsync();
         var skill = CreateSkill(client);
 
         // Act & Assert
-        await Assert.ThrowsAsync<McpProtocolException>(async () => await skill.GetResourceAsync("references/checklist.md"));
+        var exception = await Assert.ThrowsAsync<McpProtocolException>(async () => await skill.GetResourceAsync("references/checklist.md"));
+        Assert.Equal(errorCode, exception.ErrorCode);
     }
 
     [Fact]
@@ -1039,7 +1148,7 @@ public sealed partial class AgentMcpSkillTests
 
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
         await using var client = await server.CreateClientAsync();
-        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri, [instructions], client);
+        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri, new McpSkillManifestResources([instructions]), client);
 
         // Act & Assert
         if (useCharacterCount)
@@ -1299,16 +1408,16 @@ public sealed partial class AgentMcpSkillTests
         string content = SkillContent,
         long maxResourceSizeBytes = AgentMcpSkill.DefaultMaxResourceSizeBytes,
         TimeProvider? timeProvider = null) =>
-        new(CreateFrontmatter(), CreateAdvertisedFrontmatter(), root + "SKILL.md",
-        [
-            Resource(root + "SKILL.md", content),
-            .. resources ??
+        new(CreateFrontmatter(), CreateAdvertisedFrontmatter(), root + "SKILL.md", new McpSkillManifestResources(
             [
-                Resource(root + "references/checklist.md", "Checklist."),
-                Resource(root + "assets/icon.bin", new byte[] { 1, 2, 3, 4 }),
-                Resource(root + "empty.txt", ""),
-            ],
-        ], client, maxResourceSizeBytes: maxResourceSizeBytes, timeProvider: timeProvider);
+                Resource(root + "SKILL.md", content),
+                .. resources ??
+                [
+                    Resource(root + "references/checklist.md", "Checklist."),
+                    Resource(root + "assets/icon.bin", new byte[] { 1, 2, 3, 4 }),
+                    Resource(root + "empty.txt", ""),
+                ],
+            ]), client, maxResourceSizeBytes: maxResourceSizeBytes, timeProvider: timeProvider);
 
     /// <summary>
     /// Creates discovery metadata.

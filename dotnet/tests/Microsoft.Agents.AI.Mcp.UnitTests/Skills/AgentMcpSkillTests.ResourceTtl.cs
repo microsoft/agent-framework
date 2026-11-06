@@ -187,7 +187,7 @@ public sealed partial class AgentMcpSkillTests
         });
         await using var client = await server.CreateClientAsync();
         var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
-            [Resource(SkillUri, Content)], client, timeProvider: clock, ttlResolver: ttl =>
+            new McpSkillManifestResources([Resource(SkillUri, Content)]), client, timeProvider: clock, ttlResolver: ttl =>
             {
                 clock.Advance(TimeSpan.FromMilliseconds(processingMilliseconds));
                 return ttl.GetValueOrDefault();
@@ -233,7 +233,7 @@ public sealed partial class AgentMcpSkillTests
         });
         bool cancelAfterValidation = !cached;
         var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
-            [Resource(SkillUri, Content)], client.Object, timeProvider: clock, ttlResolver: ttl =>
+            new McpSkillManifestResources([Resource(SkillUri, Content)]), client.Object, timeProvider: clock, ttlResolver: ttl =>
             {
                 if (cancelAfterValidation)
                 {
@@ -360,7 +360,7 @@ public sealed partial class AgentMcpSkillTests
         var logger = new Mock<ILogger>();
         logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
         var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
-            [Resource(SkillUri, SkillContent), Resource(SkillRootUri + "references/checklist.md", "Checklist.")],
+            new McpSkillManifestResources([Resource(SkillUri, SkillContent), Resource(SkillRootUri + "references/checklist.md", "Checklist.")]),
             client, logger.Object, timeProvider: clock);
         await ReadSnapshotAsync(skill, instructions);
         clock.Advance(TimeSpan.FromMilliseconds(Math.Max(ttl.GetValueOrDefault(), 0)));
@@ -518,7 +518,7 @@ public sealed partial class AgentMcpSkillTests
             It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
             .Callback(cts.Cancel);
         var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
-            [Resource(SkillUri, SkillContent), Resource(SkillRootUri + "references/checklist.md", "Checklist.")],
+            new McpSkillManifestResources([Resource(SkillUri, SkillContent), Resource(SkillRootUri + "references/checklist.md", "Checklist.")]),
             client.Object, logger.Object, timeProvider: clock);
         if (cached)
         {

@@ -61,9 +61,25 @@ internal sealed class McpSkillEntry
     public required McpSkillFrontmatter Frontmatter { get; init; }
 
     /// <summary>
-    /// Gets the resources listed for the skill.
+    /// Gets the complete file list with expected sizes and hashes, or an indication that no list is provided.
     /// </summary>
-    public required IReadOnlyList<McpSkillResourceEntry> Resources { get; init; }
+    /// <remarks>
+    /// <para>
+    /// A <see cref="McpSkillManifestResources"/> comes from a JSON array listing every file, including
+    /// <c>SKILL.md</c>. Reads are limited to those files, and their content is checked against the listed sizes and hashes.
+    /// </para>
+    /// <para>
+    /// A <see cref="McpSkillDynamicResources"/> comes from the JSON string <c>"dynamic"</c>.
+    /// It provides no file list or hashes. Instructions are read from <see cref="Uri"/>, and supporting files
+    /// are requested by relative path within the skill's directory.
+    /// </para>
+    /// <para>
+    /// Neither form contains file content or causes files to be fetched during discovery.
+    /// Files are read only when needed.
+    /// </para>
+    /// </remarks>
+    [JsonConverter(typeof(McpSkillResourcesConverter))]
+    public required McpSkillResources Resources { get; init; }
 }
 
 /// <summary>

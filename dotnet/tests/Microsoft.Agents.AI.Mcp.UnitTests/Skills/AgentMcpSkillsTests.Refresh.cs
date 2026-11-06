@@ -921,7 +921,7 @@ public sealed partial class AgentMcpSkillsTests
     [InlineData("digest", typeof(InvalidOperationException))]
     [InlineData("size", typeof(InvalidOperationException))]
     [InlineData("incomplete", typeof(InvalidOperationException))]
-    [InlineData("dynamic", typeof(JsonException))]
+    [InlineData("unknown-resources", typeof(JsonException))]
     [InlineData("ttl", typeof(JsonException))]
     public async Task GetSkillsAsync_VerificationRefreshFailure_RetainsPendingWorkAsync(string failure, Type exceptionType)
     {
@@ -960,7 +960,7 @@ public sealed partial class AgentMcpSkillsTests
                     case "digest": result["skill"]!["resources"]![0]!["digest"] = "invalid"; break;
                     case "size": result["skill"]!["resources"]![0]!["size"] = 2_000_000; break;
                     case "incomplete": result["skill"]!["resources"] = new JsonArray(); break;
-                    case "dynamic": result["skill"]!["resources"] = "dynamic"; break;
+                    case "unknown-resources": result["skill"]!["resources"] = "unknown"; break;
                     case "ttl": result["ttlMs"] = "1000"; break;
                     default: throw new ArgumentOutOfRangeException(nameof(failure));
                 }

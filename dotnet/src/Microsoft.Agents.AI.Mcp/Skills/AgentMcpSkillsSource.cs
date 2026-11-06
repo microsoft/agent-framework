@@ -22,8 +22,9 @@ namespace Microsoft.Agents.AI;
 /// <see cref="GetSkillsAsync"/> requests the available skills through <c>skills/list</c>.
 /// The server must declare the <c>io.modelcontextprotocol/skills</c> extension;
 /// otherwise, this source returns an empty list without sending a request.
-/// Each listed skill includes a name, description, and resource list with expected byte sizes and content hashes.
-/// This resource list is called the manifest and includes <c>SKILL.md</c>, which contains the skill's instructions.
+/// Each listed skill includes a name, description, and either a complete resource list with expected byte sizes
+/// and content hashes (a manifest), or the marker <c>"dynamic"</c> when no such list is provided.
+/// A manifest includes <c>SKILL.md</c>, which contains the skill's instructions.
 /// </para>
 /// <para>
 /// The skill list may span multiple response pages, each with a time to live (TTL).
@@ -51,10 +52,13 @@ namespace Microsoft.Agents.AI;
 /// </para>
 /// <para>
 /// Listing a skill does not fetch its files. The returned skill object fetches <c>SKILL.md</c>
-/// and supporting resources only when their content is requested. Only resources in its manifest are available.
+/// and supporting resources only when their content is requested. Manifest-backed skills expose only listed resources.
+/// Dynamic skills read requested relative paths within their skill directory without listing files in advance.
 /// Each resource response must contain one text or binary content block; <c>SKILL.md</c> must contain text.
-/// Fetched content is checked against the resource's expected size and content hash.
-/// The name and description at the start of <c>SKILL.md</c> must also match the listed skill.
+/// Manifest-backed content is checked against its expected size and content hash.
+/// Dynamic content has no expected hashes to check, but reads still validate the response and enforce size limits.
+/// For both kinds of skill, all metadata fields at the start of <c>SKILL.md</c> (frontmatter)
+/// must match the metadata provided when the skill was listed.
 /// </para>
 /// <para>
 /// Each skill object caches resource content separately from the skill list, using each resource response's TTL.
@@ -62,7 +66,7 @@ namespace Microsoft.Agents.AI;
 /// causes content to be fetched on every access. All TTLs start when responses arrive, before validation.
 /// </para>
 /// <para>
-/// If fetched resource content has a different size or content hash than its manifest entry,
+/// For manifest-backed skills, if fetched content has a different size or content hash than its manifest entry,
 /// the skill that owns that resource is queued for refresh.
 /// The resource read returns previously verified cached content if available and caches it indefinitely for that skill object;
 /// otherwise, it throws. Other resource-read and validation errors propagate without queuing a skill refresh.
@@ -76,7 +80,7 @@ namespace Microsoft.Agents.AI;
 /// A failed refresh leaves the previous list unchanged and is retried on a later call.
 /// </para>
 /// <para>
-/// Refreshes return a new list with new objects for updated skills. Previously returned skill objects
+/// Refreshes return a new list with new objects for updated skills. Previously returned manifest-backed skill objects
 /// continue using the resource URIs, sizes, and content hashes they were created with.
 /// Previously returned content stays unchanged. Callers must load the new skill object to use an update.
 /// Refreshes happen only on request, not in the background.

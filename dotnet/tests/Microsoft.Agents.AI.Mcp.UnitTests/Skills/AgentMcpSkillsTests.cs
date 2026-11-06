@@ -708,7 +708,7 @@ public sealed partial class AgentMcpSkillsTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task GetSkillsAsync_EmptyOrUnsupportedDynamicList_DoesNotReadResourcesAsync(bool dynamic)
+    public async Task GetSkillsAsync_EmptyOrDynamicList_DoesNotReadResourcesAsync(bool dynamic)
     {
         // Arrange
         JsonObject entry = Entry();
@@ -724,17 +724,18 @@ public sealed partial class AgentMcpSkillsTests
         using var source = new AgentMcpSkillsSource(client);
 
         // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
         if (dynamic)
         {
-            await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+            Assert.IsType<AgentMcpSkill>(Assert.Single(skills));
         }
         else
         {
-            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
             Assert.Empty(skills);
         }
 
-        // Assert
         Assert.Empty(reads);
     }
 
@@ -760,7 +761,7 @@ public sealed partial class AgentMcpSkillsTests
     [InlineData("resources", "null", typeof(JsonException))]
     [InlineData("resources", "false", typeof(JsonException))]
     [InlineData("resources", "\"other\"", typeof(JsonException))]
-    [InlineData("resources", "\"dynamic\"", typeof(JsonException))]
+    [InlineData("resources", "\"Dynamic\"", typeof(JsonException))]
     [InlineData("resources", "{}", typeof(JsonException))]
     [InlineData("resources", "[null]", typeof(InvalidOperationException))]
     [InlineData("resources", "[42]", typeof(JsonException))]
@@ -1694,18 +1695,28 @@ public sealed partial class AgentMcpSkillsTests
         logger.VerifyNoOtherCalls();
     }
 
-    [Fact]
-    public async Task GetResourceAsync_ReadFailure_PropagatesAsync()
+    [Theory]
+    [InlineData(McpErrorCode.ResourceNotFound)]
+    [InlineData(McpErrorCode.InternalError)]
+    public async Task GetResourceAsync_ReadFailure_HandlesExpectedErrorAsync(McpErrorCode errorCode)
     {
         // Arrange
         await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())),
-            (_, _) => throw new McpProtocolException("Resource unavailable.", McpErrorCode.ResourceNotFound));
+            (_, _) => throw new McpProtocolException("Resource unavailable.", errorCode));
         await using var client = await server.CreateClientAsync();
         using var source = new AgentMcpSkillsSource(client);
         var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
 
         // Act & Assert
-        await Assert.ThrowsAsync<McpProtocolException>(async () => await skill.GetResourceAsync("references/checklist.md"));
+        if (errorCode == McpErrorCode.ResourceNotFound)
+        {
+            Assert.Null(await skill.GetResourceAsync("references/checklist.md"));
+        }
+        else
+        {
+            var exception = await Assert.ThrowsAsync<McpProtocolException>(async () => await skill.GetResourceAsync("references/checklist.md"));
+            Assert.Equal(errorCode, exception.ErrorCode);
+        }
     }
 
     [Fact]

@@ -19,4 +19,5 @@ namespace Microsoft.Agents.AI;
 [JsonSerializable(typeof(McpSkillEntry))]
 [JsonSerializable(typeof(McpSkillFrontmatter))]
 [JsonSerializable(typeof(McpSkillResourceEntry))]
+[JsonSerializable(typeof(McpSkillResourceEntry[]))]
 internal sealed partial class McpSkillsJsonContext : JsonSerializerContext;
