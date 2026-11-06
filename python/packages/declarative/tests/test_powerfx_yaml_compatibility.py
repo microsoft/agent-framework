@@ -126,6 +126,36 @@ class TestPowerFxBuiltinFunctions:
         # The missing input is only bound for evaluation, not written to state.
         assert "name" not in state.get_state_data()["Inputs"]
 
+    @pytest.mark.parametrize("inputs", [{"other": 1}, {"user": {"id": 1}}])
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            '=If(IsBlank(inputs.user.name), "World", inputs.user.name)',
+            '=If(IsBlank(Workflow.Inputs.user.name), "World", Workflow.Inputs.user.name)',
+        ],
+    )
+    async def test_if_with_isblank_when_nested_input_is_missing(self, mock_state, inputs, expression):
+        """Test that a missing nested input is blank whether or not its parent record was supplied."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize(inputs)
+
+        assert state.eval(expression) == "World"
+        assert state.get_state_data()["Inputs"] == inputs
+
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            '=If(IsBlank(inputs.user), "anonymous", "known: " & inputs.user.name)',
+            "=Sum(inputs.items, Value)",
+        ],
+    )
+    async def test_unbindable_missing_inputs_keep_undefined_fallback(self, mock_state, expression):
+        """Test that formulas the blank bindings cannot make valid still evaluate to ``None``."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"other": 1})
+
+        assert state.eval(expression) is None
+
     @pytest.mark.parametrize(
         "expression",
         [

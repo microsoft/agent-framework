@@ -507,6 +507,22 @@ actions:
         assert any("Alice" in str(output) for output in result.get_outputs())
 
     @pytest.mark.asyncio
+    async def test_missing_nested_input_uses_isblank_default(self):
+        """Test that ``IsBlank`` defaults apply to nested inputs whose parent record was omitted."""
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: missing-nested-input-test
+actions:
+  - kind: SendActivity
+    activity:
+      text: '=If(IsBlank(inputs.user.name), "World", inputs.user.name)'
+""")
+
+        result = await workflow.run({"other": 1})
+
+        assert any("World" in str(output) for output in result.get_outputs())
+
+    @pytest.mark.asyncio
     async def test_entry_join_executor_initializes_workflow_inputs(self):
         """Regression test for #3948: Entry JoinExecutor must initialize Workflow.Inputs.
 

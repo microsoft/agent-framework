@@ -98,15 +98,15 @@ def _read_member_access(formula: str, start: int) -> tuple[str, int] | None:
     return _read_powerfx_identifier(formula, _after_trailing_trivia(formula, dot + 1))
 
 
-def _referenced_input_names(formula: str) -> tuple[set[str], set[str]]:
-    """Return the fields referenced as ``inputs.<name>`` and as ``Workflow.Inputs.<name>`` in code.
+def _referenced_input_paths(formula: str) -> tuple[set[tuple[str, ...]], set[tuple[str, ...]]]:
+    """Return the field paths referenced under ``inputs`` and under ``Workflow.Inputs`` in code.
 
-    String literals and comments are skipped, so input-like text inside them is not a reference.
-    Only identifiers that start a member-access chain count, so ``Local.inputs.name`` is not an
-    ``inputs`` reference.
+    ``inputs.user.name`` yields ``("user", "name")``. String literals and comments are skipped,
+    so input-like text inside them is not a reference. Only identifiers that start a
+    member-access chain count, so ``Local.inputs.name`` is not an ``inputs`` reference.
     """
-    inputs_names: set[str] = set()
-    workflow_inputs_names: set[str] = set()
+    inputs_paths: set[tuple[str, ...]] = set()
+    workflow_inputs_paths: set[tuple[str, ...]] = set()
     chain_end = 0
     for cursor in _iter_powerfx_expression_indices(formula):
         if cursor < chain_end:
@@ -122,10 +122,36 @@ def _referenced_input_names(formula: str) -> tuple[set[str], set[str]]:
             chain.append(member[0])
             chain_end = member[1]
         if chain[0] == "inputs" and len(chain) > 1:
-            inputs_names.add(chain[1])
+            inputs_paths.add(tuple(chain[1:]))
         elif chain[:2] == ["Workflow", "Inputs"] and len(chain) > 2:
-            workflow_inputs_names.add(chain[2])
-    return inputs_names, workflow_inputs_names
+            workflow_inputs_paths.add(tuple(chain[2:]))
+    return inputs_paths, workflow_inputs_paths
+
+
+def _complete_with_blanks(record: Mapping[str, Any], paths: set[tuple[str, ...]]) -> dict[str, Any]:
+    """Return a copy of ``record`` in which every path it does not contain ends in blank.
+
+    Missing parents become records, so ``("user", "name")`` on an empty record gives
+    ``{"user": {"name": None}}`` and ``inputs.user.name`` stays a valid field access.
+    A missing field that is also used as a value (``IsBlank(inputs.user)``) is left
+    missing, because a record would not be blank and a blank record cannot be bound.
+    Values the record already has are never replaced, and paths below a value that is
+    not a record are left for PowerFx to report.
+    """
+    completed = dict(record)
+    children: dict[str, set[tuple[str, ...]]] = {}
+    for name, *rest in paths:
+        children.setdefault(name, set()).add(tuple(rest))
+    for name, nested in children.items():
+        fields = nested - {()}
+        if name not in completed:
+            if not fields:
+                completed[name] = None
+            elif () not in nested:
+                completed[name] = _complete_with_blanks({}, fields)
+        elif fields and isinstance(completed[name], Mapping):
+            completed[name] = _complete_with_blanks(cast(Mapping[str, Any], completed[name]), fields)
+    return completed
 
 
 def _bind_missing_input_references(
@@ -137,7 +163,8 @@ def _bind_missing_input_references(
     inputs record, which turns the whole expression into ``None`` and defeats defaults
     such as ``If(IsBlank(inputs.name), "World", inputs.name)``. Binding the missing
     fields to blank only for this evaluation makes them behave like an explicit ``None``
-    input without changing the workflow state.
+    input without changing the workflow state. Nested references such as
+    ``inputs.user.name`` bind ``user`` as a record whose ``name`` is blank.
 
     ``inputs`` is an alias of ``Workflow.Inputs`` unless a custom ``inputs`` namespace
     replaces it; in that case the two records are completed independently and the custom
@@ -151,12 +178,11 @@ def _bind_missing_input_references(
     if not isinstance(workflow_inputs, Mapping):
         return symbols
     workflow_input_values = cast(Mapping[str, Any], workflow_inputs)
-    inputs_names, workflow_inputs_names = _referenced_input_names(formula)
-    referenced = workflow_inputs_names | inputs_names if inputs_alias_is_canonical else workflow_inputs_names
-    missing = {name for name in referenced if name not in workflow_input_values}
-    if not missing:
+    inputs_paths, workflow_inputs_paths = _referenced_input_paths(formula)
+    referenced = workflow_inputs_paths | inputs_paths if inputs_alias_is_canonical else workflow_inputs_paths
+    bound_inputs = _complete_with_blanks(workflow_input_values, referenced)
+    if bound_inputs == workflow_input_values:
         return symbols
-    bound_inputs: dict[str, Any] = {**workflow_input_values, **dict.fromkeys(sorted(missing))}
     bound = {**symbols, "Workflow": {**workflow_values, "Inputs": bound_inputs}}
     if inputs_alias_is_canonical:
         bound["inputs"] = bound_inputs
@@ -730,9 +756,10 @@ class DeclarativeWorkflowState:
                 if bound_symbols is not symbols:
                     try:
                         return self._eval_powerfx(Engine, formula, bound_symbols)
-                    except ValueError as e:
-                        if not _is_unrecognized_name_error(e):
-                            raise
+                    except ValueError:
+                        # The blank bindings did not make the formula valid, so keep the
+                        # undefined-reference fallback the formula had without them.
+                        logger.debug(f"PowerFx: blank input bindings did not resolve '{formula}'")
                 # Handle undefined variable errors gracefully by returning None
                 # This matches the behavior of the legacy fallback parser
                 logger.debug(f"PowerFx: undefined variable in expression '{formula}', returning None")
