@@ -1743,6 +1743,26 @@ def _validate_arguments_against_schema(
     return parsed_arguments
 
 
+def _get_callable_name(func: Callable[..., Any]) -> str:
+    """Return the name of a callable, looking through ``functools.partial`` objects without their own name."""
+    while not hasattr(func, "__name__") and isinstance(func, partial):
+        func = func.func
+    return getattr(func, "__name__", type(func).__name__)
+
+
+def _get_callable_description(func: Callable[..., Any]) -> str:
+    """Return the docstring of a callable, looking through ``functools.partial`` objects without their own docstring."""
+    while isinstance(func, partial) and func.__doc__ == partial.__doc__:
+        func = func.func
+    doc = func.__doc__
+    # A class's __call__ belongs to its metaclass, and built-in __call__ slots share a generic docstring.
+    if not doc and not isinstance(func, (partial, type)):
+        call = type(func).__call__
+        if inspect.isfunction(call):
+            doc = call.__doc__
+    return doc or ""
+
+
 @overload
 def tool(
     func: Callable[..., Any],
@@ -1810,9 +1830,13 @@ def tool(
 
     Keyword Args:
         name: The name of the function. If not provided, the function's ``__name__``
-            attribute will be used.
+            attribute will be used. A ``functools.partial`` without its own ``__name__``
+            uses the name of the callable it wraps, and a callable instance uses its class
+            name.
         description: A description of the function. If not provided, the function's
-            docstring will be used.
+            docstring will be used. A ``functools.partial`` without its own docstring uses
+            the docstring of the callable it wraps, and a callable instance without a class
+            docstring uses the docstring of its ``__call__`` method.
         schema: An explicit input schema for the function. This can be a Pydantic
             ``BaseModel`` subclass or a JSON schema dictionary (``Mapping[str, Any]``).
             Dictionary schemas are passed through to providers and receive only
@@ -1924,8 +1948,8 @@ def tool(
     def decorator(func: Callable[..., Any]) -> FunctionTool:
         @wraps(func)
         def wrapper(f: Callable[..., Any]) -> FunctionTool:
-            tool_name: str = name or getattr(f, "__name__", "unknown_function")
-            tool_desc: str = description or (f.__doc__ or "")
+            tool_name: str = name or _get_callable_name(f)
+            tool_desc: str = description or _get_callable_description(f)
             return FunctionTool(
                 name=tool_name,
                 description=tool_desc,
