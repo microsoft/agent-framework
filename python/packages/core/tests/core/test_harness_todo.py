@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -199,18 +201,63 @@ async def test_todo_stores_clamp_next_id_to_avoid_collisions(tmp_path: Path) -> 
     assert items == [TodoItem(id=7, title="Seeded")]
 
 
-async def test_todo_provider_evicts_locks_when_session_is_garbage_collected() -> None:
-    """The provider should not retain mutation locks for sessions that have been GC'd."""
+async def test_todo_mutation_locks_are_evicted_when_no_longer_needed() -> None:
+    """Mutation locks should not be retained once no mutation holds or awaits them."""
     import gc
+
+    from agent_framework._harness._todo import _TODO_MUTATION_LOCKS
+
+    store = TodoSessionStore()
+    provider = TodoProvider(store=store)
+    session = AgentSession(session_id="session-1")
+    lock = provider._mutation_lock(session)  # pyright: ignore[reportPrivateUsage]
+    assert len(_TODO_MUTATION_LOCKS) == 1
+
+    del lock, session, provider
+    gc.collect()
+    assert len(_TODO_MUTATION_LOCKS) == 0
+
+
+async def test_todo_mutation_lock_is_scoped_to_the_storage_identity() -> None:
+    """Providers over one storage identity share a lock; another identity gets its own."""
+    session = AgentSession(session_id="session-1")
+    first_provider = TodoProvider(store=TodoSessionStore())
+    second_provider = TodoProvider(store=TodoSessionStore())
+    other_session_provider = TodoProvider(store=TodoSessionStore())
+
+    lock = first_provider._mutation_lock(session)  # pyright: ignore[reportPrivateUsage]
+    # Session stores keep their state on the session object itself, so both providers —
+    # and both stores — serialize on that one session instance.
+    assert second_provider._mutation_lock(session) is lock  # pyright: ignore[reportPrivateUsage]
+    assert other_session_provider._mutation_lock(AgentSession(session_id="session-1")) is not lock  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_todo_mutation_lock_shares_one_file_identity_for_equivalent_sessions(tmp_path: Path) -> None:
+    """Sessions that resolve to the same todo file must share one mutation lock."""
+    provider = TodoProvider(store=TodoFileStore(tmp_path))
+    first_lock = provider._mutation_lock(AgentSession(session_id="session-1"))  # pyright: ignore[reportPrivateUsage]
+    second_lock = provider._mutation_lock(AgentSession(session_id="session-1"))  # pyright: ignore[reportPrivateUsage]
+    assert first_lock is second_lock
+
+    # A different session ID resolves to a different file and keeps its own lock.
+    assert provider._mutation_lock(AgentSession(session_id="session-2")) is not first_lock  # pyright: ignore[reportPrivateUsage]
+
+    # Two store instances over the same directory resolve to the same file as well.
+    other_provider = TodoProvider(store=TodoFileStore(tmp_path))
+    assert other_provider._mutation_lock(AgentSession(session_id="session-1")) is first_lock  # pyright: ignore[reportPrivateUsage]
+
+
+def test_todo_mutation_lock_is_scoped_to_the_event_loop() -> None:
+    """Reusing a session across ``asyncio.run`` boundaries must not reuse a loop-bound lock."""
+
+    async def _lock_from_new_loop(provider: TodoProvider, session: AgentSession) -> asyncio.Lock:
+        return provider._mutation_lock(session)  # pyright: ignore[reportPrivateUsage]
 
     provider = TodoProvider()
     session = AgentSession(session_id="session-1")
-    provider._mutation_lock(session)  # pyright: ignore[reportPrivateUsage]
-    assert len(provider._mutation_locks) == 1  # pyright: ignore[reportPrivateUsage]
-
-    del session
-    gc.collect()
-    assert len(provider._mutation_locks) == 0  # pyright: ignore[reportPrivateUsage]
+    first_lock = asyncio.run(_lock_from_new_loop(provider, session))
+    second_lock = asyncio.run(_lock_from_new_loop(provider, session))
+    assert first_lock is not second_lock
 
 
 async def test_todo_file_store_rejects_session_path_traversal(tmp_path: Path) -> None:
@@ -366,6 +413,175 @@ async def test_todo_provider_serializes_concurrent_mutations(
         "Add B2",
     }
     assert {item["id"] for item in payload if item["is_complete"]} == {1, 2, 3, 4, 5}
+
+
+async def test_todo_providers_sharing_one_store_serialize_mutations(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Two providers over one shared store must not load the same state and drop an add."""
+
+    class _GatedSharedTodoStore(TodoStore):
+        """Hold each load until a competing caller also finishes loading, so the loads interleave."""
+
+        GATE_TIMEOUT = 0.25
+
+        def __init__(self) -> None:
+            self.items: list[TodoItem] = []
+            self.next_id = 1
+            self.load_count = 0
+            self.both_loaded = asyncio.Event()
+
+        def reset_gate(self) -> None:
+            self.load_count = 0
+            self.both_loaded.clear()
+
+        async def load_state(self, session: AgentSession, *, source_id: str) -> tuple[list[TodoItem], int]:
+            snapshot = (list(self.items), self.next_id)
+            self.load_count += 1
+            if self.load_count >= 2:
+                self.both_loaded.set()
+            # A caller whose mutations are already serialized never sees a competing load,
+            # so bound the wait instead of blocking until the gate opens.
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self.both_loaded.wait(), timeout=self.GATE_TIMEOUT)
+            return snapshot
+
+        async def save_state(
+            self, session: AgentSession, items: list[TodoItem], *, next_id: int, source_id: str
+        ) -> None:
+            self.items = list(items)
+            self.next_id = next_id
+
+    session = AgentSession(session_id="session-1")
+    store = _GatedSharedTodoStore()
+    add_tools = []
+    for _ in range(2):
+        agent = Agent(client=chat_client_base, context_providers=[TodoProvider(store=store)])
+        _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+            session=session,
+            input_messages=[Message(role="user", contents=["Track this work"])],
+        )
+        tools = options["tools"]
+        assert isinstance(tools, list)
+        add_tools.append(_tool_by_name(tools, "todos_add"))
+
+    # Preparation above loads the todo list once per provider; gate only the mutations.
+    store.reset_gate()
+
+    results = await asyncio.gather(
+        add_tools[0].invoke(arguments={"todos": [{"title": "From A"}]}),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        add_tools[1].invoke(arguments={"todos": [{"title": "From B"}]}),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    )
+
+    reported_ids = sorted(json.loads(result[0].text)[0]["id"] for result in results)
+    assert store.load_count == 2
+    assert sorted(item.id for item in store.items) == [1, 2]
+    assert {item.title for item in store.items} == {"From A", "From B"}
+    assert reported_ids == [1, 2]
+
+
+async def test_todo_providers_serialize_equivalent_sessions_over_one_file(
+    tmp_path: Path, chat_client_base: SupportsChatGetResponse
+) -> None:
+    """Two sessions that resolve to the same todo file must not both start from an empty state."""
+
+    class _GatedFileTodoStore(TodoFileStore):
+        """Hold each load until a competing caller also finishes loading, so the loads interleave."""
+
+        GATE_TIMEOUT = 0.25
+
+        def __init__(self, base_path: Path) -> None:
+            super().__init__(base_path)
+            self.load_count = 0
+            self.both_loaded = asyncio.Event()
+
+        def reset_gate(self) -> None:
+            self.load_count = 0
+            self.both_loaded.clear()
+
+        async def load_state(self, session: AgentSession, *, source_id: str) -> tuple[list[TodoItem], int]:
+            result = await super().load_state(session, source_id=source_id)
+            self.load_count += 1
+            if self.load_count >= 2:
+                self.both_loaded.set()
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self.both_loaded.wait(), timeout=self.GATE_TIMEOUT)
+            return result
+
+    store = _GatedFileTodoStore(tmp_path)
+    add_tools = []
+    for _ in range(2):
+        agent = Agent(client=chat_client_base, context_providers=[TodoProvider(store=store)])
+        _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+            session=AgentSession(session_id="session-1"),
+            input_messages=[Message(role="user", contents=["Track this work"])],
+        )
+        tools = options["tools"]
+        assert isinstance(tools, list)
+        add_tools.append(_tool_by_name(tools, "todos_add"))
+
+    # Preparation above loads the todo list once per provider; gate only the mutations.
+    store.reset_gate()
+
+    results = await asyncio.gather(
+        add_tools[0].invoke(arguments={"todos": [{"title": "From A"}]}),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        add_tools[1].invoke(arguments={"todos": [{"title": "From B"}]}),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    )
+
+    # Distinct session objects, one shared file: serialized mutations assign unique IDs.
+    reported_ids = sorted(json.loads(result[0].text)[0]["id"] for result in results)
+    assert reported_ids == [1, 2]
+
+
+async def test_todo_mutation_keeps_lock_until_cancelled_write_finishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chat_client_base: SupportsChatGetResponse
+) -> None:
+    """A cancelled mutation must not release the lock while its write is still in flight."""
+    store = TodoFileStore(tmp_path)
+    provider = TodoProvider(store=store)
+    session = AgentSession(session_id="session-1")
+    agent = Agent(client=chat_client_base, context_providers=[provider])
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Track this work"])],
+    )
+    tools = options["tools"]
+    assert isinstance(tools, list)
+    add_todos = _tool_by_name(tools, "todos_add")
+
+    write_started = threading.Event()
+    release_write = threading.Event()
+    real_save = TodoFileStore._save_state_sync
+
+    def _gated_save_sync(state_path: Path, payload: str) -> None:
+        write_started.set()
+        release_write.wait(timeout=5)
+        real_save(state_path, payload)
+
+    monkeypatch.setattr(TodoFileStore, "_save_state_sync", staticmethod(_gated_save_sync))
+
+    first = asyncio.create_task(
+        add_todos.invoke(arguments={"todos": [{"title": "Survives"}]})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    )
+    await asyncio.to_thread(write_started.wait, 5)
+    first.cancel()
+    # Give the cancellation a chance to (wrongly) release the lock while the write runs.
+    await asyncio.sleep(0.1)
+
+    second = asyncio.create_task(
+        add_todos.invoke(arguments={"todos": [{"title": "After"}]})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    )
+    await asyncio.sleep(0.1)
+    assert not second.done(), "the second mutation must wait for the in-flight write to finish"
+
+    release_write.set()
+    with contextlib.suppress(asyncio.CancelledError):
+        await first
+    await second
+
+    items, _ = await store.load_state(session, source_id=provider.source_id)
+    assert [item.title for item in items] == ["Survives", "After"]
+    assert [item.id for item in items] == [1, 2]
 
 
 def test_todo_harness_graduated_classes_are_not_experimental() -> None:

@@ -244,6 +244,18 @@ class TodoStore(ABC):
         items, _ = await self.load_state(session, source_id=source_id)
         return items
 
+    def _mutation_identity(self, session: AgentSession, *, source_id: str) -> object:
+        """Return the hashable identity that mutations on ``session`` must serialize on.
+
+        In-memory stores keep their state on the session object itself, so the session
+        instance identifies the storage. Stores that map several session objects, or
+        several store instances, onto one backing file override this to return a stable
+        identity of that file instead, so concurrent mutations share one lock. Override
+        values carry their own namespace tag, so identities of differently backed stores
+        never collide.
+        """
+        return ("session", id(session))
+
 
 class TodoSessionStore(TodoStore):
     """Store todo state inside ``AgentSession.state``."""
@@ -362,6 +374,15 @@ class TodoFileStore(TodoStore):
         """Return whether a value can be used directly as one path segment."""
         return _is_literal_storage_key_segment_safe(value)
 
+    def _mutation_identity(self, session: AgentSession, *, source_id: str) -> object:
+        """Serialize mutations on the resolved state file rather than on session objects.
+
+        Two sessions with the same session ID (and owner scope), or two store instances
+        over one directory, resolve to the same JSON file; locking per session object
+        would let them load the same state concurrently and overwrite each other.
+        """
+        return ("file", str(self._get_state_path(session, source_id=source_id)))
+
     def _state_filename(self, source_id: str) -> str:
         """Return a source-specific JSON state filename."""
         state_path = Path(self.state_filename)
@@ -411,6 +432,62 @@ class TodoFileStore(TodoStore):
         _atomic_write_text(state_path, payload)
 
 
+# Locks handed out by ``_todo_mutation_lock``. Values are held weakly, so an entry lasts only while a
+# mutation holds or awaits its lock, and the map never grows with the number of sessions ever seen.
+_TODO_MUTATION_LOCKS: weakref.WeakValueDictionary[tuple[asyncio.AbstractEventLoop, object], asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
+
+
+def _todo_mutation_lock(store: TodoStore, session: AgentSession, *, source_id: str) -> asyncio.Lock:
+    """Return the lock that serializes read-modify-write todo operations on one backing storage.
+
+    The lock key is the store's ``_mutation_identity`` for the session, so two providers
+    sharing a store — and, for stores backed by files, two sessions or two store
+    instances that resolve to the same backing file — cannot both load the state and
+    ``next_id`` before either writes them back and silently drop one of the updates.
+    Unrelated identities keep separate locks, so unrelated sessions still mutate
+    concurrently.
+
+    Locks are per event loop, because an :class:`asyncio.Lock` that has had a waiter on
+    one loop raises when a caller has to wait for it on another, and one session can be
+    reused across ``asyncio.run`` boundaries.
+
+    The lock is process-local: other processes, and storage mappings that bypass
+    ``_mutation_identity``, are not coordinated.
+    """
+    key = (asyncio.get_running_loop(), store._mutation_identity(session, source_id=source_id))
+    lock = _TODO_MUTATION_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _TODO_MUTATION_LOCKS[key] = lock
+    return lock
+
+
+async def _save_state_holding_lock(
+    store: TodoStore, session: AgentSession, items: list[TodoItem], *, next_id: int, source_id: str
+) -> None:
+    """Persist todo state while keeping the mutation lock until the write has finished.
+
+    ``TodoFileStore`` saves through a worker thread. If the caller is cancelled while
+    that write is in flight, releasing the lock straight away would let the next
+    mutation save first and then be overwritten by the stale in-flight write. The save
+    is awaited to completion here, and the cancellation is re-raised afterwards.
+    """
+    save_task = asyncio.ensure_future(store.save_state(session, items, next_id=next_id, source_id=source_id))
+    try:
+        await asyncio.shield(save_task)
+    except asyncio.CancelledError:
+        while not save_task.done():
+            try:
+                await asyncio.shield(save_task)
+            except asyncio.CancelledError:
+                pass  # cancelled again while waiting; the in-flight write still comes first
+        if not save_task.cancelled():
+            save_task.exception()  # retrieved so the finished task does not warn
+        raise
+
+
 class TodoProvider(ContextProvider):
     """Provide todo management tools and instructions to an agent.
 
@@ -446,17 +523,10 @@ class TodoProvider(ContextProvider):
         super().__init__(source_id)
         self.instructions = instructions or DEFAULT_TODO_INSTRUCTIONS
         self.store = store or TodoSessionStore()
-        # WeakKeyDictionary so per-session locks are evicted automatically when the session is GC'd
-        # rather than accumulating in long-running services that create many sessions.
-        self._mutation_locks: weakref.WeakKeyDictionary[AgentSession, asyncio.Lock] = weakref.WeakKeyDictionary()
 
     def _mutation_lock(self, session: AgentSession) -> asyncio.Lock:
-        """Return the per-session lock for read-modify-write todo operations."""
-        lock = self._mutation_locks.get(session)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._mutation_locks[session] = lock
-        return lock
+        """Return the storage-scoped lock for read-modify-write todo operations."""
+        return _todo_mutation_lock(self.store, session, source_id=self.source_id)
 
     async def before_run(
         self,
@@ -490,7 +560,9 @@ class TodoProvider(ContextProvider):
                     created_items.append(created_item)
                     next_id += 1
 
-                await self.store.save_state(session, existing_items, next_id=next_id, source_id=self.source_id)
+                await _save_state_holding_lock(
+                    self.store, session, existing_items, next_id=next_id, source_id=self.source_id
+                )
             return json.dumps([item.to_dict(exclude_none=False) for item in created_items])
 
         @tool(name="todos_complete", approval_mode="never_require")
@@ -525,7 +597,9 @@ class TodoProvider(ContextProvider):
                         updated_items.append(item)
 
                 if completed_count:
-                    await self.store.save_state(session, updated_items, next_id=next_id, source_id=self.source_id)
+                    await _save_state_holding_lock(
+                        self.store, session, updated_items, next_id=next_id, source_id=self.source_id
+                    )
             return json.dumps({"completed": completed_count})
 
         @tool(name="todos_remove", approval_mode="never_require")
@@ -539,7 +613,9 @@ class TodoProvider(ContextProvider):
                 remaining_items = [item for item in items if item.id not in set(ids)]
                 removed_count = len(items) - len(remaining_items)
                 if removed_count:
-                    await self.store.save_state(session, remaining_items, next_id=next_id, source_id=self.source_id)
+                    await _save_state_holding_lock(
+                        self.store, session, remaining_items, next_id=next_id, source_id=self.source_id
+                    )
             return json.dumps({"removed": removed_count})
 
         @tool(name="todos_get_remaining", approval_mode="never_require")
