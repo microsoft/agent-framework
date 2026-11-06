@@ -268,10 +268,14 @@ class _MCPHTTPInvocation:
     parent: _MCPHTTPInvocation | None
     runtime_kwargs: Mapping[str, Any]
     connection: _MCPConnection | None = None
-    active: bool = False
+    active_depth: int = 0
 
 
 _mcp_http_invocation: ContextVar[_MCPHTTPInvocation | None] = ContextVar("_mcp_http_invocation", default=None)
+
+
+class _MCPDiscoveryRestart(Exception):
+    """Restart staged discovery when its connection is replaced."""
 
 
 @dataclass
@@ -551,14 +555,12 @@ class _MCPHeaderScopedClient:
         self._owner = owner
 
     def __getattr__(self, name: str) -> Any:
-        # Delegate the rest of the httpx client surface so this wrapper stays a
-        # drop-in for the MCP transport. Only the request-sending methods below
-        # are wrapped; anything the transport reads (timeouts, headers, ...)
-        # comes straight from the caller's client. ``_client`` itself is always a
-        # real instance attribute, so guard against recursing on a partially
-        # initialized wrapper.
         if name == "_client":
             raise AttributeError(name)
+        if name in {"get", "post", "put", "patch", "head", "options"}:
+            raise RuntimeError(
+                f"MCP HTTP transport cannot use unscoped {name}(); use request(), stream(), send(), or delete()."
+            )
         return getattr(self._client, name)
 
     def _tagged_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -569,6 +571,9 @@ class _MCPHeaderScopedClient:
 
     def stream(self, *args: Any, **kwargs: Any) -> Any:
         return self._client.stream(*args, **self._tagged_kwargs(kwargs))
+
+    async def request(self, *args: Any, **kwargs: Any) -> httpx2.Response:
+        return await self._client.request(*args, **self._tagged_kwargs(kwargs))
 
     async def send(self, request: httpx2.Request, **kwargs: Any) -> httpx2.Response:
         request.extensions[_MCP_HEADER_OWNER_EXTENSION] = self._owner
@@ -3070,14 +3075,34 @@ class MCPTool:
 
     async def _load_configured_discovery_locked(self) -> None:
         """Load configured session discovery while the caller holds the discovery lock."""
+        await self._load_discovery_snapshot(self._load_configured_discovery_once)
+
+    async def _load_configured_discovery_once(self) -> None:
         if self.load_tools_flag:
             if self._supports_tools:
                 await self._load_tools_locked()
             self._tools_loaded = True
+        connection = self._connection
         if self.load_prompts_flag:
             if self._supports_prompts:
                 await self._load_prompts_locked()
             self._prompts_loaded = True
+        if connection is not self._connection:
+            # Prompt recovery also invalidates any tools loaded before the replacement.
+            raise _MCPDiscoveryRestart
+
+    async def _load_discovery_snapshot(self, load_snapshot: Callable[[], Awaitable[None]]) -> None:
+        """Discard staged pages and restart once after connection replacement."""
+        for attempt in range(2):
+            try:
+                await load_snapshot()
+                return
+            except _MCPDiscoveryRestart as exc:
+                if attempt:
+                    raise _mcp_tool_execution_exception(
+                        "Failed to load MCP discovery - connection changed again after restarting the catalog.",
+                        inner_exception=exc,
+                    ) from exc
 
     async def load_prompts(self) -> None:
         """Load prompts from the MCP server.
@@ -3093,6 +3118,9 @@ class MCPTool:
             await self._load_prompts_locked()
 
     async def _load_prompts_locked(self) -> None:
+        await self._load_discovery_snapshot(self._load_prompts_snapshot)
+
+    async def _load_prompts_snapshot(self) -> None:
         from mcp import types
 
         if not self._supports_prompts:
@@ -3223,7 +3251,7 @@ class MCPTool:
         kind: Literal["tool", "prompt"],
         request_page: Callable[[types.PaginatedRequestParams | None], Awaitable[_MCPListResultT]],
     ) -> _MCPListResultT | None:
-        """Fetch one catalog page, retrying after connection loss."""
+        """Fetch one catalog page and restart its snapshot after connection replacement."""
         from anyio import ClosedResourceError
         from tenacity import RetryCallState, retry, retry_if_exception_type, stop_after_attempt
 
@@ -3246,6 +3274,8 @@ class MCPTool:
                 failed_connection=failed_connection,
                 close_generation=close_generation,
             )
+            if self._connection is not failed_connection:
+                raise _MCPDiscoveryRestart from exception
 
         @retry(
             retry=retry_if_exception_type(ClosedResourceError),
@@ -3255,7 +3285,10 @@ class MCPTool:
         )
         async def request_page_with_retry() -> _MCPListResultT | None:
             nonlocal failed_connection, close_generation
+            previous_connection = self._connection
             await self._ensure_connected()
+            if previous_connection is not None and self._connection is not previous_connection:
+                raise _MCPDiscoveryRestart
             failed_connection = self._connection
             close_generation = self._close_generation
 
@@ -3275,7 +3308,10 @@ class MCPTool:
                 capture_unhandled_exceptions=False,
             ) as list_span:
                 try:
-                    return await request_page(params)
+                    result = await request_page(params)
+                    if self._connection is not failed_connection:
+                        raise _MCPDiscoveryRestart
+                    return result
                 except Exception as exc:
                     set_mcp_span_error(list_span, type(exc).__name__, str(exc))
                     raise
@@ -3310,6 +3346,9 @@ class MCPTool:
             await self._load_tools_locked()
 
     async def _load_tools_locked(self) -> None:
+        await self._load_discovery_snapshot(self._load_tools_snapshot)
+
+    async def _load_tools_snapshot(self) -> None:
         from mcp import types
 
         if not self._supports_tools:
@@ -4762,7 +4801,7 @@ class MCPStreamableHTTPTool(MCPTool):
     def _active_http_invocation(self) -> _MCPHTTPInvocation | None:
         invocation = _mcp_http_invocation.get()
         while invocation is not None:
-            if invocation.owner is self and invocation.active:
+            if invocation.owner is self and invocation.active_depth:
                 return invocation
             invocation = invocation.parent
         return None
@@ -4834,18 +4873,18 @@ class MCPStreamableHTTPTool(MCPTool):
                 finally:
                     self._header_exclusive_owner = None
                 invocation.connection = self._connection
-                invocation.active = True
+                invocation.active_depth += 1
                 self._header_operations += 1
                 self._header_operations_idle.clear()
         if ancestor is not None:
             invocation.connection = self._connection
-            invocation.active = True
+            invocation.active_depth += 1
             self._header_operations += 1
             self._header_operations_idle.clear()
         try:
             yield
         finally:
-            invocation.active = False
+            invocation.active_depth -= 1
             self._header_operations -= 1
             if not self._header_operations:
                 self._header_operations_idle.set()

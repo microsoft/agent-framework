@@ -9621,7 +9621,7 @@ async def test_load_tools_reconnects_on_closed_resource_when_ping_is_unavailable
     second_session.list_tools.assert_awaited_once()
 
 
-async def test_load_tools_retries_continuation_page_after_closed_resource() -> None:
+async def test_load_tools_restarts_snapshot_after_closed_resource_on_continuation_page() -> None:
     from anyio import ClosedResourceError
 
     tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
@@ -9655,13 +9655,12 @@ async def test_load_tools_retries_continuation_page_after_closed_resource() -> N
     with patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect:
         await tool.load_tools()
 
-    assert [function.name for function in tool.functions] == ["first", "second"]
+    assert [function.name for function in tool.functions] == ["second"]
     assert first_session.list_tools.await_count == 2
     mock_reconnect.assert_awaited_once_with()
-    continuation_call = second_session.list_tools.await_args
-    assert continuation_call is not None
-    continuation_params = continuation_call.kwargs["params"]
-    assert continuation_params.cursor == "second"
+    restarted_call = second_session.list_tools.await_args
+    assert restarted_call is not None
+    assert restarted_call.kwargs.get("params") is None
 
 
 async def test_load_tools_fails_after_closed_resource_retry_is_exhausted() -> None:
@@ -9678,17 +9677,17 @@ async def test_load_tools_fails_after_closed_resource_retry_is_exhausted() -> No
     second_session.list_tools = AsyncMock(side_effect=ClosedResourceError())
 
     async def reconnect() -> None:
-        tool.session = second_session
+        _set_framework_owned_session(tool, second_session)
         tool._supports_tools = True
 
     with (
         patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect,
-        pytest.raises(ToolExecutionException, match="Failed to load tools - connection lost"),
+        pytest.raises(ToolExecutionException, match="connection changed again"),
     ):
         await tool.load_tools()
 
     first_session.list_tools.assert_awaited_once()
-    mock_reconnect.assert_awaited_once_with()
+    assert mock_reconnect.await_count == 2
     second_session.list_tools.assert_awaited_once()
     assert tool.functions == []
 
@@ -9722,7 +9721,7 @@ async def test_load_prompts_reconnects_on_closed_resource_when_ping_is_unavailab
     second_session.list_prompts.assert_awaited_once()
 
 
-async def test_load_prompts_retries_continuation_page_after_closed_resource() -> None:
+async def test_load_prompts_restarts_snapshot_after_closed_resource_on_continuation_page() -> None:
     from anyio import ClosedResourceError
 
     tool = MCPTool(name="test_tool", load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
@@ -9750,13 +9749,12 @@ async def test_load_prompts_retries_continuation_page_after_closed_resource() ->
     with patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect:
         await tool.load_prompts()
 
-    assert [function.name for function in tool.functions] == ["first", "second"]
+    assert [function.name for function in tool.functions] == ["second"]
     assert first_session.list_prompts.await_count == 2
     mock_reconnect.assert_awaited_once_with()
-    continuation_call = second_session.list_prompts.await_args
-    assert continuation_call is not None
-    continuation_params = continuation_call.kwargs["params"]
-    assert continuation_params.cursor == "second"
+    restarted_call = second_session.list_prompts.await_args
+    assert restarted_call is not None
+    assert restarted_call.kwargs.get("params") is None
 
 
 async def test_load_prompts_fails_after_closed_resource_retry_is_exhausted() -> None:
@@ -9773,17 +9771,17 @@ async def test_load_prompts_fails_after_closed_resource_retry_is_exhausted() -> 
     second_session.list_prompts = AsyncMock(side_effect=ClosedResourceError())
 
     async def reconnect() -> None:
-        tool.session = second_session
+        _set_framework_owned_session(tool, second_session)
         tool._supports_prompts = True
 
     with (
         patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect,
-        pytest.raises(ToolExecutionException, match="Failed to load prompts - connection lost"),
+        pytest.raises(ToolExecutionException, match="connection changed again"),
     ):
         await tool.load_prompts()
 
     first_session.list_prompts.assert_awaited_once()
-    mock_reconnect.assert_awaited_once_with()
+    assert mock_reconnect.await_count == 2
     second_session.list_prompts.assert_awaited_once()
     assert tool.functions == []
 

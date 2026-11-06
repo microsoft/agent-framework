@@ -742,6 +742,58 @@ async def test_toolbox_concurrent_skill_reads_use_their_own_call_id() -> None:
     assert all(request.headers["X-Custom-Header"] == "resource-value" for request in resource_requests)
 
 
+async def test_retained_skill_read_waits_for_replacement_initialization() -> None:
+    server = _ToolboxLoopbackServer()
+    toolbox = FoundryToolbox(_FakeCredential(), url="https://loopback.invalid/mcp")  # type: ignore
+    await _attach_loopback_transport(toolbox, server)
+    source = toolbox.as_skills_provider()._source
+    initializing = asyncio.Event()
+    release = asyncio.Event()
+    tasks: list[asyncio.Task[Any]] = []
+
+    async def block_replacement(request: httpx.Request) -> None:
+        if (
+            json.loads(request.content).get("method") == "initialize"
+            and request.headers.get("x-agent-foundry-call-id") == "CALL-B"
+        ):
+            initializing.set()
+            await release.wait()
+
+    try:
+        async with asyncio.timeout(10):
+            await _run_with_request_context("CALL-A", toolbox.connect)
+            skills = await _run_with_request_context("CALL-A", lambda: source.get_skills(_source_context()))
+            assert len(skills) == 1
+            server.before_request = block_replacement
+            transition = asyncio.create_task(
+                _run_with_request_context("CALL-B", lambda: toolbox.call_tool("record", marker="transition"))
+            )
+            tasks.append(transition)
+            await initializing.wait()
+            read = asyncio.create_task(_run_with_request_context("CALL-B", skills[0].get_content))
+            tasks.append(read)
+            await asyncio.sleep(0)
+            assert not read.done()
+            assert not any(
+                request.headers.get("x-agent-foundry-call-id") == "CALL-B"
+                for request in server.requests_for("resources/read")
+            )
+            release.set()
+            result = await transition
+            assert isinstance(result, list)
+            assert len(result) == 1 and result[0].text == "CALL-B"
+            assert "Call ID: CALL-B" in await read
+            request = server.requests_for("resources/read")[-1]
+            assert request.headers["x-agent-foundry-call-id"] == "CALL-B"
+            assert request.headers["mcp-session-id"].endswith("-CALL-B")
+    finally:
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await toolbox.close()
+
+
 async def test_toolbox_skills_reject_header_provider_that_requires_runtime_kwargs() -> None:
     server = _ToolboxLoopbackServer()
     toolbox = FoundryToolbox(

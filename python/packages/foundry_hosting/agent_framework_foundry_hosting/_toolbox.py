@@ -473,8 +473,8 @@ class FoundryToolbox(MCPStreamableHTTPTool):
     async def _read_resource(self, uri: AnyUrl) -> ReadResourceResult:
         """Read a Toolbox resource under the current platform-header identity."""
         headers = self._effective_resource_headers()
-        connection = self._require_connection()
-        if not headers and not connection.is_framework_owned:
+        connection = self._connection
+        if not headers and connection is not None and not connection.is_framework_owned:
             return await connection.read_resource(str(uri))
         with self._http_headers(headers):
             async with self._http_operation():

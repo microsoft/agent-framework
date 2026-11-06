@@ -207,6 +207,10 @@ inherited invocation snapshot; generated prompts resolve host runtime kwargs
 separately from model arguments. Calls still share server-side session state;
 applications must order state-dependent operations themselves.
 
+Resource reads wait for replacement initialization before requiring the connection.
+Catalog discovery restarts the complete snapshot once after a connection replacement,
+without reusing old pages or cursors. A second replacement fails explicitly.
+
 `request_timeout` bounds header admission and session reconciliation together, and
 connection recovery separately from the RPC timeout. These are separate budgets,
 not an end-to-end deadline. `None` disables these budgets. An admission timeout does

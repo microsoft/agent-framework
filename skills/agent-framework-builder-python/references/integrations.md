@@ -47,6 +47,9 @@ than waiting on itself. Concurrent calls still share the server's MCP session st
 state-dependent operations themselves. Cancelling a local call does not guarantee that its remote side effects stop.
 Caller-owned MCP clients and sessions remain caller-owned; Agent Framework does not recreate them.
 
+Resource reads wait for replacement initialization. Tool and prompt discovery restarts its complete snapshot once
+after connection replacement, without retaining old pages or cursors. Another replacement fails explicitly.
+
 `request_timeout` supplies separate budgets for header admission/session reconciliation and connection recovery,
 not a deadline for the entire call. `None` disables those budgets; caller-owned MCP clients keep their own RPC
 timeouts. Cleanup may continue after timeout or cancellation. An explicit `close()` interrupts older recovery

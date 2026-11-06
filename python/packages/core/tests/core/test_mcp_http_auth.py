@@ -17,7 +17,7 @@ from mcp.client.session import ClientSession
 from agent_framework import Agent, FunctionInvocationContext, MCPStreamableHTTPTool
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
-from .mcp_http_helpers import MCPHTTPBarrier
+from .mcp_http_helpers import MCPHTTPBarrier, MCPPaginatedHTTPServer
 
 MCPHTTPServer: TypeAlias = tuple[httpx.AsyncClient, list[httpx.Request], dict[str, list[str]]]
 MCPHTTPClientFactory: TypeAlias = tuple[Callable[..., httpx.AsyncClient], list[httpx.Request], dict[str, list[str]]]
@@ -699,6 +699,175 @@ async def test_request_header_snapshot_cannot_be_reused_by_another_tool_owner(
             await hook(reused)
         assert reused.headers["Authorization"] == "token-b"
         assert "X-First-Only" not in reused.headers
+
+
+async def test_alternate_http_request_entry_point_keeps_owner_and_header_snapshot(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
+    from agent_framework._mcp import _MCP_HEADER_OWNER_EXTENSION, _MCPHeaderScopedClient
+
+    client, requests, _ = mcp_http_server
+    tool = _tool(client, "token-a")
+    extensions = {"test-extension": "retained"}
+    async with tool:
+        scoped = _MCPHeaderScopedClient(client, tool._header_request_owner)
+        with tool._http_headers({"Authorization": "token-b"}):
+            response = await scoped.request("POST", "https://mcp.example/unrelated", json={}, extensions=extensions)
+        assert response.status_code == 200
+        assert requests[-1].headers["Authorization"] == "token-b"
+        assert requests[-1].extensions[_MCP_HEADER_OWNER_EXTENSION] is tool._header_request_owner
+        assert requests[-1].extensions["test-extension"] == "retained"
+        assert extensions == {"test-extension": "retained"}
+        assert scoped.headers is client.headers
+
+
+@pytest.mark.parametrize("method", ["get", "post", "put", "patch", "head", "options"])
+async def test_unwrapped_http_sending_methods_fail_before_sending(mcp_http_server: MCPHTTPServer, method: str) -> None:
+    from agent_framework._mcp import _MCPHeaderScopedClient
+
+    client, requests, _ = mcp_http_server
+    scoped = _MCPHeaderScopedClient(client, object())
+    with pytest.raises(RuntimeError, match=f"cannot use unscoped {method}"):
+        getattr(scoped, method)
+    assert requests == []
+
+
+async def test_same_invocation_reentry_keeps_outer_operation_active(mcp_http_server: MCPHTTPServer) -> None:
+    client, _, writes = mcp_http_server
+    tool = _tool(client, "token-a")
+    async with tool, asyncio.timeout(5):
+        with tool._http_headers({"Authorization": "token-a"}):
+            async with tool._http_operation():
+                invocation = tool._active_http_invocation()
+                assert invocation is not None
+                async with tool._http_operation():
+                    assert tool._header_operations == 2
+                assert tool._active_http_invocation() is invocation
+                assert tool._header_operations == 1
+                with pytest.raises(ToolExecutionException, match="from its active HTTP operation"):
+                    await tool.close()
+                await tool.call_tool("record", marker="nested-after-inner")
+        assert tool._active_http_invocation() is None
+        assert tool._header_operations == 0
+        assert tool._header_operations_idle.is_set()
+    assert writes["token-a"] == ["nested-after-inner"]
+
+
+@pytest.mark.parametrize("kind", ["tool", "prompt"])
+@pytest.mark.parametrize("reject_old_cursor", [False, True])
+async def test_discovery_restarts_all_pages_after_connection_replacement(kind: str, reject_old_cursor: bool) -> None:
+    from anyio import ClosedResourceError
+    from mcp import Client
+
+    server = MCPPaginatedHTTPServer(reject_old_cursor=reject_old_cursor)
+    published: list[str] = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(server.handle)) as client:
+        tool = MCPStreamableHTTPTool(
+            name="paginated",
+            url="https://mcp.example/mcp",
+            http_client=client,
+            load_tools=False,
+            load_prompts=False,
+        )
+        load_catalog = tool.load_tools if kind == "tool" else tool.load_prompts
+        method = "list_tools" if kind == "tool" else "list_prompts"
+        original = getattr(Client, method)
+
+        async def fail_old_page(sdk_client: Client, *, cursor: str | None = None, **kwargs: Any) -> Any:
+            if server.generation == 1 and cursor is not None:
+                raise ClosedResourceError
+            return await original(sdk_client, cursor=cursor, **kwargs)
+
+        async with tool, asyncio.timeout(10):
+            tool._function_load_callback = lambda function, _: published.append(function.name)
+            with patch.object(Client, method, new=fail_old_page):
+                await load_catalog()
+            expected = [f"session_2_{kind}_head", f"session_2_{kind}_tail"]
+            assert [function.name for function in tool.functions] == expected
+            assert published == expected
+            assert server.pages == [
+                (f"{kind}s/list", 1, None),
+                (f"{kind}s/list", 2, None),
+                (f"{kind}s/list", 2, "cursor-2"),
+            ]
+            assert server.generation == 2
+            if kind == "tool":
+                assert tool._tool_call_meta_by_name == {name: {"catalog": 2} for name in expected}
+                assert tool._tool_param_names_by_name == {name: {"arg2"} for name in expected}
+
+
+@pytest.mark.parametrize("kind", ["tool", "prompt"])
+async def test_discovery_replacement_restart_is_bounded_and_keeps_previous_catalog(kind: str) -> None:
+    from anyio import ClosedResourceError
+    from mcp import Client
+
+    server = MCPPaginatedHTTPServer()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(server.handle)) as client:
+        tool = MCPStreamableHTTPTool(
+            name="paginated",
+            url="https://mcp.example/mcp",
+            http_client=client,
+            load_tools=False,
+            load_prompts=False,
+        )
+        load_catalog = tool.load_tools if kind == "tool" else tool.load_prompts
+        method = "list_tools" if kind == "tool" else "list_prompts"
+        original = getattr(Client, method)
+
+        async def fail_every_tail(sdk_client: Client, *, cursor: str | None = None, **kwargs: Any) -> Any:
+            if cursor is not None:
+                raise ClosedResourceError
+            return await original(sdk_client, cursor=cursor, **kwargs)
+
+        async with tool, asyncio.timeout(10):
+            await load_catalog()
+            previous_functions = list(tool.functions)
+            previous_meta = dict(tool._tool_call_meta_by_name)
+            with (
+                patch.object(Client, method, new=fail_every_tail),
+                pytest.raises(ToolExecutionException, match="connection changed again"),
+            ):
+                await load_catalog()
+            assert tool.functions == previous_functions
+            assert tool._tool_call_meta_by_name == previous_meta
+            assert server.generation == 3
+
+
+async def test_configured_discovery_reloads_tools_when_prompt_recovery_replaces_connection() -> None:
+    from anyio import ClosedResourceError
+    from mcp import Client
+
+    server = MCPPaginatedHTTPServer()
+    original = Client.list_prompts
+
+    async def fail_replacement_prompt_page(sdk_client: Client, *, cursor: str | None = None, **kwargs: Any) -> Any:
+        if server.generation == 2 and cursor is not None:
+            raise ClosedResourceError
+        return await original(sdk_client, cursor=cursor, **kwargs)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(server.handle)) as client:
+        tool = MCPStreamableHTTPTool(name="configured", url="https://mcp.example/mcp", http_client=client)
+        async with tool, asyncio.timeout(10):
+            connection = tool._require_connection()
+            assert connection.client is not None
+            failed_call = AsyncMock(side_effect=ClosedResourceError)
+            with (
+                patch.object(connection.client, "call_tool", new=failed_call),
+                patch.object(Client, "list_prompts", new=fail_replacement_prompt_page),
+            ):
+                result = await tool.call_tool("session_1_tool_head")
+                assert isinstance(result, list)
+                assert len(result) == 1 and result[0].text == "ok"
+                failed_call.assert_awaited_once()
+            assert server.generation == 3
+            assert {function.name for function in tool.functions} == {
+                "session_3_tool_head",
+                "session_3_tool_tail",
+                "session_3_prompt_head",
+                "session_3_prompt_tail",
+            }
+            assert set(tool._tool_call_meta_by_name) == {"session_3_tool_head", "session_3_tool_tail"}
+            assert tool._tools_loaded and tool._prompts_loaded
 
 
 async def test_nested_same_identity_call_can_finish_ahead_of_waiting_identity_change(
