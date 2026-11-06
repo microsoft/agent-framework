@@ -226,15 +226,22 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
             this.RunContext.HasQueuedExternalDeliveries ||
             this.RunContext.JoinedRunnersHaveActions)
         {
+            this.RunContext.StateManager.BeginSuperstep();
             try
             {
                 await this.RunSuperstepAsync(currentStep, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
-            { }
+            {
+                await this.DiscardFailedSuperstepAsync(error: null).ConfigureAwait(false);
+            }
             catch (Exception e)
             {
-                await this.RaiseWorkflowEventAsync(new WorkflowErrorEvent(e)).ConfigureAwait(false);
+                await this.DiscardFailedSuperstepAsync(e).ConfigureAwait(false);
+            }
+            finally
+            {
+                this.RunContext.StateManager.CompleteSuperstep();
             }
 
             return true;
@@ -305,6 +312,31 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         }
     }
 
+    private async ValueTask DiscardFailedSuperstepAsync(Exception? error)
+    {
+        this.RunContext.DiscardPendingMessages();
+
+        Exception? cleanupError = null;
+        try
+        {
+            await this.RunContext.StateManager.DiscardSuperstepUpdatesAsync().ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            cleanupError = e;
+        }
+
+        if (error is not null)
+        {
+            await this.RaiseWorkflowEventAsync(new WorkflowErrorEvent(error)).ConfigureAwait(false);
+        }
+
+        if (cleanupError is not null)
+        {
+            await this.RaiseWorkflowEventAsync(new WorkflowErrorEvent(cleanupError)).ConfigureAwait(false);
+        }
+    }
+
     private async ValueTask RunSuperstepAsync(StepContext currentStep, CancellationToken cancellationToken)
     {
         await this.RaiseWorkflowEventAsync(this.StepTracer.Advance(currentStep)).ConfigureAwait(false);
@@ -332,6 +364,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
         await Task.WhenAll(subworkflowTasks).ConfigureAwait(false);
 
+        cancellationToken.ThrowIfCancellationRequested();
         await this.CheckpointAsync(cancellationToken).ConfigureAwait(false);
 
         await this.RaiseWorkflowEventAsync(this.StepTracer.Complete(this.RunContext.NextStepHasActions, this.RunContext.HasUnservicedRequests))
@@ -360,6 +393,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         Dictionary<EdgeId, PortableValue> edgeData = await this.RunContext.ExportEdgeStateAsync().ConfigureAwait(false);
 
         await prepareTask.ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
         await this.RunContext.StateManager.PublishUpdatesAsync(this.StepTracer).ConfigureAwait(false);
 
         RunnerStateData runnerData = await this.RunContext.ExportStateAsync().ConfigureAwait(false);
