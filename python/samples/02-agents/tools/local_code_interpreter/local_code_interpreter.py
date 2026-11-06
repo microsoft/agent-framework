@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal
 
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.hyperlight import HyperlightExecuteCodeTool
+from agent_framework_hyperlight import HyperlightExecuteCodeTool
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
