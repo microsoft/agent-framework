@@ -188,7 +188,12 @@ def _toolbox_approval_filter_matches(value: Any, tool: Tool, server_label: Any) 
 
 
 def _toolbox_approval_mode(item: Tool | Prompt) -> Literal["always_require", "never_require"]:
-    """Resolve Foundry approval metadata for a discovered tool."""
+    """Resolve Foundry approval metadata for a discovered tool.
+
+    This Foundry-only parser trusts the supplied readOnlyHint for read-only filters;
+    it does not verify tool behavior. Reuse elsewhere carries no security or
+    compatibility guarantees.
+    """
     if not isinstance(item, Tool):
         return _DEFAULT_APPROVAL_MODE
     meta = item.meta
@@ -251,6 +256,13 @@ class FoundryToolbox(MCPStreamableHTTPTool):
     Refreshes, including reconnects, reapply metadata to retained functions.
     The metadata parser is supplied as an ``approval_mode`` callable. An explicit caller
     policy (including a per-tool dict or callable) replaces the metadata policy.
+
+    This Foundry-specific integration trusts the supplied ``annotations.readOnlyHint``
+    when evaluating ``read_only`` filters, including rules that skip approval. It does
+    not independently verify the classification or enforce read-only behavior.
+    Applications must trust the classifications supplied through their configured Toolbox.
+    The private metadata parser provides no security or compatibility guarantees when
+    reused outside Foundry Toolbox; it is not a general-purpose MCP approval policy.
 
     Like any MCP tool, the connection lifecycle is driven by the agent: the hosting
     server enters a factory-created agent for its request and closes its toolbox

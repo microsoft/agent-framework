@@ -19,6 +19,13 @@ An `always` match takes precedence over a `never` match, and tools without a mat
 Malformed or unsupported approval metadata raises `ToolExecutionException` during discovery instead of
 silently disabling approvals.
 
+**Trust boundary:** This Foundry-specific integration trusts the supplied `annotations.readOnlyHint`
+when evaluating `read_only` filters, including rules that skip approval. It does not independently
+verify that classification or enforce read-only behavior. Applications must trust the classifications
+supplied through their configured Toolbox. The private metadata parser is intended only for Foundry
+Toolbox; reusing it elsewhere provides no security or compatibility guarantees. It is not a
+general-purpose MCP approval policy.
+
 The metadata parser is composed through the standard MCP `approval_mode` callable, not a subclass override.
 An explicit non-`None` caller `approval_mode`, including a per-tool dictionary or callable, replaces the metadata policy
 entirely and retains the standard MCP name-matching and default rules. Tool discovery refreshes and reconnects

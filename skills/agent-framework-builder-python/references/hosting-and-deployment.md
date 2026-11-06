@@ -42,6 +42,11 @@ with `tool_names` and/or `read_only`. Metadata names use remote or original serv
 prefixes. Filter criteria must all match; `always` wins overlaps and unmatched tools require approval.
 Missing metadata preserves the no-approval default; malformed approval metadata fails discovery explicitly.
 Ordinary MCP servers do not inherit this Foundry-specific interpretation.
+For `read_only` filters, Toolbox trusts the supplied `annotations.readOnlyHint`, including when a match
+skips approval. This does not independently verify the classification or enforce read-only behavior;
+applications must trust the classifications supplied through their configured Toolbox.
+The private parser is Foundry Toolbox-specific and provides no security or compatibility guarantees
+when reused elsewhere. Do not treat it as a general-purpose MCP approval policy.
 
 For MCP agent tools, `AgentMCPTool.call_tool(...)` validates the generated input schema before execution or
 session-store access. Applications using `mcp_to_run(...)` directly must validate their own schema before conversion.
