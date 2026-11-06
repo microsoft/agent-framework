@@ -2,11 +2,17 @@
 
 using System;
 using System.Collections.Generic;
+using System.Net;
+using System.Net.Http;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -21,6 +27,63 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public class HostedUserIdTests
 {
     private const string TestUserId = "alice";
+
+    [Fact]
+    public async Task AspNetMiddleware_OverridesUserIdBeforeAgentHandlerAsync()
+    {
+        // Arrange: no isolation provider is registered. Application middleware replaces an
+        // untrusted caller value before the AgentServer endpoint creates its ResponseContext.
+        var capturingAgent = new HostedContextCapturingAgent();
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Services.AddFoundryResponses(capturingAgent, new TestAgentSessionStore());
+        builder.Services.AddLogging();
+
+        await using var app = builder.Build();
+        app.Use(async (context, next) =>
+        {
+            context.Request.Headers["x-agent-user-id"] = TestUserId;
+            await next(context);
+        });
+        app.MapFoundryResponses();
+        await app.StartAsync();
+
+        var testServer = app.Services.GetRequiredService<IServer>() as TestServer
+            ?? throw new InvalidOperationException("TestServer not found.");
+        using var client = testServer.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/responses")
+        {
+            Content = new StringContent(
+                """
+                {
+                  "model": "test",
+                  "input": [
+                    {
+                      "type": "message",
+                      "id": "msg_1",
+                      "status": "completed",
+                      "role": "user",
+                      "content": [{ "type": "input_text", "text": "Hello" }]
+                    }
+                  ]
+                }
+                """,
+                Encoding.UTF8,
+                "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("x-agent-user-id", "caller-controlled");
+
+        // Act
+        using var response = await client.SendAsync(request);
+        string body = await response.Content.ReadAsStringAsync();
+
+        // Assert
+        Assert.True(
+            response.StatusCode == HttpStatusCode.OK,
+            $"Expected HTTP 200 but received {(int)response.StatusCode}: {body}");
+        Assert.NotNull(capturingAgent.LastSession);
+        Assert.Equal(TestUserId, capturingAgent.LastSession.GetHostedUserId());
+    }
 
     [Fact]
     public async Task Handler_FreshSession_AppliesUserIdentityFromPlatformContextAsync()
