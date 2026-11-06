@@ -1536,7 +1536,7 @@ class TestMCPSkillsSourceArchive:
 
 
 class TestMCPSkillsSourceArchiveCollisions:
-    """Colliding archive members warn and preserve the first file through discovery."""
+    """Colliding archive members reject only the affected skill."""
 
     @pytest.mark.parametrize(
         "alias",
@@ -1553,7 +1553,7 @@ class TestMCPSkillsSourceArchiveCollisions:
     @pytest.mark.parametrize("alias_first", [False, True])
     @pytest.mark.parametrize("identical", [False, True])
     @pytest.mark.parametrize("with_digest", [False, True])
-    async def test_colliding_resources_keep_first_file_and_warn(
+    async def test_colliding_resources_reject_skill_and_warn(
         self, alias: str, alias_first: bool, identical: bool, with_digest: bool, caplog: pytest.LogCaptureFixture
     ) -> None:
         url = "skill://archives/packaged-skill.zip"
@@ -1572,24 +1572,15 @@ class TestMCPSkillsSourceArchiveCollisions:
         for _ in range(2):
             skills = await source.get_skills(_SOURCE_CTX)
 
-            assert len(skills) == 1
-            for resource_name in ("refs/policy.md", "REFS/POLICY.MD"):
-                resource = await skills[0].get_resource(resource_name)
-                assert resource is not None
-                assert await resource.read() == "First resource."
-            other = await skills[0].get_resource("refs/other.md")
-            assert other is not None
-            assert await other.read() == "Unaffected resource."
+            assert skills == []
 
-        collisions = [record for record in caplog.records if "duplicate archive member" in record.getMessage()]
-        assert len(collisions) == 2
-        assert all(record.levelname == "WARNING" for record in collisions)
-        assert all("keeping the first file" in record.getMessage() for record in collisions)
-        assert all("Substituted resource." not in record.getMessage() for record in collisions)
+        warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+        assert len(warnings) == 2
+        assert all("'packaged-skill'" in record.getMessage() for record in warnings)
 
-    @pytest.mark.parametrize("alias", ["SKILL.md", ".//SKILL.md", "/SKILL.md", "skill.md", "Skill.MD"])
+    @pytest.mark.parametrize("alias", [".//SKILL.md", "/SKILL.md"])
     @pytest.mark.parametrize("alias_first", [False, True])
-    async def test_colliding_skill_md_keeps_first_file_and_warns(
+    async def test_duplicate_skill_md_rejects_skill_and_warns(
         self, alias: str, alias_first: bool, caplog: pytest.LogCaptureFixture
     ) -> None:
         url = "skill://archives/packaged-skill.zip"
@@ -1605,28 +1596,52 @@ class TestMCPSkillsSourceArchiveCollisions:
             _SOURCE_CTX
         )
 
-        assert len(skills) == 1
-        assert skills[0].frontmatter.name == "packaged-skill"
-        assert "Instructions from an archive." in await skills[0].get_content()
+        assert skills == []
         assert len(caplog.records) == 1
         assert caplog.records[0].levelname == "WARNING"
-        assert "duplicate archive member" in caplog.text
+        assert "Failed to extract archive" in caplog.text
 
-    async def test_collision_does_not_skip_other_skills(self, caplog: pytest.LogCaptureFixture) -> None:
+    @pytest.mark.parametrize("duplicate", ["./reference.md", "REFERENCE.md"])
+    async def test_collision_does_not_skip_other_skills(self, duplicate: str, caplog: pytest.LogCaptureFixture) -> None:
         url = "skill://archives/packaged-skill.zip"
         index_data = json.loads(SAMPLE_SKILL_INDEX)
         index_data["skills"].extend(json.loads(_make_archive_index("packaged-skill", url))["skills"])
         archive = _make_zip([
             ("SKILL.md", ARCHIVE_SKILL_MD.encode()),
             ("reference.md", b"First."),
-            ("./reference.md", b"Second."),
+            (duplicate, b"Second."),
         ])
         client = _archive_client(json.dumps(index_data), url, archive, "application/zip")
 
         skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
 
-        assert sorted(skill.frontmatter.name for skill in skills) == ["packaged-skill", "unit-converter"]
-        assert "duplicate archive member" in caplog.text
+        assert [skill.frontmatter.name for skill in skills] == ["unit-converter"]
+        assert "'packaged-skill'" in caplog.text
+
+    async def test_distinct_resource_paths_load_with_case_insensitive_lookup(self) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip([
+            ("SKILL.md", ARCHIVE_SKILL_MD.encode()),
+            ("reference.md", b"Root resource."),
+            ("REFERENCE.MD/nested.md", b"Nested resource."),
+            ("refs/one.md", b"One."),
+            ("REFS/two.md", b"Two."),
+        ])
+        index = _make_archive_index("packaged-skill", url)
+        skills = await MCPSkillsSource(client=_archive_client(index, url, archive, "application/zip")).get_skills(
+            _SOURCE_CTX
+        )
+
+        assert len(skills) == 1
+        for name, content in (
+            ("REFERENCE.MD", "Root resource."),
+            ("reference.md/NESTED.MD", "Nested resource."),
+            ("REFS/ONE.MD", "One."),
+            ("refs/two.md", "Two."),
+        ):
+            resource = await skills[0].get_resource(name)
+            assert resource is not None
+            assert await resource.read() == content
 
 
 class TestMCPSkillsSourceArchiveDigest:
@@ -1941,30 +1956,20 @@ class TestArchiveExtractor:
         with pytest.raises(ValueError, match="file count"):
             _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 1, 1024 * 1024)
 
-    def test_skipped_duplicate_is_not_decompressed(self, caplog: pytest.LogCaptureFixture) -> None:
-        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory, _read_member_with_limit
-
-        archive = _make_zip([("reference.md", b"First."), ("./reference.md", b"x" * 100)])
-        with patch("agent_framework._skills._read_member_with_limit", wraps=_read_member_with_limit) as read:
-            files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, len(b"First."))
-
-        assert files == {"reference.md": b"First."}
-        read.assert_called_once()
-        assert "duplicate archive member" in caplog.text
-
-    @pytest.mark.parametrize("first_name", ["reference.md", "REFERENCE.md"])
-    def test_case_collision_keeps_first_name_and_warns(self, first_name: str, caplog: pytest.LogCaptureFixture) -> None:
+    def test_duplicate_normalized_path_rejects_archive(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
 
-        second_name = "REFERENCE.md" if first_name == "reference.md" else "reference.md"
-        archive = _make_zip([(first_name, b"First."), (second_name, b"Second.")])
+        archive = _make_zip([("reference.md", b"First."), ("./reference.md", b"Second.")])
+        with pytest.raises(ValueError, match="Duplicate archive member"):
+            _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
 
-        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+    def test_case_variants_are_extracted_as_is(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
 
-        assert files == {first_name: b"First."}
-        assert len(caplog.records) == 1
-        assert caplog.records[0].levelname == "WARNING"
-        assert "duplicate archive member" in caplog.text
+        entries = {"reference.md": b"First.", "REFERENCE.md": b"Second."}
+        files = _extract_archive_to_memory(_make_zip(entries), _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == entries
 
     def test_distinct_lowercase_resource_names_are_preserved(self, caplog: pytest.LogCaptureFixture) -> None:
         from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
