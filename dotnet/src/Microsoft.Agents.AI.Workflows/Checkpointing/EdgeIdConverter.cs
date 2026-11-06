@@ -20,7 +20,7 @@ internal sealed class EdgeIdConverter : JsonConverterDictionarySupportBase<EdgeI
             return new(edgeId);
         }
 
-        throw new JsonException($"Cannot deserialize EdgeId from JSON propery name '{propertyName}'");
+        throw new JsonException($"Cannot deserialize EdgeId from JSON property name '{propertyName}'");
     }
 
     protected override string Stringify([DisallowNull] EdgeId value)

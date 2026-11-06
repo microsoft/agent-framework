@@ -260,7 +260,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         string postId = Steps.Post(action.Id);
         this._workflowModel.AddLink(action.Id, postId, QuestionExecutor.IsComplete);
 
-        // Perpare for input request if not complete
+        // Prepare for input request if not complete
         string prepareId = QuestionExecutor.Steps.Prepare(action.Id);
         this.ContinueWith(new DelegateActionExecutor(prepareId, this._workflowState, action.PrepareResponseAsync, emitResult: false), action.ParentId, message => !QuestionExecutor.IsComplete(message));
 

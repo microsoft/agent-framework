@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <see cref="ChatHistoryProvider"/> defines the contract that an <see cref="AIAgent"/> can use to retrieve messsages from chat history
+/// <see cref="ChatHistoryProvider"/> defines the contract that an <see cref="AIAgent"/> can use to retrieve messages from chat history
 /// and provide notification of newly produced messages.
 /// Implementations are responsible for managing message persistence, retrieval, and any necessary optimization
 /// strategies such as truncation, summarization, or archival.

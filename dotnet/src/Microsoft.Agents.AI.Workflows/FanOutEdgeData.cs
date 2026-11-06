@@ -8,7 +8,7 @@ using AssignerF = System.Func<object?, int, System.Collections.Generic.IEnumerab
 namespace Microsoft.Agents.AI.Workflows;
 
 /// <summary>
-/// Represents a connection from a single node to a set of nodes, optionally associated with a paritition selector
+/// Represents a connection from a single node to a set of nodes, optionally associated with a partition selector
 /// function which maps incoming messages to a subset of the target set.
 /// </summary>
 internal sealed class FanOutEdgeData : EdgeData

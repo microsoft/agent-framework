@@ -28,7 +28,7 @@ public abstract class ActionExecutor(string id, FormulaSession session) : Action
     protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Test wether the provided value matches the value returned by the prior executor.
+    /// Test whether the provided value matches the value returned by the prior executor.
     /// </summary>
     /// <param name="value">The value to test against the message result.</param>
     /// <param name="message">The message containing the prior executor result.</param>

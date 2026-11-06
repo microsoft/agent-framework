@@ -6,7 +6,7 @@ namespace Microsoft.Agents.AI.Workflows;
 
 /// <summary>
 /// Provides a mechanism to return an executor to a 'reset' state, allowing a workflow containing
-/// shared instances of it to be resued after a run is disposed.
+/// shared instances of it to be reused after a run is disposed.
 /// </summary>
 public interface IResettableExecutor
 {

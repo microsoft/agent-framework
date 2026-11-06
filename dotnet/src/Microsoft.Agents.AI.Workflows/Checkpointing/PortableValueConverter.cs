@@ -12,8 +12,8 @@ namespace Microsoft.Agents.AI.Workflows.Checkpointing;
 /// of the inner value. This is used to enable serialization/deserialization of objects whose type information is not available
 /// at the time of initial deserialization, e.g. user-defined state types.
 ///
-/// This operates in conjuction with <see cref="IDelayedDeserialization"/> and <see cref="PortableValue"/> to abstract
-/// away the speicfics of a given serialization format in favor of <see cref="PortableValue.As{TValue}()"/> and
+/// This operates in conjunction with <see cref="IDelayedDeserialization"/> and <see cref="PortableValue"/> to abstract
+/// away the specifics of a given serialization format in favor of <see cref="PortableValue.As{TValue}()"/> and
 /// <see cref="PortableValue.Is{TValue}()"/> and related methods.
 /// </summary>
 /// <param name="marshaller"></param>

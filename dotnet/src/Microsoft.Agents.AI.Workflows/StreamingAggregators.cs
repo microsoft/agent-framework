@@ -39,7 +39,7 @@ public static class StreamingAggregators
     /// Creates a streaming aggregator that returns the first input element.
     /// </summary>
     /// <typeparam name="TInput">The type of the input elements to aggregate.</typeparam>
-    /// <returns>A an aggrgation function that yields the first input element.</returns>
+    /// <returns>An aggregation function that yields the first input element.</returns>
     public static Func<TInput?, TInput, TInput?> First<TInput>() => First<TInput, TInput?>(input => input);
 
     /// <summary>

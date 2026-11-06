@@ -70,7 +70,7 @@ public record ExternalRequest(RequestPortInfo PortInfo, string RequestId, Portab
     public static ExternalRequest Create<T>(RequestPort port, T data, string? requestId = null) => Create(port, (object)Throw.IfNull(data), requestId);
 
     /// <summary>
-    /// Creates a new <see cref="ExternalResponse"/> corresponding to the request, with the speicified data payload.
+    /// Creates a new <see cref="ExternalResponse"/> corresponding to the request, with the specified data payload.
     /// </summary>
     /// <param name="data">The data contained in the response.</param>
     /// <returns>An <see cref="ExternalResponse"/> instance corresponding to this request with the specified data.</returns>
@@ -93,7 +93,7 @@ public record ExternalRequest(RequestPortInfo PortInfo, string RequestId, Portab
     }
 
     /// <summary>
-    /// Creates a new <see cref="ExternalResponse"/> corresponding to the request, with the speicified data payload.
+    /// Creates a new <see cref="ExternalResponse"/> corresponding to the request, with the specified data payload.
     /// </summary>
     /// <typeparam name="T">The type of the response data.</typeparam>
     /// <param name="data">The data contained in the response.</param>

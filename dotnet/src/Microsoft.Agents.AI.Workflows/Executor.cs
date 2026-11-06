@@ -74,7 +74,7 @@ internal sealed class MessageTypeTranslator
     //   At the same time, we should not force users to declare types to interact with core system concepts like RequestInfo.
     //   So the solution for now is to register a set of known types, at the cost of duplicating this per Executor.
     //
-    //     - TODO: Create a static translation map, and keep a set of "allowed" TypeIds per Excutor.
+    //     - TODO: Create a static translation map, and keep a set of "allowed" TypeIds per Executor.
     private static IEnumerable<Type> KnownSentTypes =>
         [
             typeof(ExternalRequest),
@@ -186,7 +186,7 @@ public abstract class Executor : IIdentified
         //{
         //    // We need a way to be able to let the user override this at the workflow level too, because knowing the fine
         //    // details of when to use which of these paths seems like it could be tricky, and we should not force users
-        //    // to do this; instead container agents should set this when they intiate the run (via WorkflowHostAgent).
+        //    // to do this; instead container agents should set this when they initiate the run (via WorkflowHostAgent).
         //    throw new ArgumentException("An executor that is declared as cross-run shareable cannot also be resettable.");
         //}
 

@@ -48,7 +48,7 @@ public static class FunctionInvocationDelegatingAgentBuilderExtensions
     /// </para>
     /// <para>
     /// The inner agent or the pipeline wrapping it must include a <see cref="FunctionInvokingChatClient"/>. If one does not exist,
-    /// the <see cref="AIAgent"/> added to the pipline by this method will throw an exception when it is invoked.
+    /// the <see cref="AIAgent"/> added to the pipeline by this method will throw an exception when it is invoked.
     /// </para>
     /// <para>
     /// <b>Important:</b> these callbacks apply to tools registered on the agent, including tools passed to a
