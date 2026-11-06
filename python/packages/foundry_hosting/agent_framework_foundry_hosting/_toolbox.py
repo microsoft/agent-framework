@@ -9,7 +9,7 @@ import os
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import _AsyncGeneratorContextManager  # pyright: ignore[reportPrivateUsage]
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import urlsplit
 
 import httpx2 as httpx
@@ -25,6 +25,7 @@ from agent_framework import (
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import ToolExecutionException
 from azure.ai.agentserver.core import get_request_context
+from mcp.types import Tool
 from typing_extensions import override
 
 from ._feature_usage import FeatureIndex
@@ -34,10 +35,11 @@ if TYPE_CHECKING:
     from datetime import timedelta
 
     from agent_framework import Content, Skill
+    from agent_framework._mcp import MCPSpecificApproval
     from azure.core.credentials import AccessToken, TokenCredential
     from azure.core.credentials_async import AsyncTokenCredential
     from mcp.client.session import ClientSession
-    from mcp.types import ReadResourceResult
+    from mcp.types import Prompt, ReadResourceResult
     from pydantic import AnyUrl
 
     AzureCredentialTypes = TokenCredential | AsyncTokenCredential
@@ -48,6 +50,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_TOOLBOX_SCOPE = "https://ai.azure.com/.default"
 # Default timeout (seconds) for toolbox MCP requests.
 _DEFAULT_TIMEOUT = 120.0
+_DEFAULT_APPROVAL_MODE: Literal["always_require", "never_require"] = "never_require"
 # Environment variable used to inject platform-provided toolbox feature flags.
 _TOOLSET_FEATURES_ENV_VAR = "FOUNDRY_AGENT_TOOLSET_FEATURES"
 # Mandatory preview feature flag for Foundry toolbox requests.
@@ -158,6 +161,62 @@ class _ToolboxAuth(httpx.Auth):
         yield request
 
 
+def _toolbox_approval_filter_matches(value: Any, tool: Tool, server_label: Any) -> bool:
+    """Validate a Foundry MCP approval filter and match its remote identity and annotations."""
+    error = f"Invalid Foundry Toolbox approval filter for tool {tool.name!r}."
+    if not isinstance(value, dict) or value.keys() - {"tool_names", "read_only"}:
+        raise ToolExecutionException(error)
+    approval_filter = cast(dict[str, Any], value)
+    names = approval_filter.get("tool_names")
+    if names is not None and (
+        not isinstance(names, list) or any(not isinstance(name, str) or not name for name in cast(list[object], names))
+    ):
+        raise ToolExecutionException(error)
+    read_only = approval_filter.get("read_only")
+    if read_only is not None and not isinstance(read_only, bool):
+        raise ToolExecutionException(error)
+
+    candidate_names = {tool.name}
+    if isinstance(server_label, str) and server_label:
+        prefix = f"{server_label}___"
+        if tool.name.startswith(prefix):
+            candidate_names.add(tool.name[len(prefix) :])
+    is_read_only = tool.annotations is not None and tool.annotations.read_only_hint is True
+    return (names is None or bool(candidate_names.intersection(cast(list[str], names)))) and (
+        read_only is None or read_only == is_read_only
+    )
+
+
+def _toolbox_approval_mode(item: Tool | Prompt) -> Literal["always_require", "never_require"]:
+    """Resolve Foundry approval metadata for a discovered tool."""
+    if not isinstance(item, Tool):
+        return _DEFAULT_APPROVAL_MODE
+    meta = item.meta
+    if meta is None or "tool_configuration" not in meta:
+        return _DEFAULT_APPROVAL_MODE
+    configuration = meta["tool_configuration"]
+    if not isinstance(configuration, dict):
+        raise ToolExecutionException(f"Invalid Foundry Toolbox tool_configuration for tool {item.name!r}.")
+    configuration = cast(dict[str, Any], configuration)
+    if "require_approval" not in configuration:
+        return _DEFAULT_APPROVAL_MODE
+    approval = configuration["require_approval"]
+    if approval == "always":
+        return "always_require"
+    if approval == "never":
+        return "never_require"
+    if not isinstance(approval, dict) or not approval or approval.keys() - {"always", "never"}:
+        raise ToolExecutionException(f"Invalid Foundry Toolbox require_approval for tool {item.name!r}.")
+    approval = cast(dict[str, Any], approval)
+    matches = {
+        policy: _toolbox_approval_filter_matches(value, item, configuration.get("server_label"))
+        for policy, value in approval.items()
+    }
+    if matches.get("always") or not matches.get("never"):
+        return "always_require"
+    return "never_require"
+
+
 class FoundryToolbox(MCPStreamableHTTPTool):
     """A Foundry toolbox exposed as an MCP tool, with hosting wired in.
 
@@ -180,6 +239,18 @@ class FoundryToolbox(MCPStreamableHTTPTool):
 
     Because the toolbox endpoint is a first-party Foundry service, forwarding the
     opaque caller token to it is safe.
+
+    When ``approval_mode`` is omitted or ``None``, discovered functions honor
+    ``_meta.tool_configuration.require_approval``. Supported policies are ``"always"``,
+    ``"never"``, and ``always``/``never`` filters with ``tool_names`` and/or ``read_only``.
+    Names match the remote name or its name without the Toolbox server-label prefix;
+    local ``tool_name_prefix`` values do not affect metadata matching. Filter criteria
+    are combined, ``always`` wins overlaps, and unmatched tools require approval.
+    Missing configuration preserves the no-approval default. Invalid metadata raises
+    :class:`~agent_framework.exceptions.ToolExecutionException` during discovery.
+    Refreshes, including reconnects, reapply metadata to retained functions.
+    The metadata parser is supplied as an ``approval_mode`` callable. An explicit caller
+    policy (including a per-tool dict or callable) replaces the metadata policy.
 
     Like any MCP tool, the connection lifecycle is driven by the agent: the hosting
     server enters a factory-created agent for its request and closes its toolbox
@@ -218,6 +289,12 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         *,
         url: str | None = None,
         name: str | None = None,
+        approval_mode: (
+            Literal["always_require", "never_require"]
+            | MCPSpecificApproval
+            | Callable[[Tool | Prompt], Literal["always_require", "never_require"]]
+            | None
+        ) = None,
         token_scope: str = DEFAULT_TOOLBOX_SCOPE,
         load_prompts: bool = False,
         load_tools: bool = True,
@@ -238,6 +315,17 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 ``TOOLBOX_NAME``.
             name: The local tool name. When ``None``, it is taken from ``TOOLBOX_NAME``
                 or derived from the endpoint path.
+            approval_mode: Local execution approval policy. ``None`` (the default) selects the
+                Foundry metadata policy, which honors each tool's
+                ``_meta.tool_configuration.require_approval`` and uses the no-approval default
+                when configuration is absent. Unlike regular MCP tools, ``None`` does not
+                unconditionally mean no approval. Supply ``"never_require"`` to disable local
+                approval, ``"always_require"`` to require it for every function, an
+                ``MCPSpecificApproval`` dictionary for per-name rules, or a synchronous callable
+                receiving a discovered ``mcp.types.Tool`` or ``mcp.types.Prompt``. The callable
+                must return ``"always_require"`` or ``"never_require"`` for every item,
+                including its default decision. Every non-``None`` policy replaces the metadata
+                policy entirely; dictionary name-matching and defaults follow regular MCP rules.
             token_scope: The token scope to request. Defaults to the Foundry data-plane
                 scope.
             load_prompts: Whether to load prompts from the toolbox. Defaults to ``False``
@@ -286,6 +374,7 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         super().__init__(
             name=tool_name,
             url=endpoint,
+            approval_mode=_toolbox_approval_mode if approval_mode is None else approval_mode,
             http_client=http_client,
             header_provider=toolbox_header_provider,
             load_prompts=load_prompts,

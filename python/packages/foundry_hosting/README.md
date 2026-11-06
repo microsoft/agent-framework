@@ -2,6 +2,29 @@
 
 This package provides the integration of Agent Framework agents and workflows with the Foundry Agent Server, which can be hosted on Foundry infrastructure.
 
+## Toolbox tool approvals
+
+`FoundryToolbox` uses each discovered tool's `_meta.tool_configuration.require_approval` when
+`approval_mode` is omitted or `None`. `"always"` requires an approval pause before local execution;
+`"never"` does not. Missing configuration keeps the existing no-approval default.
+This differs from regular MCP tools, where `approval_mode=None` means no approval.
+For `FoundryToolbox`, use `approval_mode="never_require"` to disable local approval explicitly.
+
+The [Foundry MCP approval configuration](https://learn.microsoft.com/python/api/azure-ai-projects/azure.ai.projects.models.mcptoolrequireapproval)
+also supports `always` and `never` filters. Each filter can contain `tool_names` and `read_only`;
+when both are supplied, both must match. Names match the remote Toolbox name, such as
+`learn___microsoft_docs_search`, or the original name after removing the exact `server_label + "___"` prefix.
+Local `tool_name_prefix` values do not change metadata matching. Missing `readOnlyHint` means not read-only.
+An `always` match takes precedence over a `never` match, and tools without a matching filter require approval.
+Malformed or unsupported approval metadata raises `ToolExecutionException` during discovery instead of
+silently disabling approvals.
+
+The metadata parser is composed through the standard MCP `approval_mode` callable, not a subclass override.
+An explicit non-`None` caller `approval_mode`, including a per-tool dictionary or callable, replaces the metadata policy
+entirely and retains the standard MCP name-matching and default rules. Tool discovery refreshes and reconnects
+reapply metadata-derived approval modes to retained functions. A failed refresh preserves the previous complete
+tool snapshot and its approval modes.
+
 ## Agent instances and factories
 
 `ResponsesHostServer` and `InvocationsHostServer` accept an agent instance or a zero-argument callable through the

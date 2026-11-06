@@ -28,6 +28,21 @@ into application code.
   factory.
 - Make session, checkpoint, response, identity, approval, storage, and cleanup ownership explicit.
 
+`FoundryToolbox` honors discovered `_meta.tool_configuration.require_approval` unless the caller supplies
+a non-`None` `approval_mode`. An explicit caller policy replaces the metadata policy, including for tools not
+named in a per-tool dictionary. Toolbox `approval_mode=None` selects metadata-based approval, unlike regular
+MCP tools where `None` means no approval. Use `"never_require"` to disable local Toolbox approval explicitly.
+MCP `approval_mode` also accepts a synchronous callable receiving a discovered
+`mcp.types.Tool` or `mcp.types.Prompt` and returning `"always_require"` or `"never_require"` for every item,
+including its default decision. Returning `None` is invalid; constructor-level `None` still selects the default policy.
+The callable is reevaluated for new and retained functions on discovery refresh; invalid results fail discovery.
+`FoundryToolbox` composes its metadata parser through this option rather than overriding MCP approval methods.
+Toolbox metadata accepts `"always"`, `"never"`, and `always`/`never` filters
+with `tool_names` and/or `read_only`. Metadata names use remote or original server tool names, not local
+prefixes. Filter criteria must all match; `always` wins overlaps and unmatched tools require approval.
+Missing metadata preserves the no-approval default; malformed approval metadata fails discovery explicitly.
+Ordinary MCP servers do not inherit this Foundry-specific interpretation.
+
 For MCP agent tools, `AgentMCPTool.call_tool(...)` validates the generated input schema before execution or
 session-store access. Applications using `mcp_to_run(...)` directly must validate their own schema before conversion.
 Keep schemas in trusted application configuration. Regex validation is synchronous and has no execution timeout;
