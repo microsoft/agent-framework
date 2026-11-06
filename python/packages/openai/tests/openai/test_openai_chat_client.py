@@ -67,6 +67,7 @@ from openai.types.responses import (
     ResponseOutputTextAnnotationAddedEvent,
     ResponseStreamEvent,
 )
+from openai.types.responses.response_output_item import LocalShellCall, LocalShellCallAction
 from openai.types.responses.response_reasoning_item import ResponseReasoningItem, Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
     ResponseReasoningSummaryTextDeltaEvent,
@@ -2956,6 +2957,41 @@ def test_empty_local_shell_call_replays_with_empty_output(
     if max_output_length is not None:
         expected_output["max_output_length"] = max_output_length
     assert shell_outputs == [expected_output]
+
+
+@pytest.mark.parametrize("round_trip", [False, True])
+@pytest.mark.parametrize("service_storage", [False, True])
+def test_empty_local_shell_call_item_replays_with_empty_output(round_trip: bool, service_storage: bool) -> None:
+    """An empty provider ``local_shell_call`` must replay as a matched empty shell pair."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = LocalShellCall(
+        id="sh_local_empty",
+        call_id="call_local_empty",
+        status="completed",
+        type="local_shell_call",
+        action=LocalShellCallAction(command=[], env={}, type="exec"),
+    )
+
+    contents = client._shell_item_to_contents(item, "run_shell")
+
+    assert [content.type for content in contents] == ["shell_tool_call", "shell_tool_result"]
+    message = Message("assistant", contents)
+    if round_trip:
+        restored_result = Message.from_json(Message("assistant", [contents[1]]).to_json()).contents[0]
+        message = Message("assistant", [contents[0], restored_result])
+    replay = client._prepare_messages_for_openai(
+        [message, Message("user", ["Continue"])],
+        request_uses_service_side_storage=service_storage,
+    )
+
+    shell_calls = [entry for entry in replay if entry["type"] == "shell_call"]
+    assert len(shell_calls) == (0 if service_storage else 1)
+    if not service_storage:
+        assert shell_calls[0]["call_id"] == "call_local_empty"
+        assert shell_calls[0]["action"]["commands"] == []
+    assert [entry for entry in replay if entry["type"] == "shell_call_output"] == [
+        {"type": "shell_call_output", "call_id": "call_local_empty", "output": []}
+    ]
 
 
 @pytest.mark.parametrize("streaming", [False, True])

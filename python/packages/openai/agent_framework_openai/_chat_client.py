@@ -2824,15 +2824,47 @@ class RawOpenAIChatClient(
                     )
                 )
             else:
+                provider_status = _provider_status(getattr(item, "status", None))
+                empty_local_call = bool(
+                    local_shell_tool_name
+                    and local_call_id
+                    and local_call_item_id
+                    and isinstance(raw_local_command_parts, list)
+                    and not raw_local_command_parts
+                )
                 contents.append(
                     Content.from_shell_tool_call(
                         call_id=local_call_id,
                         commands=[local_command] if local_command else [],
                         timeout_ms=getattr(getattr(item, "action", None), "timeout_ms", None),
-                        status=_provider_status(getattr(item, "status", None)),
-                        raw_representation=item,
+                        status=provider_status,
+                        # An empty ``local_shell_call`` has no replayable local form: its provider
+                        # payload only validates as ``local_shell_call``, which this client never
+                        # emits on replay. A call that ran no commands is equivalent to a
+                        # ``shell_call`` with an empty action, so record that shape and pair it with
+                        # the terminal output below instead of leaving an orphaned shell call.
+                        raw_representation=(
+                            {
+                                "id": local_call_item_id,
+                                "type": "shell_call",
+                                "call_id": local_call_id,
+                                "status": provider_status or "completed",
+                                "environment": {"type": "local"},
+                                "action": {"commands": []},
+                            }
+                            if empty_local_call
+                            else item
+                        ),
                     )
                 )
+                if empty_local_call:
+                    contents.append(
+                        Content.from_shell_tool_result(
+                            call_id=local_call_id,
+                            outputs=[],
+                            additional_properties={_LOCAL_TOOL_RESULT_KEY: True},
+                        )
+                    )
         elif item_type == "shell_call_output":
             shell_output_call_id = getattr(item, "call_id", None) or ""
             shell_outputs: list[Content] = []
