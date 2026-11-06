@@ -84,7 +84,7 @@ uv run --env-file .env --package agent-framework-typesafe \
 uv run --env-file .env --package agent-framework-typesafe \
     python packages/typesafe/samples/function_calling.py
 
-uv run --with "mcp>=1.27.0,<2" --env-file .env --package agent-framework-typesafe \
+uv run --with "mcp>=2.2.0,<3" --env-file .env --package agent-framework-typesafe \
     python packages/typesafe/samples/mcp_function_calling.py
 
 uv run --env-file .env --package agent-framework-typesafe \
