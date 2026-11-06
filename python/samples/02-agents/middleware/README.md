@@ -6,6 +6,7 @@ This folder contains focused middleware samples for `Agent`, chat clients, tools
 
 | File | Description |
 |------|-------------|
+| [`per_tool_rate_limiting.py`](./per_tool_rate_limiting.py) | In-process per-tool token-bucket middleware; offline tests in `test_per_tool_rate_limiting.py`. |
 | [`agent_and_run_level_middleware.py`](./agent_and_run_level_middleware.py) | Demonstrates combining agent-level and run-level middleware. |
 | [`agent_loop_middleware_refinement.py`](./agent_loop_middleware_refinement.py) | Demonstrates `AgentLoopMiddleware` with a `should_continue` predicate: a completion-marker refinement loop with feedback tracking and `fresh_context`. |
 | [`agent_loop_middleware_todos.py`](./agent_loop_middleware_todos.py) | Demonstrates `AgentLoopMiddleware` with a `should_continue` predicate built from a `TodoProvider` via `todos_remaining`, so the agent keeps working while open todos remain. |
@@ -50,3 +51,14 @@ agent's latest response to a second, external judge chat client on every iterati
 or malicious judge endpoint could exfiltrate that data, or return a manipulated verdict/gap
 analysis that gets fed back into the loop as feedback — a form of indirect prompt injection. Only
 configure a judge client that points at a service you trust as much as the primary model.
+
+## Per-tool rate limiting
+
+Run `python per_tool_rate_limiting.py` to see two admitted calls and one rejected call. Quotas are per middleware instance and tool name, in-process only. Rejections are tool-visible results before execution, not `MiddlewareTermination`; no retries or distributed guarantees. Thread-safe accounting is shared across event loops.
+## Per-tool rate limiting
+
+Run `python per_tool_rate_limiting.py` for a self-contained example. The implementation uses the existing `FunctionMiddleware` extension point and one token bucket per configured tool name. Unconfigured tools are admitted. All buckets belong to **one middleware instance**: sharing an instance across agents shares its quotas; separate processes/instances do not coordinate. Accounting uses a monotonic clock and a short `threading.Lock`, held only for token calculations and never while awaiting a tool.
+
+An exhausted bucket short-circuits before downstream middleware and the tool execute. It sets `context.result` to a tool-visible error string rather than raising `MiddlewareTermination` (which can end the tool loop). A rejected tool call is not retried automatically. The agent may choose to request the tool again, so configure appropriate policies and prompts. Tokens are charged **on admission**, including for subsequently cancelled or failed executions; there is no refund. No waiting queue is used, so cancellation while awaiting quota admission does not arise. The sample does **not** implement distributed limits, remote-operation rollback, or idempotency.
+
+For agent integration, pass a shared instance in `Agent(..., middleware=[PerToolRateLimitMiddleware({"lookup": RatePolicy(2, 1.0)})])` alongside your actual client and tools. See `test_per_tool_rate_limiting.py` for an offline integration test using the framework's real `FunctionInvocationContext` and `FunctionMiddlewarePipeline`.
