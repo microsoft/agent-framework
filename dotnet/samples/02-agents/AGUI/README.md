@@ -153,7 +153,7 @@ An interactive client that handles approval requests from the server. Demonstrat
 
 - Detecting `ToolApprovalRequestContent` in the streamed response
 - Displaying approval details to the user and prompting for approval or rejection
-- Sending the decision back as a `ToolApprovalResponseContent` created with `approvalRequest.CreateResponse(approved)`
+- Sending the decision back as a `ToolApprovalResponseContent` created with `approvalRequest.CreateResponse(...)`. When the user rejects the call, the sample includes a reason telling the model not to retry it
 - Resuming the run so the server continues after the decision is received
 
 **Run the client:**

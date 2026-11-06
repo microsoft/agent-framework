@@ -837,6 +837,13 @@ register_state_type(_RegisteredSessionState)
 
 
 class TestStateTypeRegistry:
+    @pytest.fixture(autouse=True)
+    def isolate_state_registry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_framework import _sessions
+
+        monkeypatch.setattr(_sessions, "_STATE_TYPE_REGISTRY", _sessions._STATE_TYPE_REGISTRY.copy())
+        monkeypatch.setattr(_sessions, "_STATE_CLASS_REGISTRY", _sessions._STATE_CLASS_REGISTRY.copy())
+
     def test_same_registration_is_idempotent(self) -> None:
         register_state_type(_RegisteredSessionState)
 

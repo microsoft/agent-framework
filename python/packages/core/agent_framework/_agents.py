@@ -704,6 +704,9 @@ class BaseAgent(SerializationMixin):
             :attr:`FunctionInvocationContext.parent_service_session_state_keys` when
             the parent session is non-empty. Automatic function calling supplies it.
 
+            ``WorkflowAgent.as_tool()`` is not supported, because every caller of
+            the tool would share the state of one workflow.
+
         Examples:
             .. code-block:: python
 
@@ -885,6 +888,8 @@ class BaseAgent(SerializationMixin):
             func=_agent_wrapper,
             input_model=input_schema,
             approval_mode=approval_mode,
+            # Private link for hosts that must know which agent a tool delegates to. Serialization skips it.
+            _wrapped_agent=self,
         )
 
 
@@ -1517,6 +1522,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         response_format: Any | None = None,
     ) -> AgentResponse[Any]:
         """Finalize response updates into a single AgentResponse."""
+        if isinstance(self.client, BaseChatClient):
+            return self.client._finalize_agent_response_updates(  # pyright: ignore[reportPrivateUsage]
+                updates, response_format=response_format
+            )
         return AgentResponse.from_updates(
             updates,
             output_format_type=response_format,

@@ -9,14 +9,14 @@ informed: []
 
 # Per-agent and per-user session-storage isolation for Foundry Hosting
 
-Builds on [ADR-0030](0030-hosted-platform-context-agentserver-2.0.md).
+Builds on [ADR-0034](0034-hosted-platform-context-agentserver-2.0.md).
 
 ## Context and Problem Statement
 
 A Foundry hosted container can serve many end users (and, in .NET, many agents) over its lifetime. The
 `AgentSessionStore` persists each turn's `AgentSession` (which for a workflow agent carries the workflow
 checkpoint, and which also carries the tool-approval mapping via `ToolApprovalIdMap` in the session state
-bag). [ADR-0030](0030-hosted-platform-context-agentserver-2.0.md) protected cross-user access only through
+bag). [ADR-0034](0034-hosted-platform-context-agentserver-2.0.md) protected cross-user access only through
 the strict-resume identity check (a 403 when the persisted `HostedSessionContext.UserId` does not match the
 live request). The persisted artifacts themselves were keyed by `conversationId` (+ agent name), not
 physically partitioned per user, so a forged `conversation_id` would still resolve to another user's file
@@ -34,7 +34,7 @@ hosting model.
   must isolate per agent as well as per user (Python hosts a single agent and needs no agent layer).
 - Path-traversal safety (CWE-22) for the untrusted, platform-injected user id.
 - Back-compat for local development (no `x-agent-user-id` header) and for direct/non-hosted store use.
-- Keep the change contained and avoid the async-iterator `AsyncLocal` revert hazard from ADR-0030.
+- Keep the change contained and avoid the async-iterator `AsyncLocal` revert hazard from ADR-0034.
 
 ## Considered Options
 
@@ -45,7 +45,7 @@ hosting model.
   user id on the read path and yields a flat key rather than nested per-tenant directories.
 - An `AsyncLocal<string?>` user-context set by the handler. Rejected: the session is saved in the handler's
   `finally` after the streaming `yield`s, where an `AsyncLocal` set up front is reverted (the same hazard
-  that forced explicit call-id re-application in ADR-0030). Explicit threading is safer and clearer.
+  that forced explicit call-id re-application in ADR-0034). Explicit threading is safer and clearer.
 - A separate per-user approval store (as in Python). Rejected as unnecessary: see below.
 
 ## Decision Outcome
@@ -74,7 +74,7 @@ Other elements:
 - Path-traversal guard: the user id is rejected (not sanitized) when it is not a single safe path segment
   (path separators, NUL, drive letters, rooted paths, all-dot segments). After building the path, the
   fully-resolved path is asserted to remain under the storage root.
-- The strict-resume 403 identity check from ADR-0030 is **kept** as the second defense layer (it still
+- The strict-resume 403 identity check from ADR-0034 is **kept** as the second defense layer (it still
   catches a session that reaches the wrong partition, e.g. via a non-partitioning custom store or in-process
   tampering).
 - **No separate approval store.** The tool-approval mapping lives in `ToolApprovalIdMap` ->
@@ -94,7 +94,7 @@ Negative:
 
 - Breaking change to the experimental Foundry `AgentSessionStore` API (added `userId`).
 - The on-disk layout and leaf filename change (`<conv>.json` -> `c-<conv>.json`), orphaning sessions written
-  by the ADR-0030 release. Acceptable for an experimental package; a fresh session is created on next use.
+  by the ADR-0034 release. Acceptable for an experimental package; a fresh session is created on next use.
 
 ## Out of scope
 
@@ -103,7 +103,7 @@ Negative:
 
 ## Update (2026-09-01): contract promoted to Abstractions
 
-[ADR-0039](0039-shared-agent-session-store.md) promotes this `AgentSessionStore` contract to
+[ADR-0045](0045-shared-agent-session-store.md) promotes this `AgentSessionStore` contract to
 `Microsoft.Agents.AI.Abstractions` and makes it the common contract for Foundry Hosting and conventional
 Hosting. It supersedes the required `userId` parameter with `AgentSessionStoreKey.Partitions`. Foundry
 Hosting adds the resolved user identity as a named partition before loading or saving a session.

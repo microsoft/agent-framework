@@ -1,5 +1,5 @@
-mypy==2.4.0
+mypy==2.4.1
 pyrefly==1.4.0
 pyright==1.1.414
-ty==0.0.90
+ty==0.0.94
 zuban==0.10.1
