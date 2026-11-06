@@ -71,22 +71,23 @@ class SerializationProtocol(Protocol):
             assert isinstance(user_msg, SerializationProtocol)
             assert isinstance(restored_msg, SerializationProtocol)
 
-        The protocol is also implemented by simpler classes like ``UsageDetails``:
+        The protocol is also implemented by simpler classes like ``Content``:
 
         .. code-block:: python
 
-            from agent_framework import UsageDetails
+            from agent_framework import Content
+            from agent_framework._serialization import SerializationProtocol
 
-            # Create usage tracking instance
-            usage = UsageDetails(input_token_count=150, output_token_count=75, total_token_count=225)
+            # Create a text content item
+            content = Content.from_text("The forecast is sunny.")
 
             # Seamless serialization with type preservation
-            usage_dict = usage.to_dict()
-            restored_usage = UsageDetails.from_dict(usage_dict)
+            content_dict = content.to_dict()  # {"type": "text", "text": "The forecast is sunny.", ...}
+            restored_content = Content.from_dict(content_dict)
 
             # Both satisfy the SerializationProtocol
-            assert isinstance(usage, SerializationProtocol)
-            assert restored_usage.total_token_count == 225
+            assert isinstance(content, SerializationProtocol)
+            assert restored_content.text == "The forecast is sunny."
 
         The protocol ensures consistent serialization behavior across all framework components,
         enabling reliable data persistence, API communication, and object reconstruction
@@ -322,32 +323,31 @@ class SerializationMixin:
 
         .. code-block:: python
 
-            from agent_framework._tools import BaseTool
+            from agent_framework import FunctionTool
 
 
-            class WeatherTool(BaseTool):
-                \"\"\"Example tool that extends BaseTool with additional properties exclusion.\"\"\"
-
-                # Inherits DEFAULT_EXCLUDE = {"additional_properties"} from BaseTool
-
-                def __init__(self, name: str, api_key: str, **kwargs):
-                    super().__init__(name=name, description="Get weather information", **kwargs)
-                    self.api_key = api_key  # Will be serialized
-
-                    # Additional properties are excluded from serialization
-                    self.additional_properties = {"version": "1.0", "internal_config": {...}}
+            def get_weather(location: str) -> str:
+                return f"Weather in {location}: 72°F"
 
 
-            weather_tool = WeatherTool(name="get_weather", api_key="secret-key")
+            # FunctionTool lists "additional_properties" in DEFAULT_EXCLUDE and "func" in INJECTABLE
+            weather_tool = FunctionTool(
+                name="get_weather",
+                description="Get weather information",
+                func=get_weather,
+                additional_properties={"version": "1.0"},
+            )
 
-            # Serialization excludes additional_properties but includes other fields
+            # Serialization keeps the tool definition but leaves out excluded and injectable fields
             tool_dict = weather_tool.to_dict()
             # Result: {
-            #     "type": "weather_tool",
+            #     "type": "function_tool",
             #     "name": "get_weather",
             #     "description": "Get weather information",
-            #     "api_key": "secret-key"
-            #     # additional_properties excluded due to DEFAULT_EXCLUDE
+            #     "approval_mode": "never_require",
+            #     "input_model": {...},
+            #     ...
+            #     # additional_properties and func excluded
             # }
 
         **Agent framework with injectable dependencies:**
@@ -363,7 +363,9 @@ class SerializationMixin:
                 # Inherits DEFAULT_EXCLUDE = {"additional_properties"} from BaseAgent
 
                 def __init__(self, **kwargs):
-                    super().__init__(name="custom-agent", description="A custom agent", **kwargs)
+                    kwargs.setdefault("name", "custom-agent")
+                    kwargs.setdefault("description", "A custom agent")
+                    super().__init__(**kwargs)
 
                     # additional_properties stores runtime configuration but isn't serialized
                     self.additional_properties.update({
@@ -372,10 +374,7 @@ class SerializationMixin:
                     })
 
 
-            agent = CustomAgent(
-                context_provider=[...],
-                middleware=[...]
-            )
+            agent = CustomAgent()
 
             # Serialization captures agent configuration but excludes runtime data
             agent_dict = agent.to_dict()
@@ -384,8 +383,7 @@ class SerializationMixin:
             #     "id": "...",
             #     "name": "custom-agent",
             #     "description": "A custom agent",
-            #     "context_provider": [...],
-            #     "middleware": [...]
+            #     "context_providers": []
             #     # additional_properties excluded
             # }
 
@@ -543,14 +541,15 @@ class SerializationMixin:
 
                 # Serialized data contains only the model configuration
                 client_data = {
-                    "type": "open_ai_chat_client",
+                    "type": "open_a_i_chat_client",
                     "model": "gpt-4o-mini",
                     # client is excluded from serialization
                 }
 
-                # Provide the OpenAI client during deserialization
+                # Provide the OpenAI client during deserialization through the
+                # constructor's ``async_client`` parameter
                 openai_client = AsyncOpenAI(api_key="your-api-key")
-                dependencies = {"open_ai_chat_client": {"client": openai_client}}
+                dependencies = {"open_a_i_chat_client": {"async_client": openai_client}}
 
                 # The chat client is reconstructed with the OpenAI client injected
                 client = OpenAIChatClient.from_dict(client_data, dependencies=dependencies)
@@ -585,34 +584,38 @@ class SerializationMixin:
                 weather_func = FunctionTool.from_dict(function_data, dependencies=dependencies)
                 # The function is now callable and ready for agent use
 
-            **MiddlewareTypes Context Injection** - Agent execution context:
+            **Instance-Specific Injection** - Different functions for different tools:
 
             .. code-block:: python
 
-                from agent_framework._middleware import AgentContext
-                from agent_framework import BaseAgent
+                from agent_framework import FunctionTool
 
-                # AgentContext has INJECTABLE = {"agent", "result"}
-                context_data = {
-                    "type": "agent_context",
-                    "messages": [{"role": "user", "text": "Hello"}],
-                    "stream": False,
-                    "metadata": {"session_id": "abc123"},
-                    # agent and result are excluded from serialization
-                }
 
-                # Inject agent and result during middleware processing
-                my_agent = BaseAgent(name="test-agent")
+                async def get_current_weather(location: str) -> str:
+                    return f"Current weather in {location}: 72°F and sunny"
+
+
+                async def get_forecast(location: str) -> str:
+                    return f"Tomorrow in {location}: 68°F and cloudy"
+
+
+                # "<field>:<value>" keys select the instance that receives each dependency
                 dependencies = {
-                    "agent_context": {
-                        "agent": my_agent,
-                        "result": None,  # Will be populated during execution
+                    "function_tool": {
+                        "name:get_weather": {"func": get_current_weather},
+                        "name:get_forecast": {"func": get_forecast},
                     }
                 }
 
-                # Reconstruct context with agent dependency for middleware chain
-                context = AgentContext.from_dict(context_data, dependencies=dependencies)
-                # MiddlewareTypes can now access context.agent and process the execution
+                weather_tool = FunctionTool.from_dict(
+                    {"type": "function_tool", "name": "get_weather", "description": "Current weather"},
+                    dependencies=dependencies,
+                )
+                forecast_tool = FunctionTool.from_dict(
+                    {"type": "function_tool", "name": "get_forecast", "description": "Weather forecast"},
+                    dependencies=dependencies,
+                )
+                # Each tool is reconstructed with its own function
 
             This injection system allows the agent framework to maintain clean separation
             between serializable configuration and runtime dependencies like API clients,
