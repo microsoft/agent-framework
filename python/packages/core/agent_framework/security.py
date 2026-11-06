@@ -135,9 +135,9 @@ _TOOL_POLICY_CONFIDENTIALITY_KEY = "confidentiality"
 _TOOL_POLICY_MAX_ALLOWED_CONFIDENTIALITY_KEY = "max_allowed_confidentiality"
 _TOOL_POLICY_SOURCE_INTEGRITY_KEY = "source_integrity"
 _MAX_REPLAY_CONTENT_DEPTH = 32
-_APPROVAL_REPLAY_AUTHORITY_KEY = "_agent_framework_fides_authenticated_approval_calls"
-_HISTORY_FOLD_GUARD_CONTEXT_KEY = "_agent_framework_fides_history_fold_guard"
-_HISTORY_USE_PERSISTED_COVERAGE_CONTEXT_KEY = "_agent_framework_fides_use_persisted_history_coverage"
+_APPROVAL_REPLAY_AUTHORITY_KEY = "_agent_framework_core_fides_authenticated_approval_calls"
+_HISTORY_FOLD_GUARD_CONTEXT_KEY = "_agent_framework_core_fides_history_fold_guard"
+_HISTORY_USE_PERSISTED_COVERAGE_CONTEXT_KEY = "_agent_framework_core_fides_use_persisted_history_coverage"
 _MAX_HISTORY_COVERAGE_SOURCES = 64
 _builtin_id = builtins.id
 _TOOL_SECURITY_POLICY_KEYS = frozenset({
@@ -1115,6 +1115,8 @@ def _authenticated_hidden_reference_label(content: Content, *, scope: _SecurityS
         or content.additional_properties.get("_variable_reference") is not True
     ):
         return None
+    # The public decoder accepts legacy aliases and extra fields. Replay authentication
+    # instead requires the exact current-format payload produced for this session.
     try:
         payload = json.loads(content.text)
     except (TypeError, ValueError, RecursionError):
@@ -1238,6 +1240,7 @@ def _replayed_content_labels(
                 nested_items_are_authenticated_hidden = False
     finally:
         active_ids.remove(content_id)
+
     is_authenticated_hidden_wrapper = (
         content.type == "function_result"
         and nested_items_are_authenticated_hidden
@@ -1356,11 +1359,7 @@ def _is_pending_approval_control(content: Content, *, scope: _SecurityScope) -> 
     except (RecursionError, TypeError, ValueError):
         return False
     pending = _PendingPolicyApproval.from_state(scope.pending_approvals.get(function_call.id))
-    return (
-        pending is not None
-        and pending.request_id == content.id
-        and pending.body_signature == body_signature
-    )
+    return pending is not None and pending.request_id == content.id and pending.body_signature == body_signature
 
 
 def _is_bound_approval_control(
@@ -1542,8 +1541,7 @@ def _coverage_content_payload(content: Content, *, include_security_labels: bool
         payload["arguments"] = _parse_replay_function_call_arguments(content)
     if content.items is not None:
         payload["items"] = [
-            _coverage_content_payload(item, include_security_labels=include_security_labels)
-            for item in content.items
+            _coverage_content_payload(item, include_security_labels=include_security_labels) for item in content.items
         ]
     return payload
 
@@ -1600,8 +1598,7 @@ def _control_free_replay_projection(
     digests: list[str] = []
     for index, message in enumerate(messages):
         if message.contents and all(
-            content.type in {"function_approval_request", "function_approval_response"}
-            for content in message.contents
+            content.type in {"function_approval_request", "function_approval_response"} for content in message.contents
         ):
             continue
         digest = _message_coverage_digest(
@@ -4469,6 +4466,7 @@ class SecureAgentConfig(ContextProvider):
             )
     """
 
+    after_run_once_per_turn = True
     requires_loaded_context_before_invocation = True
 
     DEFAULT_SOURCE_ID = "secure_agent"
@@ -4832,6 +4830,24 @@ class SecureAgentConfig(ContextProvider):
             commit_coverage=commit_coverage,
         )
 
+    async def after_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Authenticate the caller-visible transcript at the completed user-turn boundary."""
+        del agent, session
+        replay_messages = list(context.input_messages)
+        if context.response is not None:
+            replay_messages.extend(context.response.messages)
+        self._store_input_replay_coverage(
+            state,
+            replay_messages,
+        )
+
     async def after_run_complete(
         self,
         *,
@@ -4854,14 +4870,6 @@ class SecureAgentConfig(ContextProvider):
         elif not history_source_ids:
             self._store_history_coverage(state, {}, set())
 
-        replay_messages = list(context.input_messages)
-        if context.response is not None:
-            replay_messages.extend(context.response.messages)
-        self._store_input_replay_coverage(
-            state,
-            replay_messages,
-        )
-
     async def after_context_loaded(
         self,
         *,
@@ -4871,9 +4879,7 @@ class SecureAgentConfig(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Fold complete loaded history before function approval replay can execute."""
-        use_persisted_coverage = (
-            context.metadata.get(_HISTORY_USE_PERSISTED_COVERAGE_CONTEXT_KEY) is True
-        )
+        use_persisted_coverage = context.metadata.get(_HISTORY_USE_PERSISTED_COVERAGE_CONTEXT_KEY) is True
         history_source_ids = self._history_source_ids(agent)
         raw_approval_authority = context.metadata.get(_APPROVAL_REPLAY_AUTHORITY_KEY)
         approval_authority = (

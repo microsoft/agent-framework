@@ -69,7 +69,7 @@ logger = logging.getLogger("agent_framework")
 MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY: str = "message_injection.pending_messages"
 _MESSAGE_INJECTION_LOCK = threading.Lock()
 _WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY = "workflow.defer_computer_function_results"
-_PERSISTED_HISTORY_MESSAGES_METADATA_KEY = "_agent_framework_persisted_history_messages"
+_PERSISTED_HISTORY_MESSAGES_METADATA_KEY = "_agent_framework_core_persisted_history_messages"
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
@@ -1728,9 +1728,7 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             )
         raw_persisted = service_call_context.metadata.get(_PERSISTED_HISTORY_MESSAGES_METADATA_KEY)
         covered_history_by_source: Mapping[str, Sequence[Message]] = (
-            cast(Mapping[str, Sequence[Message]], raw_persisted)
-            if isinstance(raw_persisted, Mapping)
-            else {}
+            cast(Mapping[str, Sequence[Message]], raw_persisted) if isinstance(raw_persisted, Mapping) else {}
         )
         for provider in self._context_providers:
             await provider.after_history_persisted(

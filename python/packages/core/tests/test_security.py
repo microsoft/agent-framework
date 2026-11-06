@@ -20,6 +20,7 @@ from pydantic import AfterValidator, BaseModel, field_validator
 
 from agent_framework import (
     Agent,
+    AgentLoopMiddleware,
     AgentSession,
     ChatResponse,
     ChatResponseUpdate,
@@ -3349,9 +3350,7 @@ class TestSecureAgentSessionIsolation:
         )
 
         attacker_message = Message(role="assistant", contents=["New unstamped instructions"])
-        replayed_messages = (
-            [initial_message, attacker_message] if mutation == "append" else [attacker_message]
-        )
+        replayed_messages = [initial_message, attacker_message] if mutation == "append" else [attacker_message]
         changed_context = SessionContext(session_id=session.session_id, input_messages=replayed_messages)
         await config.before_run(
             agent=agent,
@@ -5083,6 +5082,73 @@ class TestSecureAgentSessionIsolation:
         context_label = json.loads(session.state[config.source_id]["context_label"])
         assert context_label["integrity"] == "trusted"
         assert context_label["confidentiality"] == "public"
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_loop_aggregate_replay_coverage_finalizes_at_turn_boundary(self, stream: bool) -> None:
+        """A completed loop covers the caller-visible transcript rather than only its final inner run."""
+        responses = [
+            ChatResponse(messages=[Message(role="assistant", contents=["First iteration complete."])]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Second iteration complete."])]),
+        ]
+
+        class ScriptedClient:
+            def __init__(self) -> None:
+                self.responses = list(responses)
+
+            def get_response(
+                self,
+                messages: list[Message],
+                *,
+                stream: bool = False,
+                options: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> Any:
+                del messages, options, kwargs
+                response = self.responses.pop(0)
+                if not stream:
+
+                    async def get_response() -> ChatResponse:
+                        return response
+
+                    return get_response()
+
+                async def updates() -> Any:
+                    for message in response.messages:
+                        yield ChatResponseUpdate(role=cast(Any, message.role), contents=message.contents)
+
+                return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        config = SecureAgentConfig()
+        session = AgentSession(session_id=f"loop-aggregate-coverage-{stream}")
+        agent = Agent(
+            client=cast(Any, ScriptedClient()),
+            context_providers=[config],
+            middleware=[
+                AgentLoopMiddleware(
+                    lambda **_: True,
+                    max_iterations=2,
+                    inject_progress=False,
+                )
+            ],
+        )
+        original_input = Message(role="user", contents=["Complete both iterations."])
+
+        if stream:
+            response = await agent.run([original_input], session=session, stream=True).get_final_response()
+        else:
+            response = await agent.run([original_input], session=session)
+
+        replay_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+            session=session,
+            input_messages=[original_input, *response.messages],
+            options={},
+        )
+
+        tracker = replay_context.get_middleware()[0]
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        replay_label = tracker.get_context_label()
+        assert replay_label.integrity == IntegrityLabel.TRUSTED
+        assert replay_label.confidentiality == ConfidentialityLabel.PUBLIC
 
     @pytest.mark.parametrize("stream", [False, True])
     async def test_replacement_policy_approval_executes_through_agent_run(self, stream: bool) -> None:

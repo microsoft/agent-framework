@@ -662,7 +662,7 @@ class BaseAgent(SerializationMixin):
                 raise RuntimeError("Provider session must be available when provider state is finalized.")
             for provider in self.context_providers:
                 await provider.after_run_complete(
-                    agent=self,  # type: ignore[arg-type]
+                    agent=cast(SupportsAgentRun, self),
                     session=provider_session,
                     context=context,
                     state=provider_session.state.setdefault(provider.source_id, {}),
