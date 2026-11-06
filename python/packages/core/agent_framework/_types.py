@@ -3118,6 +3118,21 @@ class ContinuationToken(TypedDict):
 # endregion
 
 
+def _validate_structured_json(model: Any, text: str) -> Any:
+    """Validate JSON against ``model`` with alias validation enabled.
+
+    Providers are asked for alias-keyed output (the model's JSON schema uses aliases), so aliases are
+    always accepted, even for a model configured with ``validate_by_alias=False``. The model's own
+    ``validate_by_name`` / ``populate_by_name`` setting is preserved. Overriding ``by_alias`` needs
+    pydantic 2.11; earlier versions use the model's own settings.
+    """
+    from pydantic import VERSION
+
+    if tuple(int(part) for part in VERSION.split(".")[:2]) >= (2, 11):
+        return model.model_validate_json(text, by_alias=True)
+    return model.model_validate_json(text)
+
+
 def _parse_structured_response_value(text: str, response_format: Any | None) -> Any | None:
     if response_format is None:
         return None
@@ -3127,7 +3142,7 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
         from pydantic import BaseModel
 
         if issubclass(response_format, BaseModel):
-            return response_format.model_validate_json(text)
+            return _validate_structured_json(response_format, text)
     if isinstance(response_format, Mapping):
         try:
             return json.loads(text)

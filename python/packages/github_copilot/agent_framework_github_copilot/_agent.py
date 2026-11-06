@@ -54,6 +54,7 @@ from agent_framework._types import (
 )
 from agent_framework.exceptions import AgentException, ContentError, MiddlewareException
 from agent_framework.observability import AgentTelemetryLayer
+from pydantic import BaseModel
 
 from ._feature_usage import FeatureIndex
 
@@ -188,6 +189,25 @@ async def _resolve_function_approval(
 
 
 logger = logging.getLogger("agent_framework.github_copilot")
+
+
+def _to_response_schema(response_format: Any) -> Any:
+    """Return a value the Copilot SDK can JSON-serialize as ``response_schema``.
+
+    Pydantic model classes are passed through unchanged. Any other mapping (for example a
+    ``MappingProxyType`` or ``UserDict``) is converted, recursively, to plain ``dict``/``list`` objects.
+    """
+    if response_format is None or isinstance(response_format, type):
+        return response_format
+
+    def _plain(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {key: _plain(item) for key, item in cast(Mapping[Any, Any], value).items()}
+        if isinstance(value, (list, tuple)):
+            return [_plain(item) for item in cast(Sequence[Any], value)]
+        return value
+
+    return _plain(response_format)
 
 
 def _provider_service_session_state_keys(agent: object, client: object | None) -> frozenset[str]:
@@ -572,6 +592,13 @@ class GitHubCopilotOptions(TypedDict, total=False):
     telemetry: TelemetryConfig
     """OpenTelemetry configuration for the Copilot CLI process."""
 
+    response_format: type[BaseModel] | Mapping[str, Any]
+    """Structured output format for the run: a Pydantic model type or a JSON Schema mapping.
+
+    Forwarded to the Copilot SDK as ``response_schema`` so the provider constrains the
+    final answer to the schema, and the parsed result is exposed on ``AgentResponse.value``.
+    Streaming still yields text; the value is parsed once the stream completes."""
+
     on_pre_tool_use: PreToolUseHandler
     """Pre-tool-use hook handler for the Copilot SDK.
 
@@ -914,7 +941,14 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                         logger.exception("Error running after_run providers in streaming result hook")
 
             def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
-                return AgentResponse.from_updates(updates)
+                response_format: Any = cast(Mapping[str, Any], options or {}).get(
+                    "response_format"
+                ) or self._default_options.get("response_format")
+                if response_format is not None:
+                    # The structured value comes from the root agent's answer, so sub-agent updates
+                    # (which still stream to the caller) are left out of the final response.
+                    updates = [update for update in updates if not getattr(update.raw_representation, "agent_id", None)]
+                return AgentResponse.from_updates(updates, output_format_type=response_format)
 
             return ResponseStream(
                 self._stream_updates(
@@ -984,6 +1018,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 "together with on_permission_request instead."
             )
         timeout = opts.get("timeout") or self._settings.get("timeout") or DEFAULT_TIMEOUT_SECONDS
+        response_format = opts.get("response_format") or self._default_options.get("response_format")
+        response_schema = _to_response_schema(response_format)
 
         input_messages = normalize_messages(messages)
 
@@ -1036,7 +1072,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             unsubscribe = copilot_session.on(usage_event_handler)
             try:
                 mark_feature_used(FeatureIndex.GITHUB_COPILOT)
-                response_event = await copilot_session.send_and_wait(prompt, attachments=attachments, timeout=timeout)
+                response_event = await copilot_session.send_and_wait(
+                    prompt,
+                    attachments=attachments,
+                    response_schema=response_schema,
+                    timeout=timeout,
+                )
             except Exception as ex:
                 raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
             finally:
@@ -1068,6 +1109,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             finish_reason=cast(Any, finish_reason),
             usage_details=usage_details,
             additional_properties={"model": model} if model else None,
+            response_format=response_format,
         )
         session_context._response = response  # type: ignore[assignment]
         await self._run_after_providers(session=session, context=session_context)
@@ -1121,6 +1163,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 "(set via default_options). Remove on_function_approval and use on_pre_tool_use "
                 "together with on_permission_request instead."
             )
+        response_format = opts.get("response_format") or self._default_options.get("response_format")
+        response_schema = _to_response_schema(response_format)
 
         input_messages = normalize_messages(messages)
 
@@ -1218,7 +1262,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 )
                 queue.put_nowait(update)
             elif event.type == SessionEventType.SESSION_IDLE:
-                queue.put_nowait(None)
+                # A sub-agent going idle must not end the run; only the root agent's idle does.
+                if not getattr(event, "agent_id", None):
+                    queue.put_nowait(None)
             elif event.type == SessionEventType.SESSION_ERROR:
                 error_data: Any = event.data
                 error_msg = error_data.message or "Unknown error"
@@ -1238,7 +1284,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
             try:
                 mark_feature_used(FeatureIndex.GITHUB_COPILOT)
-                await copilot_session.send(prompt, attachments=attachments)
+                await copilot_session.send(prompt, attachments=attachments, response_schema=response_schema)
 
                 while (item := await queue.get()) is not None:
                     if isinstance(item, Exception):
@@ -1808,6 +1854,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             "on_pre_tool_use",
             "on_function_approval",
             "timeout",
+            "response_format",
             "cli_path",
             "log_level",
             "base_directory",
