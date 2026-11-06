@@ -26,6 +26,7 @@ import errno
 import fnmatch
 import logging
 import os
+import sys
 import threading
 import time
 import unicodedata
@@ -98,6 +99,17 @@ _SEARCH_SNIPPET_RADIUS = 50
 # rejects the same extremes the filesystem backend's OS layer would refuse.
 _MAX_PATH_SEGMENTS: Final[int] = 255
 _MAX_PATH_LENGTH: Final[int] = 4096
+
+# Windows path length limits. They are consulted only to explain an error the OS already
+# raised (see :func:`_raise_if_path_too_long`); they never gate a path up front.
+# ``MAX_PATH`` is 260 characters including the drive, the separators and the terminating
+# NUL, and ``CreateDirectory`` needs room for the 8.3 name it may have to synthesize,
+# which is where the 248-character directory limit comes from.
+# https://learn.microsoft.com/windows/win32/fileio/maximum-file-path-limitation
+_WINDOWS_MAX_PATH_CHARS: Final[int] = 260
+_WINDOWS_MAX_DIRECTORY_PATH_CHARS: Final[int] = 248
+# Pinned in a constant so tests can exercise both branches on any platform.
+_WINDOWS_PATH_LIMITS_APPLY: Final[bool] = sys.platform == "win32"
 
 # Hard cap on the length of a user-supplied search regex. The cap is a coarse bound on
 # how much work a single pattern can describe; it does not stop a short pathological
@@ -1330,6 +1342,32 @@ class InMemoryAgentFileStore(AgentFileStore):
                 self._explicit_dirs[key] = display
 
 
+def _raise_if_path_too_long(exc: OSError, path: Path, *, limit: int) -> None:
+    """Re-raise an over-long Windows path failure as :data:`errno.ENAMETOOLONG`.
+
+    Without long-path support Windows reports a path past its limit as a missing path,
+    which CPython surfaces as :class:`FileNotFoundError`. Callers then go looking for a
+    bug in their own path handling instead of shortening the key.
+
+    The length is used only to explain an error that already happened. Nothing here
+    rejects a path before it is used, so a host with long-path support behaves exactly as
+    before and every in-limit path stays untouched. The rewrite additionally requires a
+    prefix inside the limit to exist; without one the path is missing for an ordinary
+    reason and the original error is the accurate one.
+    """
+    if not _WINDOWS_PATH_LIMITS_APPLY or len(str(path)) < limit:
+        return
+    prefix = path
+    while len(str(prefix)) >= limit:
+        parent = prefix.parent
+        if parent == prefix:
+            return
+        prefix = parent
+    if not prefix.exists():
+        return
+    raise OSError(errno.ENAMETOOLONG, "File name too long", str(path)) from exc
+
+
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class FileSystemAgentFileStore(AgentFileStore):
     """A disk-backed :class:`AgentFileStore` rooted under a configurable directory.
@@ -1351,6 +1389,15 @@ class FileSystemAgentFileStore(AgentFileStore):
     symlink between the probe and the file open. This store is designed for
     single-tenant or co-operating-tenant use; it is not a sandbox against a
     hostile process that shares the root directory.
+
+    On Windows the length of the resolved path (root plus key) is limited to 260
+    characters for a file and 248 for a directory unless long-path support is enabled
+    (``LongPathsEnabled``). :meth:`write` reports that limit as :class:`OSError` with
+    :data:`errno.ENAMETOOLONG` instead of the ``FileNotFoundError`` the OS raises, so a
+    caller can tell "too long" apart from "missing". The limit only renames a failure
+    the OS already produced; paths are never rejected up front, and a host with
+    long-path support behaves exactly as before. :class:`InMemoryAgentFileStore` has no
+    such limit, so the two backends still differ at that bound.
     """
 
     # Case aliases can identify the same file while having different Path hashes.
@@ -1502,6 +1549,11 @@ class FileSystemAgentFileStore(AgentFileStore):
             if parent_file is not None:
                 raise NotADirectoryError(f"Parent path is not a directory: {parent_file}") from exc
             raise
+        except OSError as exc:
+            # Windows reports an over-long absolute path as FileNotFoundError; name the
+            # real cause before the caller reads it as a missing parent directory.
+            _raise_if_path_too_long(exc, full_path.parent, limit=_WINDOWS_MAX_DIRECTORY_PATH_CHARS)
+            raise
         encoded = content.encode("utf-8")
         flags = os.O_WRONLY | os.O_CREAT
         if overwrite:
@@ -1516,6 +1568,7 @@ class FileSystemAgentFileStore(AgentFileStore):
         try:
             fd = os.open(full_path, flags, 0o644)
         except OSError as exc:
+            _raise_if_path_too_long(exc, full_path, limit=_WINDOWS_MAX_PATH_CHARS)
             # Windows reports PermissionError when opening a directory for
             # writing; POSIX exclusive creation can report FileExistsError.
             if isinstance(exc, (FileExistsError, PermissionError)) and full_path.is_dir():

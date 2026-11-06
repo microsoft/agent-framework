@@ -8,6 +8,7 @@ import json
 import os
 import re
 import stat
+import sys
 import threading
 import time
 from contextlib import suppress
@@ -2983,9 +2984,33 @@ async def test_in_memory_store_accepts_deep_paths_within_the_bound() -> None:
     assert retained < 200 * len(path)
 
 
+def _windows_long_paths_disabled() -> bool:
+    """Return whether this host is Windows with long-path support turned off.
+
+    Read-only: the registry value is queried, never written. The Windows default is
+    ``0`` when the value or key is absent. The concept does not apply elsewhere, so
+    this returns ``False`` on every other platform.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as key:
+            enabled, _ = winreg.QueryValueEx(key, "LongPathsEnabled")
+    except OSError:
+        return True
+    return not enabled
+
+
 async def test_filesystem_store_matches_in_memory_complexity_bound(tmp_path) -> None:
     """Both backends refuse the same over-bound path with the same errno, so
-    backend substitution is not observable on the bound either."""
+    backend substitution is not observable on the bound either.
+
+    That agreement stops at the OS bound. On Windows without long-path support a
+    200-segment key is still legal for the store itself but not for the filesystem,
+    so the within-bound half expects the normalized ``ENAMETOOLONG`` there.
+    """
     import errno
 
     fs_store = FileSystemAgentFileStore(str(tmp_path))
@@ -3001,7 +3026,109 @@ async def test_filesystem_store_matches_in_memory_complexity_bound(tmp_path) -> 
     assert mem_info.value.errno == errno.ENAMETOOLONG
 
     within = "/".join(["d"] * 200 + ["f"])
-    await fs_store.write(within, "x")
     await mem_store.write(within, "x")
-    assert await fs_store.read(within) == "x"
     assert await mem_store.read(within) == "x"
+
+    if _windows_long_paths_disabled():
+        with pytest.raises(OSError) as within_info:
+            await fs_store.write(within, "x")
+        assert within_info.value.errno == errno.ENAMETOOLONG
+        # The path is not reachable for the filesystem backend, so it reads as absent.
+        assert await fs_store.read(within) is None
+    else:
+        await fs_store.write(within, "x")
+        assert await fs_store.read(within) == "x"
+
+
+@pytest.mark.parametrize("failure_point", ["mkdir", "open"])
+async def test_filesystem_store_normalizes_windows_path_too_long_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_point: str
+) -> None:
+    """An OS "path too long" failure is reported as ``ENAMETOOLONG``.
+
+    Windows reports an absolute path past its limit as a missing path, which CPython
+    surfaces as ``FileNotFoundError``; without the rewrite the store reports a path that
+    is merely too long as a missing file. The failure is injected at both points where
+    the store touches the OS and the platform flag is pinned, so the test also runs on
+    CI hosts that have long paths enabled.
+    """
+    import errno
+
+    monkeypatch.setattr("agent_framework._harness._file_access._WINDOWS_PATH_LIMITS_APPLY", True)
+    store = FileSystemAgentFileStore(str(tmp_path))
+    too_long = FileNotFoundError(errno.ENOENT, "The system cannot find the path specified", "too-long")
+
+    def raise_too_long(*_args: object, **_kwargs: object) -> None:
+        raise too_long
+
+    if failure_point == "mkdir":
+        # A directory past its limit is what a real host refuses, and it still creates the
+        # prefixes below the limit first; the rewrite checks for one of those.
+        real_mkdir = Path.mkdir
+        key = "/".join(["d" * 40] * 8)  # absolute path well past both limits
+
+        def length_aware_mkdir(self: Path, mode: int = 0o777, parents: bool = False, exist_ok: bool = False) -> None:
+            if len(str(self)) >= 248:
+                # Mimic pathlib's recursion: create the deepest prefix that is still legal,
+                # then refuse, exactly as the OS does.
+                prefix = self
+                while len(str(prefix)) >= 248 and prefix.parent != prefix:
+                    prefix = prefix.parent
+                if prefix != self and len(str(prefix)) < 248:
+                    real_mkdir(prefix, parents=True, exist_ok=True)
+                raise_too_long()
+            real_mkdir(self, mode, parents, exist_ok)
+
+        monkeypatch.setattr(Path, "mkdir", length_aware_mkdir)
+    else:
+        # Grow the parent until it is just inside the directory limit, then add a file name
+        # that pushes the absolute path past the file limit, so only the open fails.
+        segments: list[str] = []
+        current = len(str(tmp_path))
+        while current + 1 + 34 <= 247:
+            segments.append("d" * 34)
+            current += 1 + 34
+        key = "/".join([*segments, "f" * 20])
+        monkeypatch.setattr(os, "open", raise_too_long)
+
+    with pytest.raises(OSError) as exc_info:
+        await store.write(key, "x")
+
+    assert not isinstance(exc_info.value, FileNotFoundError)
+    assert exc_info.value.errno == errno.ENAMETOOLONG
+    assert exc_info.value.__cause__ is too_long
+
+
+@pytest.mark.skipif(_windows_long_paths_disabled(), reason="this host rejects paths past MAX_PATH")
+async def test_filesystem_store_never_rejects_a_path_past_the_windows_limit(tmp_path: Path) -> None:
+    """The Windows limits only rename a failure; they never reject a path up front.
+
+    On a host that supports long paths, the key that fails on a legacy host must still be
+    written and read. A length check applied before the OS call would break exactly this
+    case, which is why the rewrite runs only inside an ``except`` block.
+    """
+    store = FileSystemAgentFileStore(str(tmp_path))
+    key = "/".join(["d" * 40] * 8)
+    await store.write(key, "payload")
+    assert await store.read(key) == "payload"
+
+
+async def test_filesystem_store_propagates_other_file_not_found_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``FileNotFoundError`` that is not the Windows over-long-path error keeps
+    its type and identity, so a genuinely missing parent still reads as missing."""
+    import errno
+
+    store = FileSystemAgentFileStore(str(tmp_path))
+    missing = FileNotFoundError(errno.ENOENT, "The system cannot find the path specified")
+
+    def raise_missing(*_args: object, **_kwargs: object) -> None:
+        raise missing
+
+    monkeypatch.setattr(Path, "mkdir", raise_missing)
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        await store.write("nested/file.txt", "x")
+
+    assert exc_info.value is missing
