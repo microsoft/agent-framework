@@ -277,12 +277,13 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
     Usage:
 
     .. code-block:: python
+
         from agent_framework.microsoft import PurviewChatPolicyMiddleware, PurviewSettings
-        from agent_framework import ChatClient
+        from agent_framework.openai import OpenAIChatClient
 
         credential = ...  # TokenCredential, AsyncTokenCredential, or callable
         settings = PurviewSettings(app_name="My App")
-        client = ChatClient(..., middleware=[PurviewChatPolicyMiddleware(credential, settings)])
+        client = OpenAIChatClient(middleware=[PurviewChatPolicyMiddleware(credential, settings)])
     """
 
     def __init__(
