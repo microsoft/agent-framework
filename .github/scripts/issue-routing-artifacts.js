@@ -51,7 +51,7 @@ async function findPreviousRoutingArtifact({ github, context, core, issueNumber 
         run.repository.id !== repository.id || run.head_repository?.id !== repository.id ||
         run.head_branch !== repository.default_branch ||
         run.display_title !== `Issue Routing #${number}` ||
-        !['workflow_dispatch', 'issues'].includes(run.event) ||
+        !['workflow_dispatch', 'issues', 'issue_comment'].includes(run.event) ||
         run.status !== 'completed' || run.conclusion !== 'success' ||
         !/^[a-f0-9]{40}$/.test(run.head_sha) ||
         artifact.workflow_run.head_sha !== run.head_sha) {

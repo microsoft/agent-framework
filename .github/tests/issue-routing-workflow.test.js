@@ -24,13 +24,11 @@ function configFor(name, variable) {
 const handlers = configFor('safe_outputs', 'GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG');
 
 describe('Issue routing workflow', () => {
-  it('keeps agentic routing manual-only alongside the legacy workflow', () => {
+  it('routes new and newly typed issues, reporter replies, and manual runs', () => {
     const triggers = compiled.match(/^on:\n([\s\S]*?)^permissions:/m)[1];
     assert.match(triggers, /workflow_dispatch:/);
-    assert.doesNotMatch(triggers, /^  issues:/m);
-    assert.ok(existsSync(resolve(__dirname, '../workflows/issue-triage.yml')));
-    assert.equal(existsSync(resolve(__dirname, '../workflows/issue-triage.md')), false);
-    assert.equal(existsSync(resolve(__dirname, '../workflows/issue-triage.lock.yml')), false);
+    assert.match(triggers, /^  issues:\n    types:\n      - opened\n      - typed\n/m);
+    assert.match(triggers, /^  issue_comment:\n    types:\n      - created\n/m);
     assert.match(source, /name: Issue Routing/);
     const preview = triggers.match(/      preview:\n((?:        .+\n)+)/)[1];
     assert.match(preview, /default: true/);
@@ -107,6 +105,25 @@ describe('Issue routing workflow', () => {
     const setup = manifest.actions.find(action => action.repo === 'github/gh-aw-actions/setup');
     assert.ok(automation.includes(`uses: ${setup.repo}@${setup.sha}`), 'Publisher tests must use the compiled runtime version');
     assert.match(automation, /GH_AW_TEST_RUNTIME: \$\{\{ runner.temp \}\}\/routing-publisher/);
+  });
+
+  it('queues routing runs together and filters unrelated comments before preparation', () => {
+    const reply = "github.event.comment.user.login == github.event.issue.user.login && !github.event.issue.pull_request && contains(github.event.issue.labels.*.name, 'requested-info')";
+    const concurrency = compiled.match(/^concurrency:\n((?:  .+\n)+)/m)[1];
+    assert.ok(concurrency.includes(`!(${reply}) && format('issue-routing-ignored-{0}', github.run_id) || 'issue-routing'`));
+    assert.match(concurrency, /cancel-in-progress: false/);
+    const prepare = job('prepare').replace(/\s+/g, ' ');
+    assert.ok(prepare.includes("github.event_name != 'issue_comment' ||"));
+    assert.ok(prepare.includes(reply.replace(/\s+/g, ' ')));
+    assert.match(job('prepare'), /actions: read/);
+    assert.match(job('prepare'), /actionsGithub: getOctokit\(process.env.ACTIONS_TOKEN\)/);
+  });
+
+  it('keeps the publishing step that marks a run as routed', () => {
+    const { ROUTED_STEP } = require('../scripts/issue-routing-history.js');
+    const step = job('safe_outputs').split('\n      - ').find(text => text.includes(`name: ${ROUTED_STEP}`));
+    assert.ok(step, 'Earlier-run detection depends on this step name');
+    assert.match(step, /if: steps.routing-policy.outputs.allowed == 'true' && !\(github.event_name == 'workflow_dispatch' && inputs.preview\)/);
   });
 
   it('pins every issue writer to the validated number in manual runs too', () => {
@@ -186,7 +203,7 @@ describe('Issue routing workflow', () => {
     assert.match(job('conclusion'), /GH_AW_MISSING_TOOL_CREATE_ISSUE: "false"/);
     assert.match(job('conclusion'), /GH_AW_REPORT_INCOMPLETE_CREATE_ISSUE: "false"/);
     assert.doesNotMatch(job('conclusion'), /GH_AW_REPORT_FAILED_JOBS: "true"/);
-    assert.match(compiled, /group: issue-routing\n  queue: max/);
+    assert.ok(compiled.includes("|| 'issue-routing' }}\n  queue: max"));
     assert.match(job('activation'), /Check daily workflow token guardrail/);
     assert.match(job('agent'), /timeout-minutes: 60/);
   });

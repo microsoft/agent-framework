@@ -10,16 +10,36 @@ scope, or whether action will be taken, and it never removes the `triage` label.
 Routing or reproducing a report is not maintainer acceptance; maintainers make
 those decisions and remove `triage` themselves.
 
-The workflow is currently **manual-only**. Automatic issue triggers are not
-enabled.
+## When it runs
+
+- **New issues and type changes** (`issues: opened, typed`).
+- **Reporter replies**: when the person who opened the issue comments on an issue
+  labelled `requested-info`. Other comments, and comments on pull requests, are
+  ignored before any work starts, although each one still shows up as a skipped
+  run on the Actions page.
+- **Manually** from the Actions page (see below).
+
+Runs wait in one shared queue, one at a time. Before an automatic run starts
+work, the preparation job looks at earlier runs of this workflow for the same
+issue. A run counts as having routed the issue only if it really published
+(previews and runs stopped by labels or checks do not count). Then:
+
+- A new issue or type change is skipped if the issue was already routed.
+- A reporter reply is skipped if a routed run started after the reply was
+  posted (that run already saw it), or if the issue has already had 3 routed
+  reply re-runs. The cap stops a reporter from triggering runs without end.
+
+Manual runs always go ahead. On a reply re-run the agent focuses on the new
+information, reuses earlier evidence, and does not repeat earlier comments.
 
 ## What it does
 
 A small preparation job fetches the selected issue and rejects pull requests or
-invalid numbers. Automatic runs, once enabled, accept native Bug/Feature types
+invalid numbers. Automatic runs accept native Bug/Feature types
 and skip authors in `DEVELOPER_TEAM`. This checks the issue author, not the
 person or App that triggered the event. Manual runs bypass the team/type check.
-The App token helper is used only in preparation, with read access.
+The App token helper is used only in preparation, with read access. The
+earlier-run lookup uses the normal workflow token with read access to Actions.
 
 The labels `spam` and `suspected-spam` block routing.
 `needs-maintainer-triage` also stops it unless a maintainer has reviewed the
@@ -40,7 +60,8 @@ Features receive package ownership/labels without reproduction. Bugs and other
 manually selected reports can get local Python/.NET tests or direct verification
 of a documentation defect. There are no live model-service credentials.
 Failed setup, unavailable services, and blocked requests are inconclusive, not
-reproduction or evidence of a fix. The agent cannot implement fixes or create
+reproduction or evidence of a fix. For these, the workflow posts a short comment
+explaining why it was inconclusive and what the source evidence suggests. The agent cannot implement fixes or create
 branches or pull requests.
 
 Ownership rules are in `issue-routing-owners.yaml`, including for likely-fixed
@@ -92,8 +113,7 @@ From the Actions page, run **Issue Routing** with an issue number and leave
 previews the proposed issue updates instead of applying them. Artifacts and
 Actions records are still public in a public repository.
 
-Only one workflow should automatically handle a given issue event. Before
-enabling automatic routing, use an authorized test issue/repository to:
+To check changes to the workflow, use an authorized test issue/repository to:
 
 1. Preview a Feature, a local Python failure, a local .NET failure, a passing test,
    a documentation error, missing information, an unavailable service, failed
@@ -126,23 +146,17 @@ Do not grant automatic issue reports access to a private testing repository.
 Deploying a test workflow requires an authorized commit/push; local compilation
 does not deploy it or prove model judgment, organization access, or SDK behavior.
 
-After those checks, add the following under `on` in `issue-routing.md` and remove
-the manual-only comment in a reviewed change:
-
-```yaml
-issues:
-  types: [opened, typed]
-```
-
-Recompile the lock file and update the manual-only assertion in
-`issue-routing-workflow.test.js` to require this trigger.
 Keep `roles: all`: external reporters and App-generated type events must reach
 the preparation job. Restricting event actors to maintainer roles is not a
 check of the author's team.
 
-To pause automatic routing, remove the `issues` trigger and recompile the lock
-file in a reviewed change. Do not automatically reverse published issue or
-human edits.
+The earlier-run check relies on the publishing step named "Find this run's
+checked evidence". If you rename it, update `ROUTED_STEP` in
+`scripts/issue-routing-history.js`; a test checks the two match.
+
+To pause automatic routing, disable the workflow from the Actions page, or
+remove the `issues` and `issue_comment` triggers and recompile the lock file in
+a reviewed change. Do not automatically reverse published issue or human edits.
 
 ## Records and limits
 

@@ -6,7 +6,12 @@ name: Issue Routing
 run-name: "Issue Routing #${{ inputs.issue_number || github.event.issue.number }}"
 description: Screen issue reports, route Features, and attempt local Bug reproduction without service credentials.
 on:
-  # Keep manual-only until the checks in .github/issue-routing.md pass.
+  # Route new issues and issues whose type is set later (for example by label-issues.yml).
+  issues:
+    types: [opened, typed]
+  # Re-run when the reporter replies to a request for details; prepare rechecks this.
+  issue_comment:
+    types: [created]
   workflow_dispatch:
     inputs:
       issue_number:
@@ -35,8 +40,11 @@ env:
   GH_AW_OTLP_ENDPOINTS: "[]"
   OTEL_EXPORTER_OTLP_ENDPOINT: ""
   OTEL_EXPORTER_OTLP_HEADERS: ""
+# Runs queue one at a time so each run sees earlier results and daily credit limits.
+# Comments that are not reporter replies to `requested-info` issues skip the queue.
 concurrency:
-  group: issue-routing
+  group: >-
+    ${{ github.event_name == 'issue_comment' && !(github.event.comment.user.login == github.event.issue.user.login && !github.event.issue.pull_request && contains(github.event.issue.labels.*.name, 'requested-info')) && format('issue-routing-ignored-{0}', github.run_id) || 'issue-routing' }}
   cancel-in-progress: false
   queue: max
   job-discriminator: ${{ github.run_id }}
@@ -266,9 +274,16 @@ safe-outputs:
 # Preparation runs first and keeps App/team credentials out of the agent job.
 jobs:
   prepare:
+    # Ignore comments early unless they are a reporter reply on a `requested-info` issue.
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.comment.user.login == github.event.issue.user.login &&
+      !github.event.issue.pull_request &&
+      contains(github.event.issue.labels.*.name, 'requested-info'))
     runs-on: ubuntu-latest
     environment: github-app-auth
     permissions:
+      actions: read
       contents: read
       issues: read
       id-token: write
@@ -304,6 +319,8 @@ jobs:
           pull-requests-permission: read
           fallback-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
       # Validate the number, reject PRs, apply stop labels, and check author eligibility.
+      # Automatic runs also skip issues that an earlier run already routed, using
+      # the workflow token to read earlier runs of this workflow.
       # Export only the issue number/type and the decision, never the credentials.
       - name: Validate issue and author
         id: issue
@@ -311,12 +328,14 @@ jobs:
         env:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
+          ACTIONS_TOKEN: ${{ github.token }}
         with:
           github-token: ${{ steps.github-auth.outputs.token }}
           script: |
             const prepareIssueRouting = require('./.github/scripts/issue-routing-prepare.js');
             await prepareIssueRouting({
               github,
+              actionsGithub: getOctokit(process.env.ACTIONS_TOKEN),
               context,
               core,
               issueNumber: process.env.ISSUE_NUMBER,
@@ -346,6 +365,11 @@ jobs:
 The selected issue is #${{ needs.prepare.outputs.issue_number }} in
 ${{ github.repository }}. Its native type at preparation time was
 `${{ needs.prepare.outputs.issue_type }}`.
+
+This run was started by `${{ github.event_name }}`. If it is `issue_comment`, the
+reporter replied after earlier routing asked for more details. Focus on what
+their new information changes, reuse earlier evidence where it still applies,
+and do not repeat earlier comments.
 
 Work only on that issue. Do not fix product code, commit, push, create a branch
 or pull request, close an issue, or change any other issue. Temporary reproduction
@@ -484,7 +508,7 @@ its priority, or that action will be taken; maintainers decide that and remove
 | Finding | Updates |
 | --- | --- |
 | Observed reported failure, or directly verified documentation defect | Add `reproduced`, route the package owner/labels, and post one short evidence comment linking the run. Save reproduction JSON in the artifact, not the comment. |
-| Strong source evidence without observed failure; unavailable service/setup | Add `needs-maintainer-triage`. Do not claim reproduction or resolution. Normally no public comment. |
+| Strong source evidence without observed failure; unavailable service/setup | Add `needs-maintainer-triage` and route the package owner/labels. Do not claim reproduction or resolution. Post one short comment saying why the result is inconclusive and what the source evidence suggests. |
 | Relevant reproduction actually ran and did not fail, but more details are needed | Add `requested-info`; post focused questions explaining why the missing details matter. Do not request information already in the discussion. |
 | Specific verified evidence indicates the report is already fixed | Add `likely-fixed`, route the package owner/labels, and post evidence-backed upgrade guidance. |
 | Feature request | Route package owner/labels; set native type to Feature only if different. Normally no comment. |
