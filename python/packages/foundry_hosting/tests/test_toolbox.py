@@ -16,7 +16,15 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx as host_httpx
 import httpx2 as httpx
 import pytest
-from agent_framework import Agent, MCPStreamableHTTPTool, Message, SkillsProvider, SkillsSourceContext, SupportsAgentRun
+from agent_framework import (
+    Agent,
+    FunctionInvocationContext,
+    MCPStreamableHTTPTool,
+    Message,
+    SkillsProvider,
+    SkillsSourceContext,
+    SupportsAgentRun,
+)
 from agent_framework.exceptions import ToolException, ToolExecutionException
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
@@ -1141,6 +1149,36 @@ async def test_reconnect_restores_approval_modes_when_prompt_discovery_fails(
         await toolbox.connect()
         assert toolbox.functions[0] is functions[0]
         assert toolbox.functions[0].approval_mode == f"{refreshed_policy}_require"
+
+
+async def test_reconnect_restores_progressive_tools_when_prompt_discovery_fails() -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool(name="learn___removed"), toolbox_tool(name="learn___kept")]
+    server.prompts = [{"name": "summarize"}]
+    async with toolbox_connection(server, load_prompts=True, use_progressive_disclosure=True) as toolbox:
+        loader = next(function for function in toolbox.functions if function.name == "load_tool")
+        arguments = {"tool": ["learn___removed", "learn___kept"]}
+        context = FunctionInvocationContext(function=loader, arguments=arguments, tools=list(toolbox.functions))
+        await loader.invoke(arguments=arguments, context=context)
+        functions = list(toolbox.functions)
+        assert {function.name for function in functions} >= {"learn___removed", "learn___kept"}
+
+        server.tools = [toolbox_tool(name="learn___kept")]
+        server.prompts = [{"name": "summarize", "arguments": "invalid"}]
+        with pytest.raises(ValueError, match="arguments"):
+            await toolbox.connect(reset=True)
+
+        assert server.initializations == 2
+        assert not toolbox.is_connected
+        assert all(current is previous for current, previous in zip(toolbox.functions, functions, strict=True))
+        assert toolbox._progressive_loaded_tool_names == {"learn___removed", "learn___kept"}
+
+        server.prompts = [{"name": "summarize"}]
+        await toolbox.connect()
+        names = {function.name for function in toolbox.functions}
+        assert "learn___kept" in names
+        assert "learn___removed" not in names
+        assert toolbox._progressive_loaded_tool_names == {"learn___kept"}
 
 
 async def test_each_tool_uses_its_own_metadata_and_exact_server_prefix() -> None:

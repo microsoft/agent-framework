@@ -2579,6 +2579,7 @@ class MCPTool:
         approval_modes_before_discovery = [
             (function, function.approval_mode) for function in functions_before_discovery
         ]
+        progressive_loaded_names_before_discovery = self._progressive_loaded_tool_names.copy()
         call_meta_before_discovery = self._tool_call_meta_by_name
         param_names_before_discovery = self._tool_param_names_by_name
         annotations_before_discovery = self._tool_annotations_by_name
@@ -2620,6 +2621,8 @@ class MCPTool:
                 self._tool_call_meta_by_name = call_meta_before_discovery
                 self._tool_param_names_by_name = param_names_before_discovery
                 self._tool_annotations_by_name = annotations_before_discovery
+                self._progressive_loaded_tool_names.clear()
+                self._progressive_loaded_tool_names.update(progressive_loaded_names_before_discovery)
             raise
 
     async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
