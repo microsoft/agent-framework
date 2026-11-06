@@ -17,6 +17,7 @@ namespace Microsoft.Agents.AI;
 /// Supports ZIP payloads. Extraction is guarded against path-traversal ("zip-slip") attacks and
 /// bounded by a maximum file count and total uncompressed size to mitigate decompression-bomb attacks.
 /// Later entries resolving to an existing file are skipped, preserving the first file's content.
+/// Archives containing file names that differ only by case are rejected.
 /// </remarks>
 internal static partial class AgentMcpSkillArchiveExtractor
 {
@@ -83,7 +84,7 @@ internal static partial class AgentMcpSkillArchiveExtractor
     /// <param name="maxUncompressedSizeBytes">The maximum total uncompressed size, in bytes, of all extracted files.</param>
     /// <param name="logger">An optional logger reporting each skipped colliding archive member.</param>
     /// <exception cref="NotSupportedException">The format is not <see cref="ArchiveFormat.Zip"/>.</exception>
-    /// <exception cref="InvalidDataException">The archive exceeds one of the supplied limits.</exception>
+    /// <exception cref="InvalidDataException">The archive exceeds one of the supplied limits or contains file names that differ only by case.</exception>
     internal static void Extract(
         byte[] bytes,
         ArchiveFormat format,
@@ -113,7 +114,7 @@ internal static partial class AgentMcpSkillArchiveExtractor
 
         long remainingBytes = maxUncompressedSizeBytes;
         int fileCount = 0;
-        var destinations = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        var destinations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string skillName = SanitizePathForLog(Path.GetFileName(fullTarget));
 
         foreach (ZipArchiveEntry entry in archive.Entries)
@@ -136,11 +137,18 @@ internal static partial class AgentMcpSkillArchiveExtractor
             }
 
             // Normalization can map distinct archive names to one path; keep the first file.
-            if (!destinations.Add(destination))
+            if (destinations.TryGetValue(destination, out string? previous))
             {
+                if (!string.Equals(previous, destination, StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException("Skill archive contains file names that differ only by case.");
+                }
+
                 LogArchiveMemberCollision(logger, skillName, SanitizePathForLog(entry.FullName));
                 continue;
             }
+
+            destinations.Add(destination, destination);
 
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
 
