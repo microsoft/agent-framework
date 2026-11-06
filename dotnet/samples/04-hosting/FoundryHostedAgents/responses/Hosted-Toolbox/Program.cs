@@ -66,7 +66,7 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
 var builder = WebApplication.CreateBuilder(args);
 
 // Register the agent and response handler
-builder.Services.AddFoundryResponses(agent);
+builder.AddFoundryResponses(agent);
 
 // Register Foundry Toolbox: connects to the MCP proxy at startup and makes tools available.
 // The toolbox name must match a toolbox registered in your Foundry project.

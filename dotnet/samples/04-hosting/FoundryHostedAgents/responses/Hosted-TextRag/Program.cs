@@ -54,7 +54,7 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredentia
 
 // Host the agent using the Responses protocol.
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent);
+builder.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();

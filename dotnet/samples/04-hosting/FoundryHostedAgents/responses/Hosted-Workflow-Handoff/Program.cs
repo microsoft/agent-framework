@@ -124,7 +124,7 @@ builder.Services.AddSingleton(sp =>
 // ---------------------------------------------------------------------------
 // 4. Wire up the agent-framework handler and Responses Server SDK
 // ---------------------------------------------------------------------------
-builder.Services.AddFoundryResponses();
+builder.AddFoundryResponses();
 
 var app = builder.Build();
 

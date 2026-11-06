@@ -86,7 +86,7 @@ ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions()
 // header (see scripts/smoke.ps1); vary it to simulate distinct users. On the Foundry platform the
 // header is always present, so no local provider registration is needed.
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent);
+builder.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();

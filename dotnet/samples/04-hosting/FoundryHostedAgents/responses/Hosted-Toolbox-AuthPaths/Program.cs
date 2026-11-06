@@ -73,7 +73,7 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
 // mapped it), so the sample stays free of platform plumbing.
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddFoundryResponses(agent);
+builder.AddFoundryResponses(agent);
 // With FOUNDRY_PROJECT_ENDPOINT injected by the platform, startup MCP tools/list against
 // the toolbox proxy is typically <100ms in-region.
 builder.Services.AddFoundryToolboxes(credential, toolboxName);
