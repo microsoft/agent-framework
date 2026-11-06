@@ -1024,15 +1024,17 @@ class FunctionTool(SerializationMixin):
         # A malformed payload provenance marker keeps the synthetic raw entry
         # alive across schema validation: validation drops the undeclared key,
         # which would otherwise erase the signal that the call is still the
-        # wrapped malformed payload rather than a middleware repair.
-        preserved_raw = None
+        # wrapped malformed payload rather than a middleware repair. Presence
+        # is tracked separately from the value so a wrapped JSON null - a
+        # legitimate malformed payload - is not mistaken for no wrapper.
+        preserved_wrapper: dict[str, Any] = {}
         malformed_wrapper = context.metadata.get(_MALFORMED_WRAPPER_CONTEXT_KEY)
         if malformed_wrapper is not None and isinstance(current_arguments, Mapping) and "raw" in current_arguments:
-            preserved_raw = current_arguments["raw"]
+            preserved_wrapper["raw"] = current_arguments["raw"]
 
         validated_arguments = self._prepare_arguments(arguments)
-        if preserved_raw is not None:
-            validated_arguments = {**validated_arguments, "raw": preserved_raw}
+        if preserved_wrapper:
+            validated_arguments = {**validated_arguments, **preserved_wrapper}
         context.arguments = validated_arguments
         context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
             arguments=validated_arguments,
@@ -2422,7 +2424,10 @@ async def _auto_invoke_function(
     if host_payload_budget is not None:
         middleware_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
     middleware_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
-    if wrapped_raw_present:
+    if wrapped_raw_present and not _tool_declares_parameter(tool, "raw"):
+        # A tool that declares raw keeps the value validation produced, so the
+        # wrapper marker must not turn a middleware-rewritten declared raw into
+        # an unrepaired malformed payload.
         middleware_context.metadata[_MALFORMED_WRAPPER_CONTEXT_KEY] = dict(parsed_args)
     if arguments_prepared:
         middleware_context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
