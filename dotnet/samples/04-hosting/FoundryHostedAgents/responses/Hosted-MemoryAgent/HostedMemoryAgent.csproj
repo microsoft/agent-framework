@@ -34,9 +34,10 @@
     <AssemblyName>HostedMemoryAgent</AssemblyName>
     <UserSecretsId>7933e8df-ba8d-4e62-b419-6d34d53de308</UserSecretsId>
     <NoWarn>$(NoWarn);MAAI001</NoWarn>
-    <AgentFrameworkVersion>1.22.0-preview.260918.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.27.0-preview.261030.1</AgentFrameworkVersion>
     <LocalAgentFrameworkRoot>$(MSBuildThisFileDirectory)..\..\..\..\..\src</LocalAgentFrameworkRoot>
     <UseLocalAgentFramework Condition="'$(UseLocalAgentFramework)' == '' and Exists('$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj')">true</UseLocalAgentFramework>
+    <DefineConstants Condition="'$(UseLocalAgentFramework)' == 'true'">$(DefineConstants);USE_LOCAL_AGENT_FRAMEWORK_SOURCE</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(UseLocalAgentFramework)' == 'true'">

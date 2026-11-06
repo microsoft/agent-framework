@@ -96,8 +96,13 @@ app.Run();
 
 static FoundryMemoryProvider.State CreatePerUserMemoryState(AgentSession? session)
 {
+    // Repository builds use the reduced session API; published 1.27 exposes the context object.
     string userId =
+#if USE_LOCAL_AGENT_FRAMEWORK_SOURCE
         session?.GetHostedUserId()
+#else
+        session?.GetHostedContext()?.UserId
+#endif
         ?? throw new InvalidOperationException(
             "Foundry hosted user identity is required to scope memories.");
 

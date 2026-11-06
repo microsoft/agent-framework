@@ -16,7 +16,7 @@
     <AssemblyName>HostedWorkflowHandoff</AssemblyName>
     <UserSecretsId>92fa9432-1e9c-4f74-a2c2-7423f2042504</UserSecretsId>
     <NoWarn>$(NoWarn);MAAIW001;OPENAI001</NoWarn>
-    <AgentFrameworkVersion>1.22.0-preview.260918.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.27.0-preview.261030.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>

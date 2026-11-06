@@ -30,9 +30,16 @@ AIAgent agent = new AIProjectClient(projectEndpoint, new DefaultAzureCredential(
         description: "A steerable general-purpose AI assistant");
 
 var builder = WebApplication.CreateBuilder(args);
+// Repository builds use the unreleased direct-options API; source ZIPs target published 1.27.
+#if USE_LOCAL_AGENT_FRAMEWORK_SOURCE
 builder.AddFoundryResponses(
     agent,
     options: new FoundryResponsesOptions { SteerableConversations = true });
+#else
+builder.AddFoundryResponses(
+    agent,
+    configure: options => options.SteerableConversations = true);
+#endif
 
 var app = builder.Build();
 app.MapFoundryResponses();
