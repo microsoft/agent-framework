@@ -28,25 +28,14 @@ into application code.
   factory.
 - Make session, checkpoint, response, identity, approval, storage, and cleanup ownership explicit.
 
-`FoundryToolbox` honors discovered `_meta.tool_configuration.require_approval` unless the caller supplies
-a non-`None` `approval_mode`. An explicit caller policy replaces the metadata policy, including for tools not
-named in a per-tool dictionary. Toolbox `approval_mode=None` selects metadata-based approval, unlike regular
-MCP tools where `None` means no approval. Use `"never_require"` to disable local Toolbox approval explicitly.
-MCP `approval_mode` also accepts a synchronous callable receiving a discovered
-`mcp.types.Tool` or `mcp.types.Prompt` and returning `"always_require"` or `"never_require"` for every item,
-including its default decision. Returning `None` is invalid; constructor-level `None` still selects the default policy.
-The callable is reevaluated for new and retained functions on discovery refresh; invalid results fail discovery.
-`FoundryToolbox` composes its metadata parser through this option rather than overriding MCP approval methods.
-Toolbox metadata accepts `"always"`, `"never"`, and `always`/`never` filters
-with `tool_names` and/or `read_only`. Metadata names use remote or original server tool names, not local
-prefixes. Filter criteria must all match; `always` wins overlaps and unmatched tools require approval.
-Missing metadata preserves the no-approval default; malformed approval metadata fails discovery explicitly.
-Ordinary MCP servers do not inherit this Foundry-specific interpretation.
-For `read_only` filters, Toolbox trusts the supplied `annotations.readOnlyHint`, including when a match
-skips approval. This does not independently verify the classification or enforce read-only behavior;
-applications must trust the classifications supplied through their configured Toolbox.
-The private parser is Foundry Toolbox-specific and provides no security or compatibility guarantees
-when reused elsewhere. Do not treat it as a general-purpose MCP approval policy.
+MCP `approval_mode` supports a synchronous callable so server-specific policies can be composed without
+subclassing a transport. It receives a discovered `mcp.types.Tool` or `mcp.types.Prompt` and must return
+`"always_require"` or `"never_require"` for every item, including its default decision. It runs on discovery
+and refresh, not invocation; invalid results fail discovery. Ordinary MCP `approval_mode=None` means no approval.
+
+`FoundryToolbox` instead uses `None` to select its metadata policy. See
+[Toolbox approvals and trust boundary](https://github.com/microsoft/agent-framework/blob/main/python/packages/foundry_hosting/README.md#toolbox-tool-approvals)
+for vendor-specific configuration, caller overrides, and the trust placed in read-only labels.
 
 For MCP agent tools, `AgentMCPTool.call_tool(...)` validates the generated input schema before execution or
 session-store access. Applications using `mcp_to_run(...)` directly must validate their own schema before conversion.

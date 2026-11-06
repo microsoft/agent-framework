@@ -5,19 +5,18 @@ This package provides the integration of Agent Framework agents and workflows wi
 ## Toolbox tool approvals
 
 `FoundryToolbox` uses each discovered tool's `_meta.tool_configuration.require_approval` when
-`approval_mode` is omitted or `None`. `"always"` requires an approval pause before local execution;
-`"never"` does not. Missing configuration keeps the existing no-approval default.
-This differs from regular MCP tools, where `approval_mode=None` means no approval.
-For `FoundryToolbox`, use `approval_mode="never_require"` to disable local approval explicitly.
+`approval_mode` is omitted or `None`. See the
+[Foundry approval configuration](https://learn.microsoft.com/python/api/azure-ai-projects/azure.ai.projects.models.mcptoolrequireapproval)
+for supported metadata shapes.
 
-The [Foundry MCP approval configuration](https://learn.microsoft.com/python/api/azure-ai-projects/azure.ai.projects.models.mcptoolrequireapproval)
-also supports `always` and `never` filters. Each filter can contain `tool_names` and `read_only`;
-when both are supplied, both must match. Names match the remote Toolbox name, such as
-`learn___microsoft_docs_search`, or the original name after removing the exact `server_label + "___"` prefix.
-Local `tool_name_prefix` values do not change metadata matching. Missing `readOnlyHint` means not read-only.
-An `always` match takes precedence over a `never` match, and tools without a matching filter require approval.
-Malformed or unsupported approval metadata raises `ToolExecutionException` during discovery instead of
-silently disabling approvals.
+Unlike regular MCP tools, Toolbox `approval_mode=None` does not mean no approval.
+Use `"never_require"` to disable local approval or `"always_require"` to require it for every function.
+Any explicit non-`None` policy, including a dictionary or callable, replaces metadata handling entirely.
+Missing metadata defaults to no approval; malformed metadata raises `ToolExecutionException`.
+
+Metadata filters use remote/original tool names, not local prefixes. Filter criteria must all match;
+`always` wins overlaps and unmatched filter-policy tools require approval. Discovery refreshes and reconnects
+reapply the policy; failed refreshes preserve the previous complete snapshot and approval modes.
 
 **Trust boundary:** This Foundry-specific integration trusts the supplied `annotations.readOnlyHint`
 when evaluating `read_only` filters, including rules that skip approval. It does not independently
@@ -25,12 +24,6 @@ verify that classification or enforce read-only behavior. Applications must trus
 supplied through their configured Toolbox. The private metadata parser is intended only for Foundry
 Toolbox; reusing it elsewhere provides no security or compatibility guarantees. It is not a
 general-purpose MCP approval policy.
-
-The metadata parser is composed through the standard MCP `approval_mode` callable, not a subclass override.
-An explicit non-`None` caller `approval_mode`, including a per-tool dictionary or callable, replaces the metadata policy
-entirely and retains the standard MCP name-matching and default rules. Tool discovery refreshes and reconnects
-reapply metadata-derived approval modes to retained functions. A failed refresh preserves the previous complete
-tool snapshot and its approval modes.
 
 ## Agent instances and factories
 
