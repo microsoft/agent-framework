@@ -79,7 +79,7 @@ Python 3.11 or later is required. Use Python 3.11–3.15 for supported developme
 environments, subject to the workspace and integration-specific limits below.
 
 The checked-in root workspace lock supports Python 3.11–3.15. CI uses the
-same frozen workspace lock on Python 3.15 without excluding the Redis package.
+same frozen workspace lock across these versions.
 
 Alternatively, you can reinstall the venv, packages, dependencies and prek
 hooks with a single command. Poe is part of the cross-version development
