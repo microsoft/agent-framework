@@ -583,7 +583,7 @@ public class FoundryToolboxServiceTests
             },
         };
         await service.StartAsync(CancellationToken.None);
-        logger.Exceptions.Clear();
+        logs.Entries.Clear();
         var scope = service.CreateRequestScope();
         HostedCallContext.ToolboxCacheScopeId = scope.Id;
         await service.RetryDeferredToolboxesAsync(CancellationToken.None);
@@ -652,7 +652,7 @@ public class FoundryToolboxServiceTests
             },
         };
         await service.StartAsync(CancellationToken.None);
-        logger.Exceptions.Clear();
+        logs.Entries.Clear();
         var scope = service.CreateRequestScope();
         HostedCallContext.ToolboxCacheScopeId = scope.Id;
         await service.RetryDeferredToolboxesAsync(CancellationToken.None);
