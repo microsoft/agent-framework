@@ -1294,7 +1294,6 @@ class MCPTool:
         self._tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         self._tool_annotations_by_name: dict[str, types.ToolAnnotations | None] = {}
         self._tool_param_names_by_name: dict[str, set[str]] = {}
-        self._tool_annotations_by_name: dict[str, Any] = {}
         self._global_extra_arg_names, self._tool_extra_arg_names = _normalize_additional_tool_argument_names(
             additional_tool_argument_names
         )
@@ -2343,7 +2342,6 @@ class MCPTool:
         self._tool_call_meta_by_name.clear()
         self._tool_annotations_by_name.clear()
         self._tool_param_names_by_name.clear()
-        self._tool_annotations_by_name.clear()
         self._progressive_loaded_tool_names.clear()
 
     def _reset_session_state(self) -> None:
@@ -3354,7 +3352,6 @@ class MCPTool:
         self._tool_call_meta_by_name = tool_call_meta_by_name
         self._tool_annotations_by_name = tool_annotations_by_name
         self._tool_param_names_by_name = tool_param_names_by_name
-        self._tool_annotations_by_name = tool_annotations_by_name
         self._progressive_loaded_tool_names.difference_update(existing_tools.keys() - reused_tool_names)
 
     async def _cancel_pending_reload_tasks(self) -> None:
