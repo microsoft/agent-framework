@@ -8,6 +8,7 @@ import json
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
+from unittest.mock import patch
 
 import httpx2 as httpx
 from agent_framework import (
@@ -85,17 +86,21 @@ class ToolboxApprovalServer:
 async def toolbox_connection(
     server: ToolboxApprovalServer, *, connect: bool = True, **kwargs: Any
 ) -> AsyncGenerator[FoundryToolbox]:
-    toolbox = FoundryToolbox(ToolboxCredential(), url="https://toolbox.invalid/mcp", **kwargs)
-    original = toolbox._httpx_client
-    assert original is not None
-    await original.aclose()
-    toolbox._httpx_client = httpx.AsyncClient(transport=httpx.MockTransport(server.handle))
-    try:
-        if connect:
-            await toolbox.connect()
-        yield toolbox
-    finally:
-        await toolbox.close()
+    async_client = httpx.AsyncClient
+
+    def create_client(*args: Any, **client_kwargs: Any) -> httpx.AsyncClient:
+        client_kwargs.setdefault("transport", httpx.MockTransport(server.handle))
+        return async_client(*args, **client_kwargs)
+
+    # Failed setup closes the owned client; cover its replacement as well as startup.
+    with patch.object(httpx, "AsyncClient", new=create_client):
+        toolbox = FoundryToolbox(ToolboxCredential(), url="https://toolbox.invalid/mcp", **kwargs)
+        try:
+            if connect:
+                await toolbox.connect()
+            yield toolbox
+        finally:
+            await toolbox.close()
 
 
 def toolbox_tool(
