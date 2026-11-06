@@ -39,6 +39,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     private readonly bool _ownsClient;
     private readonly JsonSerializerOptions _jsonSerializerOptions;
     private readonly ILogger _logger;
+    private volatile bool _cliVersionChecked;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="GitHubCopilotAgent"/> class.
@@ -58,6 +59,10 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <c>SessionConfig.OnPermissionRequest</c>) and defers all other tools. If the caller supplies their own
     /// <c>OnPreToolUse</c> hook, it takes precedence and the caller is fully responsible for approval handling; in that
     /// case a warning is logged for any approval-required tool that will not be automatically gated.
+    /// <para>
+    /// GitHub Copilot CLI version 1.0.85 or higher is required. The version is checked the first time the agent runs,
+    /// and an <see cref="InvalidOperationException"/> is thrown if it is older or cannot be determined.
+    /// </para>
     /// </remarks>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
@@ -97,6 +102,10 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// When a tool wrapped in <see cref="ApprovalRequiredAIFunction"/> is registered, the agent installs a default
     /// <c>Hooks.OnPreToolUse</c> handler that returns <c>"ask"</c> for those tools (routing the decision to
     /// <c>SessionConfig.OnPermissionRequest</c>) and defers all other tools.
+    /// <para>
+    /// GitHub Copilot CLI version 1.0.85 or higher is required. The version is checked the first time the agent runs,
+    /// and an <see cref="InvalidOperationException"/> is thrown if it is older or cannot be determined.
+    /// </para>
     /// </remarks>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
@@ -308,6 +317,27 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     private async Task EnsureClientStartedAsync(CancellationToken cancellationToken)
     {
         await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
+
+        if (this._cliVersionChecked)
+        {
+            return;
+        }
+
+        string? version;
+        try
+        {
+            GetStatusResponse status = await this._copilotClient.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+            version = status?.Version;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw CopilotCliVersionGuard.CreateUndeterminedVersionException(ex);
+        }
+
+        CopilotCliVersionGuard.EnsureSupported(version);
+
+        // Only a successful check is remembered, so a failed check is repeated on the next run.
+        this._cliVersionChecked = true;
     }
 
     /// <summary>
