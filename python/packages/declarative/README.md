@@ -25,8 +25,11 @@ This package ships at two different stability levels:
 `WorkflowFactory` creates its default `AgentFactory` lazily when loading an
 agent definition from the workflow's `agents` section, including references to
 agent YAML files. That path uses the experimental declarative-agent APIs and
-emits the corresponding warning. The `env_file` passed to `WorkflowFactory` is
-loaded at that point.
+emits the corresponding warning. When no custom `agent_factory` is supplied,
+`WorkflowFactory` loads `env_file` during initialization, independently of agent
+creation. Workflow expressions such as `=Env.NAME` can read those variables when
+`restrict_env_to_configuration=False`; explicit `configuration` values still
+take precedence.
 
 Workflows containing only workflow actions use the stable workflow APIs. To use
 agents through that surface, create them with the appropriate client and pass

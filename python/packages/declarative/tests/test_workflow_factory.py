@@ -1337,23 +1337,41 @@ class TestWorkflowFactoryAgentCreation:
 
     @pytest.mark.usefixtures("fresh_feature_warnings")
     @pytest.mark.parametrize("registration", ["none", "constructor", "register_agent"])
-    async def test_workflow_without_agent_loading_emits_no_experimental_warning(self, registration: str) -> None:
+    @pytest.mark.parametrize("use_env_file", [False, pytest.param(True, marks=_requires_powerfx)])
+    async def test_workflow_without_agent_loading_emits_no_experimental_warning(
+        self, registration: str, use_env_file: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_file = None
+        if use_env_file:
+            monkeypatch.setenv("DECLARATIVE_TEST_ENV", "original")
+            monkeypatch.delenv("DECLARATIVE_TEST_ENV")
+            env_file = tmp_path / ".env"
+            env_file.write_text("DECLARATIVE_TEST_ENV=loaded\n")
         agent = MagicMock()
         with warnings.catch_warnings():
             warnings.simplefilter("error", ExperimentalWarning)
-            factory = WorkflowFactory(agents={"TestAgent": agent} if registration == "constructor" else None)
+            factory = WorkflowFactory(
+                agents={"TestAgent": agent} if registration == "constructor" else None,
+                env_file=str(env_file) if env_file else None,
+                restrict_env_to_configuration=False,
+            )
             if registration == "register_agent":
                 factory.register_agent("TestAgent", agent)
             definition: dict[str, Any] = {
                 "name": "hello-workflow",
-                "actions": [{"kind": "SendActivity", "activity": {"text": "Hello"}}],
+                "actions": [
+                    {
+                        "kind": "SendActivity",
+                        "activity": {"text": "=Env.DECLARATIVE_TEST_ENV" if use_env_file else "Hello"},
+                    }
+                ],
             }
             if registration != "none":
                 definition["agents"] = {"TestAgent": {"kind": "Prompt", "name": "OverrideAttempt"}}
             workflow = factory.create_workflow_from_yaml(yaml.safe_dump(definition))
             result = await workflow.run({})
 
-        assert any("Hello" in str(output) for output in result.get_outputs())
+        assert result.get_outputs() == ["loaded" if use_env_file else "Hello"]
         if registration != "none":
             assert cast(Any, workflow)._declarative_agents["TestAgent"] is agent
 
@@ -1378,6 +1396,7 @@ class TestWorkflowFactoryAgentCreation:
         with warnings.catch_warnings():
             warnings.simplefilter("error", ExperimentalWarning)
             factory = WorkflowFactory(env_file=str(env_file))
+        assert os.environ["DECLARATIVE_TEST_ENV"] == "loaded"
 
         with patch.object(AgentFactory, "_get_client", return_value=MagicMock()):
             with pytest.warns(ExperimentalWarning, match=r"\[DECLARATIVE_AGENTS\] AgentFactory"):
