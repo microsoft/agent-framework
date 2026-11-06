@@ -281,11 +281,31 @@ def _model_fields(value_cls: Any) -> Mapping[str, Any]:
     return fields if isinstance(fields, Mapping) else {}
 
 
+def _union_branch_label(annotation: Any) -> str:
+    """Format a type the way pydantic labels its synthetic union branches."""
+    annotation_origin = getattr(annotation, "__origin__", None)
+    if getattr(annotation, "__metadata__", None) is not None and annotation_origin is not None:
+        return _union_branch_label(annotation_origin)
+    origin = get_origin(annotation)
+    if origin in (Union, UnionType):
+        return f"Union[{','.join(_union_branch_label(arg) for arg in get_args(annotation))}]"
+    if origin is not None:
+        origin_name = getattr(origin, "__name__", str(origin).removeprefix("typing."))
+        args = ",".join(_union_branch_label(arg) for arg in get_args(annotation))
+        return f"{origin_name}[{args}]"
+    if annotation is Ellipsis:
+        return "..."
+    if isinstance(annotation, str):
+        return repr(annotation)
+    return getattr(annotation, "__name__", str(annotation))
+
+
 def _descend_classes(annotation: Any) -> tuple[Any | None, Any | None]:
     """Return the model class and item annotation for the next location level.
 
-    Union annotations stay intact until a synthetic branch label identifies the
-    branch. Mappings defer to their value annotation, while fixed tuples keep
+    A nullable union with one non-None alternative unwraps to that alternative.
+    Other union annotations stay intact until a synthetic branch label identifies
+    the branch. Mappings defer to their value annotation, while fixed tuples keep
     their complete annotation so a list index can select the element type.
     """
     annotation_origin = getattr(annotation, "__origin__", None)
@@ -293,6 +313,9 @@ def _descend_classes(annotation: Any) -> tuple[Any | None, Any | None]:
         return _descend_classes(annotation_origin)
     origin = get_origin(annotation)
     if origin is Union or origin is UnionType:
+        non_none_args = tuple(arg for arg in get_args(annotation) if arg is not type(None))
+        if len(non_none_args) == 1:
+            return _descend_classes(non_none_args[0])
         return annotation, annotation
     if origin in (dict, Mapping):
         args = get_args(annotation)
@@ -343,6 +366,33 @@ def _location_tree(errors: Sequence[Mapping[str, Any]]) -> _LocationTree | None:
     return tree if found else None
 
 
+def _restore_union(value: Any, tree: Mapping[Any, Any], annotation: Any, path: str) -> tuple[Any, bool]:
+    """Repair one union branch at a time, always starting from the original value."""
+    from pydantic import TypeAdapter, ValidationError
+
+    for segment, sub in tree.items():
+        branch = next(
+            (arg for arg in get_args(annotation) if _union_branch_label(arg) == segment),
+            None,
+        )
+        if branch is None:
+            continue
+        restored, changed = _restore_at_loc_tree(
+            value,
+            sub,
+            classes=_descend_classes(branch),
+            path=f"{path}.{segment}",
+        )
+        if not changed:
+            continue
+        try:
+            TypeAdapter(branch).validate_python(restored)
+        except ValidationError:
+            continue
+        return restored, True
+    return value, False
+
+
 def _restore_at_loc_tree(
     value: Any, tree: Any, *, classes: tuple[Any | None, Any | None], path: str
 ) -> tuple[Any, bool]:
@@ -352,6 +402,8 @@ def _restore_at_loc_tree(
     subtree = cast("_LocationTree | None", tree)
     if subtree is None or not subtree:
         return value, False
+    if get_origin(keyed_cls) in (Union, UnionType):
+        return _restore_union(value, subtree, keyed_cls, path)
     if isinstance(value, Mapping):
         mapping = cast("Mapping[str, Any]", value)
         if (
@@ -377,27 +429,9 @@ def _restore_mapping(
     path: str,
 ) -> tuple[Any, bool]:
     fields = _model_fields(keyed_cls)
-    union_args = get_args(keyed_cls) if get_origin(keyed_cls) in (Union, UnionType) else ()
     out = dict(value)
     changed = False
     for segment, sub in tree.items():
-        branch_cls = next(
-            (arg for arg in union_args if isinstance(arg, type) and arg.__name__ == segment),
-            None,
-        )
-        if branch_cls is not None:
-            # A synthetic union branch label describes the payload's type; it
-            # is not a serialized key. Select that branch without consuming a key.
-            restored, branch_changed = _restore_at_loc_tree(
-                out,
-                sub,
-                classes=_descend_classes(branch_cls),
-                path=f"{path}.{segment}",
-            )
-            if branch_changed:
-                out = dict(cast("Mapping[str, Any]", restored))
-                changed = True
-            continue
         field_name, field = next(
             (
                 (name, candidate)
