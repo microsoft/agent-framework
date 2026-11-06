@@ -9,7 +9,13 @@ namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
 /// <summary>Captures what the system under test reported, so a test can assert on it.</summary>
 internal sealed class RecordingLoggerFactory : ILoggerFactory
 {
-    public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
+    public List<(
+        LogLevel Level,
+        EventId EventId,
+        string Message,
+        Exception? Exception,
+        IReadOnlyList<KeyValuePair<string, object?>> Properties)> Entries
+    { get; } = [];
 
     public ILogger CreateLogger(string categoryName) => new RecordingLogger(this.Entries);
 
@@ -21,13 +27,27 @@ internal sealed class RecordingLoggerFactory : ILoggerFactory
     {
     }
 
-    private sealed class RecordingLogger(List<(LogLevel Level, string Message, Exception? Exception)> entries) : ILogger
+    private sealed class RecordingLogger(
+        List<(
+            LogLevel Level,
+            EventId EventId,
+            string Message,
+            Exception? Exception,
+            IReadOnlyList<KeyValuePair<string, object?>> Properties)> entries) : ILogger
     {
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
         public bool IsEnabled(LogLevel logLevel) => true;
 
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-            => entries.Add((logLevel, formatter(state, exception), exception));
+        {
+            List<KeyValuePair<string, object?>> properties = [];
+            if (state is IEnumerable<KeyValuePair<string, object?>> values)
+            {
+                properties.AddRange(values);
+            }
+
+            entries.Add((logLevel, eventId, formatter(state, exception), exception, properties));
+        }
     }
 }

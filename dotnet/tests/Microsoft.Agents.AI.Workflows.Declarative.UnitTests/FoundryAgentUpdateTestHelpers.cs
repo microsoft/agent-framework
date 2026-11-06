@@ -34,7 +34,7 @@ internal static class AgentUpdateTestHelpers
 
     /// <summary>
     /// Runs updates through the provider's failure-detection transform, reproducing what
-    /// <see cref="AzureAgentProvider"/> emits when streaming an agent run.
+    /// <see cref="FoundryAgentProvider"/> emits when streaming an agent run.
     /// </summary>
     public static async Task<List<AgentResponseUpdate>> ApplyFailureDetectionAsync(
         string agentName,
@@ -43,7 +43,7 @@ internal static class AgentUpdateTestHelpers
         List<AgentResponseUpdate> results = [];
 
         await foreach (AgentResponseUpdate update in
-            AzureAgentProvider.WithFailureDetectionAsync(ToAsyncEnumerableAsync(updates), agentName))
+            FoundryAgentProvider.WithFailureDetectionAsync(ToAsyncEnumerableAsync(updates), agentName))
         {
             results.Add(update);
         }

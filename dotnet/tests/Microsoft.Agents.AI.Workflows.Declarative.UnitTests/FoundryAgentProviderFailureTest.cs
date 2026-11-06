@@ -8,11 +8,11 @@ using OpenAI.Responses;
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
 
 /// <summary>
-/// Verifies that <see cref="AzureAgentProvider"/> restores the failure signal that
+/// Verifies that <see cref="FoundryAgentProvider"/> restores the failure signal that
 /// <c>Microsoft.Extensions.AI.OpenAI</c> drops when it maps the Responses <c>response.failed</c>
 /// event onto a contentless update.
 /// </summary>
-public sealed class AzureAgentProviderFailureTest(ITestOutputHelper output) : WorkflowTest(output)
+public sealed class FoundryAgentProviderFailureTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     private const string AgentName = "TestAgent";
 

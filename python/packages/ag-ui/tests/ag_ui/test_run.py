@@ -451,11 +451,29 @@ class TestFlowState:
             {"id": "call_2", "function": {"name": "tool2"}},
             {"id": "call_3", "function": {"name": "tool3"}},
         ]
+        flow.tool_calls_by_id = {tc["id"]: tc for tc in flow.pending_tool_calls}
         flow.tool_calls_ended = {"call_1", "call_3"}
 
         result = flow.get_pending_without_end()
         assert len(result) == 1
         assert result[0]["id"] == "call_2"
+
+    def test_get_pending_without_end_counts_a_reused_id_once(self):
+        """An earlier, ended occurrence must not become endable again when its id is reused."""
+        flow = FlowState()
+        flow.pending_tool_calls = [
+            {"id": "call_x", "function": {"name": "tool"}},
+            {"id": "call_x", "function": {"name": "tool"}},
+        ]
+        flow.tool_calls_by_id = {"call_x": flow.pending_tool_calls[-1]}
+        flow.tool_calls_ended = {"call_x"}
+
+        assert flow.get_pending_without_end() == []
+
+        flow.tool_calls_ended.discard("call_x")
+        result = flow.get_pending_without_end()
+        assert len(result) == 1
+        assert result[0]["id"] == "call_x"
 
 
 class TestNormalizeResponseStream:
