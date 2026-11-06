@@ -20,6 +20,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="..\..\..\..\..\src\Shared\Demos\AzureOpenAIEndpoint.cs"
+             Link="AzureOpenAIEndpoint.cs"
+             Condition="Exists('..\..\..\..\..\src\Shared\Demos\AzureOpenAIEndpoint.cs')" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="$(AgentFrameworkVersion)" />
     <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="$(AgentFrameworkVersion)" />
     <PackageReference Include="Microsoft.Agents.AI.Hosting" Version="$(AgentFrameworkVersion)" />
@@ -27,5 +33,6 @@
   </ItemGroup>
 
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.Web" />
+  <Import Project="..\..\scripts\SourceDeployment.targets" Condition="Exists('..\..\scripts\SourceDeployment.targets')" />
 
 </Project>

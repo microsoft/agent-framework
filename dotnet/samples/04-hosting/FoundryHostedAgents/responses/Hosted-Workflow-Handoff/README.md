@@ -23,6 +23,7 @@ This sample deploys to Foundry **directly from source (code / ZIP upload)**: the
 | File | Purpose |
 |------|---------|
 | `Program.cs` | Builds the triage + specialist agents and the handoff workflow, wires MCP tools, hosts it with the Responses protocol and serves demo pages. |
+| `AzureOpenAIEndpoint.cs` | Shared endpoint-normalization helper linked from `dotnet/src/Shared/Demos` and materialized for source deployment. |
 | `Pages.cs` | Static HTML demo pages. |
 | `ResponseStreamValidator.cs` | Validates captured SSE streams for the demo. |
 | `azure.yaml` | The unified `azd` project file: `codeConfiguration` (source/ZIP deploy) plus the listen port and the Azure OpenAI settings passed through `env`. |
@@ -66,15 +67,22 @@ The agent starts on `http://localhost:8088` and also serves demo pages at `/`, `
 
 ## Deploy to Foundry (source / ZIP)
 
-`azd` scaffolds the project into a working folder outside the repository; `-m` points at this sample's `azure.yaml`.
+The project links a shared endpoint helper from the repository. Materialize the sample and linked
+file into an isolated source folder, then let `azd` scaffold that prepared source:
 
 ```powershell
 $work = Join-Path $env:TEMP "hosted-workflow-handoff-work"
-mkdir $work; cd $work
+$source = Join-Path $work "source"
+$sample = "<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Handoff"
 
-$sample = "<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Handoff/azure.yaml"
+mkdir $work
+cd $sample
+dotnet msbuild HostedWorkflowHandoff.csproj -target:PrepareSourceDeployment `
+    "-property:SourceDeploymentDirectory=$source"
+
+cd $work
 azd auth login
-azd ai agent init -m $sample
+azd ai agent init -m (Join-Path $source "azure.yaml")
 
 cd hosted-workflow-handoff
 

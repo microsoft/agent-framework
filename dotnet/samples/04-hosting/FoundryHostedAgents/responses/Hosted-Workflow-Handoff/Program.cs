@@ -26,6 +26,7 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using OpenAI;
+using SampleHelpers;
 
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
@@ -44,7 +45,7 @@ var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 var azureClient = new OpenAIClient(
-    new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+    new BearerTokenPolicy(new DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"),
     new OpenAIClientOptions { Endpoint = endpoint });
 IChatClient chatClient = azureClient.GetResponsesClient().AsIChatClient(deployment);
 
@@ -160,13 +161,6 @@ app.Run();
 
 // ---------------------------------------------------------------------------
 // Local tool definitions
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Dev-only credential: reads a pre-fetched bearer token from AZURE_BEARER_TOKEN.
-// When the value is missing or set to "DefaultAzureCredential", this credential
-// throws CredentialUnavailableException so the ChainedTokenCredential falls
-// through to DefaultAzureCredential.
 // ---------------------------------------------------------------------------
 
 [Description("Gets the current date and time in the specified timezone.")]
