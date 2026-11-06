@@ -234,7 +234,7 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 
 ### Model Context Protocol (`_mcp.py`)
 
-- **Client lifecycle design** - [ADR 0045](../../../docs/decisions/0045-python-mcp-v2-client-lifecycle.md)
+- **Client lifecycle design** - [ADR 0050](../../../docs/decisions/0050-python-mcp-v2-client-lifecycle.md)
   defines the ownership boundary. Both framework-created and caller-supplied `_ClientMCPConnection` instances expose
   and route operations through a high-level `mcp.Client`; their `session` remains `None`, and
   `is_framework_owned` determines whether Agent Framework may manage the Client lifecycle. Caller-supplied
