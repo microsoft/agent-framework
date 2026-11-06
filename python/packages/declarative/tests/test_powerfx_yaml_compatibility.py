@@ -201,6 +201,83 @@ class TestPowerFxBuiltinFunctions:
         assert state.eval("=inputs.other") == 1
         assert state.eval('=If(IsBlank(Workflow.Inputs.missing), "World", Workflow.Inputs.missing)') == "World"
 
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [
+            (
+                (
+                    '=With({inputs: {name: "local"}}, {Chosen: inputs.name, '
+                    'Default: If(IsBlank(Workflow.Inputs.missing), "World", Workflow.Inputs.missing), '
+                    "Received: Workflow.Inputs})"
+                ),
+                {"Chosen": "local", "Default": "World", "Received": {"other": 1, "missing": None}},
+            ),
+            (
+                (
+                    '=With({Workflow: {Inputs: {name: "local"}}}, {Chosen: Workflow.Inputs.name, '
+                    'Default: If(IsBlank(inputs.missing), "World", inputs.missing), Received: inputs})'
+                ),
+                {"Chosen": "local", "Default": "World", "Received": {"other": 1, "missing": None}},
+            ),
+            (
+                (
+                    '=With({inputs: {name: "local"}, prefix: "😀"}, {Chosen: inputs.name, '
+                    'Default: If(IsBlank(Workflow.Inputs.missing), "World", Workflow.Inputs.missing), '
+                    "Received: Workflow.Inputs})"
+                ),
+                {"Chosen": "local", "Default": "World", "Received": {"other": 1, "missing": None}},
+            ),
+            (
+                (
+                    '=With({name: "local"} As inputs, {Chosen: inputs.name, '
+                    'Default: If(IsBlank(Workflow.Inputs.missing), "World", Workflow.Inputs.missing), '
+                    "Received: Workflow.Inputs})"
+                ),
+                {"Chosen": "local", "Default": "World", "Received": {"other": 1, "missing": None}},
+            ),
+            (
+                (
+                    '=ForAll([{inputs: {name: "local"}}], {Chosen: inputs.name, '
+                    'Default: If(IsBlank(Workflow.Inputs.missing), "World", Workflow.Inputs.missing), '
+                    "Received: Workflow.Inputs})"
+                ),
+                [{"Chosen": "local", "Default": "World", "Received": {"other": 1, "missing": None}}],
+            ),
+            (
+                (
+                    '=With({inputs: {name: "local"}}, {Chosen: inputs.unknown, '
+                    'Default: If(IsBlank(Workflow.Inputs.missing), "World", Workflow.Inputs.missing), '
+                    "Received: Workflow.Inputs})"
+                ),
+                None,
+            ),
+        ],
+    )
+    async def test_local_bindings_do_not_add_global_fields_during_retry(self, mock_state, expression, expected):
+        """Only missing global input references may extend the workflow record on retry."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"other": 1})
+
+        assert state.eval(expression) == expected
+        assert state.get_state_data()["Inputs"] == {"other": 1}
+
+    @pytest.mark.parametrize(
+        "error_message",
+        [
+            "Name isn't valid. 'name' isn't recognized.",
+            "Power Fx failed compilation: Error 9999 - 10000 : Name isn't valid. 'name' isn't recognized.",
+        ],
+    )
+    async def test_unknown_diagnostic_format_keeps_undefined_fallback(self, mock_state, monkeypatch, error_message):
+        """Missing or invalid diagnostic locations must not introduce speculative input fields."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"other": 1})
+        evaluate = MagicMock(side_effect=[ValueError(error_message), "unexpected retry"])
+        monkeypatch.setattr(state, "_eval_powerfx", evaluate)
+
+        assert state.eval('=If(IsBlank(inputs.name), "World", inputs.name)') is None
+        evaluate.assert_called_once()
+
     async def test_not_function(self, mock_state):
         """Test Not function."""
         state = DeclarativeWorkflowState(mock_state)

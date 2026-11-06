@@ -31,7 +31,7 @@ import os
 import re
 import sys
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal as _Decimal
 from enum import Enum
@@ -73,6 +73,7 @@ logger = logging.getLogger(__name__)
 
 _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
 _POWERFX_IDENTIFIER_RE = re.compile(r"[^\W\d]\w*")
+_POWERFX_ERROR_RE = re.compile(r"Error (\d+) - (\d+) : (.*?)(?=; Error \d+ - \d+ :|$)", re.DOTALL)
 
 
 def _read_powerfx_identifier(formula: str, start: int) -> tuple[str, int] | None:
@@ -98,12 +99,16 @@ def _read_member_access(formula: str, start: int) -> tuple[str, int] | None:
     return _read_powerfx_identifier(formula, _after_trailing_trivia(formula, dot + 1))
 
 
-def _referenced_input_paths(formula: str) -> tuple[set[tuple[str, ...]], set[tuple[str, ...]]]:
-    """Return the field paths referenced under ``inputs`` and under ``Workflow.Inputs`` in code.
+def _referenced_input_paths(
+    formula: str, unrecognized_spans: Sequence[tuple[int, int]]
+) -> tuple[set[tuple[str, ...]], set[tuple[str, ...]]]:
+    """Return input field paths containing an unrecognized-name diagnostic.
 
     ``inputs.user.name`` yields ``("user", "name")``. String literals and comments are skipped,
     so input-like text inside them is not a reference. Only identifiers that start a
     member-access chain count, so ``Local.inputs.name`` is not an ``inputs`` reference.
+    PowerFx resolves local bindings before reporting errors, so valid references to
+    shadowed ``inputs`` or ``Workflow`` records do not introduce global fields.
     """
     inputs_paths: set[tuple[str, ...]] = set()
     workflow_inputs_paths: set[tuple[str, ...]] = set()
@@ -121,6 +126,8 @@ def _referenced_input_paths(formula: str) -> tuple[set[tuple[str, ...]], set[tup
         while (member := _read_member_access(formula, chain_end)) is not None:
             chain.append(member[0])
             chain_end = member[1]
+        if not any(root[1] <= start < end <= chain_end for start, end in unrecognized_spans):
+            continue
         if chain[0] == "inputs" and len(chain) > 1:
             inputs_paths.add(tuple(chain[1:]))
         elif chain[:2] == ["Workflow", "Inputs"] and len(chain) > 2:
@@ -155,7 +162,7 @@ def _complete_with_blanks(record: Mapping[str, Any], paths: set[tuple[str, ...]]
 
 
 def _bind_missing_input_references(
-    formula: str, symbols: dict[str, Any], *, inputs_alias_is_canonical: bool
+    formula: str, symbols: dict[str, Any], error: ValueError, *, inputs_alias_is_canonical: bool
 ) -> dict[str, Any]:
     """Expose inputs the formula references but the caller did not supply as blank.
 
@@ -178,7 +185,7 @@ def _bind_missing_input_references(
     if not isinstance(workflow_inputs, Mapping):
         return symbols
     workflow_input_values = cast(Mapping[str, Any], workflow_inputs)
-    inputs_paths, workflow_inputs_paths = _referenced_input_paths(formula)
+    inputs_paths, workflow_inputs_paths = _referenced_input_paths(formula, _unrecognized_name_spans(formula, error))
     referenced = workflow_inputs_paths | inputs_paths if inputs_alias_is_canonical else workflow_inputs_paths
     bound_inputs = _complete_with_blanks(workflow_input_values, referenced)
     if bound_inputs == workflow_input_values:
@@ -189,10 +196,31 @@ def _bind_missing_input_references(
     return bound
 
 
-def _is_unrecognized_name_error(error: ValueError) -> bool:
+def _is_unrecognized_name_error(error: ValueError | str) -> bool:
     """Return whether a PowerFx error reports a name or field that does not resolve."""
     message = str(error)
     return "isn't recognized" in message or "Name isn't valid" in message
+
+
+def _unrecognized_name_spans(formula: str, error: ValueError) -> list[tuple[int, int]]:
+    """Read the Python wrapper's diagnostic spans, converting UTF-16 offsets to Python indices.
+
+    Missing or unfamiliar diagnostics leave the original undefined-reference fallback
+    intact instead of guessing which locally scoped names belong to workflow inputs.
+    """
+    offsets = {0: 0}
+    utf16_offset = 0
+    for index, character in enumerate(formula, 1):
+        utf16_offset += 2 if ord(character) > 0xFFFF else 1
+        offsets[utf16_offset] = index
+    spans: list[tuple[int, int]] = []
+    for match in _POWERFX_ERROR_RE.finditer(str(error)):
+        if not _is_unrecognized_name_error(match[3]):
+            continue
+        start, end = offsets.get(int(match[1])), offsets.get(int(match[2]))
+        if start is not None and end is not None and start < end:
+            spans.append((start, end))
+    return spans
 
 
 @dataclass(frozen=True)
@@ -746,11 +774,13 @@ class DeclarativeWorkflowState:
                 except ValueError as e:
                     if not _is_unrecognized_name_error(e):
                         raise
+                    unrecognized_error = e
                 # The formula may only fail because it references inputs the caller omitted.
                 # Retry with those inputs bound to blank so IsBlank defaults apply.
                 bound_symbols = _bind_missing_input_references(
                     formula,
                     symbols,
+                    unrecognized_error,
                     inputs_alias_is_canonical="inputs" not in self.get_state_data().get("Custom", {}),
                 )
                 if bound_symbols is not symbols:
