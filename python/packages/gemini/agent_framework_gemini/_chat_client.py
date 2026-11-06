@@ -1273,16 +1273,21 @@ class RawGeminiChatClient(
         if not usage:
             return None
         details: UsageDetails = {}
-        if (v := usage.prompt_token_count) is not None:
-            details["input_token_count"] = v
-        if (v := usage.candidates_token_count) is not None:
-            details["output_token_count"] = v
+        # Gemini reports tool-use prompt tokens and thinking tokens outside prompt_token_count and
+        # candidates_token_count (total = prompt + tool_use_prompt + candidates + thoughts). Fold them
+        # in so input/output are full totals, as in the other connectors and the GenAI semconv.
+        tool_use_prompt_tokens = usage.tool_use_prompt_token_count
+        thoughts_tokens = usage.thoughts_token_count
+        if (v := usage.prompt_token_count) is not None or tool_use_prompt_tokens is not None:
+            details["input_token_count"] = (v or 0) + (tool_use_prompt_tokens or 0)
+        if (v := usage.candidates_token_count) is not None or thoughts_tokens is not None:
+            details["output_token_count"] = (v or 0) + (thoughts_tokens or 0)
         if (v := usage.total_token_count) is not None:
             details["total_token_count"] = v
         if (v := usage.cached_content_token_count) is not None:
             details["cache_read_input_token_count"] = v
-        if (v := usage.thoughts_token_count) is not None:
-            details["reasoning_output_token_count"] = v
+        if thoughts_tokens is not None:
+            details["reasoning_output_token_count"] = thoughts_tokens
         return details or None
 
     def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | FinishReason | None:
