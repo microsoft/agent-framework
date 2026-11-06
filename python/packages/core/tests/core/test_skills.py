@@ -2590,7 +2590,7 @@ class TestFileSkillNameCollisions:
     def test_constructor_rejects_names_differing_only_by_case(
         self, kind: str, names: tuple[str, str], reverse: bool
     ) -> None:
-        names = names[::-1] if reverse else names
+        names = (names[1], names[0]) if reverse else names
         resources = [InlineSkillResource(name=name, content="data") for name in names]
         scripts = [FileSkillScript(name=name, full_path=f"{_ABS}\\{name}") for name in names]
         with pytest.raises(ValueError, match=f"{kind} names that differ only by case"):
