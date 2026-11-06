@@ -88,7 +88,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
                 // serialization because we will be relying on the parent workflow's checkpoint manager to do that,
                 // if needed. For our purposes, all we need is to keep a faithful representation of the checkpointed
                 // objects so we can emit them back to the parent workflow on checkpoint creation.
-                this._checkpointManager ??= new InMemoryCheckpointManager();
+                this._checkpointManager ??= new InMemoryCheckpointManager() { RetainLatestOnly = true };
             }
 
             this._activeRunner = InProcessRunner.CreateSubworkflowRunner(this._workflow,
@@ -270,6 +270,10 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
         await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
 
         InMemoryCheckpointManager manager = await context.ReadStateAsync<InMemoryCheckpointManager>(CheckpointManagerStateKey, cancellationToken: cancellationToken).ConfigureAwait(false) ?? new();
+
+        // Resume only reads the latest checkpoint, and every parent checkpoint carries this manager.
+        manager.RetainLatestOnly = true;
+
         if (this._checkpointManager == manager)
         {
             // We are restoring in the context of the same run; not need to rebuild the entire execution stack.
