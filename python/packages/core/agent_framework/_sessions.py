@@ -23,6 +23,7 @@ import logging
 import math
 import os
 import threading
+import time
 import uuid
 import warnings
 import weakref
@@ -2000,6 +2001,37 @@ class SessionStore:
         self._sessions.pop(session_id, None)
 
 
+_SESSION_FILE_REPLACE_ATTEMPTS = 3
+_SESSION_FILE_REPLACE_RETRY_DELAY_SECONDS = 0.01
+# Only Windows reports a briefly-held destination as ``PermissionError``; on POSIX the
+# same code means the caller genuinely may not replace the file.
+_RETRY_REPLACE_ON_THIS_PLATFORM: bool = os.name == "nt"
+
+
+def _replace_session_file(source: Path, target: Path) -> None:
+    """Replace ``target`` with ``source``, retrying briefly on transient lock contention.
+
+    Windows raises :class:`PermissionError` when the destination file is briefly held
+    open (for example right after a previous replacement), even though callers already
+    serialize access per snapshot. A bounded retry preserves the documented
+    last-writer-wins behaviour instead of surfacing the transient failure.
+
+    The retry is Windows-only: on POSIX a :class:`PermissionError` means the caller
+    really is not allowed to replace the file, so retrying would only delay the same
+    failure. The whole sequence is bounded at ~30 ms and re-raises the original error
+    once the attempts are exhausted.
+    """
+    attempts = _SESSION_FILE_REPLACE_ATTEMPTS if _RETRY_REPLACE_ON_THIS_PLATFORM else 1
+    for attempt in range(attempts):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(_SESSION_FILE_REPLACE_RETRY_DELAY_SECONDS * (attempt + 1))
+
+
 @experimental(feature_id=ExperimentalFeature.SESSION_STORE)
 class FileSessionStore(SessionStore):
     """File-backed storage for Agent Framework session snapshots.
@@ -2151,7 +2183,7 @@ class FileSessionStore(SessionStore):
                 temp_path = file_path.with_name(f".{file_path.name}.{uuid.uuid4().hex}.tmp")
                 try:
                     temp_path.write_bytes(serialized)
-                    os.replace(temp_path, file_path)
+                    _replace_session_file(temp_path, file_path)
                 finally:
                     temp_path.unlink(missing_ok=True)
 

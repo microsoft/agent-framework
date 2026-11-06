@@ -3,6 +3,7 @@
 import asyncio
 import json
 import math
+import os
 import threading
 import time
 import tracemalloc
@@ -1256,6 +1257,62 @@ class TestFileSessionStore:
         assert stored.session_id == "second"
         temp_files = await asyncio.to_thread(lambda: [*tmp_path.glob("*.tmp"), *tmp_path.glob(".*.tmp")])
         assert not temp_files
+
+    async def test_set_retries_transient_permission_error_during_atomic_replace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The retry is Windows-only, so pin the platform flag to exercise it on every CI OS.
+        monkeypatch.setattr("agent_framework._sessions._RETRY_REPLACE_ON_THIS_PLATFORM", True)
+        store = FileSessionStore(tmp_path)
+        await store.set("session-1", AgentSession(session_id="first"))
+
+        real_replace = os.replace
+        attempts = 0
+
+        def flaky_replace(source: Any, target: Any) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise PermissionError(13, "Access is denied")
+            real_replace(source, target)
+
+        monkeypatch.setattr(os, "replace", flaky_replace)
+
+        await store.set("session-1", AgentSession(session_id="second"))
+
+        assert attempts >= 2
+        stored = await store.get("session-1")
+        assert stored is not None
+        assert stored.session_id == "second"
+        temp_files = await asyncio.to_thread(lambda: [*tmp_path.glob("*.tmp"), *tmp_path.glob(".*.tmp")])
+        assert not temp_files
+
+    async def test_set_reports_permission_error_without_retrying_off_windows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # On POSIX a PermissionError is a real one: retrying only delays the same failure.
+        monkeypatch.setattr("agent_framework._sessions._RETRY_REPLACE_ON_THIS_PLATFORM", False)
+        store = FileSessionStore(tmp_path)
+        await store.set("session-1", AgentSession(session_id="first"))
+
+        real_replace = os.replace
+        attempts = 0
+
+        def denied_replace(source: Any, target: Any) -> None:
+            nonlocal attempts
+            attempts += 1
+            raise PermissionError(13, "Access is denied")
+
+        monkeypatch.setattr(os, "replace", denied_replace)
+
+        with pytest.raises(PermissionError):
+            await store.set("session-1", AgentSession(session_id="second"))
+
+        assert attempts == 1
+        monkeypatch.setattr(os, "replace", real_replace)
+        stored = await store.get("session-1")
+        assert stored is not None
+        assert stored.session_id == "first"
 
     async def test_corrupt_session_file_is_quarantined_and_retry_returns_none(self, tmp_path: Path) -> None:
         store = FileSessionStore(tmp_path)
