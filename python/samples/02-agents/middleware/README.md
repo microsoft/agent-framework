@@ -50,3 +50,45 @@ agent's latest response to a second, external judge chat client on every iterati
 or malicious judge endpoint could exfiltrate that data, or return a manipulated verdict/gap
 analysis that gets fed back into the loop as feedback — a form of indirect prompt injection. Only
 configure a judge client that points at a service you trust as much as the primary model.
+
+### Per-tool execution deadlines
+
+The `per_tool_execution_deadlines.py` sample demonstrates independent
+asynchronous deadlines using the existing `FunctionMiddleware` extension
+point and Python 3.10-compatible `asyncio` APIs.
+
+Run from the `python` directory:
+
+```bash
+python samples/02-agents/middleware/per_tool_execution_deadlines.py
+python -m pytest samples/02-agents/middleware/test_per_tool_execution_deadlines.py -v
+```
+
+Each configured tool has an independent deadline. Unconfigured tools
+execute normally.
+
+- **Read-only tools:** Deadline expiry produces a recoverable result.
+- **Side-effecting tools:** Deadline expiry raises `MiddlewareFailure`
+  because side effects may already have occurred.
+- **Tool-generated timeouts:** A tool's own `TimeoutError` propagates
+  separately from an enforced deadline.
+- **Caller cancellation:** Cancellation propagates rather than being
+  converted into a normal timeout result.
+- **Concurrency:** Different tools can have independent budgets.
+
+The sample introduces no new framework API and does not implement
+automatic retries or distributed deadline enforcement.
+
+**Cancellation and cleanup limitations:** Async cancellation is
+cooperative. Cleanup can take longer than the configured deadline.
+Synchronous worker threads or remote operations may continue running.
+Deadline expiry does not guarantee rollback, exactly-once execution,
+or absence of side effects.
+
+Caller cancellation is propagated after requesting cancellation of the
+underlying asynchronous task. That task may continue cooperative cleanup
+after the caller has been cancelled. Any eventual task exception is
+observed to avoid an unhandled-task warning.
+
+This sample does not provide hard termination, rollback, exactly-once
+execution, or automatic retries.
