@@ -1,8 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import copy
+import logging
 from collections.abc import Callable
+from contextvars import Context, ContextVar, copy_context
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# The State and epoch that writes from the current task belong to. Set for each superstep's iteration
+# task so executor tasks inherit it; writes made outside any superstep are always accepted.
+_bound_epoch: ContextVar[tuple["State", object] | None] = ContextVar("_bound_epoch", default=None)
 
 
 class State:
@@ -18,6 +26,8 @@ class State:
         - `get()` checks pending buffer first, then committed state
         - `commit()` moves all pending changes to committed state (called by Runner at superstep boundary)
         - `discard()` clears pending changes without committing
+        - `begin_epoch()` starts a new owner of pending writes; writes, deletes and clears from tasks
+          bound to an earlier epoch (for example a dropped run's cancelled executor) are ignored
 
     Reserved Keys:
         Keys starting with underscore (_) are reserved for internal framework use.
@@ -28,6 +38,30 @@ class State:
         """Initialize the state."""
         self._committed: dict[str, Any] = {}
         self._pending: dict[str, Any] = {}
+        self._epoch = object()
+
+    @property
+    def epoch(self) -> object:
+        """The current write epoch."""
+        return self._epoch
+
+    def begin_epoch(self) -> object:
+        """Start a new write epoch and return it."""
+        self._epoch = object()
+        return self._epoch
+
+    def bound_context(self) -> Context:
+        """Return a copy of the current context whose writes, and its tasks' writes, belong to the current epoch."""
+        context = copy_context()
+        context.run(_bound_epoch.set, (self, self._epoch))
+        return context
+
+    def _is_stale_write(self) -> bool:
+        bound = _bound_epoch.get()
+        if bound is None or bound[0] is not self or bound[1] is self._epoch:
+            return False
+        logger.debug("Ignoring a state write from a superstep that no longer owns this state.")
+        return True
 
     def set(self, key: str, value: Any) -> None:
         """Set a value in the pending state buffer.
@@ -43,6 +77,8 @@ class State:
             the .NET behavior and the superstep execution model where all executors
             in a superstep see the same committed state at the start.
         """
+        if self._is_stale_write():
+            return
         self._pending[key] = copy.deepcopy(value)
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -88,6 +124,8 @@ class State:
         to indicate deletion at commit time. If it only exists in pending,
         it is removed from pending.
         """
+        if self._is_stale_write():
+            return
         if key not in self._pending and key not in self._committed:
             raise KeyError(f"Key '{key}' not found in state.")
 
@@ -100,6 +138,8 @@ class State:
 
     def clear(self) -> None:
         """Clear both committed and pending state."""
+        if self._is_stale_write():
+            return
         self._committed.clear()
         self._pending.clear()
 
