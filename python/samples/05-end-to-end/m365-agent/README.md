@@ -8,7 +8,8 @@ This sample demonstrates a simple Weather Forecast Agent built with the Python M
 - [uv](https://github.com/astral-sh/uv) for fast dependency management
 - [devtunnel](https://learn.microsoft.com/azure/developer/dev-tunnels/get-started?tabs=windows)
 - `agentsplayground` for playground/testing
-- Access to OpenAI or Azure OpenAI with a model like `gpt-4o-mini`
+- A Microsoft Foundry project with a deployed model like `gpt-4o-mini`
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), signed in with `az login`
 
 ## Configuration
 
@@ -19,27 +20,17 @@ Set the following environment variables:
 export PORT=3978
 export USE_ANONYMOUS_MODE=True # set to false if using auth
 
-# OpenAI
-export OPENAI_API_KEY="..."
-export OPENAI_CHAT_COMPLETION_MODEL="..."
-```
-
-## Installing Dependencies
-
-From the repository root or the sample folder:
-
-```bash
-uv sync
+# Microsoft Foundry (authenticates with your `az login` session)
+export FOUNDRY_PROJECT_ENDPOINT="https://<your-resource>.services.ai.azure.com/api/projects/<your-project>"
+export FOUNDRY_MODEL="gpt-4o-mini"
 ```
 
 ## Running the Agent Locally
 
-```bash
-# Activate environment first if not already
-source .venv/bin/activate   # (Windows PowerShell: .venv\Scripts\Activate.ps1)
+`app.py` declares its dependencies (the M365 Agents SDK hosting and authentication packages, `agent-framework-foundry`, and `aiohttp`) in an inline [PEP 723](https://peps.python.org/pep-0723/) header. `uv run` installs them into an isolated environment the first time you run it. Run it from this sample folder:
 
-# Run the weather agent demo
-python m365_agent_demo/app.py
+```bash
+uv run m365_agent_demo/app.py
 ```
 
 The agent starts on `http://localhost:3978`. Health check: `GET /api/health`.
@@ -52,7 +43,7 @@ The agent starts on `http://localhost:3978`. Health check: `GET /api/health`.
    winget install agentsplayground
    ```
 
-2. Start the Python agent locally: `python m365_agent_demo/app.py`
+2. Start the Python agent locally: `uv run m365_agent_demo/app.py`
 3. Start the playground: `agentsplayground`
 4. Chat with the Weather Agent.
 
@@ -83,7 +74,7 @@ To test via WebChat you can provision an Azure Bot and point its messaging endpo
    ```
 
 4. Set the bot Messaging endpoint to: `https://<tunnel-host>/api/messages`
-5. Run your local agent: `python m365_agent_demo/app.py`
+5. Run your local agent: `uv run m365_agent_demo/app.py`
 6. Use "Test in WebChat" in Azure Portal.
 
 > Federated Credentials or Managed Identity auth types typically require deployment to Azure App Service instead of tunneling.
@@ -92,7 +83,7 @@ To test via WebChat you can provision an Azure Bot and point its messaging endpo
 
 - 404 on `/api/messages`: Ensure you are POSTing and using the correct tunnel URL.
 - Empty responses: Check model key / quota and ensure environment variables are set.
-- Auth errors when anonymous disabled: Validate MSAL config matches your Azure Bot registration.
+- 401 responses when anonymous mode is disabled: requests to `/api/messages` must carry a bearer token issued for your Azure Bot. Validate that the MSAL config matches your Azure Bot registration.
 
 ## Further Reading
 
