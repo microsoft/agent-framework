@@ -20,6 +20,32 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 
 internal static class AIAgentChatCompletionsProcessor
 {
+    /// <summary>
+    /// Creates an OpenAI-style <c>invalid_request_error</c> response.
+    /// </summary>
+    /// <param name="statusCode">The HTTP status code of the response.</param>
+    /// <param name="message">The error message.</param>
+    /// <param name="code">The OpenAI error code.</param>
+    /// <returns>The error result.</returns>
+    /// <remarks>
+    /// <c>AddOpenAIChatCompletions</c> only registers the Chat Completions serialization metadata, which does not include
+    /// <see cref="ErrorResponse"/>, so the error is serialized with its own metadata to work when reflection-based
+    /// serialization is disabled.
+    /// </remarks>
+    public static IResult CreateErrorResult(int statusCode, string message, string code) =>
+        Results.Json(
+            new ErrorResponse
+            {
+                Error = new ErrorDetails
+                {
+                    Message = message,
+                    Type = "invalid_request_error",
+                    Code = code
+                }
+            },
+            OpenAIHostingJsonContext.Default.ErrorResponse,
+            statusCode: statusCode);
+
     public static async Task<IResult> CreateChatCompletionAsync(AIAgent agent, CreateChatCompletion request, OpenAIChatCompletionsMapOptions? mapOptions, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(agent);
@@ -35,15 +61,7 @@ internal static class AIAgentChatCompletionsProcessor
         }
         catch (NotSupportedException ex)
         {
-            return Results.BadRequest(new ErrorResponse
-            {
-                Error = new ErrorDetails
-                {
-                    Message = ex.Message,
-                    Type = "invalid_request_error",
-                    Code = "unsupported_parameter"
-                }
-            });
+            return CreateErrorResult(StatusCodes.Status400BadRequest, ex.Message, "unsupported_parameter");
         }
 
         var chatMessages = request.Messages.Select(i => i.ToChatMessage());
