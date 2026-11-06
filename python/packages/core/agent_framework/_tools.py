@@ -513,6 +513,38 @@ _ToolParameterFormat: TypeAlias = Literal["compact", "json"]
 _ToolDescriptionFormat: TypeAlias = _ToolParameterFormat | Mapping[str, _ToolParameterFormat]
 _NormalizedToolDescriptionFormat: TypeAlias = _ToolParameterFormat | dict[str, _ToolParameterFormat]
 _TOOL_DESCRIPTION_FORMAT_ERROR = "tool_description_format must be 'compact', 'json', or a tool-name mapping."
+# model_dump's fallback (str for values JSON mode doesn't know) only exists on newer Pydantic 2 versions.
+_MODEL_DUMP_JSON_FALLBACK: dict[str, Any] = (
+    {"fallback": str} if "fallback" in inspect.signature(BaseModel.model_dump).parameters else {}
+)
+
+
+def _escape_unencodable(value: Any) -> Any:
+    """Copy a value with the parts JSON mode can't encode replaced, inside models, dicts and sequences too.
+
+    Bytes that aren't valid UTF-8 become their str() form. On Pydantic versions without ``fallback``,
+    values JSON mode doesn't know become str() too. Models are copied, not rebuilt, so their class stays
+    the same and the parent's declared field types still decide how they are serialized.
+    """
+    if isinstance(value, bytes):
+        try:
+            value.decode("utf-8")
+        except UnicodeDecodeError:
+            return str(value).encode()
+        return value
+    if isinstance(value, BaseModel):
+        return value.model_copy(update={name: _escape_unencodable(item) for name, item in value.__dict__.items()})
+    if isinstance(value, dict):
+        dict_value = cast(dict[object, object], value)
+        return {key: _escape_unencodable(item) for key, item in dict_value.items()}
+    if type(value) in (list, tuple, set, frozenset):
+        return type(value)(_escape_unencodable(item) for item in value)
+    if not _MODEL_DUMP_JSON_FALLBACK:
+        try:
+            to_jsonable_python(value)
+        except ValueError:
+            return str(value)
+    return value
 
 
 def _normalize_tool_description_format(  # pyright: ignore[reportUnusedFunction]
@@ -1430,12 +1462,49 @@ class FunctionTool(SerializationMixin):
         if isinstance(value, Content):
             return value.to_dict(exclude={"raw_representation", "additional_properties"})
         if isinstance(value, BaseModel):
-            return value.model_dump()
+            return FunctionTool._dump_model(value)
         if hasattr(value, "to_dict"):
             return value.to_dict()
         if hasattr(value, "text") and isinstance(value.text, str):
             return value.text
         return value
+
+    @staticmethod
+    def _dump_model(model: BaseModel) -> Any:
+        """Dump a Pydantic model in JSON mode.
+
+        JSON mode applies enum, datetime and UUID encoding and JSON-only field serializers. When it
+        fails (bytes that aren't valid UTF-8, or an arbitrary type on Pydantic versions without
+        ``fallback``), those values are escaped in a copy of the model and Pydantic dumps the copy, so
+        the declared field types, serializers and exclusions still decide what is written. Computed
+        fields are dumped from the original model. A field that still can't be encoded is left out.
+        Excluded fields stay out either way, unlike the str(result) fallback in invoke.
+        """
+        try:
+            return model.model_dump(mode="json", **_MODEL_DUMP_JSON_FALLBACK)
+        except ValueError:
+            pass
+        escaped = _escape_unencodable(model)
+        # The python-mode dump gives the serialized field names without the excluded ones. The class's
+        # model_computed_fields can't be used for that, it's a property on Pydantic 2.0.
+        python_dump = model.model_dump(by_alias=False)
+        if not isinstance(python_dump, dict):
+            try:
+                return escaped.model_dump(mode="json", **_MODEL_DUMP_JSON_FALLBACK)
+            except ValueError:
+                logger.warning("Leaving %s out of the tool result: it can't be encoded as JSON.", type(model).__name__)
+                return None
+        fields = type(model).model_fields
+        dumped: dict[str, Any] = {}
+        for name in python_dump:
+            source = escaped if name in fields else model
+            try:
+                dumped.update(source.model_dump(mode="json", include={name}, **_MODEL_DUMP_JSON_FALLBACK))
+            except ValueError:
+                logger.warning(
+                    "Leaving %s.%s out of the tool result: it can't be encoded as JSON.", type(model).__name__, name
+                )
+        return dumped
 
     @staticmethod
     def parse_result(result: Any) -> list[Content]:
