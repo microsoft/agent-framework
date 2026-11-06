@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -395,10 +396,18 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
     ];
 
     /// <summary>
+    /// <see cref="object.MemberwiseClone"/>, which copies content of any type with all of its data,
+    /// as <see cref="AIContent"/> has no clone method of its own.
+    /// </summary>
+    private static readonly MethodInfo s_memberwiseClone =
+        typeof(object).GetMethod(nameof(MemberwiseClone), BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+    /// <summary>
     /// Filters response messages to only include those with portable conversational content,
-    /// and strips <see cref="ChatMessage.RawRepresentation"/> so that provider-specific output
-    /// items (e.g. <c>mcp_list_tools</c>, <c>reasoning</c>, <c>fabric_dataagent_preview_call</c>)
-    /// are not round-tripped by the M.E.AI library when the messages are sent to another agent.
+    /// and strips <see cref="ChatMessage.RawRepresentation"/> and <see cref="AIContent.RawRepresentation"/>
+    /// so that provider-specific output items (e.g. <c>mcp_list_tools</c>, <c>reasoning</c>,
+    /// <c>fabric_dataagent_preview_call</c>) and content parts (e.g. <c>output_text</c>) are not
+    /// round-tripped by the M.E.AI library when the messages are sent to another agent.
     /// </summary>
     private static List<ChatMessage> FilterForwardableMessages(IList<ChatMessage> messages)
     {
@@ -409,6 +418,7 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
             // Extract only the content items that are portable across agents.
             List<AIContent> forwardableContents = message.Contents
                 .Where(c => s_forwardableContentTypes.Any(t => t.IsAssignableFrom(c.GetType())))
+                .Select(WithoutRawRepresentation)
                 .ToList();
 
             if (forwardableContents.Count == 0)
@@ -429,5 +439,23 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Returns <paramref name="content"/> without its <see cref="AIContent.RawRepresentation"/>, which a client can
+    /// send in place of the content, e.g. the OpenAI Responses <c>output_text</c> part of a non-streaming reply,
+    /// which is invalid in the user message another agent receives. Content that has one is copied, because the
+    /// agent's session keeps the original.
+    /// </summary>
+    private static AIContent WithoutRawRepresentation(AIContent content)
+    {
+        if (content.RawRepresentation is null)
+        {
+            return content;
+        }
+
+        AIContent copy = (AIContent)s_memberwiseClone.Invoke(content, null)!;
+        copy.RawRepresentation = null;
+        return copy;
     }
 }
