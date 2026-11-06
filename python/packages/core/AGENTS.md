@@ -272,7 +272,13 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   emits a `FutureWarning` because that fallback may change in a future release. A name list given as a bare string is one
   name, not a substring pattern. `default` is local-only: hosted MCP helpers (`get_mcp_tool`) do not read it. Tools and
   prompts discovered later (for example after `tools/list_changed`) use the policy at discovery time; retained
-  functions keep their resolved mode.
+  functions keep their resolved mode under static policies. Alternatively, pass a synchronous callable receiving
+  the discovered `mcp.types.Tool` or `mcp.types.Prompt` and returning `"always_require"` or `"never_require"`
+  for every item, including its default decision. Callback results of `None` are invalid; constructor-level
+  `None` keeps its default behavior. Callable policies run on each discovery refresh for new and retained functions;
+  results are validated and staged across all pages before publication. Exceptions preserve the previous
+  snapshot. `FoundryToolbox` supplies its metadata parser as this callable when no explicit caller policy is
+  configured; ordinary MCP servers do not interpret Foundry metadata.
 - **Progressive MCP disclosure** (`use_progressive_disclosure`, `always_load`) - When enabled on any `MCPTool` subclass, the initial model-facing surface is loader tools (`list_mcp_tools` / `load_tool` / `unload_tool`, prefixed by `tool_name_prefix` when configured) plus allowed tools selected by `always_load` and tools loaded earlier on the same `MCPTool` instance. `list_mcp_tools` only reports tools that pass `allowed_tools`; filtered tools are not listed or loadable. Loader tool names are reserved in progressive mode: remote MCP tools whose local generated name collides with a loader name are omitted from the initial/listed surface, and explicit `load_tool` calls return a model-visible message pointing callers to `tool_name_prefix` or excluding the colliding tool. `load_tool` accepts one tool name or a list of tool names and uses `FunctionInvocationContext.add_tools(...)` so the selected generated MCP `FunctionTool`s become available on the next function-calling iteration while keeping existing approval mode, argument filtering, header-provider runtime kwargs, result parsing, and OTel. `unload_tool` accepts one dynamically loaded tool name or a list of names and removes them from the live tool list and persisted progressive surface, but it does not remove tools configured in `always_load`. Invalid `always_load` entries are ignored like unmatched `allowed_tools` entries.
 - **Tool discovery refresh** - Validate the complete current tool snapshot alongside retained non-tool functions,
   not stale tool wrappers. Successful refreshes atomically replace the previous tool set and metadata, including
