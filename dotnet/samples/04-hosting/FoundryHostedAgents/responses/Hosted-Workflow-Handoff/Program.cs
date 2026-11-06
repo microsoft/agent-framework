@@ -26,7 +26,8 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using OpenAI;
-using SampleHelpers;
+
+using AzureOpenAIEndpointHelper = SampleHelpers.AzureOpenAIEndpoint;
 
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
@@ -36,7 +37,7 @@ var builder = WebApplication.CreateBuilder(args);
 // ---------------------------------------------------------------------------
 // 1. Create the shared Azure OpenAI chat client
 // ---------------------------------------------------------------------------
-Uri endpoint = AzureOpenAIEndpoint.From(
+Uri endpoint = AzureOpenAIEndpointHelper.From(
     Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT"))
     ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4o";

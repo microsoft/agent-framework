@@ -20,7 +20,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="..\..\..\..\..\src\Shared\Demos\AzureOpenAIEndpoint.cs"
+    <Content Include="..\..\..\..\..\src\Shared\Demos\AzureOpenAIEndpoint.cs"
              Link="AzureOpenAIEndpoint.cs"
              Condition="Exists('..\..\..\..\..\src\Shared\Demos\AzureOpenAIEndpoint.cs')" />
   </ItemGroup>
