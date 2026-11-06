@@ -45,6 +45,13 @@ public static class ServiceCollectionExtensions
     /// so AgentServer can bind response and task storage from the host configuration.
     /// </para>
     /// <para>
+    /// A non-hosted production platform owns caller authentication. It must remove any
+    /// client-supplied <c>x-agent-user-id</c> header before injecting a verified identity.
+    /// This package treats <c>ResponseContext.PlatformContext.UserIdKey</c> as trusted platform
+    /// context; it does not authenticate that value. Directly exposing the endpoint while accepting
+    /// a caller-provided identity for session isolation is unsupported.
+    /// </para>
+    /// <para>
     /// Example:
     /// <code>
     /// builder.Services.AddKeyedSingleton&lt;AIAgent&gt;("my-agent", myAgent);
@@ -93,6 +100,13 @@ public static class ServiceCollectionExtensions
     /// This overload is for local or non-hosted scenarios. Foundry hosted applications must use
     /// the <see cref="IHostApplicationBuilder"/> overload. When used locally, the provided agent is
     /// registered as both a keyed service and the default <see cref="AIAgent"/>.
+    /// </para>
+    /// <para>
+    /// A non-hosted production platform owns caller authentication. It must remove any
+    /// client-supplied <c>x-agent-user-id</c> header before injecting a verified identity.
+    /// This package treats <c>ResponseContext.PlatformContext.UserIdKey</c> as trusted platform
+    /// context; it does not authenticate that value. Directly exposing the endpoint while accepting
+    /// a caller-provided identity for session isolation is unsupported.
     /// </para>
     /// <para>
     /// Example:
