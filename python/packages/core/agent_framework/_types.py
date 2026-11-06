@@ -3783,8 +3783,8 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
     @property
     def text(self) -> str:
-        """Get the concatenated text of all messages."""
-        return "".join(msg.text for msg in self.messages) if self.messages else ""
+        """Get the concatenated text of all messages, with a newline between non-empty message texts."""
+        return "\n".join(text for msg in self.messages if (text := msg.text))
 
     @property
     def value(self) -> ResponseModelT | None:
