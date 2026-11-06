@@ -1464,6 +1464,67 @@ public class PerServiceCallChatHistoryPersistingChatClientTests
     }
 
     /// <summary>
+    /// Verifies that abandoning a streaming run that was started with
+    /// <see cref="ChatOptions.AllowBackgroundResponses"/> still persists the input messages when no
+    /// continuation token has been received yet. The agent only forces end-of-run persistence when the
+    /// stream is fully consumed, so without this the user message would be lost from history with no
+    /// continuation token to resume from.
+    /// See https://github.com/microsoft/agent-framework/issues/9793.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_PersistsInputMessages_WhenConsumerAbandonsBackgroundRunBeforeTokenAsync()
+    {
+        await AssertHistoryAsync(
+            () => CreateStreamingService(("answer", null)),
+            async (agent, session) =>
+            {
+                // Consumer abandons the stream on the first update, which carries no continuation token.
+                await foreach (var _ in agent.RunStreamingAsync(
+                    [new(ChatRole.User, "Hello")],
+                    session,
+                    new AgentRunOptions { AllowBackgroundResponses = true }))
+                {
+                    break;
+                }
+            },
+            (ChatRole.User, "Hello"));
+    }
+
+    /// <summary>
+    /// Verifies that abandoning a resumed (continuation-token) streaming run does not re-persist the input
+    /// messages carried inside the continuation token: the decorator only ever persists the messages passed
+    /// to it, so history must not grow a second copy of the original user message.
+    /// See https://github.com/microsoft/agent-framework/issues/9793.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_DoesNotDuplicateMessages_WhenResumedRunIsAbandonedBeforeNewTokenAsync()
+    {
+        await AssertHistoryAsync(
+            () => CreateStreamingService(("partial", ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 })), (" rest", null)),
+            async (agent, session) =>
+            {
+                ResponseContinuationToken? continuationToken = null;
+                await foreach (var update in agent.RunStreamingAsync([new(ChatRole.User, "Hello")], session))
+                {
+                    // Abandon the initial run on the update carrying the continuation token, so the
+                    // resumed run owns persistence.
+                    continuationToken = update.ContinuationToken;
+                    break;
+                }
+
+                Assert.NotNull(continuationToken);
+
+                // Abandon the resumed run on its first update, which carries no new continuation token.
+                await foreach (var _ in agent.RunStreamingAsync(
+                    session,
+                    new AgentRunOptions { ContinuationToken = continuationToken }))
+                {
+                    break;
+                }
+            });
+    }
+
+    /// <summary>
     /// Verifies that a background run (<see cref="ChatOptions.AllowBackgroundResponses"/>) persists the same
     /// history as end-of-run persistence. The agent forces end-of-run persistence for these runs, so the
     /// decorator must not notify the providers per service call as well.

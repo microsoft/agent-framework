@@ -51,6 +51,9 @@ namespace Microsoft.Agents.AI;
 /// <see cref="ChatClientAgent"/> forces end-of-run persistence (see the
 /// <c>LogAgentChatClientBackgroundResponseFallback</c> warning), so this decorator neither loads
 /// history nor notifies providers for them — doing so would persist the same messages twice.
+/// The one exception is a streaming continuation/background run that the consumer abandons before
+/// any continuation token is received: nothing will resume that run, so this decorator persists the
+/// input messages on that early-exit path to avoid losing them.
 /// </para>
 /// <para>
 /// This chat client must be used within the context of a running <see cref="ChatClientAgent"/>. It retrieves the
@@ -260,10 +263,13 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
             // this on the cooperative-pause path; service errors deliberately do NOT persist
             // input messages (history of failed calls is the caller's responsibility, e.g.
             // by retrying or starting from an earlier point).
-            // Continuation/background runs, and runs that handed out a continuation token, are
-            // excluded because the (possibly resumed) run persists these inputs itself at the
-            // end of the run; persisting here too would duplicate them.
-            if (!loopExitedNormally && !serviceErrorOccurred && !isContinuationOrBackground && !continuationTokenObserved)
+            // Runs that handed out a continuation token are excluded because the resumed run
+            // persists these inputs itself at the end of the run; persisting here too would
+            // duplicate them. Continuation/background runs that were abandoned *before* any
+            // continuation token was received are NOT excluded: there is nothing to resume with,
+            // and the agent's forced end-of-run persistence never runs (its finally block only
+            // disposes the stream), so these inputs would be lost from history entirely.
+            if (!loopExitedNormally && !serviceErrorOccurred && !continuationTokenObserved)
             {
                 // Prefer the original cancellation token so cleanup remains responsive; fall
                 // back to None only if the caller's token has already been canceled (otherwise
