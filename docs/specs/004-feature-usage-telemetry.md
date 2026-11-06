@@ -9,7 +9,7 @@ informed:
 
 # Feature-usage telemetry via an accumulating bitmask
 
-> Companion design for [ADR-0033](../decisions/0033-feature-usage-bitmask-user-agent.md).
+> Companion design for [ADR-0037](../decisions/0037-feature-usage-bitmask-user-agent.md).
 > The per-language bit tables, encoding, opt-out, and governance live in
 > [feature-usage-bit-registry.md](feature-usage-bit-registry.md). The registry
 > allocates indexes; package-local `FeatureIndex` declarations implement them.
@@ -36,7 +36,7 @@ magentic / handoff), **one bit per built-in context/history provider**, selected
 skill source types, and separate Foundry chat/agent/memory/evals/toolbox bits
 (plus embedding in Python).
 See the
-[registry](feature-usage-bit-registry.md). ADR-0033 still leaves final v1
+[registry](feature-usage-bit-registry.md). ADR-0037 still leaves final v1
 granularity open. The refreshed candidate assigns 63 Python indexes and 52 .NET
 indexes. V1 uses 128 bits, leaving 65 Python and 76 .NET positions for additive
 growth.
@@ -310,7 +310,7 @@ a monotonically-growing, combinatorial value must never become a metric
 dimension.) The version prefix leaves the door open to add it later **if** the
 User-Agent path cannot answer a concrete query and there is an acceptable
 scoped/redacted variant; v1 ships the UA path only. See
-[ADR-0033 → option C](../decisions/0033-feature-usage-bitmask-user-agent.md#considered-options).
+[ADR-0037 → option C](../decisions/0037-feature-usage-bitmask-user-agent.md#considered-options).
 
 ## API Changes
 
@@ -488,8 +488,8 @@ The decision-level limitations and unresolved trade-offs — reach, per-process
 (not per-call) attribution, v1 granularity, fingerprinting residue, and the OTel
 question — are owned by the ADR (the dedicated mask-only opt-out is now decided
 and included). See
-**[ADR-0033 → Limitations](../decisions/0033-feature-usage-bitmask-user-agent.md#limitations)**
-and **[Open Questions](../decisions/0033-feature-usage-bitmask-user-agent.md#open-questions-for-decider-discussion)**.
+**[ADR-0037 → Limitations](../decisions/0037-feature-usage-bitmask-user-agent.md#limitations)**
+and **[Open Questions](../decisions/0037-feature-usage-bitmask-user-agent.md#open-questions-for-decider-discussion)**.
 This spec is the implementation reference; it does not re-litigate those choices.
 
 Implementation-only note:

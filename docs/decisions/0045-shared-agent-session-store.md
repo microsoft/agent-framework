@@ -92,5 +92,5 @@ Negative:
 
 ## More Information
 
-- [ADR-0031](0031-hosted-per-user-session-storage-isolation.md) records the earlier Foundry-specific user partition.
-- [ADR-0032](0032-dotnet-hosting-protocol-helpers.md) records the previous conventional Hosting contract.
+- [ADR-0035](0035-hosted-per-user-session-storage-isolation.md) records the earlier Foundry-specific user partition.
+- [ADR-0036](0036-dotnet-hosting-protocol-helpers.md) records the previous conventional Hosting contract.

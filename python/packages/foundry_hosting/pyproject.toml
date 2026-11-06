@@ -52,7 +52,7 @@ fallback-version = "0.0.0"
 
 [tool.pytest.ini_options]
 testpaths = 'tests'
-addopts = "-ra -q -r fEX"
+addopts = "-ra -q -r fEX --import-mode=importlib"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
