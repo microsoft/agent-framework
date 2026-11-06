@@ -6,6 +6,8 @@ FROM mcr.microsoft.com/dotnet/runtime:10.0 AS dotnet
 
 FROM python:3.12-slim
 
+ENV PYTHONNOUSERSITE=1
+
 WORKDIR /app
 
 # libicu is required by the .NET runtime for globalization support.

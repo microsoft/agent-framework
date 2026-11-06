@@ -23,6 +23,8 @@ downstream service ID.
 
 Run one entry point at a time. The deployment manifest targets `main.py`; select another script to deploy a different
 mode. Set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL` in `.env`, then run `python main.py`.
+For deployment environment configuration, see the
+[Python startup configuration](../../README.md#python-startup-configuration).
 Follow the [parent hosting guide](../../README.md) for local and deployed setup.
 
 ## Outer response storage and background

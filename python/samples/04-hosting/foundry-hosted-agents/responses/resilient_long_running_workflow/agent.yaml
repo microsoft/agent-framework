@@ -7,3 +7,6 @@ protocols:
 resources:
   cpu: "0.25"
   memory: "0.5Gi"
+environment_variables:
+  - name: PYTHONNOUSERSITE
+    value: "1"

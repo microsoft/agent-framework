@@ -8,5 +8,7 @@ resources:
   cpu: "0.25"
   memory: "0.5Gi"
 environment_variables:
+  - name: PYTHONNOUSERSITE
+    value: "1"
   - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
     value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}

@@ -198,6 +198,9 @@ azd deploy --all
 azd ai agent run
 ```
 
+For deployment environment settings, see the
+[Python startup configuration](../../README.md#python-startup-configuration).
+
 The agent host will start on `http://localhost:8088`.
 
 #### Invoke the local agent

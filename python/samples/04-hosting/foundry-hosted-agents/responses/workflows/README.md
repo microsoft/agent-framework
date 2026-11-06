@@ -31,6 +31,9 @@ uv run --no-sync python main.py
 uv run --no-sync python approval.py
 ```
 
+For deployment environment settings, see the
+[Python startup configuration](../../README.md#python-startup-configuration).
+
 Example typed request:
 
 ```bash
