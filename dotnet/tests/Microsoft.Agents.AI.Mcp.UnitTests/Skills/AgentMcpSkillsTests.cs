@@ -1695,18 +1695,28 @@ public sealed partial class AgentMcpSkillsTests
         logger.VerifyNoOtherCalls();
     }
 
-    [Fact]
-    public async Task GetResourceAsync_ReadFailure_PropagatesAsync()
+    [Theory]
+    [InlineData(McpErrorCode.ResourceNotFound)]
+    [InlineData(McpErrorCode.InternalError)]
+    public async Task GetResourceAsync_ReadFailure_HandlesExpectedErrorAsync(McpErrorCode errorCode)
     {
         // Arrange
         await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())),
-            (_, _) => throw new McpProtocolException("Resource unavailable.", McpErrorCode.ResourceNotFound));
+            (_, _) => throw new McpProtocolException("Resource unavailable.", errorCode));
         await using var client = await server.CreateClientAsync();
         using var source = new AgentMcpSkillsSource(client);
         var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
 
         // Act & Assert
-        await Assert.ThrowsAsync<McpProtocolException>(async () => await skill.GetResourceAsync("references/checklist.md"));
+        if (errorCode == McpErrorCode.ResourceNotFound)
+        {
+            Assert.Null(await skill.GetResourceAsync("references/checklist.md"));
+        }
+        else
+        {
+            var exception = await Assert.ThrowsAsync<McpProtocolException>(async () => await skill.GetResourceAsync("references/checklist.md"));
+            Assert.Equal(errorCode, exception.ErrorCode);
+        }
     }
 
     [Fact]

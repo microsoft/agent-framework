@@ -776,16 +776,67 @@ public sealed partial class AgentMcpSkillTests
         Assert.Empty(reads);
     }
 
-    [Fact]
-    public async Task GetResourceAsync_ReadFailure_PropagatesAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetResourceAsync_ResourceNotFound_ReturnsNullWithoutCachingAsync(bool dynamicResources)
     {
         // Arrange
-        await using var server = CreateServer((_, _) => throw new McpProtocolException("Resource unavailable.", McpErrorCode.ResourceNotFound));
+        int reads = 0;
+        await using var server = CreateServer((uri, _) =>
+        {
+            if (++reads == 1)
+            {
+                throw new McpProtocolException("Resource unavailable.", McpErrorCode.ResourceNotFound);
+            }
+
+            return ValueTask.FromResult(Text(uri, "Checklist."));
+        });
+        await using var client = await server.CreateClientAsync();
+        var skill = dynamicResources ? CreateDynamicSkill(client) : CreateSkill(client);
+
+        // Act
+        var missing = await skill.GetResourceAsync("references/checklist.md");
+        var available = await skill.GetResourceAsync("references/checklist.md");
+
+        // Assert
+        Assert.Null(missing);
+        Assert.NotNull(available);
+        Assert.Equal("Checklist.", await available.ReadAsync());
+        Assert.Equal(2, reads);
+        Assert.False(skill.NeedsRefresh);
+    }
+
+    [Theory]
+    [InlineData(false, McpErrorCode.ResourceNotFound)]
+    [InlineData(true, McpErrorCode.ResourceNotFound)]
+    [InlineData(false, McpErrorCode.InternalError)]
+    [InlineData(true, McpErrorCode.InternalError)]
+    public async Task GetContentAsync_ReadFailure_PropagatesAsync(bool dynamicResources, McpErrorCode errorCode)
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => throw new McpProtocolException("Read failed.", errorCode));
+        await using var client = await server.CreateClientAsync();
+        var skill = dynamicResources ? CreateDynamicSkill(client) : CreateSkill(client);
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<McpProtocolException>(async () => await skill.GetContentAsync());
+        Assert.Equal(errorCode, exception.ErrorCode);
+    }
+
+    [Theory]
+    [InlineData(McpErrorCode.InternalError)]
+    [InlineData(McpErrorCode.InvalidParams)]
+    public async Task GetResourceAsync_ReadFailure_PropagatesAsync(McpErrorCode errorCode)
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => throw new McpProtocolException("Resource unavailable.", errorCode));
         await using var client = await server.CreateClientAsync();
         var skill = CreateSkill(client);
 
         // Act & Assert
-        await Assert.ThrowsAsync<McpProtocolException>(async () => await skill.GetResourceAsync("references/checklist.md"));
+        var exception = await Assert.ThrowsAsync<McpProtocolException>(async () => await skill.GetResourceAsync("references/checklist.md"));
+        Assert.Equal(errorCode, exception.ErrorCode);
     }
 
     [Fact]

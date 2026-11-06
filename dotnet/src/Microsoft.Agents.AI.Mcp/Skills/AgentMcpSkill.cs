@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -152,7 +153,8 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// <remarks>
     /// Returns a supporting resource from the server's resource list, or any resource within the skill's directory
     /// when resources are dynamic, using cached content until it expires.
-    /// Returns <see langword="null"/> for unsafe names, resources not listed in the manifest, or <c>SKILL.md</c>.
+    /// Returns <see langword="null"/> for unsafe names, resources not listed in the manifest,
+    /// resources the server reports as not found, or <c>SKILL.md</c>.
     /// A size or content hash mismatch returns previously verified content if available and queues a skill refresh.
     /// </remarks>
     /// <exception cref="InvalidOperationException">The resource response is invalid, exceeds the size limit,
@@ -189,7 +191,16 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             }
         }
 
-        ResourceContents content = await this.GetResourceContentAsync(uri, resource, cancellationToken).ConfigureAwait(false);
+        ResourceContents content;
+        try
+        {
+            content = await this.GetResourceContentAsync(uri, resource, cancellationToken).ConfigureAwait(false);
+        }
+        catch (McpProtocolException ex) when (ex.ErrorCode == McpErrorCode.ResourceNotFound)
+        {
+            // Return null to indicate that the resource was not found, as required by GetResourceAsync's contract.
+            return null;
+        }
 
         return new AgentMcpSkillResource(name, content);
     }

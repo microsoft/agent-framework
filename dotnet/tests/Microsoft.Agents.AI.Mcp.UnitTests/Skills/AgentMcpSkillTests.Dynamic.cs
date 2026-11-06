@@ -251,7 +251,7 @@ public sealed partial class AgentMcpSkillTests
     }
 
     [Theory]
-    [InlineData(McpErrorCode.ResourceNotFound)]
+    [InlineData(McpErrorCode.InvalidParams)]
     [InlineData(McpErrorCode.InternalError)]
     public async Task DynamicSkill_ReadFailure_PropagatesWithoutCachingAsync(McpErrorCode errorCode)
     {
@@ -277,8 +277,10 @@ public sealed partial class AgentMcpSkillTests
         Assert.False(skill.NeedsRefresh);
     }
 
-    [Fact]
-    public async Task DynamicSkill_ExpiredReadFailure_DoesNotReturnStaleContentAsync()
+    [Theory]
+    [InlineData(McpErrorCode.ResourceNotFound)]
+    [InlineData(McpErrorCode.InternalError)]
+    public async Task DynamicSkill_ExpiredReadFailure_DoesNotReturnStaleContentAsync(McpErrorCode errorCode)
     {
         // Arrange
         var clock = new ResourceTimeProvider();
@@ -287,7 +289,7 @@ public sealed partial class AgentMcpSkillTests
         {
             if (++reads == 2)
             {
-                throw new McpProtocolException("Read failed.", McpErrorCode.InternalError);
+                throw new McpProtocolException("Read failed.", errorCode);
             }
 
             ReadResourceResult result = Text(uri, reads == 1 ? "Original." : "Updated.");
@@ -301,7 +303,14 @@ public sealed partial class AgentMcpSkillTests
 
         // Act
         clock.Advance(TimeSpan.FromSeconds(1));
-        await Assert.ThrowsAsync<McpProtocolException>(async () => await skill.GetResourceAsync("references/guide.md"));
+        if (errorCode == McpErrorCode.ResourceNotFound)
+        {
+            Assert.Null(await skill.GetResourceAsync("references/guide.md"));
+        }
+        else
+        {
+            await Assert.ThrowsAsync<McpProtocolException>(async () => await skill.GetResourceAsync("references/guide.md"));
+        }
         var updated = await skill.GetResourceAsync("references/guide.md");
 
         // Assert
