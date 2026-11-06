@@ -178,7 +178,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             return null;
         }
 
-        // Supporting reads must stay within the held manifest if the manifest provided.
+        // Supporting reads must stay within the held manifest if a manifest is provided.
         McpSkillResourceEntry? resource = null;
         if (this._resources is McpSkillManifestResources manifest)
         {
@@ -195,7 +195,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     }
 
     /// <summary>
-    /// Gets resource content checked against the size and content hash recorded when this skill was created.
+    /// Gets resource content, checking its size and content hash only when a manifest entry exists.
     /// </summary>
     /// <remarks>
     /// Reads of the same resource wait for earlier reads to finish.
