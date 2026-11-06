@@ -98,10 +98,13 @@ points on which the deciders may want a different answer.
 
 Every coordination entry is addressed by `(sessionKey, taskId, executionId)`.
 
-- `sessionKey` is an opaque string that identifies the session in the shared store. It defaults to the session id. Hosts
-  that partition sessions (tenant, user, and so on) provide a scope that the provider combines with the session id, so
-  two sessions that share an id in different partitions never share entries. How the scope reaches the provider is Open
-  Question 1.
+- `sessionKey` is an opaque string that identifies the session in the shared store. It must be stable across
+  serialization, because a replica that loads the session later has to find the same entries. A session id cannot be the
+  source: Python sessions have one, but the .NET `AgentSession` exposes none (the id travels separately in
+  `AgentSessionStoreKey`). The proposal is that the provider creates a random coordination id the first time it needs
+  one and persists it with the task records in session state, so it travels with the session in both languages and two
+  sessions never share a key, even across tenants or partitions. A host may supply its own key instead. Where the key
+  comes from, and whether hosts also need to supply a scope, is Open Question 1.
 - `taskId` is the integer the tools already use.
 - `executionId` is an opaque, globally unique value created whenever an execution starts: the initial run and every
   continuation. It is persisted in the task record. Python already does this; .NET adds it.
@@ -161,8 +164,11 @@ goes through step 1, so it can never return to `Running`.
 
 The refresh persists the record only when its status changes, so it does not rewrite `Lost` on every turn.
 
-A record whose execution this process does track follows today's rules. A record without an execution id, for example
-one that was persisted before this change, cannot be looked up in the store and also follows today's rules.
+A record whose execution this process does track follows today's rules, with one addition for shared-store mode: if
+another process persisted `Lost` for an execution that this process still tracks, a terminal result of that execution
+(local, or a published outcome) supersedes `Lost` here too, and the record never returns to `Running`. A record without
+an execution id, for example one that was persisted before this change, cannot be looked up in the store and follows
+today's rules.
 
 ### Owner rules
 
@@ -171,7 +177,16 @@ one that was persisted before this change, cannot be looked up in the store and 
   release is either fully registered before the release takes its snapshot, or it is rejected and its claim is removed.
 - **While running.** Call `Renew` at an interval well below the TTL (one third is suggested). If `Renew` reports a
   cancel request, cancel the local execution. Transient renewal failures are retried and the execution keeps running.
-- **Finish.** Call `PublishOutcome` with bounded retries and backoff. Publishing does not require a live claim.
+- **Finish.** Call `PublishOutcome` with bounded retries and backoff. Publishing does not require a live claim. If all
+  retries fail, the owner keeps the finished execution, with its result, in its runtime and tries again on its next
+  renewal tick or refresh, for as long as the process lives and the outcome retention has not passed. The claim is
+  not renewed for an execution that has finished, so other processes eventually see `Lost` instead of a permanent
+  "running on another instance". If the owner dies before a publish succeeds, the result is lost; this is a documented
+  limitation of the shared-store mode, not of the contract.
+- **Retention.** A finished execution and its child session stay on the owner for `continue` until this process clears
+  or releases the task, or until the outcome retention has passed, whichever comes first. A clear on another process
+  removes the shared entries but cannot reach the owner, so the owner must not keep finished executions indefinitely.
+  After that point `continue` fails with a clear message, as in the cross-process case.
 - **Lapsed ownership.** If the claim expires while the execution is still running (a long store outage or a paused
   process), the execution continues and still publishes. Another process may have marked the record `Lost` and the model
   may have restarted the work; the outcome supersedes `Lost` when it is read. This is the same exposure as today, but it
@@ -181,11 +196,17 @@ one that was persisted before this change, cannot be looked up in the store and 
   expires.
 - **Clear.** Remove the local state and call `Remove` for the record's execution. Other executions of the same task id
   are not touched.
-- **Release.** (1) Close the local runtime to new starts. (2) Call `RequestCancel` for every execution that the session
-  record lists as `Running`, including executions this process does not own. (3) Cancel and await the local executions
-  within the release timeout. (4) Await pending outcome publications within the same timeout, before dropping the
-  runtime. (5) Call `Remove` for the entries this process owns. Cancel requests are left to expire so that remote owners
-  can still observe them. Store failures during release are logged and do not fail the release, and release stays
+- **Release.** (0) If the caller disables cancellation (`cancel_running=False` in Python, `cancelRunning: false` in
+  .NET), reject the release before changing anything when a local execution is still running or when `GetClaim` shows a
+  live claim for an execution in the record; a store failure there also rejects, because the work may be running. No
+  runtime is closed and no cancel request is written in that case. Otherwise: (1) Close the local runtime to new starts.
+  (2) Call `RequestCancel` for every execution in the session record that is `Running`, or `Lost` with an execution id
+  (a lapsed owner may still be running it), including executions this process does not own. (3) Cancel and await the
+  local executions within the release timeout. (4) Await pending outcome publications within the same timeout, before
+  dropping the runtime. (5) Stop renewing; claims expire on their own. Published outcomes are not removed, because the
+  host may release a runtime for eviction before the result reached the persisted record; they expire with their
+  retention or are removed by `Clear`. Cancel requests are left to expire so that remote owners can still observe them.
+  Apart from the check in (0), store failures during release are logged and do not fail the release, and release stays
   bounded by its timeout, as established by the fix for #9231.
 
 ### Cancellation
@@ -260,7 +281,11 @@ service is not a goal of this ADR.
 - One test per scenario S1 to S7 that uses two provider instances over one shared store to simulate two processes.
 - Fault injection: store errors during every operation, a failed initial claim, a publish that fails and then succeeds,
   a stale publisher, a claim that expires before a late outcome, a release that races with a start, and a release with
-  pending publications. Each test must fail on an implementation that breaks the rule it covers.
+  pending publications. Also: a publish that exhausts its retries and succeeds after the store recovers, a task that
+  finishes on its owner after another process persisted `Lost`, a clear or release on a process that does not own the
+  task, release with cancellation disabled (local and remote work), release of a `Lost` record with an execution id,
+  and an outcome that survives a release of the owner's runtime. Each test must fail on an implementation that breaks
+  the rule it covers.
 - The existing single-process tests of both providers pass unchanged against the default store.
 - Documentation and the harness samples describe the opt-in, the TTL, and the limitations above.
 
@@ -323,9 +348,10 @@ Use a durable orchestration engine (for example the Durable Task integration `ag
 
 ## Open Questions
 
-1. **Session scope.** What is the best way for a host to supply the scope that is combined with the session id?
-   Candidates are a provider option holding a prefix or a key factory, or reuse of the partitions of
-   `AgentSessionStoreKey` ([ADR-0045](0045-shared-agent-session-store.md)) in .NET.
+1. **Session key.** Is a provider-generated coordination id persisted in session state the right source of
+   `sessionKey`, or should the host supply it (a provider option holding a key or a key factory, or the partitions of
+   `AgentSessionStoreKey` in .NET, see [ADR-0045](0045-shared-agent-session-store.md))? If the host can supply it, how
+   does it reach the provider, given that .NET sessions carry no id?
 2. **Cancellation reach.** Is per-execution cancellation derived from the record enough, or should release also write a
    session-level marker with an epoch so that executions the releasing process does not know about are cancelled too?
 3. **Superseding `Lost`.** This ADR proposes that a published outcome supersedes `Lost` for the same execution. Should
@@ -367,7 +393,7 @@ titles are paraphrased from the pull request review):
 | Require atomic outcome publication and lease removal | Readers check the outcome before the claim, so no atomic pair is needed |
 | Handle publication failures with retries or durable handoff | Finish rule: bounded retries; release awaits pending publications |
 | Avoid repeated `Lost` writes during refresh | The refresh persists only on change |
-| Outcomes are never removed | Invariant 2, `Clear`, and `Release` |
+| Outcomes are never removed | Invariant 2 (bounded lifetime) and `Clear`; release leaves outcomes to expire |
 | A failed initial lease still starts the task | Start rule: no claim, no run |
 | Release does not drain pending publications | Release step 4 |
 
