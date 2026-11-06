@@ -2576,6 +2576,9 @@ class MCPTool:
         elif connection.client is None:
             raise RuntimeError("MCP connection has neither a Client nor a ClientSession.")
         functions_before_discovery = self._functions.copy()
+        approval_modes_before_discovery = [
+            (function, function.approval_mode) for function in functions_before_discovery
+        ]
         call_meta_before_discovery = self._tool_call_meta_by_name
         param_names_before_discovery = self._tool_param_names_by_name
         annotations_before_discovery = self._tool_annotations_by_name
@@ -2611,6 +2614,8 @@ class MCPTool:
             try:
                 await self._close_on_owner()
             finally:
+                for function, approval_mode in approval_modes_before_discovery:
+                    function.approval_mode = approval_mode
                 self._functions[:] = functions_before_discovery
                 self._tool_call_meta_by_name = call_meta_before_discovery
                 self._tool_param_names_by_name = param_names_before_discovery

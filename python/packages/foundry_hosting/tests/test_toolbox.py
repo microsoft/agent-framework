@@ -1113,6 +1113,36 @@ async def test_metadata_refresh_is_atomic_and_updates_retained_functions() -> No
         assert toolbox.functions[0].approval_mode == "never_require"
 
 
+@pytest.mark.parametrize(
+    ("initial_policy", "refreshed_policy"),
+    [("always", "never"), ("never", "always")],
+)
+async def test_reconnect_restores_approval_modes_when_prompt_discovery_fails(
+    initial_policy: str, refreshed_policy: str
+) -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool(initial_policy)]
+    server.prompts = [{"name": "summarize"}]
+    async with toolbox_connection(server, load_prompts=True) as toolbox:
+        functions = list(toolbox.functions)
+        original_modes = [function.approval_mode for function in functions]
+        server.tools = [toolbox_tool(refreshed_policy)]
+        server.prompts = [{"name": "summarize", "arguments": "invalid"}]
+
+        with pytest.raises(ValueError, match="arguments"):
+            await toolbox.connect(reset=True)
+
+        assert server.initializations == 2
+        assert not toolbox.is_connected
+        assert all(current is previous for current, previous in zip(toolbox.functions, functions, strict=True))
+        assert [function.approval_mode for function in toolbox.functions] == original_modes
+
+        server.prompts = [{"name": "summarize"}]
+        await toolbox.connect()
+        assert toolbox.functions[0] is functions[0]
+        assert toolbox.functions[0].approval_mode == f"{refreshed_policy}_require"
+
+
 async def test_each_tool_uses_its_own_metadata_and_exact_server_prefix() -> None:
     server = ToolboxApprovalServer()
     server.tools = [
