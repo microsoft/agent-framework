@@ -66,7 +66,7 @@ class WorkflowFactory:
             from agent_framework import FileCheckpointStorage
 
             # With checkpointing for pause/resume support
-            storage = FileCheckpointStorage(path="./checkpoints")
+            storage = FileCheckpointStorage("./checkpoints")
             factory = WorkflowFactory(checkpoint_storage=storage)
             workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
 

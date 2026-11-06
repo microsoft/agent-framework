@@ -12,10 +12,13 @@ Graph-based execution enables:
 - Full integration with the workflow runtime
 """
 
+from agent_framework import register_checkpoint_type
+
 from ._declarative_base import (
     DECLARATIVE_STATE_KEY,
     ActionComplete,
     ActionTrigger,
+    ConditionResult,
     ConversationData,
     DeclarativeActionExecutor,
     DeclarativeMessage,
@@ -96,6 +99,36 @@ from ._mcp_handler import (
     MCPToolResult,
 )
 from ._state import WorkflowState
+
+# Framework-owned types that cross a checkpoint boundary.
+#
+# Checkpoint restore runs pickle through a restricted unpickler whose default allowlist
+# trusts ``agent_framework.`` and ``agent_framework_orchestrations.`` but not this
+# distribution, so these types opt in by name, as the orchestrations package does.
+# Without this, ``FileCheckpointStorage`` cannot save any checkpoint taken after the
+# first action, and a paused workflow cannot be resumed from storage.
+for _checkpoint_type in (
+    # Executor-to-executor message envelopes (``DeclarativeMessage``).
+    ActionTrigger,
+    ActionComplete,
+    ConditionResult,
+    LoopIterationResult,
+    LoopControl,
+    # ``request_info`` payloads and their response types, checkpointed as pending
+    # requests while a workflow waits for input or approval.
+    ExternalInputRequest,
+    ExternalInputResponse,
+    AgentExternalInputRequest,
+    AgentExternalInputResponse,
+    ToolApprovalRequest,
+    ToolApprovalResponse,
+    MCPToolApprovalRequest,
+    # Stored in workflow state while an agent's external input loop is paused.
+    ExternalLoopState,
+):
+    register_checkpoint_type(_checkpoint_type)
+
+del _checkpoint_type
 
 __all__ = [
     "AGENT_ACTION_EXECUTORS",
