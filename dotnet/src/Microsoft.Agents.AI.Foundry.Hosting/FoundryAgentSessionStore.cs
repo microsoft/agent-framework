@@ -48,7 +48,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// unnamed agents.
 /// </para>
 /// </remarks>
-internal sealed class FoundryAgentSessionStore : AgentSessionStore
+internal sealed partial class FoundryAgentSessionStore : AgentSessionStore
 {
     /// <summary>
     /// The default state-store name used to hold every agent session persisted by this store.
@@ -208,14 +208,7 @@ internal sealed class FoundryAgentSessionStore : AgentSessionStore
         catch (FoundryStorageNotFoundException ex)
         {
             // Nothing stored for this key, so deletion remains idempotent.
-            if (this._logger.IsEnabled(LogLevel.Debug))
-            {
-                this._logger.LogDebug(
-                    ex,
-                    "Session '{SessionId}' was not found in the Foundry state store '{StoreName}'. Nothing to delete.",
-                    key.SessionId,
-                    this.StoreName);
-            }
+            LogSessionNotFound(this._logger, key.SessionId, this.StoreName, ex);
         }
     }
 
@@ -229,4 +222,11 @@ internal sealed class FoundryAgentSessionStore : AgentSessionStore
     private static BinaryData ToBinaryData(JsonElement element) => FoundryStateStoreJson.ToBinaryData(element);
 
     private static BinaryData ToJsonString(string value) => FoundryStateStoreJson.ToJsonString(value);
+
+    [LoggerMessage(LogLevel.Debug, "Session '{SessionId}' was not found in the Foundry state store '{StoreName}'. Nothing to delete.", EventId = 0)]
+    private static partial void LogSessionNotFound(
+        ILogger logger,
+        string sessionId,
+        string storeName,
+        Exception exception);
 }

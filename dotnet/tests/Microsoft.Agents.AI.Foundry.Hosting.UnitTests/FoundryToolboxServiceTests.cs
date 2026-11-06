@@ -8,6 +8,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
+using Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -548,7 +549,7 @@ public class FoundryToolboxServiceTests
     public async Task RequestToolboxScope_DisposalFailure_CleansRemainingResourcesAndDoesNotThrowAsync()
     {
         // Arrange
-        var logger = new RecordingLogger();
+        var logs = new RecordingLoggerFactory();
         var handlers = new ConcurrentDictionary<string, TrackingHttpMessageHandler>(StringComparer.Ordinal);
         var options = new FoundryToolboxOptions
         {
@@ -560,7 +561,7 @@ public class FoundryToolboxServiceTests
         var service = new FoundryToolboxService(
             options,
             Mock.Of<TokenCredential>(),
-            logger)
+            logs.CreateLogger<FoundryToolboxService>())
         {
             ToolboxOpener = (name, _) =>
             {
@@ -594,7 +595,20 @@ public class FoundryToolboxServiceTests
         Assert.Null(exception);
         Assert.True(handlers["throws"].IsDisposed);
         Assert.True(handlers["continues"].IsDisposed);
-        Assert.Single(logger.Exceptions);
+        var warning = Assert.Single(logs.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Equal(0, warning.EventId.Id);
+        Assert.Equal("LogToolboxResourceDisposalFailed", warning.EventId.Name);
+        Assert.Equal(
+            $"Failed to dispose HTTP client for toolbox throws owned by response scope '{scope.Id}'.",
+            warning.Message);
+        Assert.IsType<InvalidOperationException>(warning.Exception);
+        AssertProperty(warning.Properties, "Resource", "HTTP client");
+        AssertProperty(warning.Properties, "ToolboxName", "throws");
+        AssertProperty(warning.Properties, "Owner", $"response scope '{scope.Id}'");
+        AssertProperty(
+            warning.Properties,
+            "{OriginalFormat}",
+            "Failed to dispose {Resource} for toolbox {ToolboxName} owned by {Owner}.");
         Assert.Empty(service.GetCurrentRequestTools());
 
         await service.DisposeAsync();
@@ -604,7 +618,7 @@ public class FoundryToolboxServiceTests
     public async Task DisposeAsync_DisposalFailure_CleansRemainingResourcesAndThrowsAggregateAsync()
     {
         // Arrange
-        var logger = new RecordingLogger();
+        var logs = new RecordingLoggerFactory();
         var handlers = new ConcurrentDictionary<string, TrackingHttpMessageHandler>(StringComparer.Ordinal);
         var options = new FoundryToolboxOptions
         {
@@ -616,7 +630,7 @@ public class FoundryToolboxServiceTests
         var service = new FoundryToolboxService(
             options,
             Mock.Of<TokenCredential>(),
-            logger)
+            logs.CreateLogger<FoundryToolboxService>())
         {
             ToolboxOpener = (name, _) =>
             {
@@ -651,7 +665,20 @@ public class FoundryToolboxServiceTests
         Assert.Single(exception.InnerExceptions);
         Assert.True(handlers["throws"].IsDisposed);
         Assert.True(handlers["continues"].IsDisposed);
-        Assert.Single(logger.Exceptions);
+        var warning = Assert.Single(logs.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Equal(
+            $"Failed to dispose HTTP client for toolbox throws owned by response scope '{scope.Id}'.",
+            warning.Message);
+        Assert.Same(exception.InnerException, warning.Exception);
+    }
+
+    private static void AssertProperty(
+        IReadOnlyList<KeyValuePair<string, object?>> properties,
+        string name,
+        object expectedValue)
+    {
+        var property = Assert.Single(properties, property => property.Key == name);
+        Assert.Equal(expectedValue, property.Value);
     }
 
     private sealed class TrackingHttpMessageHandler : HttpMessageHandler
@@ -681,27 +708,4 @@ public class FoundryToolboxServiceTests
         }
     }
 
-    private sealed class RecordingLogger : ILogger<FoundryToolboxService>
-    {
-        internal ConcurrentBag<Exception> Exceptions { get; } = [];
-
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull =>
-            null;
-
-        public bool IsEnabled(LogLevel logLevel) => true;
-
-        public void Log<TState>(
-            LogLevel logLevel,
-            EventId eventId,
-            TState state,
-            Exception? exception,
-            Func<TState, Exception?, string> formatter)
-        {
-            if (exception is not null)
-            {
-                this.Exceptions.Add(exception);
-            }
-        }
-    }
 }
