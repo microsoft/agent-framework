@@ -181,19 +181,31 @@ You can explore additional agent samples [here](https://github.com/microsoft/age
 
 ### MCP HTTP concurrency and timeouts
 
-`MCPStreamableHTTPTool` permits concurrent tool calls and generated prompt calls when
-their effective HTTP headers match. Fixed and dynamic headers together identify the
+For connections created by `MCPTool`, `MCPStreamableHTTPTool` permits concurrent tool
+calls and generated prompt calls when their effective HTTP headers match.
+Fixed and dynamic headers together identify the
 MCP session; header names are compared case-insensitively and values case-sensitively.
 A caller with different headers waits for active operations to finish before the
 framework reconnects and refreshes session discovery. Foundry Toolbox resource reads
 use the same coordination.
 
+The lifecycle owner completes connection setup and configured discovery before
+admitting operations. Concurrent failures reuse a replacement only after that
+replacement's catalogs are ready. Tool retries reprepare arguments and metadata
+from the refreshed catalog. Catalog discovery restarts from the beginning if its
+managed connection changes; it does not combine pages from different sessions.
+
 Header admission, session reconciliation, and connection recovery use `request_timeout`
 as separate budgets (30 seconds by default; `None` disables them). These budgets do
 not form an end-to-end deadline. Admission timeout does not cancel another caller's
-active tool call. Concurrent failures from one connection reuse its replacement.
+active tool call. Releasing a call's header lease does not wait on a lock, including
+when the call is cancelled.
 Calling `close()` interrupts in-flight recovery; it does not permit that recovery
 to reopen the session. Subsequent explicit connection or discovery remains supported.
+
+Caller-supplied `mcp_client` and `session` objects retain their existing ownership
+and passthrough behavior. Their lifecycle and synchronization remain the caller's
+responsibility; these managed-connection readiness guarantees do not apply to them.
 
 ### MCP HTTP client ownership and cookies
 

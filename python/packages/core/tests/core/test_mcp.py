@@ -8102,7 +8102,7 @@ async def test_mcp_tool_connect_reset_cleans_up_in_original_task(caplog):
     assert transport_contexts[1].exit_task is transport_contexts[1].enter_task
 
 
-async def test_mcp_tool_connect_from_lifecycle_owner_bypasses_request_lock() -> None:
+async def test_mcp_tool_connect_from_lifecycle_owner_bypasses_request_queue() -> None:
     """connect(reset=True) should bypass the request queue when already on the owner task."""
     import asyncio
 
@@ -8116,18 +8116,21 @@ async def test_mcp_tool_connect_from_lifecycle_owner_bypasses_request_lock() -> 
     async def connect_from_owner_task() -> None:
         tool._lifecycle_owner_task = asyncio.current_task()
         try:
-            async with tool._lifecycle_request_lock:
-                await tool.connect(reset=True)
+            await tool.connect(reset=True)
         finally:
             tool._lifecycle_owner_task = None
 
-    with patch.object(tool, "_connect_on_owner", AsyncMock()) as mock_connect_on_owner:
+    with (
+        patch.object(tool, "_connect_on_owner", AsyncMock()) as mock_connect_on_owner,
+        patch.object(tool, "_run_on_lifecycle_owner", AsyncMock()) as queue_request,
+    ):
         await asyncio.wait_for(connect_from_owner_task(), timeout=0.1)
 
     mock_connect_on_owner.assert_awaited_once_with(reset=True)
+    queue_request.assert_not_awaited()
 
 
-async def test_mcp_tool_close_from_lifecycle_owner_bypasses_request_lock() -> None:
+async def test_mcp_tool_close_from_lifecycle_owner_bypasses_request_queue() -> None:
     """close() should bypass the request queue when already on the owner task."""
     import asyncio
 
@@ -8141,15 +8144,18 @@ async def test_mcp_tool_close_from_lifecycle_owner_bypasses_request_lock() -> No
     async def close_from_owner_task() -> None:
         tool._lifecycle_owner_task = asyncio.current_task()
         try:
-            async with tool._lifecycle_request_lock:
-                await tool.close()
+            await tool.close()
         finally:
             tool._lifecycle_owner_task = None
 
-    with patch.object(tool, "_close_on_owner", AsyncMock()) as mock_close_on_owner:
+    with (
+        patch.object(tool, "_close_on_owner", AsyncMock()) as mock_close_on_owner,
+        patch.object(tool, "_run_on_lifecycle_owner", AsyncMock()) as queue_request,
+    ):
         await asyncio.wait_for(close_from_owner_task(), timeout=0.1)
 
     mock_close_on_owner.assert_awaited_once_with()
+    queue_request.assert_not_awaited()
 
 
 async def test_mcp_tool_safe_close_reraises_other_runtime_errors():

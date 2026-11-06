@@ -111,13 +111,20 @@ async def mcp_http_client_factory() -> AsyncIterator[MCPHTTPClientFactory]:
     async_client = httpx.AsyncClient
     clients: list[httpx.AsyncClient] = []
 
-    def create_client(*, response_cookies: dict[str, str] | None = None, **kwargs: Any) -> httpx.AsyncClient:
+    def create_client(
+        *,
+        response_cookies: dict[str, str] | None = None,
+        rewrite_response: Callable[[httpx.Request, httpx.Response], httpx.Response] | None = None,
+        **kwargs: Any,
+    ) -> httpx.AsyncClient:
         async def handle_with_cookies(request: httpx.Request) -> httpx.Response:
             response = await handle(request)
             if response_cookies and request.method == "POST":
                 method = json.loads(request.content).get("method")
                 if method in response_cookies:
                     response.headers["Set-Cookie"] = response_cookies[method]
+            if rewrite_response is not None:
+                response = rewrite_response(request, response)
             return response
 
         client = async_client(transport=httpx.MockTransport(handle_with_cookies), **kwargs)
@@ -729,9 +736,10 @@ async def test_concurrent_calls_share_recovery_of_their_failed_connection(
         ) == (["arriving", "first", "second"] if operation == "tool" else ["first", "second"])
 
 
+@pytest.mark.parametrize("operation", ["tool", "discovery"])
 @pytest.mark.parametrize("blocked_method", ["initialize", "tools/list"])
 async def test_close_interrupts_recovery_without_reopening_or_retrying(
-    mcp_http_server: MCPHTTPServer, blocked_method: str
+    mcp_http_server: MCPHTTPServer, blocked_method: str, operation: str
 ) -> None:
     client, requests, writes = mcp_http_server
     tool = _tool(client, "token-a")
@@ -748,13 +756,21 @@ async def test_close_interrupts_recovery_without_reopening_or_retrying(
         async with asyncio.timeout(5):
             await tool.connect()
             client.event_hooks["request"].append(block_recovery)
-            with patch.object(_connected_client(tool), "call_tool", side_effect=ClosedResourceError()):
-                call = asyncio.create_task(tool.call_tool("record", credential="token-a", marker="must-not-retry"))
+            with patch.object(
+                _connected_client(tool),
+                "call_tool" if operation == "tool" else "list_tools",
+                side_effect=ClosedResourceError(),
+            ):
+                call = asyncio.create_task(
+                    tool.call_tool("record", credential="token-a", marker="must-not-retry")
+                    if operation == "tool"
+                    else tool.load_tools()
+                )
                 await recovery_started.wait()
                 closing = asyncio.create_task(tool.close())
                 await asyncio.sleep(0)
                 release_recovery.set()
-                with pytest.raises(ToolExecutionException, match="Failed to reconnect"):
+                with pytest.raises(ToolExecutionException, match=r"Failed to reconnect|interrupted by close\(\)"):
                     await call
                 await closing
 
@@ -786,6 +802,156 @@ async def test_idle_header_admission_does_not_queue_lifecycle_synchronization(mc
         assert sorted(writes["token-a"]) == ["first", "second"]
 
 
+async def test_recovery_waits_for_catalog_and_reprepares_arguments_and_metadata(
+    mcp_http_client_factory: MCPHTTPClientFactory,
+) -> None:
+    create_client, requests, _ = mcp_http_client_factory
+    session_count = 0
+    catalog_started = asyncio.Event()
+    release_catalog = asyncio.Event()
+
+    def change_catalog(request: httpx.Request, response: httpx.Response) -> httpx.Response:
+        nonlocal session_count
+        if request.method != "POST":
+            return response
+        method = json.loads(request.content).get("method")
+        if method == "initialize":
+            session_count += 1
+        if method == "tools/list":
+            payload = response.json()
+            remote_tool = payload["result"]["tools"][0]
+            remote_tool["_meta"] = {"catalog-version": str(session_count)}
+            if session_count > 1:
+                remote_tool["inputSchema"]["properties"]["fresh"] = {"type": "string"}
+            return httpx.Response(200, json=payload)
+        return response
+
+    async def block_new_catalog(request: httpx.Request) -> None:
+        if request.method == "POST" and json.loads(request.content).get("method") == "tools/list" and session_count > 1:
+            catalog_started.set()
+            await release_catalog.wait()
+
+    async with create_client(rewrite_response=change_catalog) as client:
+        tool = _tool(client, "token-a")
+        async with tool, asyncio.timeout(5), asyncio.TaskGroup() as tasks:
+            client.event_hooks["request"].append(block_new_catalog)
+            with patch.object(_connected_client(tool), "call_tool", side_effect=ClosedResourceError()):
+                recovering = tasks.create_task(
+                    tool.call_tool("record", credential="token-a", marker="recovering", fresh="value")
+                )
+                await catalog_started.wait()
+                arriving = tasks.create_task(
+                    tool.call_tool("record", credential="token-a", marker="arriving", fresh="value")
+                )
+                await asyncio.sleep(0)
+                assert _calls(requests) == []
+                release_catalog.set()
+
+        assert recovering.result() is not None
+        assert arriving.result() is not None
+        assert session_count == 2
+        for request in _calls(requests):
+            params = json.loads(request.content)["params"]
+            assert params["arguments"]["fresh"] == "value"
+            assert params["_meta"]["catalog-version"] == "2"
+
+
+@pytest.mark.parametrize("cancel_call", [False, True])
+async def test_header_lease_cleanup_does_not_wait_for_admission_lock(
+    mcp_http_server: MCPHTTPServer, cancel_call: bool
+) -> None:
+    client, _, _ = mcp_http_server
+    tool = _tool(client, "token-a")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def block_call(request: httpx.Request) -> None:
+        if request.method == "POST" and json.loads(request.content).get("method") == "tools/call":
+            started.set()
+            await release.wait()
+
+    call = None
+    try:
+        async with tool, asyncio.timeout(5):
+            client.event_hooks["request"].append(block_call)
+            call = asyncio.create_task(tool.call_tool("record", credential="token-a"))
+            await started.wait()
+            async with tool._call_headers_lock:
+                if cancel_call:
+                    call.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        _ = await call
+                else:
+                    release.set()
+                    assert await call is not None
+                assert tool._active_header_calls == 0
+                assert tool._active_call_headers is None
+                assert tool._call_headers_idle.is_set()
+    finally:
+        release.set()
+        if call is not None:
+            call.cancel()
+            await asyncio.gather(call, return_exceptions=True)
+
+
+async def test_recovery_discovery_failure_does_not_deadlock_queued_connect(
+    mcp_http_client_factory: MCPHTTPClientFactory,
+) -> None:
+    create_client, requests, _ = mcp_http_client_factory
+    session_count = 0
+    discovery_started = asyncio.Event()
+    release_discovery = asyncio.Event()
+
+    def reject_recovery_catalog(request: httpx.Request, response: httpx.Response) -> httpx.Response:
+        nonlocal session_count
+        if request.method != "POST":
+            return response
+        payload = json.loads(request.content)
+        if payload.get("method") == "initialize":
+            session_count += 1
+        if payload.get("method") == "tools/list" and session_count == 2:
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": payload["id"], "error": {"code": -32001, "message": "rejected"}}
+            )
+        return response
+
+    async def block_discovery(request: httpx.Request) -> None:
+        if (
+            request.method == "POST"
+            and json.loads(request.content).get("method") == "tools/list"
+            and session_count == 2
+        ):
+            discovery_started.set()
+            await release_discovery.wait()
+
+    async with create_client(rewrite_response=reject_recovery_catalog) as client:
+        tool = _tool(client, "token-a")
+        async with tool, asyncio.timeout(5):
+            client.event_hooks["request"].append(block_discovery)
+            with patch.object(_connected_client(tool), "call_tool", side_effect=ClosedResourceError()):
+                recovering = asyncio.create_task(tool.call_tool("record", credential="token-a"))
+                connecting = None
+                try:
+                    await discovery_started.wait()
+                    connecting = asyncio.create_task(tool.connect())
+                    await asyncio.sleep(0)
+                    assert not connecting.done()
+                    release_discovery.set()
+                    results = await asyncio.gather(recovering, connecting, return_exceptions=True)
+                    assert isinstance(results[0], ToolExecutionException)
+                    assert results[1] is None
+                    assert tool.is_connected
+                    assert session_count == 3
+                finally:
+                    release_discovery.set()
+                    for task in (recovering, connecting):
+                        if task is not None:
+                            task.cancel()
+                            await asyncio.gather(task, return_exceptions=True)
+            await tool.call_tool("record", credential="token-a", marker="after-recovery")
+        assert len(_calls(requests)) == 1
+
+
 @pytest.mark.parametrize("stage", ["lock", "active", "reconcile"])
 async def test_header_admission_timeout_does_not_dispatch_the_waiting_call(
     mcp_http_server: MCPHTTPServer, stage: str
@@ -813,7 +979,7 @@ async def test_header_admission_timeout_does_not_dispatch_the_waiting_call(
             with patch.object(tool, "request_timeout", 0.05):
                 async with contextlib.AsyncExitStack() as stack:
                     if stage == "lock":
-                        await stack.enter_async_context(tool._call_headers_condition)
+                        await stack.enter_async_context(tool._call_headers_lock)
                     with pytest.raises(ToolExecutionException, match="Timed out.*header admission"):
                         await tool.call_tool("record", credential="token-b", marker="waiting")
                 assert not any(
@@ -868,7 +1034,9 @@ async def test_connection_recovery_respects_configured_timeout(
             else:
                 with pytest.raises(ToolExecutionException, match="Timed out recovering"):
                     await call
-        assert not tool._lifecycle_request_lock.locked()
+        release.set()
+        await tool._lifecycle_idle.wait()
+        assert tool._lifecycle_idle.is_set()
         assert tool._active_header_calls == 0
         await tool.call_tool("record", credential="token-a")
 

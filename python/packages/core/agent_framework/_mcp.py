@@ -609,6 +609,22 @@ class _MCPConnection(Protocol):
         ...
 
 
+@dataclass
+class _MCPLifecycleRequest:
+    action: Literal["connect", "recover", "close", "load_tools", "load_prompts"]
+    reset: bool
+    load_configured: bool
+    reset_discovery: bool
+    future: asyncio.Future[None]
+    acknowledged: asyncio.Future[bool]
+    failed_connection: _MCPConnection | None = None
+    close_generation: int | None = None
+
+
+class _MCPDiscoveryRestart(Exception):
+    """Restart a catalog snapshot after its connection is replaced."""
+
+
 class _ClientMCPConnection:
     """MCP connection backed by a high-level Client."""
 
@@ -1248,11 +1264,10 @@ class MCPTool:
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
         self._function_load_lock = asyncio.Lock()
-        self._lifecycle_queue: (
-            asyncio.Queue[tuple[str, bool, bool, bool, asyncio.Future[None], asyncio.Future[bool]]] | None
-        ) = None
+        self._lifecycle_queue: asyncio.Queue[_MCPLifecycleRequest] | None = None
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
-        self._lifecycle_action_in_progress = False
+        self._lifecycle_idle = asyncio.Event()
+        self._lifecycle_idle.set()
         self._close_generation = 0
 
         if mcp_client is not None and session is not None:
@@ -2152,22 +2167,20 @@ class MCPTool:
         stop_error: BaseException | None = None
         try:
             while True:
-                action, reset, load_configured, reset_discovery, future, acknowledged = await queue.get()
-                if action == "connect" and future.cancelled():
+                request = await queue.get()
+                action, future = request.action, request.future
+                if action != "close" and future.cancelled():
                     if not self.is_connected and queue.empty():
                         return
+                    if queue.empty():
+                        self._lifecycle_idle.set()
                     continue
 
-                self._lifecycle_action_in_progress = True
+                previous_connection = self._connection
+                previously_connected = self.is_connected
                 try:
-                    if action == "connect":
-                        previous_connection = self._connection
-                        previously_connected = self.is_connected
-                        await self._connect_on_owner(
-                            reset=reset,
-                            load_configured=load_configured,
-                            reset_discovery=reset_discovery,
-                        )
+                    await self._execute_lifecycle_request(request)
+                    if action != "close":
                         new_connection = not previously_connected or self._connection is not previous_connection
                         accepted = False
                         try:
@@ -2175,26 +2188,27 @@ class MCPTool:
                                 future.set_result(None)
                             # A completed result future cannot tell us that its waiter was
                             # cancelled before consuming it. Await explicit caller acceptance.
-                            accepted = await acknowledged
+                            accepted = await request.acknowledged
                         finally:
                             if not accepted and new_connection:
                                 await self._close_on_owner()
-                                if reset_discovery:
+                                if request.reset_discovery:
                                     self._reset_session_discovery_state()
                         if not accepted and new_connection and queue.empty():
                             return
-                    elif action == "close":
-                        await self._close_on_owner()
-                    elif action == "synchronize":
-                        pass
-                    else:
-                        raise RuntimeError(f"Unknown MCP lifecycle action: {action}")
                 except asyncio.CancelledError as ex:
                     stop_error = ex
                     if not future.done():
                         future.set_exception(ex)
                     raise
                 except Exception as ex:
+                    if (
+                        self._connection is not previous_connection
+                        and self._connection is not None
+                        and self._connection.is_framework_owned
+                    ):
+                        await self._close_on_owner()
+                        self._reset_session_discovery_state()
                     if not future.done():
                         future.set_exception(ex)
                     else:
@@ -2211,13 +2225,14 @@ class MCPTool:
                     # cancelled-connect branch above. The connected check matters because
                     # is_connected is set before tools and prompts are loaded: when loading fails
                     # the session is live and still needs this owner to close it later.
-                    if action == "connect" and not self.is_connected and queue.empty():
+                    if action != "close" and not self.is_connected and queue.empty():
                         return
                 else:
                     if not future.done():
                         future.set_result(None)
                 finally:
-                    self._lifecycle_action_in_progress = False
+                    if queue.empty():
+                        self._lifecycle_idle.set()
 
                 if action == "close":
                     return
@@ -2227,15 +2242,58 @@ class MCPTool:
         finally:
             while True:
                 try:
-                    _, _, _, _, future, _ = queue.get_nowait()
+                    request = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
-                if not future.done():
-                    future.set_exception(stop_error or RuntimeError("MCP lifecycle owner stopped unexpectedly."))
+                if not request.future.done():
+                    request.future.set_exception(
+                        stop_error or RuntimeError("MCP lifecycle owner stopped unexpectedly.")
+                    )
 
             self._lifecycle_queue = None
             self._lifecycle_owner_task = None
-            self._lifecycle_action_in_progress = False
+            self._lifecycle_idle.set()
+
+    async def _execute_lifecycle_request(self, request: _MCPLifecycleRequest) -> None:
+        """Keep transport changes and catalog publication on the lifecycle owner."""
+        if request.close_generation is not None and request.close_generation != self._close_generation:
+            raise _mcp_tool_execution_exception("MCP lifecycle operation was interrupted by close().")
+        if request.action == "recover":
+            if not self.is_connected or self._connection is request.failed_connection:
+                await self._reconnect_without_loading()
+                self._reset_session_discovery_state()
+            if request.load_configured:
+                try:
+                    async with self._function_load_lock:
+                        await self._load_configured_discovery_locked()
+                except (Exception, asyncio.CancelledError):
+                    await self._close_on_owner()
+                    self._reset_session_discovery_state()
+                    raise
+        elif request.action == "connect":
+            await self._connect_on_owner(
+                reset=request.reset,
+                load_configured=request.load_configured,
+                reset_discovery=request.reset_discovery,
+            )
+        elif request.action == "close":
+            await self._close_on_owner()
+        else:
+            previous_connection = self._connection
+            if request.action == "load_tools":
+                await self.load_tools()
+            else:
+                await self.load_prompts()
+            if (
+                self._connection is not previous_connection
+                and self._connection is not None
+                and self._connection.client is not None
+            ):
+                async with self._function_load_lock:
+                    await self._load_configured_discovery_locked()
+        if request.close_generation is not None and request.close_generation != self._close_generation:
+            await self._close_on_owner()
+            raise _mcp_tool_execution_exception("MCP lifecycle operation was interrupted by close().")
 
     def _is_lifecycle_owner_task(self) -> bool:
         owner_task = self._lifecycle_owner_task
@@ -2243,36 +2301,29 @@ class MCPTool:
 
     async def _run_on_lifecycle_owner(
         self,
-        action: str,
+        action: Literal["connect", "recover", "close", "load_tools", "load_prompts"],
         *,
         reset: bool = False,
         load_configured: bool = True,
         reset_discovery: bool = False,
+        failed_connection: _MCPConnection | None = None,
+        close_generation: int | None = None,
     ) -> None:
         await self._ensure_lifecycle_owner()
 
+        future = asyncio.get_running_loop().create_future()
+        acknowledged: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        request = _MCPLifecycleRequest(
+            action, reset, load_configured, reset_discovery, future, acknowledged, failed_connection, close_generation
+        )
         if self._is_lifecycle_owner_task():
-            if action == "connect":
-                await self._connect_on_owner(
-                    reset=reset,
-                    load_configured=load_configured,
-                    reset_discovery=reset_discovery,
-                )
-            elif action == "close":
-                await self._close_on_owner()
-            elif action == "synchronize":
-                pass
-            else:
-                raise RuntimeError(f"Unknown MCP lifecycle action: {action}")
+            await self._execute_lifecycle_request(request)
             return
-
         queue = self._lifecycle_queue
         if queue is None:
             raise RuntimeError("MCP lifecycle owner is not available.")
-
-        future = asyncio.get_running_loop().create_future()
-        acknowledged: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
-        await queue.put((action, reset, load_configured, reset_discovery, future, acknowledged))
+        self._lifecycle_idle.clear()
+        await queue.put(request)
         accepted = False
         try:
             await future
@@ -2280,6 +2331,18 @@ class MCPTool:
         finally:
             if not acknowledged.done():
                 acknowledged.set_result(accepted)
+
+    async def _wait_for_lifecycle(self) -> None:
+        """Wait for a managed connection's complete lifecycle action, including discovery."""
+        connection = self._connection
+        if self._is_lifecycle_owner_task() or (connection is not None and not connection.is_framework_owned):
+            return
+        async with asyncio.timeout(self.request_timeout):
+            while True:
+                await self._lifecycle_idle.wait()
+                if not self._lifecycle_idle.is_set():
+                    continue
+                return
 
     async def _safe_close_exit_stack(self) -> BaseException | None:
         """Safely close the exit stack, handling unexpected cleanup failures.
@@ -2397,36 +2460,13 @@ class MCPTool:
 
         try:
             async with asyncio.timeout(self.request_timeout):
-                if self._is_lifecycle_owner_task():
-                    if close_generation != self._close_generation:
-                        raise _mcp_tool_execution_exception("MCP connection recovery was interrupted by close().")
-                    if not self.is_connected or self._connection is connection:
-                        await self._reconnect_without_loading()
-                else:
-                    async with self._lifecycle_request_lock:
-                        if close_generation != self._close_generation:
-                            raise _mcp_tool_execution_exception("MCP connection recovery was interrupted by close().")
-                        if not self.is_connected or self._connection is connection:
-                            logger.info("MCP connection was lost during %s. Reconnecting...", operation)
-                            await self._reconnect_without_loading()
-
-                # Discovery can itself recover a connection. Do not hold the lifecycle
-                # request lock while loading, or its recovery would wait on this caller.
-                if load_configured:
-                    async with self._function_load_lock:
-                        if close_generation != self._close_generation:
-                            raise _mcp_tool_execution_exception("MCP connection recovery was interrupted by close().")
-                        if (self.load_tools_flag and not self._tools_loaded) or (
-                            self.load_prompts_flag and not self._prompts_loaded
-                        ):
-                            try:
-                                await self._load_configured_discovery_locked()
-                            except (Exception, asyncio.CancelledError):
-                                await self.close()
-                                self._reset_session_discovery_state()
-                                raise
-                        if close_generation != self._close_generation:
-                            raise _mcp_tool_execution_exception("MCP connection recovery was interrupted by close().")
+                logger.info("MCP connection was lost during %s. Requesting recovery...", operation)
+                await self._run_on_lifecycle_owner(
+                    "recover",
+                    load_configured=load_configured,
+                    failed_connection=connection,
+                    close_generation=close_generation,
+                )
         except TimeoutError as timeout_ex:
             raise _mcp_tool_execution_exception(
                 f"Timed out recovering the MCP connection after {operation}.",
@@ -3007,14 +3047,35 @@ class MCPTool:
 
     async def _load_configured_discovery_locked(self) -> None:
         """Load configured session discovery while the caller holds the discovery lock."""
-        if self.load_tools_flag:
+        if self.load_tools_flag and not self._tools_loaded:
             if self._supports_tools:
                 await self._load_tools_locked()
             self._tools_loaded = True
-        if self.load_prompts_flag:
+        if self.load_prompts_flag and not self._prompts_loaded:
             if self._supports_prompts:
                 await self._load_prompts_locked()
             self._prompts_loaded = True
+
+    async def _load_discovery_snapshot(
+        self,
+        kind: Literal["tools", "prompts"],
+        load_snapshot: Callable[[], Awaitable[None]],
+    ) -> None:
+        """Restart complete catalog discovery once when its managed connection changes."""
+        from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
+
+        try:
+            async for attempt in AsyncRetrying(
+                retry=retry_if_exception_type(_MCPDiscoveryRestart),
+                stop=stop_after_attempt(2),
+                reraise=True,
+            ):
+                with attempt:
+                    await load_snapshot()
+        except _MCPDiscoveryRestart as ex:
+            raise _mcp_tool_execution_exception(
+                f"MCP connection changed repeatedly during {kind} discovery.", inner_exception=ex
+            ) from ex
 
     async def load_prompts(self) -> None:
         """Load prompts from the MCP server.
@@ -3026,10 +3087,17 @@ class MCPTool:
             ToolExecutionException: If the MCP server is not connected or a configured
                 allow/approval name matches multiple raw remote names.
         """
+        if not self._is_lifecycle_owner_task() and (self._connection is None or self._connection.is_framework_owned):
+            await self._run_on_lifecycle_owner("load_prompts", close_generation=self._close_generation)
+            return
         async with self._function_load_lock:
             await self._load_prompts_locked()
+            self._prompts_loaded = True
 
     async def _load_prompts_locked(self) -> None:
+        await self._load_discovery_snapshot("prompts", self._load_prompts_snapshot)
+
+    async def _load_prompts_snapshot(self) -> None:
         from mcp import types
 
         if not self._supports_prompts:
@@ -3176,6 +3244,12 @@ class MCPTool:
                 failed_connection=failed_connection,
                 close_generation=close_generation,
             )
+            if (
+                failed_connection is not None
+                and failed_connection.client is not None
+                and self._connection is not failed_connection
+            ):
+                raise _MCPDiscoveryRestart
 
         @retry(
             retry=retry_if_exception_type(ClosedResourceError),
@@ -3186,7 +3260,14 @@ class MCPTool:
         async def request_page_with_retry() -> _MCPListResultT | None:
             nonlocal failed_connection, close_generation
             close_generation = self._close_generation
+            previous_connection = self._connection
             await self._ensure_connected()
+            if (
+                previous_connection is not None
+                and previous_connection.client is not None
+                and self._connection is not previous_connection
+            ):
+                raise _MCPDiscoveryRestart
 
             # on reconnect we may have different capabilities.
             is_supported = self._supports_tools if kind == "tool" else self._supports_prompts
@@ -3236,10 +3317,17 @@ class MCPTool:
                 map to the same local name, or a configured allow/approval name matches
                 multiple raw remote names.
         """
+        if not self._is_lifecycle_owner_task() and (self._connection is None or self._connection.is_framework_owned):
+            await self._run_on_lifecycle_owner("load_tools", close_generation=self._close_generation)
+            return
         async with self._function_load_lock:
             await self._load_tools_locked()
+            self._tools_loaded = True
 
     async def _load_tools_locked(self) -> None:
+        await self._load_discovery_snapshot("tools", self._load_tools_snapshot)
+
+    async def _load_tools_snapshot(self) -> None:
         from mcp import types
 
         if not self._supports_tools:
@@ -3550,9 +3638,8 @@ class MCPTool:
             raise _mcp_tool_execution_exception(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
             )
-        filtered_kwargs, meta = self._prepare_call_kwargs(tool_name, kwargs)
-
         parser = self.parse_tool_results or self._parse_tool_result_from_mcp
+        parent_span = otel_trace.get_current_span()
 
         # Build MCP span attributes for tools/call
         mcp_span_attrs = self._mcp_base_span_attributes()
@@ -3568,19 +3655,19 @@ class MCPTool:
         ) as span:
             return await self._call_tool_with_retries(
                 tool_name,
-                filtered_kwargs,
-                meta,
+                kwargs,
                 parser,
                 span,
+                parent_span,
             )
 
     async def _call_tool_with_retries(
         self,
         tool_name: str,
-        filtered_kwargs: dict[str, Any],
-        meta: types.RequestParamsMeta | None,
+        kwargs: dict[str, Any],
         parser: Callable[..., str | list[Content]],
         span: otel_trace.Span,
+        parent_span: otel_trace.Span,
     ) -> str | list[Content]:
         """Execute the MCP tools/call RPC with retry logic."""
         from anyio import ClosedResourceError
@@ -3591,7 +3678,12 @@ class MCPTool:
             connection = self._connection
             close_generation = self._close_generation
             try:
+                await self._wait_for_lifecycle()
                 connection = self._require_connection()
+                with otel_trace.use_span(
+                    parent_span, end_on_exit=False, record_exception=False, set_status_on_exception=False
+                ):
+                    filtered_kwargs, meta = self._prepare_call_kwargs(tool_name, kwargs)
                 result = await connection.call_tool(
                     tool_name,
                     filtered_kwargs,
@@ -3754,6 +3846,7 @@ class MCPTool:
                 connection = self._connection
                 close_generation = self._close_generation
                 try:
+                    await self._wait_for_lifecycle()
                     connection = self._require_connection()
                     prompt_result = await connection.get_prompt(prompt_name, kwargs)
                     return parser(prompt_result)
@@ -4423,11 +4516,8 @@ class MCPStreamableHTTPTool(MCPTool):
         self._httpx_client: httpx2.AsyncClient | None = http_client
         self._static_headers = dict(static_headers or {})
         self._header_provider = header_provider
-        # Headers for the in-flight call_tool invocation. The streamable HTTP transport
-        # sends requests from tasks spawned at connect time, whose contexts never observe
-        # ContextVar values set later inside call_tool, so the request hook needs this
-        # instance-level snapshot as a cross-task fallback. Concurrent operations share
-        # one effective header identity; a different identity waits until they finish.
+        # One header identity is leased by all concurrent operations. Keep a snapshot
+        # for transports that do not propagate the invoking task's ContextVars.
         self._active_call_headers: dict[str, str] | None = None
         # None means no run seeded this connection, which an empty mapping cannot express:
         # a run that supplies no kwargs still expects a missing provider key to be an error.
@@ -4440,8 +4530,10 @@ class MCPStreamableHTTPTool(MCPTool):
         self._session_header_session: ClientSession | None = None
         self._pending_session_headers: dict[str, str] | None = None
         self._pending_connection_kwargs: dict[str, Any] | None = None
-        self._call_headers_condition = asyncio.Condition()
+        self._call_headers_lock = asyncio.Lock()
         self._active_header_calls = 0
+        self._call_headers_idle = asyncio.Event()
+        self._call_headers_idle.set()
         self._header_request_owner = object()
         self._header_hook_client: httpx2.AsyncClient | None = None
 
@@ -4678,27 +4770,12 @@ class MCPStreamableHTTPTool(MCPTool):
         self._pending_connection_kwargs = None
 
     async def _reconnect_for_identity_change(self) -> None:
-        async with self._function_load_lock:
-            if self._is_lifecycle_owner_task():
-                await self._connect_on_owner(reset=True, load_configured=False, reset_discovery=True)
-            else:
-                async with self._lifecycle_request_lock:
-                    await self._run_on_lifecycle_owner(
-                        "connect",
-                        reset=True,
-                        load_configured=False,
-                        reset_discovery=True,
-                    )
-
-            try:
-                await self._load_configured_discovery_locked()
-            except (Exception, asyncio.CancelledError):
-                self._reset_session_discovery_state()
-                if self._is_lifecycle_owner_task():
-                    await self._close_on_owner()
-                else:
-                    await self.close()
-                raise
+        await self._run_on_lifecycle_owner(
+            "connect",
+            reset=True,
+            reset_discovery=True,
+            close_generation=self._close_generation,
+        )
 
     async def _ensure_session_identity(
         self,
@@ -4706,16 +4783,6 @@ class MCPStreamableHTTPTool(MCPTool):
         kwargs: Mapping[str, Any],
     ) -> None:
         identity = _mcp_header_identity(headers)
-        await self._call_headers_condition.wait_for(
-            lambda: self._active_call_headers is None or identity == _mcp_header_identity(self._active_call_headers)
-        )
-        lifecycle_pending = self._lifecycle_action_in_progress or (
-            self._lifecycle_queue is not None and not self._lifecycle_queue.empty()
-        )
-        if lifecycle_pending and not self._is_lifecycle_owner_task():
-            # A timed-out connect caller can return before its owner finishes setup
-            # and teardown. Synchronize with that owner before borrowing the session.
-            await self._run_on_lifecycle_owner("synchronize")
         connection = self._connection
         if isinstance(connection, _SessionMCPConnection):
             if self._session_header_identity is None or self._session_header_session is not connection.session:
@@ -4754,11 +4821,25 @@ class MCPStreamableHTTPTool(MCPTool):
         headers: dict[str, str],
         kwargs: Mapping[str, Any],
     ) -> AsyncGenerator[None]:
-        """Bound header admission and reconciliation while holding the condition."""
+        """Wait outside the admission lock until the requested identity can be used."""
+        connection = self._connection
+        if connection is not None and not connection.is_framework_owned:
+            await self._ensure_session_identity(headers, kwargs)
+            yield
+            return
+        identity = _mcp_header_identity(headers)
         try:
-            async with asyncio.timeout(self.request_timeout), self._call_headers_condition:
-                await self._ensure_session_identity(headers, kwargs)
-                yield
+            async with asyncio.timeout(self.request_timeout):
+                while True:
+                    await self._wait_for_lifecycle()
+                    async with self._call_headers_lock:
+                        if self._active_call_headers is None or identity == _mcp_header_identity(
+                            self._active_call_headers
+                        ):
+                            await self._ensure_session_identity(headers, kwargs)
+                            yield
+                            return
+                    await self._call_headers_idle.wait()
         except TimeoutError as timeout_ex:
             raise _mcp_tool_execution_exception(
                 "Timed out waiting for MCP header admission or session reconciliation.",
@@ -4772,21 +4853,27 @@ class MCPStreamableHTTPTool(MCPTool):
         kwargs: Mapping[str, Any],
     ) -> AsyncGenerator[None]:
         """Share a header snapshot until every operation using its identity finishes."""
+        connection = self._connection
+        if connection is not None and not connection.is_framework_owned:
+            await self._ensure_session_identity(headers, kwargs)
+            yield
+            return
         async with self._acquire_call_headers(headers, kwargs):
             if self._active_header_calls == 0:
                 self._active_call_headers = headers
             self._active_header_calls += 1
+            self._call_headers_idle.clear()
 
         token = _mcp_call_headers.set((self._header_request_owner, headers))
         try:
             yield
         finally:
             _mcp_call_headers.reset(token)
-            async with self._call_headers_condition:
-                self._active_header_calls -= 1
-                if self._active_header_calls == 0:
-                    self._active_call_headers = None
-                    self._call_headers_condition.notify_all()
+            # No suspension point: cancellation cannot strand the last lease.
+            self._active_header_calls -= 1
+            if self._active_header_calls == 0:
+                self._active_call_headers = None
+                self._call_headers_idle.set()
 
     async def _call_prompt_with_runtime_kwargs(
         self,

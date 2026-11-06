@@ -92,6 +92,27 @@ lifecycle. Constructor combinations that mix those ownership modes or configure 
 owns raise `ValueError` instead of silently ignoring parameters. Temporarily retained legacy constructor and
 `ClientSession` combinations remain compatible and will be removed in vNext.
 
+### Managed connection readiness
+
+For framework-created connections, the lifecycle owner completes transport setup,
+configured catalog discovery, recovery, and teardown. Operations wait for that
+owner before borrowing a connection; transport availability alone is not readiness.
+Public managed catalog refreshes also run on the owner, so discovery recovery and
+failure cleanup never wait on a lifecycle request held by another task while
+holding the discovery lock. A catalog interrupted by connection replacement is
+restarted as a complete snapshot rather than resumed using the previous session's cursor.
+
+Same-header HTTP operations share identity leases and execute concurrently outside
+admission synchronization. Identity changes wait for leases to drain. Lease release
+is synchronous, so cancellation cannot prevent releasing the last lease.
+
+Separating transport recovery and discovery across invocation tasks was rejected:
+it exposes a replacement before its schemas and metadata are ready and creates
+cross-task lock-ordering dependencies. Keeping the complete transition on the
+existing owner preserves one authority without depending on transport-specific
+ContextVar propagation. Caller-supplied connections do not receive these additional
+lifecycle or synchronization guarantees.
+
 Catalog page and item limits apply after the MCP SDK parses each response. They do not establish a universal
 transport response-size bound; applications must connect to MCP servers trusted to return reasonably sized responses
 and configure transport-specific limits where the selected transport exposes them.
