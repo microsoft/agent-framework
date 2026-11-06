@@ -39,6 +39,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     private readonly bool _ownsClient;
     private readonly JsonSerializerOptions _jsonSerializerOptions;
     private readonly ILogger _logger;
+    private readonly SemaphoreSlim _startLock = new(1, 1);
+    private volatile bool _cliVersionChecked;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="GitHubCopilotAgent"/> class.
@@ -58,6 +60,10 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <c>SessionConfig.OnPermissionRequest</c>) and defers all other tools. If the caller supplies their own
     /// <c>OnPreToolUse</c> hook, it takes precedence and the caller is fully responsible for approval handling; in that
     /// case a warning is logged for any approval-required tool that will not be automatically gated.
+    /// <para>
+    /// GitHub Copilot CLI version 1.0.85 or higher is required. The version is checked the first time the agent runs,
+    /// and an <see cref="InvalidOperationException"/> is thrown if it is older or cannot be determined.
+    /// </para>
     /// </remarks>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
@@ -97,6 +103,10 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// When a tool wrapped in <see cref="ApprovalRequiredAIFunction"/> is registered, the agent installs a default
     /// <c>Hooks.OnPreToolUse</c> handler that returns <c>"ask"</c> for those tools (routing the decision to
     /// <c>SessionConfig.OnPermissionRequest</c>) and defers all other tools.
+    /// <para>
+    /// GitHub Copilot CLI version 1.0.85 or higher is required. The version is checked the first time the agent runs,
+    /// and an <see cref="InvalidOperationException"/> is thrown if it is older or cannot be determined.
+    /// </para>
     /// </remarks>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
@@ -303,11 +313,71 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         {
             await this._copilotClient.DisposeAsync().ConfigureAwait(false);
         }
+
+        this._startLock.Dispose();
     }
 
     private async Task EnsureClientStartedAsync(CancellationToken cancellationToken)
     {
-        await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
+        if (this._cliVersionChecked)
+        {
+            await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        // Only one start and version check may run at a time, so a failed check can't stop a client
+        // that another concurrent run has already accepted.
+        await this._startLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
+
+            if (this._cliVersionChecked)
+            {
+                return;
+            }
+
+            try
+            {
+                string? version;
+                try
+                {
+                    GetStatusResponse status = await this._copilotClient.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+                    version = status?.Version;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    throw CopilotCliVersionGuard.CreateUndeterminedVersionException(ex);
+                }
+
+                CopilotCliVersionGuard.EnsureSupported(version);
+            }
+            catch (InvalidOperationException) when (this._ownsClient)
+            {
+                await this.StopOwnedClientAfterFailedCheckAsync().ConfigureAwait(false);
+                throw;
+            }
+
+            // Only a successful check is remembered, so a failed check is repeated on the next run.
+            this._cliVersionChecked = true;
+        }
+        finally
+        {
+            this._startLock.Release();
+        }
+    }
+
+    private async Task StopOwnedClientAfterFailedCheckAsync()
+    {
+        try
+        {
+            await this._copilotClient.StopAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Keep the original version check error; a failure to stop is only logged.
+            this._logger.LogFailedToStopClientAfterVersionCheck(ex);
+        }
     }
 
     /// <summary>
