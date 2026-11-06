@@ -17,7 +17,10 @@ from typing import Any, ClassVar, Literal, TypeVar, cast
 
 import redis.asyncio as redis
 from agent_framework import Message
-from agent_framework._compaction import group_messages
+from agent_framework._compaction import (
+    _unambiguous_approval_pairs,  # pyright: ignore[reportPrivateUsage]
+    group_messages,
+)
 from agent_framework._filesystem import _storage_key_segment  # pyright: ignore[reportPrivateUsage]
 from agent_framework._sessions import HistoryProvider, filter_new_messages
 from agent_framework._telemetry import mark_feature_used
@@ -33,12 +36,23 @@ _T = TypeVar("_T")
 _SAVE_WATCH_RETRIES = 8
 
 
+def _has_unfinished_approval(messages: Sequence[Message]) -> bool:
+    """Return whether an approval group still lacks at least one response."""
+    request_count = sum(
+        content.type == "function_approval_request" for message in messages for content in message.contents
+    )
+    paired_request_count = len(_unambiguous_approval_pairs(messages))
+    return request_count > paired_request_count
+
+
 def _trim_start_index(messages: Sequence[Message], max_messages: int) -> int:
     """Return the oldest index whose retained suffix contains only complete core groups.
 
     The raw count boundary advances past every group that crosses it, including linked
     non-contiguous spans. Advancing can cross another linked group, so repeat until the
     boundary is stable. A group larger than the limit is dropped rather than split.
+    Pending approval groups are retained whole across saves until their responses arrive,
+    even when that temporarily exceeds the limit.
     """
     count = len(messages)
     if count <= max_messages:
@@ -48,6 +62,7 @@ def _trim_start_index(messages: Sequence[Message], max_messages: int) -> int:
     # copies isolate that top-level mutation without copying the message contents.
     spans = group_messages([copy(message) for message in messages])
     group_bounds: dict[str, list[int]] = {}
+    group_members: dict[str, list[Message]] = {}
     for span in spans:
         group_id = str(span["group_id"])
         start_index = int(span["start_index"])
@@ -55,9 +70,33 @@ def _trim_start_index(messages: Sequence[Message], max_messages: int) -> int:
         bounds = group_bounds.setdefault(group_id, [start_index, end_index])
         bounds[0] = min(bounds[0], start_index)
         bounds[1] = max(bounds[1], end_index)
+        group_members.setdefault(group_id, []).extend(messages[start_index : end_index + 1])
 
     start = count - max_messages
-    while start < count:
+    pending_starts = [
+        group_bounds[group_id][0] for group_id, members in group_members.items() if _has_unfinished_approval(members)
+    ]
+    boundary_limit = count
+    if pending_starts:
+        # A pending approval may need its original declaration on a later save.
+        # Retain the whole suffix containing it, including any overlapping groups.
+        protected_start = min(pending_starts)
+        while True:
+            next_start = min(
+                (
+                    group_start
+                    for group_start, group_end in group_bounds.values()
+                    if group_start < protected_start <= group_end
+                ),
+                default=protected_start,
+            )
+            if next_start == protected_start:
+                break
+            protected_start = next_start
+        start = min(start, protected_start)
+        boundary_limit = protected_start
+
+    while start < boundary_limit:
         next_start = start
         for group_start, group_end in group_bounds.values():
             if group_start < start <= group_end:

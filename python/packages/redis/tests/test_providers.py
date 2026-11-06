@@ -17,7 +17,7 @@ from redis.asyncio import Redis
 
 from agent_framework_redis._context_provider import _SCOPE_FIELDS, RedisContextProvider, _scope_token_field
 from agent_framework_redis._feature_usage import FeatureIndex
-from agent_framework_redis._history_provider import RedisHistoryProvider, _redis_result
+from agent_framework_redis._history_provider import RedisHistoryProvider, _redis_result, _trim_start_index
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -782,6 +782,93 @@ class TestRedisHistoryProviderRedisKey:
         key = provider._redis_key("s")
         pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
         pipeline.ltrim.assert_awaited_once_with(key, 2, -1)
+
+    def test_pending_approval_group_survives_when_it_precedes_the_raw_window(self) -> None:
+        first_call = Content.from_function_call(id="c1", call_id="c1", name="f", arguments="{}")
+        second_call = Content.from_function_call(id="c2", call_id="c2", name="f", arguments="{}")
+        batch = Message(
+            role="assistant",
+            contents=[
+                first_call,
+                second_call,
+                Content.from_function_approval_request(id="c1", function_call=first_call),
+                Content.from_function_approval_request(id="c2", function_call=second_call),
+            ],
+        )
+        response = Message(
+            role="user",
+            contents=[Content.from_function_approval_response(approved=True, id="c1", function_call=first_call)],
+        )
+        result = Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="one")])
+        history = [
+            batch,
+            response,
+            result,
+            Message(role="assistant", contents=["later one"]),
+            Message(role="assistant", contents=["later two"]),
+        ]
+
+        assert _trim_start_index(history, max_messages=2) == 0
+
+    async def test_multi_save_approval_batch_never_replays_orphaned_results(self, mock_redis_client: MagicMock) -> None:
+        openai = pytest.importorskip("agent_framework_openai")
+        with patch("agent_framework_redis._history_provider.redis.from_url", return_value=mock_redis_client):
+            provider = RedisHistoryProvider(
+                "mem",
+                redis_url="redis://localhost:6379",
+                application_id="app",
+                max_messages=2,
+            )
+        first_call = Content.from_function_call(id="c1", call_id="c1", name="f", arguments="{}")
+        second_call = Content.from_function_call(id="c2", call_id="c2", name="f", arguments="{}")
+        batch = Message(
+            role="assistant",
+            contents=[
+                first_call,
+                second_call,
+                Content.from_function_approval_request(id="c1", function_call=first_call),
+                Content.from_function_approval_request(id="c2", function_call=second_call),
+            ],
+        )
+        first_response = Message(
+            role="user",
+            contents=[Content.from_function_approval_response(approved=True, id="c1", function_call=first_call)],
+        )
+        second_response = Message(
+            role="user",
+            contents=[Content.from_function_approval_response(approved=True, id="c2", function_call=second_call)],
+        )
+        first_result = Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="one")])
+        second_result = Message(role="tool", contents=[Content.from_function_result(call_id="c2", result="two")])
+        done = Message(role="assistant", contents=["done"])
+        stored_rows: list[str] = []
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        pipeline.multi = MagicMock()
+        pipeline.lrange = AsyncMock(side_effect=lambda *args: list(stored_rows))
+
+        async def execute() -> list[Any]:
+            stored_rows.extend(call.args[1] for call in pipeline.rpush.await_args_list)
+            for call in pipeline.ltrim.await_args_list:
+                start, stop = call.args[1:3]
+                stored_rows[:] = stored_rows[start : None if stop == -1 else stop + 1]
+            pipeline.rpush.reset_mock()
+            pipeline.ltrim.reset_mock()
+            return []
+
+        pipeline.execute = AsyncMock(side_effect=execute)
+        mock_redis_client.lrange = AsyncMock(side_effect=lambda *args: list(stored_rows))
+        await provider.save_messages("s", [Message(role="user", contents=["old"]), batch])
+        await provider.save_messages("s", [first_response, first_result])
+        await provider.save_messages("s", [second_response, second_result, done])
+
+        retained = await provider.get_messages("s")
+        client = openai.OpenAIChatClient(model="test-model", api_key="test-key")
+        replay = await client._prepare_options(
+            [*retained, Message(role="user", contents=["follow up"])],
+            ChatOptions(store=False),
+        )
+        assert replay["store"] is False
+        assert [message.text for message in retained] == ["done"]
 
     async def test_trim_pairs_call_and_result_by_occurrence_when_an_id_is_reused(
         self, mock_redis_client: MagicMock

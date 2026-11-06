@@ -187,7 +187,8 @@ def _unambiguous_approval_pairs(messages: Sequence[Message]) -> list[tuple[int, 
     return pairs
 
 
-def _unambiguous_tool_call_result_pairs(messages: Sequence[Message]) -> list[tuple[int, int]]:
+def _unambiguous_tool_call_output_pairs(messages: Sequence[Message]) -> list[tuple[int, int]]:
+    """Pair tool results and approval requests with unambiguous declaration occurrences."""
     unmatched_declaration_indices: dict[tuple[str, str], list[int]] = {}
     pairs: list[tuple[int, int]] = []
 
@@ -201,6 +202,14 @@ def _unambiguous_tool_call_result_pairs(messages: Sequence[Message]) -> list[tup
                 and content.call_id
             ):
                 unmatched_declaration_indices.setdefault((content.type, content.call_id), []).append(message_index)
+                continue
+            if message.role == "assistant" and content.type == "function_approval_request":
+                function_call = getattr(content, "function_call", None)
+                call_id = getattr(function_call, "call_id", None)
+                candidates = unmatched_declaration_indices.get(("function_call", call_id)) if call_id else None
+                if candidates is not None and len(candidates) == 1:
+                    # The same declaration also owns the later tool result.
+                    pairs.append((candidates[0], message_index))
                 continue
             if content.type not in ("function_result", "computer_tool_result") or not content.call_id:
                 continue
@@ -268,7 +277,7 @@ def _link_tool_call_result_spans(messages: Sequence[Message], spans: list[dict[s
         return True
 
     linked = False
-    pairs = [*_unambiguous_tool_call_result_pairs(messages), *_unambiguous_approval_pairs(messages)]
+    pairs = [*_unambiguous_tool_call_output_pairs(messages), *_unambiguous_approval_pairs(messages)]
     for declaration_message_index, result_message_index in pairs:
         declaration_span_index = span_by_message_index[declaration_message_index]
         result_span_index = span_by_message_index[result_message_index]
