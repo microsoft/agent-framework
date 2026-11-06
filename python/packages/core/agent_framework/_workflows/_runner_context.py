@@ -585,9 +585,17 @@ class InProcRunnerContext:
 
         # Validate response type if specified
         if event.response_type and not is_instance_of(response, event.response_type):
+            # response_type may be a union/generic (e.g. int | str), which has no usable
+            # __name__ on Python 3.10/3.11 (AttributeError) and only yields "Union" on 3.12+.
+            # Use the readable repr for anything that isn't a plain class.
+            expected = (
+                event.response_type.__name__
+                if isinstance(event.response_type, type)
+                else str(event.response_type)
+            )
             raise TypeError(
                 f"Response type mismatch for request_id {request_id}: "
-                f"expected {event.response_type.__name__}, got {type(response).__name__}"
+                f"expected {expected}, got {type(response).__name__}"
             )
 
         source_executor_id = event.source_executor_id
