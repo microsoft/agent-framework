@@ -110,6 +110,7 @@ def _generate_function_call_occurrence_id() -> str:
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
+_LOCAL_TOOL_RESULT_KEY: Final[str] = "agent_framework.local_tool_result"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
 _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY: Final[str] = "_approval_session_is_authoritative"
 _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY: Final[str] = "_parent_tool_approval_source_ids"
@@ -4974,10 +4975,21 @@ def _reset_required_tool_choice(options: dict[str, Any]) -> None:
 
 
 def _prepare_messages_for_next_iteration(prepared_messages: list[Message], response: ChatResponse[Any]) -> None:
+    from ._types import Message
+
     if response.conversation_id is None:
         prepared_messages.extend(response.messages)
         return
-    prepared_messages[:] = response.messages[-1:]
+    local_results = [
+        content
+        for message in response.messages[:-1]
+        for content in message.contents
+        if content.type in {"function_result", "shell_tool_result", "computer_tool_result"}
+        and content.additional_properties.get(_LOCAL_TOOL_RESULT_KEY) is True
+    ]
+    prepared_messages[:] = (
+        [Message(role="tool", contents=local_results)] if local_results else []
+    ) + response.messages[-1:]
 
 
 @dataclass
