@@ -2578,7 +2578,8 @@ async def test_middleware_that_replaces_null_wrapper_with_valid_arguments_repair
     assert result_groups[0][0].result == "ok"
 
 
-async def test_builtin_label_tracking_middleware_preserves_malformed_wrapper_provenance() -> None:
+@pytest.mark.parametrize("arguments", ["not {json", "[1, 2]", "null", "NaN", "false", "0", '""', "   "])
+async def test_builtin_label_tracking_middleware_preserves_malformed_wrapper_provenance(arguments: str) -> None:
     """The built-in label-tracking middleware must not erase the wrapper.
 
     Its argument normalization validates against the declared model and drops
@@ -2597,7 +2598,7 @@ async def test_builtin_label_tracking_middleware_preserves_malformed_wrapper_pro
     result_groups, should_terminate = await _try_execute_function_call_groups(
         custom_args={},
         function_calls=[
-            Content.from_function_call(call_id="call-1", name="typed_label_target", arguments="not {json"),
+            Content.from_function_call(call_id="call-1", name="typed_label_target", arguments=arguments),
         ],
         tools=[typed_label_target],
         config={},
@@ -2616,7 +2617,11 @@ def raw_reader_tool(raw: datetime) -> str:
     return f"raw:{raw.isoformat()}"
 
 
-async def test_declared_raw_tool_keeps_normal_preparation_types() -> None:
+@pytest.mark.parametrize(
+    "arguments", ['"2024-01-01T00:00:00+00:00"', '{"raw":"2024-01-01T00:00:00+00:00"}'], ids=["scalar", "object"]
+)
+@pytest.mark.parametrize("rewrite_raw", [False, True], ids=["unchanged", "rewritten"])
+async def test_declared_raw_tool_keeps_normal_preparation_types(arguments: str, rewrite_raw: bool) -> None:
     """A declared ``raw: datetime`` reaches middleware as a datetime, not a string.
 
     Preparation runs normally for tools that declare ``raw``, so middleware
@@ -2632,6 +2637,8 @@ async def test_declared_raw_tool_keeps_normal_preparation_types() -> None:
         ) -> None:
             raw_value = cast("dict[str, Any]", context.arguments).get("raw")
             seen_types.append(type(raw_value).__name__)
+            if rewrite_raw:
+                context.arguments = {"raw": "2025-02-03T00:00:00+00:00"}
             await call_next()
 
     result_groups, should_terminate = await _try_execute_function_call_groups(
@@ -2640,7 +2647,7 @@ async def test_declared_raw_tool_keeps_normal_preparation_types() -> None:
             Content.from_function_call(
                 call_id="call-1",
                 name="raw_reader",
-                arguments='"2024-01-01T00:00:00+00:00"',
+                arguments=arguments,
             ),
         ],
         tools=[raw_reader_tool],
@@ -2650,4 +2657,6 @@ async def test_declared_raw_tool_keeps_normal_preparation_types() -> None:
 
     assert not should_terminate
     assert seen_types == ["datetime"]
-    assert result_groups[0][0].result == "raw:2024-01-01T00:00:00+00:00"
+    expected_timestamp = "2025-02-03T00:00:00+00:00" if rewrite_raw else "2024-01-01T00:00:00+00:00"
+    assert result_groups[0][0].exception is None
+    assert result_groups[0][0].result == f"raw:{expected_timestamp}"
