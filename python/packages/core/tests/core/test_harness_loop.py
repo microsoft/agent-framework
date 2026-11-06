@@ -1652,6 +1652,128 @@ async def test_turn_scoped_after_run_fires_normally_without_loop() -> None:
     assert turn_scoped.after_calls == 1
 
 
+class _RaiseOnSecondIterationClient(RecordingChatClient):
+    """Succeeds on the first loop iteration and raises on the second.
+
+    By the time the second iteration fails, a prior-iteration final response already
+    exists, which is the condition under which a loop could erroneously run the
+    turn-scoped ``after_run`` with a stale response.
+    """
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool = False,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+
+            async def _gen() -> AsyncIterable[ChatResponseUpdate]:
+                self.call_count += 1
+                if self.call_count >= 2:
+                    raise RuntimeError("boom on iteration 2")
+                yield ChatResponseUpdate(contents=[Content.from_text("first")], role="assistant", finish_reason="stop")
+
+            return ResponseStream(_gen(), finalizer=ChatResponse.from_updates)
+
+        async def _get() -> ChatResponse:
+            self.call_count += 1
+            if self.call_count >= 2:
+                raise RuntimeError("boom on iteration 2")
+            return ChatResponse(messages=Message(role="assistant", contents=["first"]))
+
+        return _get()
+
+
+async def test_turn_scoped_after_run_skipped_on_loop_exception_non_streaming() -> None:
+    """A loop iteration that raises must not fire turn-scoped after_run (non-streaming).
+
+    Matches the normal (non-loop) run contract, where after_run does not fire when the
+    run raises.
+    """
+    client = _RaiseOnSecondIterationClient()
+    turn_scoped = _TurnScopedRecordingProvider()
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=5)],
+        context_providers=[turn_scoped],
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await agent.run("start")
+
+    assert turn_scoped.after_calls == 0
+
+
+async def test_turn_scoped_after_run_skipped_on_loop_exception_streaming() -> None:
+    """A loop iteration that raises must not fire turn-scoped after_run (streaming).
+
+    Regression: the streaming loop previously fired the turn-scoped after-providers from a
+    ``finally`` block, so an exception on a later iteration ran them with the prior
+    iteration's stale final response - diverging from both the non-streaming path and the
+    normal (non-loop) run contract.
+    """
+    client = _RaiseOnSecondIterationClient()
+    turn_scoped = _TurnScopedRecordingProvider()
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=5)],
+        context_providers=[turn_scoped],
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        stream = agent.run("start", stream=True)
+        _ = [update async for update in stream]
+        await stream.get_final_response()
+
+    assert turn_scoped.after_calls == 0
+
+
+async def test_turn_scoped_after_run_skipped_on_streaming_early_close() -> None:
+    """Dropping a streaming loop early (GeneratorExit) must not fire turn-scoped after_run."""
+
+    class _TwoUpdatesPerIterationClient(RecordingChatClient):
+        def _inner_get_response(
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool = False,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _gen() -> AsyncIterable[ChatResponseUpdate]:
+                self.call_count += 1
+                yield ChatResponseUpdate(contents=[Content.from_text("a")], role="assistant")
+                yield ChatResponseUpdate(contents=[Content.from_text("b")], role="assistant", finish_reason="stop")
+
+            return ResponseStream(_gen(), finalizer=ChatResponse.from_updates)
+
+    client = _TwoUpdatesPerIterationClient()
+    turn_scoped = _TurnScopedRecordingProvider()
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=5)],
+        context_providers=[turn_scoped],
+    )
+
+    stream = agent.run("start", stream=True)
+    # Pull until iteration 2's client call has started: that guarantees iteration 1 fully
+    # finalized (so a prior-iteration final response exists) before we drop the stream.
+    pulled = 0
+    async for _update in stream:
+        pulled += 1
+        if client.call_count >= 2:
+            break
+        if pulled > 100:  # pragma: no cover - safety bound against hanging the test
+            pytest.fail("second loop iteration never started")
+    assert client.call_count >= 2
+    await stream.close()
+
+    assert turn_scoped.after_calls == 0
+
+
 def test_compaction_provider_defers_to_turn_boundary() -> None:
     from agent_framework._compaction import CompactionProvider
 
