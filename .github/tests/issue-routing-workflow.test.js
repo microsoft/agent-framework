@@ -24,13 +24,11 @@ function configFor(name, variable) {
 const handlers = configFor('safe_outputs', 'GH_AW_SAFE_OUTPUTS_HANDLER_CONFIG');
 
 describe('Issue routing workflow', () => {
-  it('keeps agentic routing manual-only alongside the legacy workflow', () => {
+  it('routes new and newly typed issues, reporter replies, and manual runs', () => {
     const triggers = compiled.match(/^on:\n([\s\S]*?)^permissions:/m)[1];
     assert.match(triggers, /workflow_dispatch:/);
-    assert.doesNotMatch(triggers, /^  issues:/m);
-    assert.ok(existsSync(resolve(__dirname, '../workflows/issue-triage.yml')));
-    assert.equal(existsSync(resolve(__dirname, '../workflows/issue-triage.md')), false);
-    assert.equal(existsSync(resolve(__dirname, '../workflows/issue-triage.lock.yml')), false);
+    assert.match(triggers, /^  issues:\n    types:\n      - opened\n      - typed\n/m);
+    assert.match(triggers, /^  issue_comment:\n    types:\n      - created\n/m);
     assert.match(source, /name: Issue Routing/);
     const preview = triggers.match(/      preview:\n((?:        .+\n)+)/)[1];
     assert.match(preview, /default: true/);
@@ -109,6 +107,25 @@ describe('Issue routing workflow', () => {
     assert.match(automation, /GH_AW_TEST_RUNTIME: \$\{\{ runner.temp \}\}\/routing-publisher/);
   });
 
+  it('queues routing runs together and filters unrelated comments before preparation', () => {
+    const reply = "github.event.comment.user.login == github.event.issue.user.login && !github.event.issue.pull_request && contains(github.event.issue.labels.*.name, 'requested-info')";
+    const concurrency = compiled.match(/^concurrency:\n((?:  .+\n)+)/m)[1];
+    assert.ok(concurrency.includes(`!(${reply}) && format('issue-routing-ignored-{0}', github.run_id) || 'issue-routing'`));
+    assert.match(concurrency, /cancel-in-progress: false/);
+    const prepare = job('prepare').replace(/\s+/g, ' ');
+    assert.ok(prepare.includes("github.event_name != 'issue_comment' ||"));
+    assert.ok(prepare.includes(reply.replace(/\s+/g, ' ')));
+    assert.match(job('prepare'), /actions: read/);
+    assert.match(job('prepare'), /actionsGithub: getOctokit\(process.env.ACTIONS_TOKEN\)/);
+  });
+
+  it('keeps the publishing step that marks a run as routed', () => {
+    const { ROUTED_STEP } = require('../scripts/issue-routing-history.js');
+    const step = job('safe_outputs').split('\n      - ').find(text => text.includes(`name: ${ROUTED_STEP}`));
+    assert.ok(step, 'Earlier-run detection depends on this step name');
+    assert.match(step, /if: steps.request-check.outputs.allowed == 'true' && !\(github.event_name == 'workflow_dispatch' && inputs.preview\)/);
+  });
+
   it('pins every issue writer to the validated number in manual runs too', () => {
     assert.match(job('safe_outputs'), /^      - prepare$/m);
     const names = ['add_comment', 'add_labels', 'assign_to_user', 'set_issue_type'];
@@ -128,7 +145,7 @@ describe('Issue routing workflow', () => {
       names.sort());
   });
 
-  it('keeps all public owner routes and their labels within the publication limits', () => {
+  it('keeps all public owner routes and their labels within the issue update limits', () => {
     const paths = [...owners.matchAll(/path: ([^,]+)/g)].map(match => match[1]);
     assert.ok(paths.length > 0);
     assert.equal(paths.length, new Set(paths).size);
@@ -186,7 +203,7 @@ describe('Issue routing workflow', () => {
     assert.match(job('conclusion'), /GH_AW_MISSING_TOOL_CREATE_ISSUE: "false"/);
     assert.match(job('conclusion'), /GH_AW_REPORT_INCOMPLETE_CREATE_ISSUE: "false"/);
     assert.doesNotMatch(job('conclusion'), /GH_AW_REPORT_FAILED_JOBS: "true"/);
-    assert.match(compiled, /group: issue-routing\n  queue: max/);
+    assert.ok(compiled.includes("|| 'issue-routing' }}\n  queue: max"));
     assert.match(job('activation'), /Check daily workflow token guardrail/);
     assert.match(job('agent'), /timeout-minutes: 60/);
   });
@@ -195,15 +212,15 @@ describe('Issue routing workflow', () => {
     assert.equal(handlers.upload_artifact, undefined);
     assert.doesNotMatch(compiled, /Upload upload-artifact staging|safe-outputs-upload-artifacts/);
     const agent = job('agent');
-    assert.ok(agent.indexOf('Preserve the trusted evidence checker') < agent.indexOf('id: agentic_execution'));
+    assert.ok(agent.indexOf('Keep a safe copy of the evidence checker') < agent.indexOf('id: agentic_execution'));
     assert.match(agent, /--mount "\$\{RUNNER_TEMP\}\/gh-aw:\$\{RUNNER_TEMP\}\/gh-aw:ro"/);
-    assert.match(agent, /gh-aw\/routing-helpers\/bundle.js/);
-    assert.ok(agent.indexOf('Check evidence before transfer') < agent.indexOf('Transfer checked evidence'));
-    const transfer = agent.split(/^      - /m).find(step => step.includes('name: Transfer checked evidence'));
-    assert.match(transfer, /if: success\(\) && steps.routing-bundle.outputs.ready == 'true'/);
-    assert.match(transfer, /path: \$\{\{ runner.temp \}\}\/gh-aw\/routing-evidence\//);
-    assert.match(transfer, /if-no-files-found: error/);
-    assert.doesNotMatch(transfer, /always\(\)|continue-on-error/);
+    assert.match(agent, /gh-aw\/routing-helpers\/evidence.js/);
+    assert.ok(agent.indexOf("Check this run's evidence files") < agent.indexOf('Upload a temporary copy of the evidence'));
+    const upload = agent.split(/^      - /m).find(step => step.includes('name: Upload a temporary copy of the evidence'));
+    assert.match(upload, /if: success\(\) && steps.evidence-check.outputs.ready == 'true'/);
+    assert.match(upload, /path: \$\{\{ runner.temp \}\}\/gh-aw\/routing-evidence\//);
+    assert.match(upload, /if-no-files-found: error/);
+    assert.doesNotMatch(upload, /always\(\)|continue-on-error/);
     assert.ok(source.indexOf('## 1. Check for spam') < source.indexOf('## 2. Route a Feature'));
     assert.match(source, /stop before following issue links,\ninstalling project dependencies/);
     assert.match(source, /first-time author.*do not imply spam/s);
@@ -223,12 +240,12 @@ describe('Issue routing workflow', () => {
     assert.match(writer, /ref: \$\{\{ github.workflow_sha \}\}/);
     assert.match(writer, /persist-credentials: false/);
     assert.ok(writer.indexOf('id: setup-agent-output-env') < writer.indexOf('name: Check issue requests'));
-    assert.ok(writer.indexOf('name: Check issue requests') < writer.indexOf('name: Publish issue evidence'));
-    assert.ok(writer.indexOf('name: Publish issue evidence') < writer.indexOf('name: Recheck stop labels immediately'));
+    assert.ok(writer.indexOf('name: Check issue requests') < writer.indexOf('name: Save evidence for later runs'));
+    assert.ok(writer.indexOf('name: Save evidence for later runs') < writer.indexOf('name: Recheck stop labels immediately'));
     assert.ok(writer.indexOf('name: Recheck stop labels immediately') < writer.indexOf('name: Process Safe Outputs'));
     assert.match(writer, /require\('\.\/\.github\/scripts\/issue-routing-publish\.js'\)/);
-    const upload = writer.split(/^      - /m).find(step => step.includes('name: Publish issue evidence'));
-    assert.match(upload, /steps.routing-evidence.outputs.allowed == 'true'/);
+    const upload = writer.split(/^      - /m).find(step => step.includes('name: Save evidence for later runs'));
+    assert.match(upload, /steps.evidence-recheck.outputs.allowed == 'true'/);
     assert.match(upload, /!\(github.event_name == 'workflow_dispatch' && inputs.preview\)/);
     assert.match(upload, /name: issue-routing-issue-\$\{\{ needs.prepare.outputs.issue_number \}\}/);
     assert.match(upload, /path: \$\{\{ runner.temp \}\}\/routing-final\//);
@@ -238,13 +255,13 @@ describe('Issue routing workflow', () => {
     assert.doesNotMatch(processor, /if: always\(\)|continue-on-error/);
   });
 
-  it('downloads the selected prior bundle by validated artifact and run IDs without running its files', () => {
+  it('downloads the selected earlier evidence by validated upload and run IDs without running its files', () => {
     const agent = job('agent');
     assert.match(compiled, /^run-name: .*Issue Routing #\$\{\{ inputs.issue_number \|\| github.event.issue.number \}\}/m);
     assert.match(agent, /require\('\.\/\.github\/scripts\/issue-routing-artifacts\.js'\)/);
     assert.match(agent, /ISSUE_NUMBER: \$\{\{ needs.prepare.outputs.issue_number \}\}/);
-    const download = agent.split(/^      - /m).find(step => /^\s+name: Download the previous issue bundle$/m.test(step));
-    assert.ok(download, 'Missing previous-bundle download step');
+    const download = agent.split(/^      - /m).find(step => /^\s+name: Download evidence saved by an earlier run$/m.test(step));
+    assert.ok(download, 'Missing earlier-evidence download step');
     assert.match(download, /if: needs.prepare.outputs.issue_type != 'Feature' && steps.previous-routing.outputs.artifact_id != ''/);
     assert.match(download, /artifact-ids: \$\{\{ steps.previous-routing.outputs.artifact_id \}\}/);
     assert.match(download, /run-id: \$\{\{ steps.previous-routing.outputs.run_id \}\}/);
@@ -255,17 +272,17 @@ describe('Issue routing workflow', () => {
     assert.match(source, /issue-routing-issue-\$\{\{ needs.prepare.outputs.issue_number \}\}/);
   });
 
-  it('carries forward reviewed evidence so the latest bundle is useful to a third run', () => {
-    assert.match(source, /Copy reviewed,\nrelevant earlier files into the new bundle/);
-    assert.match(source, /only the latest bundle is downloaded/);
+  it('carries forward reviewed evidence so the latest saved evidence is useful to a third run', () => {
+    assert.match(source, /Copy reviewed,\nrelevant earlier files into this run's evidence folder/);
+    assert.match(source, /only the latest saved evidence is downloaded/);
     assert.match(source, /history\/<original-run-id>/);
-    assert.match(source, /existing paths rather than nesting whole bundles/);
+    assert.match(source, /existing paths rather than nesting whole earlier evidence folders/);
     assert.match(source, /even without a newly confirmed reproduction/);
     assert.match(source, /Do not blindly copy everything, overwrite checked-out product code/);
     assert.doesNotMatch(source, /Do not copy the\nentire earlier bundle/);
   });
 
-  it('keeps new reproduction JSON in artifacts, not posted comments or unconfirmed findings', () => {
+  it('keeps new reproduction JSON in evidence files, not posted comments or unconfirmed findings', () => {
     const example = JSON.parse(source.match(/```json\n([\s\S]*?)\n```/)[1]);
     assert.equal(example.schema_version, 1);
     assert.equal(example.status, 'reproduced');
@@ -277,7 +294,7 @@ describe('Issue routing workflow', () => {
     for (const field of ['steps', 'commands', 'source_files', 'test_files']) {
       assert.ok(Array.isArray(example[field]) && example[field].length > 0, field);
     }
-    assert.match(source, /save `reproduction.json` at the root of\nthe new bundle/);
+    assert.match(source, /save `reproduction.json` at the root of\nthis run's evidence folder/);
     assert.match(source, /Do not put reproduction JSON or an expandable reproduction-details section in\nthe comment/);
     assert.doesNotMatch(source, /<details>|<summary>|evidence comment with reproduction JSON/);
     assert.match(source, /Do not create a new reproduced record for Features, spam, passing tests, likely\nfixes/);

@@ -3,19 +3,45 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const prepareIssueRouting = require('../scripts/issue-routing-prepare.js');
+const { ROUTED_STEP } = require('../scripts/issue-routing-history.js');
 
-function mocks({ manual = false, type = 'Bug', labels = [], member = false } = {}) {
+// An earlier completed run of this workflow; `routed` controls its publishing step.
+function earlierRun(id, { routed = true, event = 'issues', started = '2026-01-02T00:00:00Z' } = {}) {
+  return {
+    run: { id, event, status: 'completed', display_title: 'Issue Routing #42', run_started_at: started },
+    jobs: [{ name: 'safe_outputs', conclusion: 'success', steps: [{ name: ROUTED_STEP, conclusion: routed ? 'success' : 'skipped' }] }],
+  };
+}
+
+function mocks({ manual = false, event, type = 'Bug', labels = [], member = false, runs = [], commenter = 'author', repliedAt = '2026-01-03T00:00:00Z' } = {}) {
   const outputs = {};
   const calls = [];
+  const eventName = event ?? (manual ? 'workflow_dispatch' : 'issues');
   return {
     outputs,
     calls,
     issueNumber: '42',
     teamSlug: 'developers',
     context: {
-      eventName: manual ? 'workflow_dispatch' : 'issues',
+      eventName,
+      runId: 1000,
       repo: { owner: 'microsoft', repo: 'agent-framework' },
-      payload: { issue: { number: 42, user: { login: 'stale-author' } } },
+      payload: {
+        issue: { number: 42, user: { login: 'stale-author' } },
+        ...(eventName === 'issue_comment' ? { comment: { user: { login: commenter }, created_at: repliedAt } } : {}),
+      },
+    },
+    actionsGithub: {
+      paginate: async (endpoint, params) => endpoint(params),
+      rest: {
+        actions: {
+          listWorkflowRuns: async params => {
+            calls.push(['runs', params]);
+            return runs.map(entry => entry.run);
+          },
+          listJobsForWorkflowRun: async ({ run_id }) => runs.find(entry => entry.run.id === run_id).jobs,
+        },
+      },
     },
     core: {
       setOutput: (key, value) => { outputs[key] = value; },
@@ -27,7 +53,7 @@ function mocks({ manual = false, type = 'Bug', labels = [], member = false } = {
         issues: {
           get: async params => {
             calls.push(['issue', params]);
-            return { data: { number: 42, type: type ? { name: type } : null, labels, user: { login: 'author' } } };
+            return { data: { number: 42, created_at: '2026-01-01T00:00:00Z', type: type ? { name: type } : null, labels, user: { login: 'author' } } };
           },
         },
         teams: {
@@ -115,5 +141,42 @@ describe('Issue routing preparation', () => {
         assert.equal(released.outputs.should_route, label === 'needs-maintainer-triage' ? 'true' : 'false');
       }
     }
+  });
+
+  it('routes new issues and type changes only once, ignoring previews and blocked runs', async () => {
+    const fresh = mocks({ runs: [earlierRun(1, { routed: false })] });
+    await prepareIssueRouting(fresh);
+    assert.equal(fresh.outputs.should_route, 'true');
+    assert.equal(fresh.calls.find(([kind]) => kind === 'runs')[1].created, '>=2026-01-01T00:00:00Z');
+    const routed = mocks({ runs: [earlierRun(1), earlierRun(1000)] });
+    await prepareIssueRouting(routed);
+    assert.equal(routed.outputs.should_route, 'false');
+    const manual = mocks({ manual: true, runs: [earlierRun(1)] });
+    await prepareIssueRouting(manual);
+    assert.equal(manual.outputs.should_route, 'true');
+    assert.equal(manual.calls.some(([kind]) => kind === 'runs'), false);
+  });
+
+  it('re-runs only for a reporter reply on a requested-info issue that no run has seen', async () => {
+    const labels = [{ name: 'requested-info' }];
+    const reply = mocks({ event: 'issue_comment', labels, runs: [earlierRun(1)] });
+    await prepareIssueRouting(reply);
+    assert.equal(reply.outputs.should_route, 'true');
+
+    const otherUser = mocks({ event: 'issue_comment', labels, commenter: 'someone-else' });
+    await prepareIssueRouting(otherUser);
+    assert.equal(otherUser.outputs.should_route, 'false');
+
+    const notRequested = mocks({ event: 'issue_comment' });
+    await prepareIssueRouting(notRequested);
+    assert.equal(notRequested.outputs.should_route, 'false');
+
+    const alreadySeen = mocks({ event: 'issue_comment', labels, runs: [earlierRun(1, { started: '2026-01-04T00:00:00Z' })] });
+    await prepareIssueRouting(alreadySeen);
+    assert.equal(alreadySeen.outputs.should_route, 'false');
+
+    const capped = mocks({ event: 'issue_comment', labels, runs: [1, 2, 3].map(id => earlierRun(id, { event: 'issue_comment' })) });
+    await prepareIssueRouting(capped);
+    assert.equal(capped.outputs.should_route, 'false');
   });
 });

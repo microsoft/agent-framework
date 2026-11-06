@@ -3,8 +3,8 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const {
-  findPreviousRoutingArtifact,
-  findTransferredRoutingArtifact,
+  findEarlierEvidence,
+  findThisRunsEvidence,
 } = require('../scripts/issue-routing-artifacts.js');
 
 function mocks() {
@@ -57,9 +57,9 @@ function mocks() {
 }
 
 describe('Previous issue routing artifacts', () => {
-  it('finds an issue-specific bundle and records its actual source run and commit', async () => {
+  it('finds evidence saved for this issue and records its actual source run and commit', async () => {
     const input = mocks();
-    const result = await findPreviousRoutingArtifact(input);
+    const result = await findEarlierEvidence(input);
     assert.deepEqual(result, {
       repository: 'microsoft/agent-framework',
       issue_number: 42,
@@ -76,18 +76,18 @@ describe('Previous issue routing artifacts', () => {
     ]);
   });
 
-  it('selects only the latest eligible bundle, skipping expired and other-issue artifacts', async () => {
+  it('selects only the latest eligible evidence, skipping expired and other-issue uploads', async () => {
     const input = mocks();
     input.artifacts.push(
       { ...input.artifact, id: 701, created_at: '2026-11-03T11:00:00Z' },
       { ...input.artifact, id: 702, expired: true, created_at: '2026-11-03T12:00:00Z' },
       { ...input.artifact, id: 703, name: 'issue-routing-issue-420', created_at: '2026-11-03T13:00:00Z' },
     );
-    assert.equal((await findPreviousRoutingArtifact(input)).artifact_id, 701);
+    assert.equal((await findEarlierEvidence(input)).artifact_id, 701);
     assert.equal(input.calls.filter(([kind]) => kind === 'run').length, 1);
   });
 
-  it('ignores bundles from other repositories and the current or a later run', async () => {
+  it('ignores evidence from other repositories and the current or a later run', async () => {
     for (const workflow_run of [
       undefined,
       { id: 100, repository_id: 8 },
@@ -96,7 +96,7 @@ describe('Previous issue routing artifacts', () => {
     ]) {
       const input = mocks();
       input.artifact.workflow_run = workflow_run;
-      assert.equal(await findPreviousRoutingArtifact(input), null);
+      assert.equal(await findEarlierEvidence(input), null);
       assert.equal(input.calls.some(([kind]) => kind === 'run'), false);
     }
   });
@@ -118,12 +118,12 @@ describe('Previous issue routing artifacts', () => {
     ]) {
       const input = mocks();
       Object.assign(input.run, changes);
-      assert.equal(await findPreviousRoutingArtifact(input), null, JSON.stringify(changes));
+      assert.equal(await findEarlierEvidence(input), null, JSON.stringify(changes));
       assert.equal(input.warnings.length, 1);
     }
   });
 
-  it('can fall back to an older bundle when the newest source run is not eligible', async () => {
+  it('can fall back to an older upload when the newest source run is not eligible', async () => {
     const input = mocks();
     input.artifacts.push({
       ...input.artifact, id: 701, created_at: '2026-11-03T11:00:00Z',
@@ -132,36 +132,36 @@ describe('Previous issue routing artifacts', () => {
     input.github.rest.actions.getWorkflowRun = async ({ run_id }) => ({
       data: run_id === 101 ? { ...input.run, id: 101, conclusion: 'failure' } : input.run,
     });
-    assert.equal((await findPreviousRoutingArtifact(input)).artifact_id, 700);
+    assert.equal((await findEarlierEvidence(input)).artifact_id, 700);
   });
 
-  it('continues normally when no retained bundle exists', async () => {
+  it('continues normally when no saved evidence exists', async () => {
     const input = mocks();
     input.artifacts.length = 0;
-    assert.equal(await findPreviousRoutingArtifact(input), null);
+    assert.equal(await findEarlierEvidence(input), null);
   });
 
-  it('rejects invalid bundle metadata instead of downloading it', async () => {
+  it('rejects invalid upload details instead of downloading it', async () => {
     for (const size of [0, -1, '100']) {
       const input = mocks();
       input.artifact.size_in_bytes = size;
-      await assert.rejects(findPreviousRoutingArtifact(input), /download size limit|invalid size/);
+      await assert.rejects(findEarlierEvidence(input), /download size limit|invalid size/);
     }
   });
 
-  it('skips an oversized archive and falls back to an older bundle or no history', async () => {
+  it('skips an oversized upload and falls back to older evidence or none', async () => {
     const input = mocks();
     input.artifacts.push({
       ...input.artifact, id: 701, created_at: '2026-11-03T11:00:00Z',
       size_in_bytes: 11 * 1024 * 1024 + 1,
     });
-    assert.equal((await findPreviousRoutingArtifact(input)).artifact_id, 700);
+    assert.equal((await findEarlierEvidence(input)).artifact_id, 700);
     assert.match(input.warnings[0], /exceeds the 11 MiB/);
     input.artifact.size_in_bytes = 12 * 1024 * 1024;
-    assert.equal(await findPreviousRoutingArtifact(input), null);
+    assert.equal(await findEarlierEvidence(input), null);
   });
 
-  it('finds only this run\'s checked transfer and rejects excessive archives and API errors', async () => {
+  it('finds only this run\'s temporary copy and rejects oversized uploads and API errors', async () => {
     const input = mocks();
     input.github.rest.actions.listWorkflowRunArtifacts = () => {};
     input.github.paginate = async (method, params) => {
@@ -169,35 +169,35 @@ describe('Previous issue routing artifacts', () => {
       assert.equal(params.run_id, 1000);
       return input.artifacts;
     };
-    assert.equal(await findTransferredRoutingArtifact(input), null);
+    assert.equal(await findThisRunsEvidence(input), null);
     input.artifact.name = 'issue-routing-transfer';
-    assert.equal(await findTransferredRoutingArtifact(input), 700);
+    assert.equal(await findThisRunsEvidence(input), 700);
     input.artifact.expired = true;
-    assert.equal(await findTransferredRoutingArtifact(input), null);
+    assert.equal(await findThisRunsEvidence(input), null);
     input.artifact.expired = false;
     for (const size of [0, -1, '100']) {
       input.artifact.size_in_bytes = size;
-      await assert.rejects(findTransferredRoutingArtifact(input), /invalid size/);
+      await assert.rejects(findThisRunsEvidence(input), /invalid size/);
     }
     input.artifact.size_in_bytes = 14 * 1024 * 1024 + 1;
-    await assert.rejects(findTransferredRoutingArtifact(input), /archive size/);
+    await assert.rejects(findThisRunsEvidence(input), /too large/);
     input.github.paginate = async () => { throw new Error('Access denied'); };
-    await assert.rejects(findTransferredRoutingArtifact(input), /Access denied/);
+    await assert.rejects(findThisRunsEvidence(input), /Access denied/);
   });
 
   it('validates issue numbers before calling GitHub', async () => {
     for (const issueNumber of ['', '0', '-1', '042', '42\n', '42/../43', '9007199254740992']) {
       const input = { ...mocks(), issueNumber };
-      await assert.rejects(findPreviousRoutingArtifact(input), /positive, safe integer/);
+      await assert.rejects(findEarlierEvidence(input), /positive, safe integer/);
       assert.equal(input.calls.length, 0);
     }
   });
 
-  it('requires a current run for transfers instead of falling back to repository-wide lookup', async () => {
+  it('requires the current run for the temporary copy instead of falling back to repository-wide lookup', async () => {
     for (const runId of [undefined, 0, '1000']) {
       const input = mocks();
       input.context.runId = runId;
-      await assert.rejects(findTransferredRoutingArtifact(input), /current workflow run ID/);
+      await assert.rejects(findThisRunsEvidence(input), /current workflow run ID/);
       assert.equal(input.calls.length, 0);
     }
   });
@@ -209,7 +209,7 @@ describe('Previous issue routing artifacts', () => {
       if (endpoint === 'repository') input.github.rest.repos.get = fail;
       if (endpoint === 'list') input.github.paginate = fail;
       if (endpoint === 'run') input.github.rest.actions.getWorkflowRun = fail;
-      await assert.rejects(findPreviousRoutingArtifact(input), /GitHub access denied/);
+      await assert.rejects(findEarlierEvidence(input), /GitHub access denied/);
     }
   });
 });
