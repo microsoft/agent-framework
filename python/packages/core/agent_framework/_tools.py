@@ -6189,6 +6189,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             middleware_pipeline=middleware_pipeline,
             settle_dangling_calls=settle_approval_replay_calls,
         )
+        function_call_messages.extend(approval_processing.response_messages)
         errors_in_a_row = approval_processing.errors_in_a_row
         total_function_calls = _record_function_calls(
             budget_state,

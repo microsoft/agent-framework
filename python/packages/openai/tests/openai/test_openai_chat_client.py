@@ -11641,6 +11641,95 @@ async def test_background_recovery_preserves_explicit_approval_resume(stream: bo
     assert retrieve.await_count == create.await_count == 1
 
 
+@pytest.mark.parametrize("mode", ["non-streaming", "iterate", "final-only"])
+async def test_background_recovery_preserves_approved_results_in_history(
+    mode: str,
+    consume_response: Callable[[Any, str], Awaitable[Any]],
+    response_stream_factory: Callable[[Any], MagicMock],
+) -> None:
+    executions: list[str] = []
+
+    @tool(approval_mode="always_require")
+    def send_email(to: str) -> str:
+        """Record an approved action."""
+        executions.append(f"send:{to}")
+        return "approved-once"
+
+    @tool(approval_mode="never_require")
+    def record_delivery(to: str) -> str:
+        """Record a later automatic action."""
+        executions.append(f"record:{to}")
+        return "recorded-once"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    history = InMemoryHistoryProvider()
+    agent = Agent(client=client, tools=[send_email, record_delivery], context_providers=[history])
+    session = AgentSession()
+    retrieve = AsyncMock(return_value=_completed_response("resp_bg", "function_call"))
+    second_response = _completed_response("resp_second", "function_call")
+    second_response.output[0].name = "record_delivery"
+    second_response.output[0].call_id = "call_2"
+    second_response.output[0].id = "fc_2"
+    final_response = _completed_response("resp_done", "message")
+    request = _OPENAI_HTTPX.Request("POST", "https://unit-test.invalid/v1/responses")
+    error = RateLimitError("Rejected", response=_OPENAI_HTTPX.Response(429, request=request), body=None)
+    create = AsyncMock(
+        side_effect=[
+            response_stream_factory(second_response) if mode != "non-streaming" else second_response,
+            error,
+            response_stream_factory(final_response) if mode != "non-streaming" else final_response,
+        ]
+    )
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        paused = await agent.run(
+            session=session, options=OpenAIChatOptions(continuation_token={"response_id": "resp_bg"})
+        )
+        approval = next(
+            content
+            for message in paused.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        )
+        assert executions == []
+        messages = [Message(role="user", contents=[approval.to_function_approval_response(approved=True)])]
+        options = OpenAIChatOptions(background=True, conversation_id="resp_bg")
+        with pytest.raises(ChatClientException):
+            await consume_response(
+                agent.run(  # type: ignore[call-overload]
+                    messages, session=session, stream=mode != "non-streaming", options=options
+                ),
+                mode,
+            )
+        assert executions == ["send:bob", "record:bob"]
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        options["continuation_token"] = {"response_id": "resp_second"}
+        final = await consume_response(
+            agent.run(  # type: ignore[call-overload]
+                messages, session=session, stream=mode != "non-streaming", options=options
+            ),
+            mode,
+        )
+
+    expected_results = [("call_1", "approved-once"), ("call_2", "recorded-once")]
+    results = [
+        content for message in final.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert [(content.call_id, content.result) for content in results] == expected_results
+    stored = session.state[history.source_id]["messages"]
+    stored_calls = [content for message in stored for content in message.contents if content.type == "function_call"]
+    stored_results = [
+        content for message in stored for content in message.contents if content.type == "function_result"
+    ]
+    assert [(content.call_id, content.result) for content in stored_results] == expected_results
+    assert [content.id for content in stored_calls] == [content.id for content in stored_results]
+    assert executions == ["send:bob", "record:bob"]
+    assert retrieve.await_count == 1
+    assert create.await_count == 3
+
+
 async def test_background_recovery_capacity_does_not_evict_consumed_tokens() -> None:
     executions: list[str] = []
 
