@@ -212,7 +212,7 @@ public sealed class AgentMcpSkillsSerializationTests
         {
             Uri = "skill://unit-converter/SKILL.md",
             Frontmatter = new McpSkillFrontmatter { Name = "unit-converter", Description = "Convert units." },
-            Resources = [],
+            Resources = new McpSkillManifestResources([]),
         };
 
         // Act & Assert
@@ -429,7 +429,8 @@ public sealed class AgentMcpSkillsSerializationTests
     [InlineData("resources", "null")]
     [InlineData("resources", "{}")]
     [InlineData("resources", "false")]
-    [InlineData("resources", "\"dynamic\"")]
+    [InlineData("resources", "\"Dynamic\"")]
+    [InlineData("resources", "\"unknown\"")]
     [InlineData("resources", "[42]")]
     [InlineData("resources", "[[]]")]
     [InlineData("resources", "[{}]")]
@@ -531,12 +532,35 @@ public sealed class AgentMcpSkillsSerializationTests
         Assert.Equal("unit-converter", deserialized.Frontmatter.Name);
         Assert.Equal("Convert units.", deserialized.Frontmatter.Description);
         JsonArray expected = Assert.IsType<JsonArray>(entry["resources"]);
-        Assert.Equal(expected.Count, deserialized.Resources.Count);
+        var manifest = Assert.IsType<McpSkillManifestResources>(deserialized.Resources);
+        Assert.Equal(expected.Count, manifest.Entries.Count);
         if (expected.Count > 0)
         {
-            McpSkillResourceEntry resource = Assert.IsType<McpSkillResourceEntry>(Assert.Single(deserialized.Resources));
+            McpSkillResourceEntry resource = Assert.IsType<McpSkillResourceEntry>(Assert.Single(manifest.Entries));
             Assert.Equal("skill://unit-converter/SKILL.md", resource.Uri);
         }
+    }
+
+    [Fact]
+    public void Deserialize_DynamicResources_RoundTripsListAndGetResults()
+    {
+        // Arrange
+        JsonObject entry = CreateEntry();
+        entry["resources"] = "dynamic";
+        JsonObject list = new() { ["resultType"] = "complete", ["skills"] = new JsonArray(entry.DeepClone()) };
+        JsonObject get = new() { ["resultType"] = "complete", ["skill"] = entry };
+
+        // Act
+        var listResult = list.Deserialize(McpSkillsJsonContext.Default.McpSkillsListResult);
+        var getResult = get.Deserialize(McpSkillsJsonContext.Default.McpSkillsGetResult);
+
+        // Assert
+        Assert.NotNull(listResult);
+        Assert.NotNull(getResult);
+        Assert.IsType<McpSkillDynamicResources>(Assert.Single(listResult.Skills)!.Resources);
+        Assert.IsType<McpSkillDynamicResources>(getResult.Skill.Resources);
+        Assert.Equal("dynamic", JsonSerializer.SerializeToNode(listResult, McpSkillsJsonContext.Default.McpSkillsListResult)!["skills"]![0]!["resources"]!.GetValue<string>());
+        Assert.Equal("dynamic", JsonSerializer.SerializeToNode(getResult, McpSkillsJsonContext.Default.McpSkillsGetResult)!["skill"]!["resources"]!.GetValue<string>());
     }
 
     [Fact]
