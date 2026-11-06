@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-# Run with: uv run samples/02-agents/embeddings/azure_openai_embeddings.py
+# Run with: uv run samples/02-agents/embeddings/openai_embeddings_on_azure.py
 
 import asyncio
 import os
