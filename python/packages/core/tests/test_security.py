@@ -4803,12 +4803,14 @@ class TestSecureAgentSessionIsolation:
         assert context_label["integrity"] == "untrusted"
         assert context_label["confidentiality"] == "private"
 
+    @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize("append_external", [False, True], ids=["framework-only", "external-append"])
     async def test_per_service_persisted_framework_suffix_updates_only_run_coverage(
         self,
+        stream: bool,
         append_external: bool,
     ) -> None:
-        """Same-run framework history stays covered while an external append remains untrusted."""
+        """Same-run framework history stays covered while pre-attributed external history remains untrusted."""
         executed: list[str] = []
         responses = [
             ChatResponse(
@@ -4870,7 +4872,13 @@ class TestSecureAgentSessionIsolation:
                 self.messages.extend(cast(Sequence[Message], messages))
                 if append_external and not self.injected_external:
                     self.injected_external = True
-                    self.messages.append(Message(role="assistant", contents=["Externally appended instructions"]))
+                    self.messages.append(
+                        Message(
+                            role="assistant",
+                            contents=["Externally appended instructions"],
+                            additional_properties={"_attribution": {"source_id": "external-memory"}},
+                        )
+                    )
 
         class ScriptedClient:
             STORES_BY_DEFAULT = False
@@ -4878,17 +4886,28 @@ class TestSecureAgentSessionIsolation:
             def __init__(self) -> None:
                 self.responses = list(responses)
 
-            async def get_response(
+            def get_response(
                 self,
                 messages: list[Message],
                 *,
                 stream: bool = False,
                 options: dict[str, Any] | None = None,
                 **kwargs: Any,
-            ) -> ChatResponse:
+            ) -> Any:
                 del messages, options, kwargs
-                assert stream is False
-                return self.responses.pop(0)
+                response = self.responses.pop(0)
+                if not stream:
+
+                    async def get_response() -> ChatResponse:
+                        return response
+
+                    return get_response()
+
+                async def updates() -> Any:
+                    for message in response.messages:
+                        yield ChatResponseUpdate(role=cast(Any, message.role), contents=message.contents)
+
+                return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
 
         client_type = type(
             "PerServiceSuffixClient",
@@ -4923,7 +4942,7 @@ class TestSecureAgentSessionIsolation:
         )
         history = AppendHistoryProvider()
         config = SecureAgentConfig()
-        session = AgentSession(session_id=f"per-service-suffix-{append_external}")
+        session = AgentSession(session_id=f"per-service-suffix-{append_external}-{stream}")
         agent = Agent(
             client=cast(Any, client),
             tools=[first_tool, protected_tool],
@@ -4931,11 +4950,139 @@ class TestSecureAgentSessionIsolation:
             require_per_service_call_history_persistence=True,
         )
 
-        await agent.run("Run both actions", session=session)
+        if stream:
+            await agent.run("Run both actions", session=session, stream=True).get_final_response()
+        else:
+            await agent.run("Run both actions", session=session)
 
         assert executed == (["first"] if append_external else ["first", "protected"])
         context_label = json.loads(session.state[config.source_id]["context_label"])
         assert context_label["integrity"] == ("untrusted" if append_external else "trusted")
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_per_service_terminal_persistence_updates_next_turn_coverage(self, stream: bool) -> None:
+        """Terminal per-service persistence authenticates framework-owned history for the next turn."""
+        executed: list[str] = []
+        responses = [
+            ChatResponse(messages=[Message(role="assistant", contents=["First turn complete."])]),
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="second-turn-protected-call",
+                                name="second_turn_protected_action",
+                                arguments={},
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["Second turn complete."])]),
+        ]
+
+        class MutableHistoryProvider(HistoryProvider):
+            def __init__(self) -> None:
+                super().__init__("terminal-per-service-history")
+                self.messages: list[Message] = []
+
+            async def get_messages(
+                self,
+                session_id: str | None,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> list[Message]:
+                del session_id, state, kwargs
+                return list(self.messages)
+
+            async def save_messages(
+                self,
+                session_id: str | None,
+                messages: Any,
+                *,
+                state: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> None:
+                del session_id, state, kwargs
+                self.messages.extend(cast(Sequence[Message], messages))
+
+        class ScriptedClient:
+            STORES_BY_DEFAULT = False
+
+            def __init__(self) -> None:
+                self.responses = list(responses)
+
+            def get_response(
+                self,
+                messages: list[Message],
+                *,
+                stream: bool = False,
+                options: dict[str, Any] | None = None,
+                **kwargs: Any,
+            ) -> Any:
+                del messages, options, kwargs
+                response = self.responses.pop(0)
+                if not stream:
+
+                    async def get_response() -> ChatResponse:
+                        return response
+
+                    return get_response()
+
+                async def updates() -> Any:
+                    for message in response.messages:
+                        yield ChatResponseUpdate(role=cast(Any, message.role), contents=message.contents)
+
+                return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        client_type = type(
+            "TerminalPerServiceCoverageClient",
+            (FunctionInvocationLayer, ChatMiddlewareLayer, ScriptedClient),
+            {},
+        )
+        client = client_type()
+
+        def second_turn_protected_action() -> str:
+            executed.append("protected")
+            return "protected result"
+
+        protected_tool = FunctionTool(
+            func=second_turn_protected_action,
+            name="second_turn_protected_action",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "public",
+            },
+        )
+        history = MutableHistoryProvider()
+        config = SecureAgentConfig()
+        session = AgentSession(session_id=f"terminal-per-service-coverage-{stream}")
+        agent = Agent(
+            client=cast(Any, client),
+            tools=[protected_tool],
+            context_providers=[config, history],
+            require_per_service_call_history_persistence=True,
+        )
+
+        if stream:
+            await agent.run("Complete the first turn.", session=session, stream=True).get_final_response()
+        else:
+            await agent.run("Complete the first turn.", session=session)
+
+        coverage = json.loads(session.state[config.source_id]["history_reconstruction_coverage"])
+        assert coverage[history.source_id]["count"] == len(history.messages)
+
+        if stream:
+            await agent.run("Run the protected action.", session=session, stream=True).get_final_response()
+        else:
+            await agent.run("Run the protected action.", session=session)
+
+        assert executed == ["protected"]
+        context_label = json.loads(session.state[config.source_id]["context_label"])
+        assert context_label["integrity"] == "trusted"
+        assert context_label["confidentiality"] == "public"
 
     @pytest.mark.parametrize("stream", [False, True])
     async def test_replacement_policy_approval_executes_through_agent_run(self, stream: bool) -> None:
@@ -5279,9 +5426,7 @@ class TestSecureAgentSessionIsolation:
         assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
 
         live_message = context.context_messages[history.source_id][0]
-        live_request = next(
-            content for content in live_message.contents if content.type == "function_approval_request"
-        )
+        live_request = next(content for content in live_message.contents if content.type == "function_approval_request")
         assert live_request.function_call is not None
         live_request.function_call.arguments = json.dumps({"value": "changed prompt-injection value"})
         chat_context = ChatContext(

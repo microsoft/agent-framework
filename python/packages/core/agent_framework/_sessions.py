@@ -1681,6 +1681,7 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             session_id=self._session.session_id,
             service_session_id=None,
             input_messages=list(input_messages),
+            metadata=self._run_context.metadata,
         )
         for source_id, source_messages in context_messages.items():
             service_call_context.extend_messages(source_id, source_messages)
@@ -1691,6 +1692,15 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             if not provider.load_messages:
                 continue
             await provider.before_run(
+                agent=self._agent,
+                session=self._session,
+                context=service_call_context,
+                state=self._session.state.setdefault(provider.source_id, {}),
+            )
+        for provider in self._context_providers:
+            if not provider.requires_loaded_context_before_invocation:
+                continue
+            await provider.after_context_loaded(
                 agent=self._agent,
                 session=self._session,
                 context=service_call_context,
