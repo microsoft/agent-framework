@@ -3,7 +3,7 @@ name = "agent-framework-redis"
 description = "Redis integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
-requires-python = ">=3.11,<3.15"
+requires-python = ">=3.11"
 version = "1.0.0b261030"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
@@ -19,12 +19,13 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Typing :: Typed",
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
     "redis>=6.4.0,<7.2.1",
-    "redisvl>=0.11.0,<0.16",
+    "redisvl>=0.31.0,<0.32",
     "numpy>=2.2.6,<3"
 ]
 

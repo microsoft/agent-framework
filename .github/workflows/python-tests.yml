@@ -89,8 +89,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           os: ${{ runner.os }}
-          # RedisVL still declares Python <3.15.
-          exclude-packages: ${{ matrix.python-version == '3.15' && 'agent-framework-redis' || '' }}
         env:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
@@ -191,3 +189,4 @@ jobs:
           $version = & $python -c "import tomllib; print(tomllib.load(open('python/pyproject.toml', 'rb'))['project']['version'])"
           & $python -m pip install --find-links wheelhouse "agent-framework==$version" azure-identity
           & $python -c "import agent_framework; import azure.identity"
+          & $python -c "from agent_framework.redis import RedisCollection, RedisContextProvider, RedisHistoryProvider, RedisSettings, RedisStore"
