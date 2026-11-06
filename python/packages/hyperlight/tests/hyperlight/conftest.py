@@ -6,10 +6,69 @@ import asyncio
 import threading
 from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from agent_framework import FunctionTool
+
+from agent_framework_hyperlight import HyperlightExecuteCodeTool
+from agent_framework_hyperlight import _execute_code_tool as execute_code_module
+
+
+@pytest.fixture
+def interruptible_execution(monkeypatch: pytest.MonkeyPatch):
+    entered = threading.Event()
+    release = threading.Event()
+    interrupted = threading.Event()
+    kill_attempted = threading.Event()
+    completed = threading.Event()
+
+    class Sandbox:
+        def __init__(self, **kwargs: Any) -> None:
+            self._host_callback = False
+
+        def interrupt_handle(self) -> SimpleNamespace:
+            def kill() -> bool:
+                kill_attempted.set()
+                interrupted.set()
+                return not self._host_callback
+
+            return SimpleNamespace(kill=kill)
+
+        def run(self, code: str) -> SimpleNamespace:
+            if code in {"guest", "host"}:
+                self._host_callback = code == "host"
+                entered.set()
+                try:
+                    if self._host_callback:
+                        if not release.wait(5):
+                            raise RuntimeError("Host callback was not released.")
+                    elif not interrupted.wait(5):
+                        raise RuntimeError("Guest was not interrupted.")
+                    if interrupted.is_set():
+                        raise InterruptedError("Guest execution interrupted.")
+                finally:
+                    completed.set()
+                    self._host_callback = False
+            return SimpleNamespace(success=True, stdout="ok\n", stderr="")
+
+        def snapshot(self) -> object:
+            return object()
+
+        def restore(self, snapshot: object) -> None:
+            interrupted.clear()
+
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: Sandbox)
+    execute_code = HyperlightExecuteCodeTool(execution_timeout_seconds=0.1)
+    yield SimpleNamespace(
+        tool=execute_code,
+        entered=entered,
+        release=release,
+        kill_attempted=kill_attempted,
+        completed=completed,
+    )
+    release.set()
+    cast(Any, execute_code._registry).close()
 
 
 @pytest.fixture
@@ -69,6 +128,9 @@ def lifecycle_sandbox_factory(host_error_detail: str) -> Callable[..., type[Any]
             def snapshot(self) -> object:
                 self._record("snapshot")
                 return object()
+
+            def interrupt_handle(self) -> SimpleNamespace:
+                return SimpleNamespace(kill=lambda: False)
 
             def restore(self, snapshot: object) -> None:
                 self._record("restore")
