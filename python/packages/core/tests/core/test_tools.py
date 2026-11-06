@@ -1610,13 +1610,15 @@ async def test_ai_function_with_kwargs_rejects_runtime_invoke_kwargs():
 
 @pytest.mark.parametrize("explicit_context", [False, True])
 @pytest.mark.parametrize("tool_call_id", [None, "manual-call"])
-async def test_invoke_exposes_tool_call_id_to_context(explicit_context: bool, tool_call_id: str | None) -> None:
+async def test_invoke_exposes_tool_call_id_metadata(explicit_context: bool, tool_call_id: str | None) -> None:
     """Standalone invocation exposes the supplied ID without fabricating one."""
     observed_call_ids: list[str | None] = []
 
     @tool(approval_mode="never_require")
     def lookup(context: FunctionInvocationContext) -> str:
-        observed_call_ids.append(context.call_id)
+        observed_call_ids.append(context.metadata.get("call_id"))
+        assert "function_call_occurrence_id" not in context.metadata
+        assert ("call_id" in context.metadata) == (tool_call_id is not None)
         return "found"
 
     context = FunctionInvocationContext(function=lookup, arguments={}) if explicit_context else None
@@ -1627,20 +1629,50 @@ async def test_invoke_exposes_tool_call_id_to_context(explicit_context: bool, to
     assert lookup.parameters()["properties"] == {}
 
 
-async def test_invoke_clears_call_id_when_reusing_context_without_an_id() -> None:
-    """A reused manual context must not retain the previous invocation's call ID."""
-    observed_call_ids: list[str | None] = []
+@pytest.mark.parametrize("tool_call_id", [None, "second-call", ""])
+async def test_invoke_clears_stale_identity_metadata(tool_call_id: str | None) -> None:
+    """A changed or omitted call ID must not retain identity from an earlier call."""
+    observed_identities: list[tuple[str | None, str | None]] = []
 
     @tool(approval_mode="never_require")
     def lookup(context: FunctionInvocationContext) -> str:
-        observed_call_ids.append(context.call_id)
+        observed_identities.append((
+            context.metadata.get("call_id"),
+            context.metadata.get("function_call_occurrence_id"),
+        ))
         return "found"
 
-    context = FunctionInvocationContext(function=lookup, arguments={})
-    await lookup.invoke(context=context, tool_call_id="first-call")
-    await lookup.invoke(context=context)
+    context = FunctionInvocationContext(
+        function=lookup,
+        arguments={},
+        metadata={"call_id": "first-call", "function_call_occurrence_id": "first-occurrence", "application": "kept"},
+    )
+    await lookup.invoke(context=context, tool_call_id=tool_call_id)
 
-    assert observed_call_ids == ["first-call", None]
+    assert observed_identities == [(tool_call_id, None)]
+    assert ("call_id" in context.metadata) == (tool_call_id is not None)
+    assert "function_call_occurrence_id" not in context.metadata
+    assert context.metadata["application"] == "kept"
+
+
+@pytest.mark.parametrize("tool_call_id", ["manual-call", ""])
+async def test_invoke_preserves_matching_occurrence_metadata(tool_call_id: str) -> None:
+    """A custom loop can supply canonical occurrence metadata for the same provider call."""
+    observed_identities: list[tuple[str, str]] = []
+
+    @tool(approval_mode="never_require")
+    def lookup(context: FunctionInvocationContext) -> str:
+        observed_identities.append((context.metadata["call_id"], context.metadata["function_call_occurrence_id"]))
+        return "found"
+
+    context = FunctionInvocationContext(
+        function=lookup,
+        arguments={},
+        metadata={"call_id": tool_call_id, "function_call_occurrence_id": "manual-occurrence"},
+    )
+    await lookup.invoke(context=context, tool_call_id=tool_call_id)
+
+    assert observed_identities == [(tool_call_id, "manual-occurrence")]
 
 
 @pytest.mark.parametrize("tool_call_id", [None, "second-call"])
@@ -1651,7 +1683,7 @@ async def test_invoke_clears_call_id_when_reusing_context_without_an_id() -> Non
         ({"item": 1}, {"unexpected": True}, "Unexpected keyword argument"),
     ],
 )
-async def test_invoke_updates_call_id_before_argument_validation(
+async def test_invoke_updates_call_metadata_before_argument_validation(
     tool_call_id: str | None,
     arguments: dict[str, Any],
     invocation_kwargs: dict[str, Any],
@@ -1667,17 +1699,19 @@ async def test_invoke_updates_call_id_before_argument_validation(
 
     context = FunctionInvocationContext(function=lookup, arguments={"item": 1})
     await lookup.invoke(context=context, tool_call_id="first-call")
-    assert context.call_id == "first-call"
+    assert context.metadata["call_id"] == "first-call"
+    context.metadata["function_call_occurrence_id"] = "first-occurrence"
 
     with pytest.raises(TypeError, match=error_message):
         await lookup.invoke(arguments=arguments, context=context, tool_call_id=tool_call_id, **invocation_kwargs)
 
-    assert context.call_id == tool_call_id
+    assert context.metadata.get("call_id") == tool_call_id
+    assert "function_call_occurrence_id" not in context.metadata
     assert executed_items == [1]
 
 
 @pytest.mark.parametrize("tool_call_id", [None, "second-call"])
-async def test_invoke_updates_call_id_before_security_validation(tool_call_id: str | None) -> None:
+async def test_invoke_updates_call_metadata_before_security_validation(tool_call_id: str | None) -> None:
     """Security rejection must preserve the failed invocation's ID without executing it."""
     executed_items: list[int] = []
 
@@ -1691,12 +1725,14 @@ async def test_invoke_updates_call_id_before_security_validation(tool_call_id: s
         {"item": 1}, boundary="security policy"
     )
     await lookup.invoke(context=context, tool_call_id="first-call")
-    assert context.call_id == "first-call"
+    assert context.metadata["call_id"] == "first-call"
+    context.metadata["function_call_occurrence_id"] = "first-occurrence"
 
     with pytest.raises(MiddlewareFailure, match="Function arguments changed after security middleware"):
         await lookup.invoke(arguments={"item": 2}, context=context, tool_call_id=tool_call_id)
 
-    assert context.call_id == tool_call_id
+    assert context.metadata.get("call_id") == tool_call_id
+    assert "function_call_occurrence_id" not in context.metadata
     assert executed_items == [1]
 
 

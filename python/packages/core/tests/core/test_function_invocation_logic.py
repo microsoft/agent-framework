@@ -974,34 +974,35 @@ def _force_tool_content_tool_choice_none_stream(
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
 @pytest.mark.parametrize("with_middleware", [False, True], ids=["direct", "middleware"])
 @pytest.mark.parametrize("requires_approval", [False, True], ids=["immediate", "approved"])
-async def test_tool_context_exposes_provider_call_id(
+@pytest.mark.parametrize("reused_provider_id", [False, True], ids=["distinct-call-ids", "reused-call-id"])
+async def test_tool_context_exposes_call_identity_metadata(
     chat_client_base: SupportsChatGetResponse,
     streaming: bool,
     with_middleware: bool,
     requires_approval: bool,
+    reused_provider_id: bool,
 ) -> None:
-    """Tools and middleware receive the provider ID across execution and approval paths."""
-    observed_call_ids: list[str] = []
-    middleware_call_ids: list[str] = []
+    """Tools and middleware receive provider and occurrence identities across execution paths."""
+    observed_identities: list[tuple[str, str]] = []
+    middleware_identities: list[tuple[str, str]] = []
+    expected_identities = [
+        ("provider-shared" if reused_provider_id else f"provider-{index}", f"occurrence-{index}") for index in (1, 2)
+    ]
 
     class ObserveCall(FunctionMiddleware):
         async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
-            assert context.call_id is not None
-            assert context.metadata["call_id"] == context.call_id
-            middleware_call_ids.append(context.call_id)
+            middleware_identities.append((context.metadata["call_id"], context.metadata["function_call_occurrence_id"]))
             await call_next()
 
     @tool(name="lookup", approval_mode="always_require" if requires_approval else "never_require")
     async def lookup(context: FunctionInvocationContext, value: str) -> str:
         await asyncio.sleep(0)
-        provider_call_id = context.call_id
-        assert provider_call_id is not None
-        observed_call_ids.append(provider_call_id)
+        observed_identities.append((context.metadata["call_id"], context.metadata["function_call_occurrence_id"]))
         return value
 
     calls = [
         Content.from_function_call(
-            call_id=f"provider-{index}",
+            call_id="provider-shared" if reused_provider_id else f"provider-{index}",
             name="lookup",
             arguments='{"value":"same"}',
             id=f"occurrence-{index}",
@@ -1020,7 +1021,7 @@ async def test_tool_context_exposes_provider_call_id(
                     role="assistant",
                     contents=[
                         Content.from_function_call(
-                            call_id=f"provider-{index}",
+                            call_id="provider-shared" if reused_provider_id else f"provider-{index}",
                             name="lookup",
                             arguments='{"value":',
                             id=f"occurrence-{index}",
@@ -1033,7 +1034,10 @@ async def test_tool_context_exposes_provider_call_id(
                     role="assistant",
                     contents=[
                         Content.from_function_call(
-                            call_id=f"provider-{index}", name="", arguments='"same"}', id=f"occurrence-{index}"
+                            call_id="provider-shared" if reused_provider_id else f"provider-{index}",
+                            name="",
+                            arguments='"same"}',
+                            id=f"occurrence-{index}",
                         )
                         for index in (1, 2)
                     ],
@@ -1069,8 +1073,8 @@ async def test_tool_context_exposes_provider_call_id(
 
     messages = await run("look up the same value twice")
     if requires_approval:
-        assert observed_call_ids == []
-        assert middleware_call_ids == []
+        assert observed_identities == []
+        assert middleware_identities == []
         requests = [
             content
             for message in messages
@@ -1085,14 +1089,14 @@ async def test_tool_context_exposes_provider_call_id(
             )
         ])
 
-    assert sorted(observed_call_ids) == ["provider-1", "provider-2"]
-    assert middleware_call_ids == (["provider-1", "provider-2"] if with_middleware else [])
+    assert sorted(observed_identities) == expected_identities
+    assert middleware_identities == (expected_identities if with_middleware else [])
     assert [
         (content.call_id, content.id, content.result)
         for message in messages
         for content in message.contents
         if content.type == "function_result"
-    ] == [("provider-1", "occurrence-1", "same"), ("provider-2", "occurrence-2", "same")]
+    ] == [(provider_call_id, occurrence_id, "same") for provider_call_id, occurrence_id in expected_identities]
 
 
 async def test_base_client_with_function_calling(chat_client_base: SupportsChatGetResponse):

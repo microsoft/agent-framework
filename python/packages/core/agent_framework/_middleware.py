@@ -439,11 +439,6 @@ class FunctionInvocationContext:
 
     Attributes:
         function: The function being invoked.
-        call_id: The read-only provider call ID for this invocation. Automatic invocation
-                supplies it before function middleware and tool execution, including
-                approval resume. Direct ``FunctionTool.invoke`` calls use ``tool_call_id``;
-                it is ``None`` when no ID is supplied. This is distinct from the
-                framework occurrence identity in ``Content.id``.
         arguments: The function arguments. In the automatic function-calling loop,
                 schema-compatible provider arguments retain the existing normalized
                 mapping contract. If provisional normalization rejects provider
@@ -454,7 +449,13 @@ class FunctionInvocationContext:
                 Middleware that short-circuits without calling ``call_next()`` skips
                 final validation and function execution.
         session: The agent session for this invocation, if any.
-        metadata: Metadata dictionary for sharing data between function middleware.
+        metadata: Metadata dictionary shared by function middleware and context-aware tools.
+                Automatic invocation supplies ``"call_id"`` for provider correlation and
+                ``"function_call_occurrence_id"`` for the canonical ``Content.id``, when present,
+                before middleware and tool execution, including approval resume. Standalone
+                ``FunctionTool.invoke`` calls set or clear ``"call_id"`` from ``tool_call_id``
+                before validation. A supplied occurrence ID is retained only when the context's
+                provider call ID matches the supplied ``tool_call_id``; otherwise it is cleared.
         result: Function execution result. This attribute carries no guaranteed type.
                 The pipeline assigns :meth:`FunctionTool.invoke`'s output — a
                 ``list[Content]``, or the wrapped function's raw return value when the
@@ -540,7 +541,6 @@ class FunctionInvocationContext:
                 or ``None`` when the invocation path cannot establish that ownership.
         """
         self.function = function
-        self._call_id: str | None = None
         self.arguments = arguments
         self.session = session
         self.metadata: dict[str, Any] = dict(metadata) if metadata is not None else {}
@@ -550,11 +550,6 @@ class FunctionInvocationContext:
             frozenset(parent_service_session_state_keys) if parent_service_session_state_keys is not None else None
         )
         self.tools = tools
-
-    @property
-    def call_id(self) -> str | None:
-        """Get the provider call ID supplied by the invocation layer, if any."""
-        return self._call_id
 
     @experimental(feature_id=ExperimentalFeature.PROGRESSIVE_TOOLS)
     def add_tools(
