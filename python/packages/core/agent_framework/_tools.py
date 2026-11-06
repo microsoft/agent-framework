@@ -6579,8 +6579,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             return self._finalize_function_invocation_updates(updates, response_format=response_format)
 
         async def _run_streaming() -> AsyncIterable[ChatResponseUpdate]:
+            updates: AsyncIterable[ChatResponseUpdate] | None = None
             try:
-                async for update in self._stream_response_with_function_invocation(
+                updates = self._stream_response_with_function_invocation(
                     super_get_response=super_get_response,
                     messages=messages,
                     options=mutable_options,
@@ -6594,10 +6595,16 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     max_errors=max_errors,
                     middleware_pipeline=function_middleware_pipeline,
                     invalidation_error=invalidation_error,
-                ):
+                )
+                async for update in updates:
                     yield update
             finally:
-                _clear_budget_state_from_session(invocation_session, budget_state)
+                try:
+                    close = getattr(updates, "aclose", None)
+                    if close is not None:
+                        await close()
+                finally:
+                    _clear_budget_state_from_session(invocation_session, budget_state)
 
         return ResponseStream(
             _run_streaming(),
