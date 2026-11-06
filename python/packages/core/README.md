@@ -200,8 +200,12 @@ MCP protocol sessions or other server-side state between principals.
 outgoing HTTP request. Calls with identical effective static and dynamic headers can
 overlap on one MCP session. A different identity waits for active operations before
 reconnecting and refreshing discovery. Discovery, reset, close, and recovery are
-exclusive against active network attempts. Calls still share server-side session
-state; applications must order state-dependent operations themselves.
+exclusive against active network attempts on framework-owned MCP connections, with
+or without a header provider. Same-identity Agent run preparation does not drain
+active calls. Direct prompt calls resolve current headers rather than reusing an
+inherited invocation snapshot; generated prompts resolve host runtime kwargs
+separately from model arguments. Calls still share server-side session state;
+applications must order state-dependent operations themselves.
 
 `request_timeout` bounds header admission and session reconciliation together, and
 connection recovery separately from the RPC timeout. These are separate budgets,

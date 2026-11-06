@@ -38,7 +38,10 @@ Calls with identical effective static and dynamic headers can run concurrently o
 any effective header, including the Foundry platform call ID, waits for active operations and reconnects before
 refreshing discovery. Token refresh performed by HTTP authentication remains request-local.
 
-Discovery, reset, close, and connection recovery are exclusive. Do not reset, close, refresh discovery, or change
+Discovery, reset, close, and connection recovery wait for active attempts on framework-owned MCP connections,
+including connections without a header provider. Same-identity Agent run preparation can overlap active calls.
+Direct prompts resolve current headers; generated prompts resolve host runtime kwargs separately from model arguments.
+Do not reset, close, refresh discovery, or change
 header identity from a callback that must finish an active operation on that same tool; it raises an error rather
 than waiting on itself. Concurrent calls still share the server's MCP session state, so applications must order
 state-dependent operations themselves. Cancelling a local call does not guarantee that its remote side effects stop.

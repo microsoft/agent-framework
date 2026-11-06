@@ -14,7 +14,7 @@ import httpx2 as httpx
 import pytest
 from mcp.client.session import ClientSession
 
-from agent_framework import FunctionInvocationContext, MCPStreamableHTTPTool
+from agent_framework import Agent, FunctionInvocationContext, MCPStreamableHTTPTool
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
 from .mcp_http_helpers import MCPHTTPBarrier
@@ -188,17 +188,24 @@ def _requests_for_method(requests: list[httpx.Request], method: str) -> list[htt
 
 
 @pytest.mark.parametrize("protocol_version", ["2025-11-25", "2026-07-28"])
+@pytest.mark.parametrize("header_source", ["dynamic", "static", "client"])
 async def test_same_identity_http_requests_overlap(
-    mcp_http_client_factory: MCPHTTPClientFactory, protocol_version: str
+    mcp_http_client_factory: MCPHTTPClientFactory, protocol_version: str, header_source: str
 ) -> None:
     create_client, requests, writes = mcp_http_client_factory
     barrier = MCPHTTPBarrier("tools/call", "prompts/get")
-    client = create_client(before_request=barrier.before_request, protocol_version=protocol_version)
+    headers = {"Authorization": "token-a", "X-Test-Prompts": "enabled"}
+    client = create_client(
+        before_request=barrier.before_request,
+        protocol_version=protocol_version,
+        headers=headers if header_source == "client" else None,
+    )
     tool = MCPStreamableHTTPTool(
         name="parallel",
         url="https://mcp.example/mcp",
         http_client=client,
-        header_provider=lambda _: {"Authorization": "token-a", "X-Test-Prompts": "enabled"},
+        static_headers=headers if header_source == "static" else None,
+        header_provider=(lambda _: headers) if header_source == "dynamic" else None,
     )
     async with tool:
         first = asyncio.create_task(tool.call_tool("record", marker="first"))
@@ -221,12 +228,27 @@ async def test_same_identity_http_requests_overlap(
 
 
 @pytest.mark.parametrize("transition", ["identity", "reset", "close", "tools", "prompts"])
+@pytest.mark.parametrize("header_source", ["dynamic", "static", "client"])
 async def test_http_transition_waits_for_active_requests(
-    mcp_http_client_factory: MCPHTTPClientFactory, transition: str
+    mcp_http_client_factory: MCPHTTPClientFactory, transition: str, header_source: str
 ) -> None:
+    if transition == "identity" and header_source != "dynamic":
+        pytest.skip("Fixed headers do not have a runtime identity transition.")
     create_client, requests, writes = mcp_http_client_factory
     barrier = MCPHTTPBarrier("tools/call")
-    tool = _tool(create_client(before_request=barrier.before_request), "token-a")
+    tool = MCPStreamableHTTPTool(
+        name="transition",
+        url="https://mcp.example/mcp",
+        http_client=create_client(
+            before_request=barrier.before_request,
+            headers={"Authorization": "token-a"} if header_source == "client" else None,
+        ),
+        static_headers={"Authorization": "token-a"} if header_source == "static" else None,
+        header_provider=(lambda kwargs: {"Authorization": kwargs.get("credential", "token-a")})
+        if header_source == "dynamic"
+        else None,
+        load_prompts=False,
+    )
     async with tool:
         active = asyncio.create_task(tool.call_tool("record", marker="active"))
         await barrier.next_request()
@@ -374,6 +396,38 @@ async def test_run_preparation_uses_the_header_admission_budget(mcp_http_server:
                 await tool._prepare_for_run({"credential": "token-b"})
         assert len(_requests_for_method(requests, "initialize")) == 1
         await tool.call_tool("record", marker="after-timeout")
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_same_identity_agent_run_prepares_while_another_rpc_is_active(
+    mcp_http_client_factory: MCPHTTPClientFactory, chat_client_base: Any, stream: bool
+) -> None:
+    create_client, requests, writes = mcp_http_client_factory
+    barrier = MCPHTTPBarrier("tools/call")
+    tool = _tool(create_client(before_request=barrier.before_request), "token-a")
+    agent = Agent(client=chat_client_base, tools=tool)
+
+    async def run_agent() -> str:
+        if stream:
+            return "".join([
+                update.text
+                async for update in agent.run(
+                    "prepare", stream=True, function_invocation_kwargs={"credential": "token-a"}
+                )
+            ])
+        return (await agent.run("prepare", function_invocation_kwargs={"credential": "token-a"})).text
+
+    async with tool, asyncio.timeout(5):
+        active = asyncio.create_task(tool.call_tool("record", marker="active"))
+        await barrier.next_request()
+        try:
+            assert await asyncio.wait_for(run_agent(), timeout=1)
+            assert not active.done()
+            assert len(_requests_for_method(requests, "initialize")) == 1
+        finally:
+            barrier.release.set()
+            await active
+        assert writes["token-a"] == ["active"]
 
 
 async def test_header_admission_budget_does_not_wrap_the_admitted_rpc(
@@ -576,6 +630,47 @@ async def test_direct_prompt_resolves_current_identity_instead_of_reusing_previo
     assert len(_requests_for_method(requests, "initialize")) == 2
 
 
+async def test_direct_prompt_in_detached_child_does_not_reuse_completed_invocation_headers(
+    mcp_http_client_factory: MCPHTTPClientFactory,
+) -> None:
+    create_client, requests, _ = mcp_http_client_factory
+    principal = ContextVar("child_prompt_principal", default="token-a")
+    start_child = asyncio.Event()
+    children: list[asyncio.Task[str]] = []
+
+    async def call_prompt() -> str:
+        await start_child.wait()
+        token = principal.set("token-b")
+        try:
+            return await tool.get_prompt("principal-prompt", topic="child")
+        finally:
+            principal.reset(token)
+
+    async def spawn_child(request: httpx.Request) -> None:
+        if request.method == "POST" and json.loads(request.content).get("method") == "tools/call":
+            children.append(asyncio.create_task(call_prompt()))
+
+    tool = MCPStreamableHTTPTool(
+        name="child-prompt",
+        url="https://mcp.example/mcp",
+        http_client=create_client(before_request=spawn_child),
+        header_provider=lambda _: {"Authorization": principal.get(), "X-Test-Prompts": "enabled"},
+    )
+    async with tool, asyncio.timeout(5):
+        try:
+            await tool.call_tool("record", marker="parent")
+            assert len(children) == 1
+            start_child.set()
+            assert await children[0] == "token-b:child"
+            assert _requests_for_method(requests, "prompts/get")[-1].headers["Authorization"] == "token-b"
+            assert len(_requests_for_method(requests, "initialize")) == 2
+        finally:
+            start_child.set()
+            for child in children:
+                child.cancel()
+            await asyncio.gather(*children, return_exceptions=True)
+
+
 async def test_request_header_snapshot_cannot_be_reused_by_another_tool_owner(
     mcp_http_server: MCPHTTPServer,
 ) -> None:
@@ -640,11 +735,14 @@ async def test_nested_same_identity_call_can_finish_ahead_of_waiting_identity_ch
 
 
 @pytest.mark.parametrize("operation", ["identity", "reset", "close", "tools", "prompts", "recovery"])
+@pytest.mark.parametrize("dynamic_headers", [False, True])
 async def test_nested_exclusive_operation_fails_instead_of_waiting_on_its_parent(
-    mcp_http_client_factory: MCPHTTPClientFactory, operation: str
+    mcp_http_client_factory: MCPHTTPClientFactory, operation: str, dynamic_headers: bool
 ) -> None:
     from anyio import ClosedResourceError
 
+    if operation == "identity" and not dynamic_headers:
+        pytest.skip("Fixed headers do not have a runtime identity transition.")
     create_client, _, writes = mcp_http_client_factory
 
     async def invoke_nested(request: httpx.Request) -> None:
@@ -668,7 +766,17 @@ async def test_nested_exclusive_operation_fails_instead_of_waiting_on_its_parent
                 )
         assert tool._close_generation == close_generation
 
-    tool = _tool(create_client(before_request=invoke_nested), "token-a")
+    tool = (
+        _tool(create_client(before_request=invoke_nested), "token-a")
+        if dynamic_headers
+        else MCPStreamableHTTPTool(
+            name="static-nested",
+            url="https://mcp.example/mcp",
+            http_client=create_client(before_request=invoke_nested),
+            static_headers={"Authorization": "token-a"},
+            load_prompts=False,
+        )
+    )
     async with tool:
         await asyncio.wait_for(tool.call_tool("record", marker="outer"), timeout=5)
     assert writes["token-a"] == ["outer"]

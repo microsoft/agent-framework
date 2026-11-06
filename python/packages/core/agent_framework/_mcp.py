@@ -4715,8 +4715,7 @@ class MCPStreamableHTTPTool(MCPTool):
 
     def _check_exclusive_header_access(self) -> None:
         if (
-            self._header_provider is not None
-            and not self._is_lifecycle_owner_task()
+            not self._is_lifecycle_owner_task()
             and self._header_exclusive_owner is not asyncio.current_task()
             and self._active_http_invocation() is not None
         ):
@@ -4726,11 +4725,7 @@ class MCPStreamableHTTPTool(MCPTool):
 
     @asynccontextmanager
     async def _exclusive_header_access(self) -> AsyncGenerator[None]:
-        if (
-            self._header_provider is None
-            or self._is_lifecycle_owner_task()
-            or self._header_exclusive_owner is asyncio.current_task()
-        ):
+        if self._is_lifecycle_owner_task() or self._header_exclusive_owner is asyncio.current_task():
             yield
             return
         self._check_exclusive_header_access()
@@ -4745,7 +4740,8 @@ class MCPStreamableHTTPTool(MCPTool):
 
     @asynccontextmanager
     async def _http_operation(self) -> AsyncGenerator[None]:
-        if self._header_provider is None:
+        connection = self._connection
+        if self._header_provider is None and connection is not None and not connection.is_framework_owned:
             yield
             return
         invocation = _mcp_http_invocation.get()
@@ -4809,11 +4805,7 @@ class MCPStreamableHTTPTool(MCPTool):
             await super().load_prompts()
 
     async def _check_connection(self) -> None:
-        if (
-            self._header_provider is None
-            or self._is_lifecycle_owner_task()
-            or self._header_exclusive_owner is asyncio.current_task()
-        ):
+        if self._is_lifecycle_owner_task() or self._header_exclusive_owner is asyncio.current_task():
             await super()._check_connection()
             return
         invocation = _mcp_http_invocation.get()
@@ -4862,19 +4854,8 @@ class MCPStreamableHTTPTool(MCPTool):
             return await super()._invoke_prompt(prompt_name, kwargs)
 
     async def get_prompt(self, prompt_name: str, **kwargs: Any) -> str:
-        if self._header_provider is None:
-            return await super().get_prompt(prompt_name, **kwargs)
-        header_context = _mcp_call_headers.get(None)
-        headers = (
-            header_context[1]
-            if header_context is not None and header_context[0] is self._header_request_owner
-            else self._effective_headers({})
-        )
-        invocation = _mcp_http_invocation.get()
-        runtime_kwargs: Mapping[str, Any] = (
-            invocation.runtime_kwargs if invocation is not None and invocation.owner is self else {}
-        )
-        with self._http_headers(headers, runtime_kwargs):
+        headers = self._effective_headers({})
+        with self._http_headers(headers):
             return await super().get_prompt(prompt_name, **kwargs)
 
     async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
@@ -4897,8 +4878,10 @@ class MCPStreamableHTTPTool(MCPTool):
                 sensitive_exc_info=True,
             )
             return
-        async with self._header_admission(), self._exclusive_header_access():
-            await self._ensure_session_identity(headers, kwargs)
+        with self._http_headers(headers, kwargs):
+            async with self._http_operation():
+                # Reconcile through admission without draining same-identity active calls.
+                pass
 
     def _bind_session_headers(self, headers: Mapping[str, str]) -> None:
         self._session_headers = dict(headers)
@@ -4995,11 +4978,7 @@ class MCPStreamableHTTPTool(MCPTool):
 
         headers = self._effective_headers(runtime_kwargs)
         with self._http_headers(headers, runtime_kwargs):
-            return await super()._call_prompt_with_runtime_kwargs(
-                prompt_name,
-                prompt_arguments,
-                runtime_kwargs,
-            )
+            return await super().get_prompt(prompt_name, **prompt_arguments)
 
     def _release_connection_kwargs(self) -> None:
         self._connection_kwargs = None
@@ -5036,13 +5015,11 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             A list of Content items representing the tool output.
         """
-        if self._header_provider is not None:
-            runtime_context = _mcp_tool_runtime_context.get()
-            header_kwargs = runtime_context[1] if runtime_context is not None and runtime_context[0] is self else kwargs
-            headers = self._effective_headers(header_kwargs)
-            with self._http_headers(headers, header_kwargs):
-                return await super().call_tool(tool_name, **kwargs)
-        return await super().call_tool(tool_name, **kwargs)
+        runtime_context = _mcp_tool_runtime_context.get()
+        header_kwargs = runtime_context[1] if runtime_context is not None and runtime_context[0] is self else kwargs
+        headers = self._effective_headers(header_kwargs)
+        with self._http_headers(headers, header_kwargs):
+            return await super().call_tool(tool_name, **kwargs)
 
 
 @deprecated("MCP WebSocket transport was removed in MCP v2. Use MCPStreamableHTTPTool instead.")

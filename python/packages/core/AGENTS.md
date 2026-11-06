@@ -288,8 +288,11 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **MCP HTTP concurrency** - MCP >=2.2 propagates the sending operation's ContextVars into each outbound HTTP task.
   The owner-scoped header hook copies effective headers onto each request, including redirects; do not restore a
   mutable instance-level active-header fallback. Same-identity tool, prompt, and Toolbox resource operations may
-  overlap on one session. Identity changes, discovery, reset, close, and recovery wait for active network attempts;
-  retries release their attempt before recovery, re-admit the original identity, and use its refreshed argument
+  overlap on one session. Same-identity run preparation uses shared admission rather than draining active calls.
+  Direct prompts resolve current headers; generated prompts retain explicitly resolved host runtime headers.
+  Identity changes, discovery, reset, close, and recovery wait for active network attempts on framework-owned
+  connections even without a header provider; retries release their attempt before recovery, re-admit the original
+  identity, and use its refreshed argument
   allowlist and tool metadata. Failed attempts from the same replaced framework-owned connection share recovery.
   Keep the original trace context when rebuilding metadata. Cancelled lifecycle waiters leave their owner running;
   new HTTP operations must wait for that setup or teardown to finish. A same-generation nested callback may finish

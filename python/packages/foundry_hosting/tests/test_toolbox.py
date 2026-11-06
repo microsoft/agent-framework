@@ -15,7 +15,13 @@ from unittest.mock import AsyncMock, patch
 
 import httpx2 as httpx
 import pytest
-from agent_framework import MCPStreamableHTTPTool, SkillsProvider, SkillsSourceContext, SupportsAgentRun
+from agent_framework import (
+    FunctionInvocationContext,
+    MCPStreamableHTTPTool,
+    SkillsProvider,
+    SkillsSourceContext,
+    SupportsAgentRun,
+)
 from agent_framework.exceptions import ToolException, ToolExecutionException
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
@@ -104,7 +110,7 @@ class _ToolboxLoopbackServer:
             headers["mcp-session-id"] = f"session-{self._session_count}-{call_id or 'none'}"
             result = {
                 "protocolVersion": payload["params"]["protocolVersion"],
-                "capabilities": {"tools": {}, "resources": {}},
+                "capabilities": {"tools": {}, "prompts": {}, "resources": {}},
                 "serverInfo": {"name": "toolbox-loopback", "version": "1"},
             }
         elif method == "tools/list":
@@ -121,6 +127,10 @@ class _ToolboxLoopbackServer:
             }
         elif method == "tools/call":
             result = {"content": [{"type": "text", "text": call_id or "none"}]}
+        elif method == "prompts/list":
+            result = {"prompts": [{"name": "request-prompt"}]}
+        elif method == "prompts/get":
+            result = {"messages": [{"role": "user", "content": {"type": "text", "text": call_id or "none"}}]}
         elif method == "resources/read":
             uri = payload["params"]["uri"]
             if uri == "skill://index.json":
@@ -503,6 +513,57 @@ async def test_toolbox_header_provider_does_not_retain_prior_platform_context() 
         await toolbox.close()
 
     assert "x-agent-foundry-call-id" not in headers
+
+
+@pytest.mark.parametrize("generated", [False, True])
+async def test_prompt_in_detached_child_uses_current_platform_context(generated: bool) -> None:
+    server = _ToolboxLoopbackServer()
+    start_child = asyncio.Event()
+    children: list[asyncio.Task[str]] = []
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://loopback.invalid/mcp",
+        load_prompts=True,
+    )
+    await _attach_loopback_transport(toolbox, server)
+
+    async def call_prompt() -> str:
+        await start_child.wait()
+        token = set_request_context(FoundryAgentRequestContext(call_id="CALL-B", user_id="same-user"))
+        try:
+            if generated:
+                prompt = next(function for function in toolbox.functions if function.name == "request-prompt")
+                context = FunctionInvocationContext(function=prompt, arguments={}, kwargs={})
+                contents = await prompt.invoke(arguments={}, context=context)
+                assert len(contents) == 1
+                assert contents[0].text is not None
+                return contents[0].text
+            return await toolbox.get_prompt("request-prompt")
+        finally:
+            reset_request_context(token)
+
+    async def spawn_child(request: httpx.Request) -> None:
+        if json.loads(request.content).get("method") == "tools/call":
+            children.append(asyncio.create_task(call_prompt()))
+
+    server.before_request = spawn_child
+    try:
+        async with asyncio.timeout(5):
+            await _run_with_request_context("CALL-A", toolbox.connect)
+            await _run_with_request_context("CALL-A", lambda: toolbox.call_tool("record", marker="parent"))
+            assert len(children) == 1
+            start_child.set()
+            assert await children[0] == "CALL-B"
+            request = server.requests_for("prompts/get")[-1]
+            assert request.headers["x-agent-foundry-call-id"] == "CALL-B"
+            assert request.headers["mcp-session-id"].endswith("-CALL-B")
+            assert len(server.requests_for("initialize")) == 2
+    finally:
+        start_child.set()
+        for child in children:
+            child.cancel()
+        await asyncio.gather(*children, return_exceptions=True)
+        await toolbox.close()
 
 
 async def test_custom_header_provider_key_error_does_not_drop_platform_headers() -> None:
