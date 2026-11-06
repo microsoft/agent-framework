@@ -873,6 +873,11 @@ class AgentMiddleware(ABC):
                     self.max_retries = max_retries
 
                 async def process(self, context: AgentContext, call_next):
+                    if context.stream:
+                        # A streaming call_next() returns before the provider is called, and errors
+                        # surface while the caller iterates the stream, so only retry non-streaming runs.
+                        await call_next()
+                        return
                     for attempt in range(1, self.max_retries + 1):
                         try:
                             await call_next()
