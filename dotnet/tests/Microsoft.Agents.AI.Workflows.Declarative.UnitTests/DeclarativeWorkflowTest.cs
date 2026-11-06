@@ -61,7 +61,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [Theory]
     [InlineData("de-DE")]
     [InlineData("fr-FR")]
-    public async Task DeclarativeWorkflowExecution_UsesInvariantCulture_ForFormulasAndNumberParsing(string cultureName)
+    public async Task DeclarativeWorkflowExecution_UsesInvariantCulture_ForFormulasAndNumberParsingAsync(string cultureName)
     {
         CultureInfo originalCulture = CultureInfo.CurrentCulture;
         try
