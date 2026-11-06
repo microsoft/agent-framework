@@ -69,10 +69,9 @@ prompts) or a `domain` (URL prompts). Both are optional, so a bare
 `PermissionDecisionApproveForSession()` carries no scope at all and the Copilot CLI cannot
 interpret it.
 
-`GitHubCopilotAgent` therefore scopes such a decision automatically, using the request that
-triggered it — a shell prompt becomes an approval for that prompt's command identifiers, an
-MCP prompt an approval for that server and tool, a URL prompt an approval for that URL's
-domain, and so on:
+`GitHubCopilotAgent` therefore scopes such a decision automatically when the request provides
+a structured session approval — a shell prompt becomes an approval for that prompt's command
+identifiers, an MCP prompt an approval for that server and tool, and so on:
 
 ```python
 from copilot.generated.rpc import PermissionDecisionApproveForSession
@@ -83,12 +82,13 @@ def on_permission_request(request, invocation):
     return PermissionDecisionApproveForSession()
 ```
 
-The decision is only ever narrowed, never widened. When the prompt reports that it cannot
-offer session-scoped approval (`can_offer_session_approval=False`), or the request kind has
-no session-scoped approval at all (such as a `hook` prompt), the decision is downgraded to a
-single-use approval and a warning is logged. Pass an explicit `approval=` or `domain=` when
-you want to approve something other than the request being handled — decisions that already
-specify a scope are forwarded unchanged.
+The decision is only ever narrowed, never widened. A bare decision for a URL prompt is
+downgraded to a single-use approval because the framework cannot safely infer the Copilot
+CLI's exact URL permission scope. The same downgrade occurs when the prompt reports that it
+cannot offer session-scoped approval (`can_offer_session_approval=False`), or the request
+kind has no session-scoped approval at all (such as a `hook` prompt). A warning is logged in
+each case. Pass an explicit `approval=` or `domain=` when you want to approve a specific
+scope for the session — decisions that already specify a scope are forwarded unchanged.
 
 ### Deprecated: `on_function_approval`
 
