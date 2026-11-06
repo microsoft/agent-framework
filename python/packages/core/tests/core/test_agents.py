@@ -74,7 +74,13 @@ from agent_framework.exceptions import (
     ChatClientInvalidResponseException,
     ToolExecutionException,
 )
-from agent_framework.security import SecureAgentConfig
+from agent_framework.security import (
+    PRINCIPAL_METADATA_KEY,
+    ConfidentialityLabel,
+    ContentLabel,
+    IntegrityLabel,
+    SecureAgentConfig,
+)
 
 from .conftest import MockBaseChatClient
 
@@ -5446,6 +5452,50 @@ async def test_psc_reuses_fides_prepared_history_for_first_service_call(stream: 
 
 
 @_psc_stream_params
+async def test_psc_prepared_history_preserves_upstream_middleware_redaction(stream: bool) -> None:
+    """Prepared history reuse does not restore messages removed by earlier middleware."""
+
+    @chat_middleware
+    async def redact_outbound_messages(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        context.messages = [Message(role="user", contents=["redacted-request"])]
+        await call_next()
+
+    provider = _PscSpyHistoryProvider()
+    provider._messages.append(Message(role="assistant", contents=["stored-sensitive-history"]))
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=False,
+        script=[("text", "done")],
+    )
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        context_providers=[SecureAgentConfig(), provider],
+        require_per_service_call_history_persistence=True,
+    )
+    session = agent.create_session()
+
+    if stream:
+        await agent.run(
+            "caller-sensitive-request",
+            session=session,
+            stream=True,
+            client_kwargs={"middleware": [redact_outbound_messages]},
+        ).get_final_response()
+    else:
+        await agent.run(
+            "caller-sensitive-request",
+            session=session,
+            client_kwargs={"middleware": [redact_outbound_messages]},
+        )
+
+    assert [message.text for message in client.received_messages[0]] == ["redacted-request"]
+    stored_text = [message.text for batch in provider.saved_batches for message in batch]
+    assert "redacted-request" in stored_text
+    assert "caller-sensitive-request" not in stored_text
+    assert "stored-sensitive-history" not in stored_text
+
+
+@_psc_stream_params
 async def test_psc_persists_provider_finalized_outbound_messages(stream: bool) -> None:
     """Per-call persistence captures messages after provider middleware rewrites the request."""
 
@@ -5809,6 +5859,91 @@ async def test_fides_complete_local_history_can_reconstruct_bound_service_state(
     assert client.call_count == 2
 
 
+@_psc_stream_params
+async def test_fides_truncated_history_is_not_recertified_after_authorized_continuation(stream: bool) -> None:
+    """An authorized turn cannot certify a truncated archive for later FIDES reconstruction."""
+    provider = _PscSpyHistoryProvider()
+    executed = False
+
+    @tool(
+        name="private_sink",
+        approval_mode="never_require",
+        additional_properties={
+            "accepts_untrusted": True,
+            "max_allowed_confidentiality": "private",
+        },
+    )
+    def private_sink() -> str:
+        nonlocal executed
+        executed = True
+        return "sent"
+
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=True,
+        script=[
+            ("text", "identity established"),
+            ("text", "authorized continuation"),
+            ("call", "call-private-sink", "private_sink", "{}"),
+            ("text", "must not complete"),
+        ],
+    )
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        tools=[private_sink],
+        context_providers=[security, provider],
+    )
+    session = agent.create_session()
+    identity_message = Message(
+        role="user",
+        contents=["identity-scoped secret"],
+        additional_properties={
+            "security_label": ContentLabel(
+                integrity=IntegrityLabel.TRUSTED,
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                metadata={
+                    PRINCIPAL_METADATA_KEY: [
+                        {"tenant_id": "tenant-a", "user_id": "user-a"},
+                    ]
+                },
+            ).to_dict()
+        },
+    )
+
+    if stream:
+        await agent.run(identity_message, session=session, stream=True).get_final_response()
+    else:
+        await agent.run(identity_message, session=session)
+    security._scope_for_session(session).context_label = ContentLabel(  # pyright: ignore[reportPrivateUsage]
+        integrity=IntegrityLabel.TRUSTED,
+        confidentiality=ConfidentialityLabel.USER_IDENTITY,
+        metadata={
+            PRINCIPAL_METADATA_KEY: [
+                {"tenant_id": "tenant-a", "user_id": "user-a"},
+            ]
+        },
+    )
+    assert (
+        security._scope_for_session(session).context_label.confidentiality  # pyright: ignore[reportPrivateUsage]
+        == ConfidentialityLabel.USER_IDENTITY
+    )
+
+    provider._messages = [  # pyright: ignore[reportPrivateUsage]
+        message
+        for message in provider._messages  # pyright: ignore[reportPrivateUsage]
+        if message.text != "identity-scoped secret"
+    ]
+    assert await _psc_run(agent, "Continue with trusted state", session, stream=stream) == "authorized continuation"
+
+    session.state.pop(security.source_id)
+    with pytest.raises(RuntimeError, match="authoritative FIDES context label"):
+        await _psc_run(agent, "Reconstruct before using the sink", session, stream=stream)
+
+    assert executed is False
+    assert client.call_count == 2
+
+
 @pytest.mark.parametrize("incomplete_mode", ["outputs-disabled", "snapshot-tampered"])
 @_psc_stream_params
 async def test_fides_partial_local_history_cannot_cover_service_continuation(
@@ -5841,7 +5976,7 @@ async def test_fides_partial_local_history_cannot_cover_service_continuation(
 
 
 @_psc_stream_params
-async def test_fides_rejected_continuation_clears_stale_reconstruction_marker(stream: bool) -> None:
+async def test_fides_rejected_continuation_clears_stale_reconstruction_state(stream: bool) -> None:
     """Retrying a rejected opaque continuation remains fail-closed in the same session."""
     provider = _PscSpyHistoryProvider(load_messages=False)
     client = _PscSpyChatClient(
@@ -5858,13 +5993,15 @@ async def test_fides_rejected_continuation_clears_stale_reconstruction_marker(st
     session.service_session_id = "opaque-service-history"
     session.state[security.source_id] = {
         "scope_id": session.session_id,
-        "history_reconstruction_complete": True,
+        "history_reconstruction_coverage": "{}",
+        "service_continuation_identity": '"different-service-history"',
     }
 
     for _ in range(2):
         with pytest.raises(RuntimeError, match="authoritative FIDES context label"):
             await _psc_run(agent, "Continue", session, stream=stream)
-        assert session.state[security.source_id].get("history_reconstruction_complete") is not True
+        assert "history_reconstruction_coverage" not in session.state[security.source_id]
+        assert "service_continuation_identity" not in session.state[security.source_id]
 
     assert client.call_count == 0
 
