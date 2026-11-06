@@ -93,3 +93,45 @@ def test_stateless_preserves_existing_pwsh_command_flag() -> None:
 def test_interactive_does_not_append_command_flag() -> None:
     argv = resolve_shell("/bin/bash --noprofile", interactive=True)
     assert "-c" not in argv
+
+
+def test_win32_shell_override_preserves_backslashes(monkeypatch: pytest.MonkeyPatch) -> None:
+    import agent_framework_tools.shell._resolve as resolve_module
+
+    monkeypatch.setattr(resolve_module.sys, "platform", "win32")
+    path = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+    argv = resolve_shell(path, interactive=False)
+    assert argv == [path, "-Command"]
+
+
+def test_win32_env_shell_override_preserves_backslashes(monkeypatch: pytest.MonkeyPatch) -> None:
+    import agent_framework_tools.shell._resolve as resolve_module
+
+    monkeypatch.setattr(resolve_module.sys, "platform", "win32")
+    path = r"C:\msys64\usr\bin\bash.exe"
+    monkeypatch.setenv("AGENT_FRAMEWORK_SHELL", path)
+    argv = resolve_shell(None, interactive=False)
+    assert argv == [path, "-c"]
+
+
+def test_win32_quoted_shell_with_spaces_and_empty_arg(monkeypatch: pytest.MonkeyPatch) -> None:
+    import agent_framework_tools.shell._resolve as resolve_module
+
+    monkeypatch.setattr(resolve_module.sys, "platform", "win32")
+    cmd = r'"C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile "" --opt="val\"ue"'
+    argv = resolve_shell(cmd, interactive=False)
+    assert argv[0] == r"C:\Program Files\PowerShell\7\pwsh.exe"
+    assert argv[1] == "-NoProfile"
+    assert argv[2] == ""
+    assert argv[3] == r'--opt=val"ue'
+    assert argv[-1] == "-Command"
+
+
+def test_win32_adjacent_quoted_unquoted_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    import agent_framework_tools.shell._resolve as resolve_module
+
+    monkeypatch.setattr(resolve_module.sys, "platform", "win32")
+    argv = resolve_shell(r'"C:\Program Files"\PowerShell\7\pwsh.exe -NoProfile', interactive=False)
+    assert argv[0] == r"C:\Program Files\PowerShell\7\pwsh.exe"
+    assert argv[1] == "-NoProfile"
+    assert argv[-1] == "-Command"
