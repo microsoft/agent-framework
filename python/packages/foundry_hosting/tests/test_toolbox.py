@@ -11,11 +11,20 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
+import httpx as host_httpx
 import httpx2 as httpx
 import pytest
-from agent_framework import MCPStreamableHTTPTool, SkillsProvider, SkillsSourceContext, SupportsAgentRun
+from agent_framework import (
+    Agent,
+    FunctionInvocationContext,
+    MCPStreamableHTTPTool,
+    Message,
+    SkillsProvider,
+    SkillsSourceContext,
+    SupportsAgentRun,
+)
 from agent_framework.exceptions import ToolException, ToolExecutionException
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
@@ -23,15 +32,23 @@ from azure.ai.agentserver.core import (
     set_request_context,
 )
 from mcp.client.session import ClientSession
+from mcp.types import Prompt, Tool
 from pydantic import AnyUrl
 
-from agent_framework_foundry_hosting import FoundryToolbox
+from agent_framework_foundry_hosting import FoundryToolbox, ResponsesHostServer
 from agent_framework_foundry_hosting._feature_usage import FeatureIndex
 from agent_framework_foundry_hosting._toolbox import (
     _FoundryToolboxSkillsSource,
     _resolve_toolbox_endpoint,
     _toolbox_name_from_endpoint,
     _ToolboxAuth,
+)
+
+from .foundry_hosting.toolbox_approval_helpers import (  # pyrefly: ignore[missing-import] - pytest's importlib namespace
+    ToolboxApprovalClient,
+    ToolboxApprovalServer,
+    toolbox_connection,
+    toolbox_tool,
 )
 
 
@@ -934,3 +951,451 @@ class TestFoundryToolboxReconnection:
         assert isinstance(toolbox._httpx_client.auth, _ToolboxAuth)
 
         await toolbox.close()
+
+
+@pytest.mark.parametrize("prefix", [None, "guarded"])
+@pytest.mark.parametrize(
+    ("approval", "expected"),
+    [
+        ("always", "always_require"),
+        ("never", "never_require"),
+        ({"always": {"tool_names": ["microsoft_docs_search"]}}, "always_require"),
+        ({"never": {"tool_names": ["microsoft_docs_search"]}}, "never_require"),
+        ({"never": {"tool_names": ["learn___microsoft_docs_search"]}}, "never_require"),
+        ({"never": {"tool_names": ["guarded_learn___microsoft_docs_search"]}}, "always_require"),
+        ({"never": {"tool_names": ["other"]}}, "always_require"),
+        ({"always": {"tool_names": ["other"]}}, "always_require"),
+        ({"never": {"tool_names": []}}, "always_require"),
+        ({"never": {}}, "never_require"),
+        ({"always": {}, "never": {}}, "always_require"),
+        (
+            {"always": {"tool_names": ["microsoft_docs_search"]}, "never": {"tool_names": ["microsoft_docs_search"]}},
+            "always_require",
+        ),
+    ],
+)
+async def test_discovered_tool_honors_metadata(approval: Any, expected: str, prefix: str | None) -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool(approval)]
+    async with toolbox_connection(server, tool_name_prefix=prefix) as toolbox:
+        assert toolbox.functions[0].approval_mode == expected
+
+
+@pytest.mark.parametrize("read_only", [None, False, True])
+@pytest.mark.parametrize("filter_read_only", [False, True])
+@pytest.mark.parametrize("names", [None, ["microsoft_docs_search"], ["other"]])
+async def test_metadata_filters_match_names_and_read_only(
+    read_only: bool | None, filter_read_only: bool, names: list[str] | None
+) -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool({"never": {"read_only": filter_read_only, "tool_names": names}}, read_only=read_only)]
+    async with toolbox_connection(server) as toolbox:
+        matches = (names is None or names == ["microsoft_docs_search"]) and filter_read_only == (read_only is True)
+        assert toolbox.functions[0].approval_mode == ("never_require" if matches else "always_require")
+
+
+@pytest.mark.parametrize("metadata_policy", ["always", "never", None])
+@pytest.mark.parametrize(
+    ("policy", "expected"),
+    [
+        ("never_require", "never_require"),
+        ("always_require", "always_require"),
+        ({"always_require_approval": ["learn___microsoft_docs_search"]}, "always_require"),
+        (
+            {"never_require_approval": ["guarded_learn___microsoft_docs_search"], "default": "always_require"},
+            "never_require",
+        ),
+        ({"default": "never_require"}, "never_require"),
+        ({}, "never_require"),
+    ],
+)
+async def test_explicit_caller_policy_replaces_metadata(policy: Any, expected: str, metadata_policy: Any) -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool(metadata_policy)]
+    async with toolbox_connection(server, tool_name_prefix="guarded", approval_mode=policy) as toolbox:
+        assert toolbox.functions[0].approval_mode == expected
+
+
+@pytest.mark.parametrize("meta", [None, {}, {"tool_configuration": {}}, {"unrelated": "always"}])
+@pytest.mark.parametrize("default_mode", ["never_require", "always_require"])
+async def test_missing_approval_metadata_preserves_default(
+    meta: Any, default_mode: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("agent_framework_foundry_hosting._toolbox._DEFAULT_APPROVAL_MODE", default_mode)
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool()]
+    server.tools[0]["_meta"] = meta
+    server.prompts = [{"name": "summarize"}]
+    async with toolbox_connection(server, load_prompts=True) as toolbox:
+        assert len(toolbox.functions) == 2
+        assert {function.approval_mode for function in toolbox.functions} == {default_mode}
+
+
+async def test_explicit_none_approval_mode_selects_toolbox_metadata_policy() -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool("always")]
+    async with toolbox_connection(server, approval_mode=None) as toolbox:
+        assert toolbox.functions[0].approval_mode == "always_require"
+
+
+@pytest.mark.parametrize(
+    "approval",
+    [
+        None,
+        False,
+        1,
+        [],
+        "",
+        "ALWAYS",
+        "unknown",
+        {},
+        {"unexpected": {}},
+        {"never": None},
+        {"never": []},
+        {"never": {"tool_names": "microsoft_docs_search"}},
+        {"never": {"tool_names": [1]}},
+        {"never": {"tool_names": [""]}},
+        {"never": {"read_only": "true"}},
+        {"never": {"unknown": True}},
+        {"always": {}, "never": {"tool_names": False}},
+    ],
+)
+async def test_malformed_approval_fails_discovery(approval: Any) -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool(approval)]
+    async with toolbox_connection(server, connect=False) as toolbox:
+        with pytest.raises(ToolExecutionException, match="Foundry Toolbox"):
+            await toolbox.connect()
+        assert toolbox.functions == []
+        assert server.calls == []
+
+
+@pytest.mark.parametrize("configuration", [None, [], "never", False])
+async def test_malformed_tool_configuration_fails_discovery(configuration: Any) -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool()]
+    server.tools[0]["_meta"]["tool_configuration"] = configuration
+    async with toolbox_connection(server, connect=False) as toolbox:
+        with pytest.raises(ToolExecutionException, match="tool_configuration"):
+            await toolbox.connect()
+
+
+async def test_ordinary_mcp_does_not_interpret_foundry_metadata_or_replace_custom_approval() -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool()]
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(server.handle)) as transport,
+        MCPStreamableHTTPTool(
+            name="ordinary", url="https://toolbox.invalid/mcp", http_client=transport, approval_mode=None
+        ) as toolbox,
+    ):
+        function = toolbox.functions[0]
+        assert function.approval_mode == "never_require"
+        function.approval_mode = "always_require"
+        await toolbox.load_tools()
+        assert toolbox.functions[0] is function
+        assert function.approval_mode == "always_require"
+
+
+async def test_metadata_refresh_is_atomic_and_updates_retained_functions() -> None:
+    server = ToolboxApprovalServer()
+    server.page_size = 1
+    server.tools = [toolbox_tool("never")]
+    async with toolbox_connection(server) as toolbox:
+        function = toolbox.functions[0]
+        server.tools = [toolbox_tool("always"), toolbox_tool(None, name="learn___invalid")]
+        with pytest.raises(ToolExecutionException, match="require_approval"):
+            await toolbox.load_tools()
+        assert toolbox.functions == [function]
+        assert function.approval_mode == "never_require"
+        server.tools = [toolbox_tool("always")]
+        await toolbox.load_tools()
+        assert toolbox.functions[0] is function
+        assert function.approval_mode == "always_require"
+        server.tools = [toolbox_tool("never")]
+        await toolbox.connect(reset=True)
+        assert toolbox.functions[0].approval_mode == "never_require"
+        assert server.initializations == 2
+        del server.tools[0]["_meta"]
+        await toolbox.load_tools()
+        assert toolbox.functions[0].approval_mode == "never_require"
+
+
+@pytest.mark.parametrize(
+    ("initial_policy", "refreshed_policy"),
+    [("always", "never"), ("never", "always")],
+)
+async def test_reconnect_restores_approval_modes_when_prompt_discovery_fails(
+    initial_policy: str, refreshed_policy: str
+) -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool(initial_policy)]
+    server.prompts = [{"name": "summarize"}]
+    async with toolbox_connection(server, load_prompts=True) as toolbox:
+        functions = list(toolbox.functions)
+        original_modes = [function.approval_mode for function in functions]
+        server.tools = [toolbox_tool(refreshed_policy)]
+        server.prompts = [{"name": "summarize", "arguments": "invalid"}]
+
+        with pytest.raises(ValueError, match="arguments"):
+            await toolbox.connect(reset=True)
+
+        assert server.initializations == 2
+        assert not toolbox.is_connected
+        assert all(current is previous for current, previous in zip(toolbox.functions, functions, strict=True))
+        assert [function.approval_mode for function in toolbox.functions] == original_modes
+
+        server.prompts = [{"name": "summarize"}]
+        await toolbox.connect()
+        assert toolbox.functions[0] is functions[0]
+        assert toolbox.functions[0].approval_mode == f"{refreshed_policy}_require"
+
+
+async def test_reconnect_restores_progressive_tools_when_prompt_discovery_fails() -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool(name="learn___removed"), toolbox_tool(name="learn___kept")]
+    server.prompts = [{"name": "summarize"}]
+    async with toolbox_connection(server, load_prompts=True, use_progressive_disclosure=True) as toolbox:
+        loader = next(function for function in toolbox.functions if function.name == "load_tool")
+        arguments = {"tool": ["learn___removed", "learn___kept"]}
+        context = FunctionInvocationContext(function=loader, arguments=arguments, tools=list(toolbox.functions))
+        await loader.invoke(arguments=arguments, context=context)
+        functions = list(toolbox.functions)
+        assert {function.name for function in functions} >= {"learn___removed", "learn___kept"}
+
+        server.tools = [toolbox_tool(name="learn___kept")]
+        server.prompts = [{"name": "summarize", "arguments": "invalid"}]
+        with pytest.raises(ValueError, match="arguments"):
+            await toolbox.connect(reset=True)
+
+        assert server.initializations == 2
+        assert not toolbox.is_connected
+        assert all(current is previous for current, previous in zip(toolbox.functions, functions, strict=True))
+        assert toolbox._progressive_loaded_tool_names == {"learn___removed", "learn___kept"}
+
+        server.prompts = [{"name": "summarize"}]
+        await toolbox.connect()
+        names = {function.name for function in toolbox.functions}
+        assert "learn___kept" in names
+        assert "learn___removed" not in names
+        assert toolbox._progressive_loaded_tool_names == {"learn___kept"}
+
+
+async def test_each_tool_uses_its_own_metadata_and_exact_server_prefix() -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [
+        toolbox_tool("always", name="learn___guarded"),
+        toolbox_tool("never", name="learn___safe"),
+        toolbox_tool({"never": {"tool_names": ["safe"]}}, name="other___safe"),
+        toolbox_tool({"never": {"tool_names": ["learn___safe"]}}, name="learn___learn___safe"),
+    ]
+    async with toolbox_connection(
+        server, tool_name_prefix="local", allowed_tools=["learn___guarded", "learn___safe"]
+    ) as toolbox:
+        assert {function.name: function.approval_mode for function in toolbox.functions} == {
+            "local_learn___guarded": "always_require",
+            "local_learn___safe": "never_require",
+        }
+        toolbox.allowed_tools = None
+        assert {function.name: function.approval_mode for function in toolbox.functions} == {
+            "local_learn___guarded": "always_require",
+            "local_learn___safe": "never_require",
+            "local_other___safe": "always_require",
+            "local_learn___learn___safe": "never_require",
+        }
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("approved", [False, True])
+async def test_metadata_approval_pauses_and_resumes_once(stream: bool, approved: bool) -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool()]
+    client = ToolboxApprovalClient("guarded_learn___microsoft_docs_search")
+    async with toolbox_connection(server, tool_name_prefix="guarded") as toolbox:
+        agent = Agent(client=client, tools=toolbox)
+        session = agent.create_session()
+        if stream:
+            paused_stream = agent.run("Search the docs", session=session, stream=True)
+            paused_updates = [update async for update in paused_stream]
+            paused = await paused_stream.get_final_response()
+            assert any(
+                content.type == "function_approval_request" for update in paused_updates for content in update.contents
+            )
+        else:
+            paused = await agent.run("Search the docs", session=session)
+        approvals = [
+            content
+            for message in paused.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        ]
+        assert len(approvals) == 1
+        assert not any(content.type == "function_result" for message in paused.messages for content in message.contents)
+        assert server.calls == []
+        assert len(client.calls) == 1
+        decision = Message("user", [approvals[0].to_function_approval_response(approved=approved)])
+        if stream:
+            resumed_stream = agent.run(decision, session=session, stream=True)
+            resumed_updates = [update async for update in resumed_stream]
+            resumed = await resumed_stream.get_final_response()
+            assert any(content.type == "function_result" for update in resumed_updates for content in update.contents)
+        else:
+            resumed = await agent.run(decision, session=session)
+        assert resumed.text == "done"
+        assert len(server.calls) == int(approved)
+        returned = [content for message in resumed.messages for content in message.contents]
+        assert sum(content.type == "function_result" for content in returned) == 1
+        model_history = [content for message in client.calls[-1] for content in message.contents]
+        assert sum(content.type == "function_call" for content in model_history) == 1
+        assert sum(content.type == "function_result" for content in model_history) == 1
+        assert not any(content.type.startswith("function_approval") for content in model_history)
+        await agent.run("Continue", session=session)
+        assert len(server.calls) == int(approved)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_responses_host_returns_metadata_approval_before_tool_execution(stream: bool) -> None:
+    mcp_server = ToolboxApprovalServer()
+    mcp_server.tools = [toolbox_tool()]
+    model = ToolboxApprovalClient("learn___microsoft_docs_search")
+    async with toolbox_connection(mcp_server) as toolbox:
+        host = ResponsesHostServer(agent=Agent(client=model, tools=toolbox))
+        async with host_httpx.AsyncClient(
+            transport=host_httpx.ASGITransport(app=host), base_url="http://test"
+        ) as client:
+            first = await client.post(
+                "/responses", json={"model": "test-model", "input": "Search the docs", "stream": stream}
+            )
+            assert first.status_code == 200
+            if stream:
+                first_events = [
+                    json.loads(line[6:])
+                    for line in first.text.splitlines()
+                    if line.startswith("data: ") and line != "data: [DONE]"
+                ]
+                first_body = next(event["response"] for event in first_events if event["type"] == "response.completed")
+            else:
+                first_body = first.json()
+            approvals = [item for item in first_body["output"] if item["type"] == "mcp_approval_request"]
+            assert len(approvals) == 1
+            assert not any(item["type"] == "function_call_output" for item in first_body["output"])
+            assert mcp_server.calls == []
+            second = await client.post(
+                "/responses",
+                json={
+                    "model": "test-model",
+                    "input": [
+                        {"type": "mcp_approval_response", "approval_request_id": approvals[0]["id"], "approve": True}
+                    ],
+                    "previous_response_id": first_body["id"],
+                    "stream": stream,
+                },
+            )
+            assert second.status_code == 200
+            if stream:
+                second_events = [
+                    json.loads(line[6:])
+                    for line in second.text.splitlines()
+                    if line.startswith("data: ") and line != "data: [DONE]"
+                ]
+                second_body = next(
+                    event["response"] for event in second_events if event["type"] == "response.completed"
+                )
+            else:
+                second_body = second.json()
+            assert sum(item["type"] == "function_call_output" for item in second_body["output"]) == 1
+            assert len(mcp_server.calls) == 1
+
+
+async def test_callable_approval_policy_is_composable_without_a_subclass() -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool()]
+    server.prompts = [{"name": "summarize", "description": "Summarize the result"}]
+    policy = Mock(return_value="always_require")
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(server.handle)) as transport,
+        MCPStreamableHTTPTool(
+            name="ordinary",
+            url="https://toolbox.invalid/mcp",
+            http_client=transport,
+            tool_name_prefix="local",
+            approval_mode=policy,
+        ) as toolbox,
+    ):
+        assert {function.approval_mode for function in toolbox.functions} == {"always_require"}
+        items = [call.args[0] for call in policy.call_args_list]
+        assert len(items) == 2
+        assert any(isinstance(item, Tool) and item.name == "learn___microsoft_docs_search" for item in items)
+        assert any(isinstance(item, Prompt) and item.name == "summarize" for item in items)
+        functions = list(toolbox.functions)
+        policy.return_value = "never_require"
+        await toolbox.load_tools()
+        await toolbox.load_prompts()
+        assert toolbox.functions == functions
+        assert all(current is previous for current, previous in zip(toolbox.functions, functions, strict=True))
+        assert {function.approval_mode for function in toolbox.functions} == {"never_require"}
+        assert policy.call_count == 4
+
+
+@pytest.mark.parametrize("kind", ["tool", "prompt"])
+async def test_callable_approval_requires_an_explicit_initial_decision(kind: str) -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool()]
+    server.prompts = [{"name": "summarize"}]
+    with pytest.raises(ToolExecutionException, match="'always_require' or 'never_require'"):
+        async with toolbox_connection(
+            server,
+            approval_mode=Mock(return_value=None),
+            load_tools=kind == "tool",
+            load_prompts=kind == "prompt",
+        ):
+            pytest.fail("A callback without an explicit decision must fail discovery.")
+
+
+@pytest.mark.parametrize("kind", ["tool", "prompt"])
+@pytest.mark.parametrize("invalid", [None, "always", "", True, False, 1, [], {}])
+async def test_callable_approval_rejects_invalid_results_atomically(kind: str, invalid: Any) -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool(), toolbox_tool(name="learn___second")]
+    server.prompts = [{"name": "summarize"}, {"name": "translate"}]
+    policy = Mock(return_value="always_require")
+    async with toolbox_connection(server, approval_mode=policy, load_prompts=True) as toolbox:
+        functions = list(toolbox.functions)
+        policy.side_effect = ["never_require", invalid]
+        with pytest.raises(ToolExecutionException, match="approval_mode callable"):
+            await (toolbox.load_tools() if kind == "tool" else toolbox.load_prompts())
+        assert all(current is previous for current, previous in zip(toolbox.functions, functions, strict=True))
+        assert {function.approval_mode for function in toolbox.functions} == {"always_require"}
+
+
+@pytest.mark.parametrize("kind", ["tool", "prompt"])
+async def test_callable_approval_errors_preserve_previous_snapshot(kind: str) -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool(), toolbox_tool(name="learn___second")]
+    server.prompts = [{"name": "summarize"}, {"name": "translate"}]
+    policy = Mock(return_value="never_require")
+    async with toolbox_connection(server, approval_mode=policy, load_prompts=True) as toolbox:
+        functions = list(toolbox.functions)
+        policy.side_effect = ["always_require", ValueError("policy failed")]
+        with pytest.raises(ValueError, match="policy failed"):
+            await (toolbox.load_tools() if kind == "tool" else toolbox.load_prompts())
+        assert toolbox.functions == functions
+        assert {function.approval_mode for function in toolbox.functions} == {"never_require"}
+
+
+async def test_caller_can_wrap_the_foundry_metadata_policy() -> None:
+    server = ToolboxApprovalServer()
+    server.tools = [toolbox_tool("never")]
+    server.prompts = [{"name": "summarize"}]
+    async with toolbox_connection(server, load_prompts=True) as toolbox:
+        assert {function.approval_mode for function in toolbox.functions} == {"never_require"}
+        metadata_policy = toolbox.approval_mode
+        assert callable(metadata_policy)
+        caller_policy = Mock(side_effect=metadata_policy)
+        toolbox.approval_mode = caller_policy
+        await toolbox.load_tools()
+        assert toolbox.functions[0].approval_mode == "never_require"
+        caller_policy.side_effect = None
+        caller_policy.return_value = "always_require"
+        await toolbox.load_tools()
+        assert toolbox.functions[0].approval_mode == "always_require"

@@ -259,6 +259,6 @@ Committed contract tests cover:
 - [MCP MRTR specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr)
 - [MCP subscriptions specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions)
 - [MCP caching specification](https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching)
-- [ADR 0043: MCP runtime context](0043-python-mcp-runtime-context.md)
+- [ADR 0047: MCP runtime context](0047-python-mcp-runtime-context.md)
 
 This ADR was accepted through the repository ADR review process.

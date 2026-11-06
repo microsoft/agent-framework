@@ -110,6 +110,7 @@ def _generate_function_call_occurrence_id() -> str:
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
+_LOCAL_TOOL_RESULT_KEY: Final[str] = "agent_framework.local_tool_result"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
 _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY: Final[str] = "_approval_session_is_authoritative"
 _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY: Final[str] = "_parent_tool_approval_source_ids"
@@ -4974,10 +4975,21 @@ def _reset_required_tool_choice(options: dict[str, Any]) -> None:
 
 
 def _prepare_messages_for_next_iteration(prepared_messages: list[Message], response: ChatResponse[Any]) -> None:
+    from ._types import Message
+
     if response.conversation_id is None:
         prepared_messages.extend(response.messages)
         return
-    prepared_messages[:] = response.messages[-1:]
+    local_results = [
+        content
+        for message in response.messages[:-1]
+        for content in message.contents
+        if content.type in {"function_result", "shell_tool_result", "computer_tool_result"}
+        and content.additional_properties.get(_LOCAL_TOOL_RESULT_KEY) is True
+    ]
+    prepared_messages[:] = (
+        [Message(role="tool", contents=local_results)] if local_results else []
+    ) + response.messages[-1:]
 
 
 @dataclass
@@ -5677,6 +5689,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         if (chat_middleware := (categorized_middleware["chat"] or None)) is not None:
             kwargs["middleware"] = chat_middleware
         super().__init__(**kwargs)
+
+    def _finalize_function_invocation_updates(
+        self,
+        updates: Sequence[ChatResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> ChatResponse[Any]:
+        """Aggregate all model turns and tool results without reapplying per-turn processing."""
+        from ._types import ChatResponse
+
+        return ChatResponse.from_updates(updates, output_format_type=response_format)
 
     def _update_function_invocation_continuation_state(
         self,
@@ -6420,10 +6443,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         from ._middleware import _as_middleware_list, categorize_middleware  # pyright: ignore[reportPrivateUsage]
-        from ._types import (
-            ChatResponse,
-            ResponseStream,
-        )
+        from ._types import ResponseStream
 
         super_get_response = cast(
             Callable[..., Any],
@@ -6549,7 +6569,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         def finalize_stream(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
             if invalidation_error:
                 raise invalidation_error[0]
-            return ChatResponse.from_updates(updates, output_format_type=response_format)
+            return self._finalize_function_invocation_updates(updates, response_format=response_format)
 
         return ResponseStream(
             self._stream_response_with_function_invocation(
