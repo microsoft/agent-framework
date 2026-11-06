@@ -175,9 +175,13 @@ def test_resolve_endpoint_prefers_explicit_env(monkeypatch: pytest.MonkeyPatch) 
     assert _resolve_toolbox_endpoint() == "https://host/toolboxes/tb/mcp?api-version=v1"
 
 
-def test_resolve_endpoint_builds_from_project_and_name(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "project_endpoint",
+    ["https://proj.example.com", "https://proj.example.com/", "https://proj.example.com///"],
+)
+def test_resolve_endpoint_builds_from_project_and_name(monkeypatch: pytest.MonkeyPatch, project_endpoint: str) -> None:
     monkeypatch.delenv("TOOLBOX_ENDPOINT", raising=False)
-    monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", "https://proj.example.com/")
+    monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", project_endpoint)
     monkeypatch.setenv("TOOLBOX_NAME", "mybox")
     assert _resolve_toolbox_endpoint() == "https://proj.example.com/toolboxes/mybox/mcp?api-version=v1"
 
