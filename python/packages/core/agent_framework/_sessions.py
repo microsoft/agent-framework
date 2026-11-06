@@ -368,28 +368,40 @@ def _location_tree(errors: Sequence[Mapping[str, Any]]) -> _LocationTree | None:
 
 def _restore_union(value: Any, tree: Mapping[Any, Any], annotation: Any, path: str) -> tuple[Any, bool]:
     """Repair one union branch at a time, always starting from the original value."""
-    from pydantic import TypeAdapter, ValidationError
+    from pydantic import BaseModel, ConfigDict, TypeAdapter
 
     for segment, sub in tree.items():
         branch = next(
             (arg for arg in get_args(annotation) if _union_branch_label(arg) == segment),
             None,
         )
-        if branch is None:
-            continue
-        restored, changed = _restore_at_loc_tree(
-            value,
-            sub,
-            classes=_descend_classes(branch),
-            path=f"{path}.{segment}",
-        )
-        if not changed:
-            continue
-        try:
-            TypeAdapter(branch).validate_python(restored)
-        except ValidationError:
-            continue
-        return restored, True
+        # Pydantic also uses is-instance labels and discriminator values. When
+        # the label is not a type name, branch validation identifies the candidate
+        # without guessing the schema-specific label format.
+        candidates = (branch,) if branch is not None else get_args(annotation)
+        for candidate in candidates:
+            restored = value
+            try:
+                restored, changed = _restore_at_loc_tree(
+                    value,
+                    sub,
+                    classes=_descend_classes(candidate),
+                    path=f"{path}.{segment}",
+                )
+                if not changed:
+                    continue
+                config = (
+                    None
+                    if isinstance(candidate, type) and issubclass(candidate, BaseModel)
+                    else ConfigDict(arbitrary_types_allowed=True)
+                )
+                TypeAdapter(cast(Any, candidate), config=config).validate_python(restored)
+            except ValueError:
+                # Registered codecs are application extension points. A failed
+                # candidate must not prevent a later branch from succeeding.
+                changed = False
+            if changed:
+                return restored, True
     return value, False
 
 

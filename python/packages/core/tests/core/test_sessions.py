@@ -1503,6 +1503,150 @@ class TestFileSessionStore:
         assert child.data == raw_data
 
     @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_round_trips_arbitrary_type_union_branch(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        from pydantic import BaseModel, ConfigDict
+
+        class Other(BaseModel):
+            other: str
+
+        class ArbitraryUnionWrapper(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            child: Message | Other
+
+        register_state_type(ArbitraryUnionWrapper, type_id=f"pydantic_arbitrary_union_{serialization_format}_test")
+        session = AgentSession(session_id=f"arbitrary-union-{serialization_format}")
+        session.state["value"] = ArbitraryUnionWrapper(child=Message(role="user", contents=["persisted"]))
+
+        await FileSessionStore(tmp_path, serialization_format=serialization_format).set(
+            "tenant_arbitrary-union", session
+        )
+        restored = await FileSessionStore(tmp_path, serialization_format=serialization_format).get(
+            "tenant_arbitrary-union"
+        )
+
+        assert restored is not None
+        child = restored.state["value"].child
+        assert isinstance(child, Message)
+        assert child.text == "persisted"
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_round_trips_nested_message_inside_discriminated_union(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        from pydantic import BaseModel, ConfigDict, Field
+
+        class Cat(BaseModel):
+            model_config = ConfigDict(
+                arbitrary_types_allowed=True,
+                serialize_by_alias=True,
+                loc_by_alias=False,
+            )
+
+            kind: Literal["cat"]
+            last_message: Message = Field(alias="lastMessage")
+            data: dict[str, Any]
+
+        class Dog(BaseModel):
+            kind: Literal["dog"]
+            name: str
+
+        class DiscriminatedUnionWrapper(BaseModel):
+            child: Cat | Dog = Field(discriminator="kind")
+
+        register_state_type(
+            DiscriminatedUnionWrapper,
+            type_id=f"pydantic_discriminated_union_{serialization_format}_test",
+        )
+        raw_data = {"type": "message", "note": "plain data"}
+        session = AgentSession(session_id=f"discriminated-union-{serialization_format}")
+        session.state["value"] = DiscriminatedUnionWrapper(
+            child=Cat(
+                kind="cat",
+                lastMessage=Message(role="user", contents=["persisted"]),
+                data=raw_data,
+            )
+        )
+
+        await FileSessionStore(tmp_path, serialization_format=serialization_format).set(
+            "tenant_discriminated-union", session
+        )
+        restored = await FileSessionStore(tmp_path, serialization_format=serialization_format).get(
+            "tenant_discriminated-union"
+        )
+
+        assert restored is not None
+        child = restored.state["value"].child
+        assert isinstance(child, Cat)
+        assert isinstance(child.last_message, Message)
+        assert child.last_message.text == "persisted"
+        assert child.data == raw_data
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_union_candidate_codec_failure_does_not_abort_fallback(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        from pydantic import BaseModel, ConfigDict
+
+        # A dataclass would let Pydantic construct this branch without invoking its codec.
+        class Fragile:  # ruff:ignore[class-as-data-structure]
+            def __init__(self, value: str) -> None:
+                self.value = value
+
+        fragile_type_id = f"fragile_union_candidate_{serialization_format}_test"
+
+        def fail_fragile_decode(_value: Mapping[str, Any]) -> Fragile:
+            raise ValueError("candidate codec failed")
+
+        register_state_type(
+            Fragile,
+            type_id=fragile_type_id,
+            encoder=lambda value: {"value": value.value},
+            decoder=fail_fragile_decode,
+        )
+
+        class BrokenCandidate(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            value: Fragile
+            message: Message
+
+        class Fallback(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            value: dict[str, Any]
+            message: Message
+
+        class CodecFailureUnionWrapper(BaseModel):
+            child: BrokenCandidate | Fallback
+
+        register_state_type(
+            CodecFailureUnionWrapper,
+            type_id=f"pydantic_union_codec_failure_{serialization_format}_test",
+        )
+        raw_data = {"type": fragile_type_id, "value": "plain data"}
+        session = AgentSession(session_id=f"union-codec-failure-{serialization_format}")
+        session.state["value"] = CodecFailureUnionWrapper(
+            child=Fallback(value=raw_data, message=Message(role="user", contents=["persisted"]))
+        )
+
+        await FileSessionStore(tmp_path, serialization_format=serialization_format).set(
+            "tenant_union-codec-failure", session
+        )
+        restored = await FileSessionStore(tmp_path, serialization_format=serialization_format).get(
+            "tenant_union-codec-failure"
+        )
+
+        assert restored is not None
+        child = restored.state["value"].child
+        assert isinstance(child, Fallback)
+        assert child.value == raw_data
+        assert isinstance(child.message, Message)
+        assert child.message.text == "persisted"
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
     async def test_round_trips_aliased_nested_message_inside_nullable_union(
         self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
     ) -> None:
@@ -1570,25 +1714,27 @@ class TestFileSessionStore:
             lastMessage=Message(role="user", contents=["persisted"]),
             data={"type": "message", "note": "plain data"},
         )
+        session = AgentSession(session_id=f"{container_kind}-union-{serialization_format}")
         if container_kind == "mapping":
 
-            class ContainerUnionWrapper(BaseModel):
+            class MappingUnionWrapper(BaseModel):
                 child: dict[str, Item] | Other
 
-            child_value: Any = {"first": item}
+            register_state_type(
+                MappingUnionWrapper,
+                type_id=f"pydantic_{container_kind}_union_{serialization_format}_test",
+            )
+            session.state["value"] = MappingUnionWrapper(child={"first": item})
         else:
 
-            class ContainerUnionWrapper(BaseModel):
+            class SequenceUnionWrapper(BaseModel):
                 child: list[Item] | Other
 
-            child_value = [item]
-
-        register_state_type(
-            ContainerUnionWrapper,
-            type_id=f"pydantic_{container_kind}_union_{serialization_format}_test",
-        )
-        session = AgentSession(session_id=f"{container_kind}-union-{serialization_format}")
-        session.state["value"] = ContainerUnionWrapper(child=child_value)
+            register_state_type(
+                SequenceUnionWrapper,
+                type_id=f"pydantic_{container_kind}_union_{serialization_format}_test",
+            )
+            session.state["value"] = SequenceUnionWrapper(child=[item])
 
         await FileSessionStore(tmp_path, serialization_format=serialization_format).set(
             f"tenant_{container_kind}-union", session
