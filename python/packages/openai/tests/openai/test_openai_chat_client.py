@@ -53,7 +53,7 @@ from agent_framework.exceptions import (
     ChatClientInvalidRequestException,
     SettingNotFoundError,
 )
-from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
+from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient, InternalServerError, RateLimitError
 from openai.types.responses import (
     ResponseComputerToolCall,
     ResponseComputerToolCallOutputItem,
@@ -91,6 +91,7 @@ from agent_framework_openai import (
     OpenAIChatClient,
     OpenAIChatCompletionClient,
     OpenAIChatOptions,
+    OpenAIContinuationToken,
     RawOpenAIChatClient,
     RawOpenAIChatCompletionClient,
 )
@@ -10961,7 +10962,12 @@ async def test_streaming_resume_with_tools_runs_the_tool_once() -> None:
         patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
         patch.object(client.client.responses.with_raw_response, "create", new=create),
     ):
-        stream = client.get_response([Message(role="user", contents=["email bob"])], stream=True, options=options)
+        stream = client.get_response(
+            [Message(role="user", contents=["email bob"])],
+            stream=True,
+            options=options,
+            client_kwargs={"session": AgentSession()},
+        )
         async for _ in stream:
             pass
         final = await stream.get_final_response()
@@ -11035,17 +11041,1023 @@ async def test_resume_with_tools_runs_the_tool_once_when_middleware_replaces_opt
     ):
         messages = [Message(role="user", contents=["email bob"])]
         if stream:
-            response_stream = client.get_response(messages, stream=True, options=options)
+            response_stream = client.get_response(
+                messages, stream=True, options=options, client_kwargs={"session": AgentSession()}
+            )
             async for _ in response_stream:
                 pass
             final = await response_stream.get_final_response()
         else:
-            final = await client.get_response(messages, options=options)
+            final = await client.get_response(messages, options=options, client_kwargs={"session": AgentSession()})
 
     assert executions == ["bob"]
     assert retrieve.await_count == 1
     assert create.await_count == 1
     assert final.text == "Email sent."
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("status_code", [429, 503])
+@pytest.mark.parametrize("retry_succeeds", [False, True], ids=["persistent-failure", "retry-success"])
+@pytest.mark.parametrize("failure_stage", ["retrieve", "submit"])
+@pytest.mark.parametrize("restore_session", [False, True], ids=["live-session", "restored-session"])
+async def test_background_poll_retry_does_not_repeat_completed_tools(
+    stream: bool,
+    status_code: int,
+    retry_succeeds: bool,
+    failure_stage: str,
+    restore_session: bool,
+) -> None:
+    """A caller-held token must not repeat a completed tool after result delivery fails (#9031)."""
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Record a simulated email without contacting an external service."""
+        executions.append(to)
+        return f"sent-{len(executions)}"
+
+    queued_response = _completed_response("resp_bg", "message")
+    queued_response.status = "queued"
+    queued_response.output = []
+    usage = SimpleNamespace(
+        input_tokens=3, output_tokens=2, total_tokens=5, input_tokens_details=None, output_tokens_details=None
+    )
+
+    if stream:
+        function_call_added = MagicMock()
+        function_call_added.type = "response.output_item.added"
+        function_call_added.output_index = 0
+        function_call_added.item.type = "function_call"
+        function_call_added.item.call_id = "call_1"
+        function_call_added.item.name = "send_email"
+        arguments_delta = MagicMock()
+        arguments_delta.type = "response.function_call_arguments.delta"
+        arguments_delta.output_index = 0
+        arguments_delta.item_id = "fc_1"
+        arguments_delta.delta = '{"to": "bob"}'
+        tool_completed = _completed_response_event("resp_bg", "function_call")
+        tool_completed.response.usage = usage
+        retrieved_response = _FakeAsyncEventStream([
+            function_call_added,
+            arguments_delta,
+            tool_completed,
+        ])
+        text_delta = MagicMock()
+        text_delta.type = "response.output_text.delta"
+        text_delta.delta = "Email sent."
+        text_delta.logprobs = None
+        final_completed = _completed_response_event("resp_next", "message")
+        final_completed.response.usage = usage
+        final_response = _FakeAsyncEventStream([
+            text_delta,
+            final_completed,
+        ])
+    else:
+        retrieved_response = _completed_response("resp_bg", "function_call")
+        final_response = _completed_response("resp_next", "message")
+        retrieved_response.usage = usage
+        final_response.usage = usage
+
+    request = _OPENAI_HTTPX.Request(
+        "GET" if failure_stage == "retrieve" else "POST",
+        "https://unit-test.invalid/v1/responses/resp_bg",
+    )
+    error_response = _OPENAI_HTTPX.Response(status_code=status_code, request=request)
+    error_type = RateLimitError if status_code == 429 else InternalServerError
+    request_error = error_type("Simulated request failure", response=error_response, body=None)
+    retrieve = AsyncMock(return_value=retrieved_response)
+    if failure_stage == "retrieve":
+        retrieve.side_effect = [request_error, retrieved_response if retry_succeeds else request_error]
+        create = AsyncMock(side_effect=[queued_response, final_response])
+    else:
+        create = AsyncMock(
+            side_effect=[queued_response, request_error, final_response if retry_succeeds else request_error]
+        )
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    history_provider = InMemoryHistoryProvider(load_messages=False)
+    agent = Agent(client=client, tools=[send_email], context_providers=[history_provider])
+    session = agent.create_session()
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        initial = await agent.run("Email bob.", session=session, options=OpenAIChatOptions(background=True))
+        assert initial.continuation_token is not None
+        held_token = cast(OpenAIContinuationToken, initial.continuation_token)
+
+        with pytest.raises(ChatClientException) as first_error:
+            if stream:
+                await agent.run(
+                    session=session, stream=True, options=OpenAIChatOptions(continuation_token=held_token)
+                ).get_final_response()
+            else:
+                await agent.run(session=session, options=OpenAIChatOptions(continuation_token=held_token))
+
+        assert first_error.value.__cause__ is request_error
+        assert executions == (["bob"] if failure_stage == "submit" else [])
+        if restore_session:
+            session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+
+        if retry_succeeds:
+            if stream:
+                retry_stream = agent.run(
+                    session=session, stream=True, options=OpenAIChatOptions(continuation_token=held_token)
+                )
+                if restore_session:
+                    async for _ in retry_stream:
+                        pass
+                final = await retry_stream.get_final_response()
+            else:
+                final = await agent.run(session=session, options=OpenAIChatOptions(continuation_token=held_token))
+            assert final.text == "Email sent."
+            assert final.continuation_token is None
+            assert final.usage_details is not None
+            assert final.usage_details["total_token_count"] == 10
+            calls = [
+                content for message in final.messages for content in message.contents if content.type == "function_call"
+            ]
+            results = [
+                content
+                for message in final.messages
+                for content in message.contents
+                if content.type == "function_result"
+            ]
+            assert len(calls) == len(results) == 1
+            assert calls[0].id is not None
+            assert calls[0].id == results[0].id
+            stored_results = [
+                content
+                for message in session.state[history_provider.source_id]["messages"]
+                for content in message.contents
+                if content.type == "function_result"
+            ]
+            assert [result.id for result in stored_results] == [results[0].id]
+            with pytest.raises(ChatClientInvalidRequestException, match="stale"):
+                await agent.run(session=session, options=OpenAIChatOptions(continuation_token=held_token))
+        else:
+            with pytest.raises(ChatClientException) as retry_error:
+                if stream:
+                    await agent.run(
+                        session=session, stream=True, options=OpenAIChatOptions(continuation_token=held_token)
+                    ).get_final_response()
+                else:
+                    await agent.run(session=session, options=OpenAIChatOptions(continuation_token=held_token))
+            assert retry_error.value.__cause__ is request_error
+
+    assert executions == (["bob"] if failure_stage == "submit" or retry_succeeds else [])
+    submitted_outputs = [
+        item["output"]
+        for request_call in create.await_args_list[1:]
+        for item in request_call.kwargs["input"]
+        if item["type"] == "function_call_output"
+    ]
+    expected_submissions = 2 if failure_stage == "submit" else int(retry_succeeds)
+    assert submitted_outputs == ["sent-1"] * expected_submissions
+    for request_call in create.await_args_list[1:]:
+        assert request_call.kwargs["previous_response_id"] == "resp_bg"
+
+
+@pytest.mark.parametrize("mode", ["non-streaming", "iterate", "final-only"])
+@pytest.mark.parametrize(
+    "retry_change",
+    [
+        "new-input",
+        "model",
+        "endpoint",
+        "version",
+        "budget",
+        "results",
+        "tool-schema",
+        "busy",
+        "ambiguous-delivery",
+        "cancelled-submission",
+    ],
+)
+async def test_background_recovery_rejects_unsafe_retries(
+    retry_change: str,
+    mode: str,
+    consume_response: Callable[[Any, str], Awaitable[Any]],
+    response_stream_factory: Callable[[Any], MagicMock],
+) -> None:
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Record a harmless local action."""
+        executions.append(to)
+        return "sent-once"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    session = AgentSession()
+    options = OpenAIChatOptions(continuation_token={"response_id": "resp_bg"}, tools=[send_email])
+    request = _OPENAI_HTTPX.Request("POST", "https://unit-test.invalid/v1/responses")
+    request_error: BaseException = RateLimitError(
+        "Simulated rejection", response=_OPENAI_HTTPX.Response(429, request=request), body=None
+    )
+    if retry_change == "ambiguous-delivery":
+        request_error = _OPENAI_HTTPX.ReadTimeout("Acceptance unknown", request=request)
+    elif retry_change == "cancelled-submission":
+        request_error = asyncio.CancelledError()
+
+    completed = _completed_response("resp_bg", "function_call")
+    retrieve = AsyncMock(return_value=response_stream_factory(completed) if mode != "non-streaming" else completed)
+    create = AsyncMock(side_effect=request_error)
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        with pytest.raises(
+            asyncio.CancelledError if isinstance(request_error, asyncio.CancelledError) else ChatClientException
+        ):
+            await consume_response(
+                client.get_response(  # type: ignore[call-overload]
+                    [], stream=mode != "non-streaming", options=options, client_kwargs={"session": session}
+                ),
+                mode,
+            )
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        state = session.state["_background_tool_recovery"]
+        messages: list[Message] = []
+        if retry_change == "new-input":
+            messages = [Message(role="user", contents=["A different request."])]
+        elif retry_change == "model":
+            options["model"] = "another-model"
+        elif retry_change == "endpoint":
+            client.client.base_url = "https://another-provider.invalid/v1"
+        elif retry_change == "version":
+            state["version"] = 2
+        elif retry_change == "budget":
+            state["pending"]["budget"].pop("attempt_count")
+        elif retry_change == "results":
+            state["pending"]["calls"] = {}
+        elif retry_change == "tool-schema":
+            send_email.parameters()["properties"]["to"]["type"] = "integer"
+        elif retry_change == "busy":
+            state["busy"] = True
+        with pytest.raises(ChatClientException):
+            await consume_response(
+                client.get_response(  # type: ignore[call-overload]
+                    messages, stream=mode != "non-streaming", options=options, client_kwargs={"session": session}
+                ),
+                mode,
+            )
+    assert executions == ["bob"]
+    assert retrieve.await_count == create.await_count == 1
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("through_agent", [False, True], ids=["direct-client", "ephemeral-agent-session"])
+async def test_background_tools_without_a_reusable_session_remain_supported(stream: bool, through_agent: bool) -> None:
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Record a harmless local action."""
+        executions.append(to)
+        return "sent"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    agent = Agent(client=client, tools=[send_email])
+    completed: Any = _completed_response("resp_bg", "function_call")
+    final: Any = _completed_response("resp_final", "message")
+    if stream:
+        added = MagicMock(type="response.output_item.added", output_index=0)
+        added.item.type = "function_call"
+        added.item.call_id = "call_1"
+        added.item.name = "send_email"
+        arguments = MagicMock(
+            type="response.function_call_arguments.delta",
+            output_index=0,
+            item_id="fc_1",
+            delta='{"to": "bob"}',
+        )
+        completed = _FakeAsyncEventStream([
+            added,
+            arguments,
+            _completed_response_event("resp_bg", "function_call"),
+        ])
+        final = _FakeAsyncEventStream([_completed_response_event("resp_final", "message")])
+    create = AsyncMock(side_effect=[completed, final])
+    with patch.object(client.client.responses.with_raw_response, "create", new=create):
+        if through_agent:
+            if stream:
+                await agent.run(
+                    "Email bob.", stream=True, options=OpenAIChatOptions(background=True)
+                ).get_final_response()
+            else:
+                await agent.run("Email bob.", options=OpenAIChatOptions(background=True))
+        elif stream:
+            await client.get_response(
+                [Message(role="user", contents=["Email bob."])],
+                stream=True,
+                options=OpenAIChatOptions(background=True, tools=[send_email]),
+            ).get_final_response()
+        else:
+            await client.get_response(
+                [Message(role="user", contents=["Email bob."])],
+                options=OpenAIChatOptions(background=True, tools=[send_email]),
+            )
+    assert executions == ["bob"]
+    assert create.await_count == 2
+
+
+@pytest.mark.parametrize("mode", ["non-streaming", "iterate", "final-only"])
+async def test_background_partial_batch_and_concurrent_poll_fail_closed(
+    mode: str,
+    consume_response: Callable[[Any, str], Awaitable[Any]],
+    response_stream_factory: Callable[[Any], MagicMock],
+) -> None:
+    executions: list[str] = []
+    waiting = asyncio.Event()
+
+    @tool(approval_mode="never_require")
+    async def send_email(to: str) -> str:
+        """Record one completion and keep its sibling in flight."""
+        executions.append(to)
+        if to == "waiting":
+            waiting.set()
+            await asyncio.Event().wait()
+        return "completed"
+
+    completed = _completed_response("resp_bg", "function_call")
+    completed.output[0].arguments = '{"to": "completed"}'
+    second = copy.copy(completed.output[0])
+    second.call_id = "call_2"
+    second.id = "fc_2"
+    second.arguments = '{"to": "waiting"}'
+    completed.output.append(second)
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    session = AgentSession()
+    options = OpenAIChatOptions(continuation_token={"response_id": "resp_bg"}, tools=[send_email])
+    retrieve = AsyncMock(return_value=response_stream_factory(completed) if mode != "non-streaming" else completed)
+    with patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve):
+        first_poll = asyncio.ensure_future(
+            consume_response(
+                client.get_response(  # type: ignore[call-overload]
+                    [], stream=mode != "non-streaming", options=options, client_kwargs={"session": session}
+                ),
+                mode,
+            )
+        )
+        try:
+            await asyncio.wait_for(waiting.wait(), timeout=5)
+            with pytest.raises(ChatClientInvalidRequestException, match="concurrent"):
+                await consume_response(
+                    client.get_response(  # type: ignore[call-overload]
+                        [], stream=mode != "non-streaming", options=options, client_kwargs={"session": session}
+                    ),
+                    mode,
+                )
+        finally:
+            first_poll.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first_poll
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        with pytest.raises(ChatClientException, match="indeterminate"):
+            await consume_response(
+                client.get_response(  # type: ignore[call-overload]
+                    [], stream=mode != "non-streaming", options=options, client_kwargs={"session": session}
+                ),
+                mode,
+            )
+    assert executions == ["completed", "waiting"]
+    assert retrieve.await_count == 1
+    recorded_results = list(session.state["_background_tool_recovery"]["pending"]["calls"].values())
+    assert recorded_results[0] is not None
+    assert recorded_results[1] is None
+
+
+@pytest.mark.parametrize("mode", ["non-streaming", "iterate", "final-only"])
+async def test_background_recovery_preserves_reused_call_ids_reasoning_and_limits(
+    mode: str,
+    consume_response: Callable[[Any, str], Awaitable[Any]],
+    response_stream_factory: Callable[[Any], MagicMock],
+) -> None:
+    from agent_framework import FunctionInvocationContext, FunctionMiddleware
+
+    executions: list[str] = []
+    middleware_calls: list[str] = []
+
+    class CountInvocations(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
+            middleware_calls.append(context.function.name)
+            await call_next()
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Record distinct logical tool occurrences."""
+        executions.append(to)
+        return f"sent-{len(executions)}"
+
+    first_response = _completed_response("resp_bg", "function_call")
+    first_response.output.insert(
+        0,
+        ResponseReasoningItem(
+            id="rs_1",
+            type="reasoning",
+            summary=[Summary(type="summary_text", text="Reasoned before acting.")],
+            encrypted_content="opaque-reasoning",
+        ),
+    )
+    second_response = _completed_response("resp_second", "function_call")
+    client = OpenAIChatClient(model="test-model", api_key="test-key", middleware=[CountInvocations()])
+    client.function_invocation_configuration.update({"max_iterations": 2, "max_function_calls": 2})
+    history = InMemoryHistoryProvider(load_messages=False)
+    agent = Agent(client=client, tools=[send_email], context_providers=[history])
+    session = AgentSession()
+    options = OpenAIChatOptions(continuation_token={"response_id": "resp_bg"})
+    request = _OPENAI_HTTPX.Request("POST", "https://unit-test.invalid/v1/responses")
+    error = RateLimitError("Rejected", response=_OPENAI_HTTPX.Response(429, request=request), body=None)
+    final_response = _completed_response("resp_final", "message")
+    usage = SimpleNamespace(
+        input_tokens=3, output_tokens=2, total_tokens=5, input_tokens_details=None, output_tokens_details=None
+    )
+    for response in (first_response, second_response, final_response):
+        response.usage = usage
+    retrieve = AsyncMock(
+        return_value=response_stream_factory(first_response) if mode != "non-streaming" else first_response
+    )
+    create = AsyncMock(
+        side_effect=[
+            response_stream_factory(second_response) if mode != "non-streaming" else second_response,
+            error,
+            response_stream_factory(final_response) if mode != "non-streaming" else final_response,
+        ]
+    )
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        with pytest.raises(ChatClientException):
+            await consume_response(
+                agent.run(session=session, stream=mode != "non-streaming", options=options),  # type: ignore[call-overload]
+                mode,
+            )
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        final = await consume_response(
+            agent.run(session=session, stream=mode != "non-streaming", options=options),  # type: ignore[call-overload]
+            mode,
+        )
+
+    assert executions == ["bob", "bob"]
+    assert middleware_calls == ["send_email", "send_email"]
+    assert retrieve.await_count == 1
+    calls = [content for message in final.messages for content in message.contents if content.type == "function_call"]
+    results = [
+        content for message in final.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert [content.call_id for content in calls] == ["call_1", "call_1"]
+    assert calls[0].id != calls[1].id
+    assert [content.id for content in results] == [content.id for content in calls]
+    assert [content.result for content in results] == ["sent-1", "sent-2"]
+    assert "opaque-reasoning" in final.to_json()
+    assert final.usage_details["total_token_count"] == 15
+    stored = session.state[history.source_id]["messages"]
+    stored_results = [
+        content for message in stored for content in message.contents if content.type == "function_result"
+    ]
+    assert [content.id for content in stored_results] == [content.id for content in results]
+    assert [content.result for content in stored_results] == ["sent-1", "sent-2"]
+    assert create.await_args_list[1].kwargs["tool_choice"] == "none"
+    assert create.await_args_list[2].kwargs["tool_choice"] == "none"
+    assert create.await_args_list[2].kwargs["previous_response_id"] == "resp_second"
+    assert [
+        item["output"]
+        for request_call in create.await_args_list
+        for item in request_call.kwargs["input"]
+        if item["type"] == "function_call_output"
+    ] == ["sent-1", "sent-2", "sent-2"]
+
+
+async def test_background_recovery_rejects_retry_after_partial_submission_stream() -> None:
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Record a harmless local action."""
+        executions.append(to)
+        return "sent-once"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    session = AgentSession()
+    options = OpenAIChatOptions(continuation_token={"response_id": "resp_bg"}, tools=[send_email])
+    request = _OPENAI_HTTPX.Request("POST", "https://unit-test.invalid/v1/responses")
+    error = RateLimitError("Interrupted", response=_OPENAI_HTTPX.Response(429, request=request), body=None)
+
+    async def interrupted_events() -> AsyncIterable[Any]:
+        yield MagicMock(type="response.output_text.delta", delta="Partial reply", logprobs=None)
+        raise error
+
+    parsed_stream = AsyncMock()
+    parsed_stream.__aenter__.return_value = parsed_stream
+    parsed_stream.__aiter__.side_effect = interrupted_events
+    raw_stream = MagicMock(headers={})
+    raw_stream.parse.return_value = parsed_stream
+    retrieve = AsyncMock(return_value=_completed_response("resp_bg", "function_call"))
+    create = AsyncMock(side_effect=[error, raw_stream])
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        with pytest.raises(ChatClientException):
+            await client.get_response([], options=options, client_kwargs={"session": session})
+        response_stream = client.get_response([], stream=True, options=options, client_kwargs={"session": session})
+        updates: list[ChatResponseUpdate] = []
+        with pytest.raises(ChatClientException):
+            async for update in response_stream:
+                updates.append(update)
+        assert any(update.text == "Partial reply" for update in updates)
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        with pytest.raises(ChatClientException, match="indeterminate"):
+            await client.get_response([], options=options, client_kwargs={"session": session})
+    assert executions == ["bob"]
+    assert retrieve.await_count == 1
+    assert create.await_count == 2
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_background_recovery_accepts_refreshed_todo_context(stream: bool) -> None:
+    from agent_framework import TodoProvider
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    provider = TodoProvider()
+    agent = Agent(client=client, context_providers=[provider])
+    session = agent.create_session()
+    completed = _completed_response("resp_bg", "function_call")
+    completed.output[0].name = "todos_add"
+    completed.output[0].arguments = '{"todos": [{"title": "Deliver once"}]}'
+    request = _OPENAI_HTTPX.Request("POST", "https://unit-test.invalid/v1/responses")
+    error = RateLimitError("Rejected", response=_OPENAI_HTTPX.Response(429, request=request), body=None)
+    final: Any = _completed_response("resp_next", "message")
+    if stream:
+        final = _FakeAsyncEventStream([_completed_response_event("resp_next", "message")])
+    create = AsyncMock(side_effect=[error, final])
+    retrieve = AsyncMock(return_value=completed)
+    options = OpenAIChatOptions(continuation_token={"response_id": "resp_bg"})
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        with pytest.raises(ChatClientException):
+            await agent.run(session=session, options=options)
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        if stream:
+            response = await agent.run(session=session, stream=True, options=options).get_final_response()
+        else:
+            response = await agent.run(session=session, options=options)
+    assert response.continuation_token is None
+    assert retrieve.await_count == 1
+    assert create.await_args_list[0].kwargs["input"] == create.await_args_list[1].kwargs["input"]
+    assert len(session.state[provider.source_id]["items"]) == 1
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("alias", ["conversation_id", "conversation", "conversation-object"])
+async def test_background_recovery_preserves_conversation_mode(stream: bool, alias: str) -> None:
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Record a harmless action."""
+        executions.append(to)
+        return "sent-once"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    session = AgentSession()
+    options = cast(
+        OpenAIChatOptions,
+        {
+            "continuation_token": {"response_id": "resp_bg"},
+            "conversation" if alias == "conversation-object" else alias: (
+                {"id": "conv_original"} if alias == "conversation-object" else "conv_original"
+            ),
+            "tools": [send_email],
+        },
+    )
+    completed = _completed_response("resp_bg", "function_call")
+    completed.conversation = SimpleNamespace(id="conv_original")
+    request = _OPENAI_HTTPX.Request("POST", "https://unit-test.invalid/v1/responses")
+    error = RateLimitError("Rejected", response=_OPENAI_HTTPX.Response(429, request=request), body=None)
+    final: Any = _completed_response("resp_next", "message")
+    if stream:
+        final = _FakeAsyncEventStream([_completed_response_event("resp_next", "message")])
+    create = AsyncMock(side_effect=[error, final])
+    retrieve = AsyncMock(return_value=completed)
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        with pytest.raises(ChatClientException):
+            await client.get_response([], options=options, client_kwargs={"session": session})
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        if stream:
+            await client.get_response(
+                [], stream=True, options=options, client_kwargs={"session": session}
+            ).get_final_response()
+        else:
+            await client.get_response([], options=options, client_kwargs={"session": session})
+    assert executions == ["bob"]
+    for submission in create.await_args_list:
+        conversation = submission.kwargs["conversation"]
+        assert (conversation["id"] if isinstance(conversation, dict) else conversation) == "conv_original"
+        assert "previous_response_id" not in submission.kwargs
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_background_token_only_poll_retains_model_override(stream: bool) -> None:
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Simulate an email."""
+        return "sent-once"
+
+    client = OpenAIChatClient(model="default-model", api_key="test-key")
+    session = AgentSession()
+    queued = _completed_response("resp_bg", "message")
+    queued.status = "queued"
+    queued.output = []
+    request = _OPENAI_HTTPX.Request("POST", "https://unit-test.invalid/v1/responses")
+    error = RateLimitError("Rejected", response=_OPENAI_HTTPX.Response(429, request=request), body=None)
+    final: Any = _completed_response("resp_next", "message")
+    if stream:
+        final = _FakeAsyncEventStream([_completed_response_event("resp_next", "message")])
+    create = AsyncMock(side_effect=[queued, error, final])
+    retrieve = AsyncMock(return_value=_completed_response("resp_bg", "function_call"))
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        initial = await client.get_response(
+            [Message("user", ["Email bob."])],
+            options={"background": True, "model": "override-model", "tools": [send_email]},
+            client_kwargs={"session": session},
+        )
+        assert initial.continuation_token is not None
+        options = OpenAIChatOptions(
+            continuation_token=cast(OpenAIContinuationToken, initial.continuation_token), tools=[send_email]
+        )
+        with pytest.raises(ChatClientException):
+            await client.get_response([], options=options, client_kwargs={"session": session})
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        if stream:
+            await client.get_response(
+                [], stream=True, options=options, client_kwargs={"session": session}
+            ).get_final_response()
+        else:
+            await client.get_response([], options=options, client_kwargs={"session": session})
+    assert retrieve.await_count == 1
+    assert [call.kwargs["model"] for call in create.await_args_list] == ["override-model"] * 3
+
+
+@pytest.mark.parametrize("change", ["model", "endpoint"])
+async def test_background_without_execution_evidence_can_change_scope(change: str) -> None:
+    client = OpenAIChatClient(model="first-model", api_key="test-key")
+    session = AgentSession()
+    create = AsyncMock(return_value=_completed_response("resp_done", "message"))
+    with patch.object(client.client.responses.with_raw_response, "create", new=create):
+        await client.get_response(
+            [Message("user", ["First request"])], options={"background": True}, client_kwargs={"session": session}
+        )
+        if change == "model":
+            client.model = "second-model"
+        else:
+            client.client.base_url = "https://other.invalid/v1"
+        await client.get_response(
+            [Message("user", ["Unrelated request"])], options={"background": True}, client_kwargs={"session": session}
+        )
+    assert create.await_count == 2
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_background_recovery_survives_local_request_validation_failure(stream: bool) -> None:
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Record one harmless action."""
+        executions.append(to)
+        return "sent-once"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    session = AgentSession()
+    options = OpenAIChatOptions(continuation_token={"response_id": "resp_bg"}, tools=[send_email])
+    request = _OPENAI_HTTPX.Request("POST", "https://unit-test.invalid/v1/responses")
+    error = RateLimitError("Rejected", response=_OPENAI_HTTPX.Response(429, request=request), body=None)
+    final: Any = _completed_response("resp_next", "message")
+    if stream:
+        final = _FakeAsyncEventStream([_completed_response_event("resp_next", "message")])
+    create = AsyncMock(side_effect=[error, final])
+    retrieve = AsyncMock(return_value=_completed_response("resp_bg", "function_call"))
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        with pytest.raises(ChatClientException):
+            await client.get_response([], options=options, client_kwargs={"session": session})
+        invalid_options = cast(OpenAIChatOptions, {**options, "response_format": 123})
+        with pytest.raises(ChatClientInvalidRequestException, match="response_format"):
+            if stream:
+                await client.get_response(
+                    [], stream=True, options=invalid_options, client_kwargs={"session": session}
+                ).get_final_response()
+            else:
+                await client.get_response([], options=invalid_options, client_kwargs={"session": session})
+        assert create.await_count == 1
+        if stream:
+            await client.get_response(
+                [], stream=True, options=options, client_kwargs={"session": session}
+            ).get_final_response()
+        else:
+            await client.get_response([], options=options, client_kwargs={"session": session})
+    assert executions == ["bob"]
+    assert create.await_count == 2
+    assert retrieve.await_count == 1
+
+
+async def test_background_stream_close_after_tool_result_keeps_delivery_ready() -> None:
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Record a harmless action."""
+        executions.append(to)
+        return "sent-once"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    session = AgentSession()
+    options = OpenAIChatOptions(continuation_token={"response_id": "resp_bg"}, tools=[send_email])
+    added = MagicMock(type="response.output_item.added", output_index=0)
+    added.item.type = "function_call"
+    added.item.call_id = "call_1"
+    added.item.name = "send_email"
+    arguments = MagicMock(
+        type="response.function_call_arguments.delta", output_index=0, item_id="fc_1", delta='{"to": "bob"}'
+    )
+    retrieve = AsyncMock(
+        return_value=_FakeAsyncEventStream([added, arguments, _completed_response_event("resp_bg", "function_call")])
+    )
+    create = AsyncMock(return_value=_completed_response("resp_next", "message"))
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        response_stream = client.get_response([], stream=True, options=options, client_kwargs={"session": session})
+        async for update in response_stream:
+            if any(content.type == "function_result" for content in update.contents):
+                break
+        await response_stream.close()
+        assert create.await_count == 0
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        response = await client.get_response([], options=options, client_kwargs={"session": session})
+    assert response.continuation_token is None
+    assert executions == ["bob"]
+    assert retrieve.await_count == create.await_count == 1
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("change", ["add", "remove"])
+async def test_background_recovery_restores_dynamic_tool_registry(stream: bool, change: str) -> None:
+    from agent_framework import FunctionInvocationContext
+
+    @tool(approval_mode="never_require")
+    def extra_tool() -> str:
+        """Offer a dynamically exposed capability."""
+        return "extra"
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str, context: FunctionInvocationContext) -> str:
+        """Change tool exposure while simulating an email."""
+        if change == "add":
+            context.add_tools(extra_tool)
+        else:
+            context.remove_tools(extra_tool)
+        return "sent-once"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    session = AgentSession()
+    options = OpenAIChatOptions(
+        continuation_token={"response_id": "resp_bg"},
+        tools=[send_email] if change == "add" else [send_email, extra_tool],
+    )
+    request = _OPENAI_HTTPX.Request("POST", "https://unit-test.invalid/v1/responses")
+    error = RateLimitError("Rejected", response=_OPENAI_HTTPX.Response(429, request=request), body=None)
+    final: Any = _completed_response("resp_next", "message")
+    if stream:
+        final = _FakeAsyncEventStream([_completed_response_event("resp_next", "message")])
+    create = AsyncMock(side_effect=[error, final])
+    retrieve = AsyncMock(return_value=_completed_response("resp_bg", "function_call"))
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        with pytest.raises(ChatClientException):
+            await client.get_response([], options=options, client_kwargs={"session": session})
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        if change == "add":
+            with pytest.raises(ChatClientInvalidRequestException, match="tool registry"):
+                await client.get_response([], options=options, client_kwargs={"session": session})
+            options["tools"] = [send_email, extra_tool]
+        if stream:
+            await client.get_response(
+                [], stream=True, options=options, client_kwargs={"session": session}
+            ).get_final_response()
+        else:
+            await client.get_response([], options=options, client_kwargs={"session": session})
+    expected_names = ["send_email", "extra_tool"] if change == "add" else ["send_email"]
+    assert [[item["name"] for item in call.kwargs["tools"]] for call in create.await_args_list] == [expected_names] * 2
+    assert retrieve.await_count == 1
+
+
+async def test_background_stream_close_releases_poll_ownership() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    session = AgentSession()
+    options = OpenAIChatOptions(continuation_token={"response_id": "resp_bg"})
+    event = MagicMock(type="response.output_text.delta", delta="First part", logprobs=None)
+    retrieve = AsyncMock(
+        side_effect=[
+            _FakeAsyncEventStream([event, _completed_response_event("resp_bg", "message")]),
+            _completed_response("resp_bg", "message"),
+        ]
+    )
+    with patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve):
+        response_stream = client.get_response([], stream=True, options=options, client_kwargs={"session": session})
+        async for _ in response_stream:
+            break
+        await response_stream.close()
+        final = await client.get_response([], options=options, client_kwargs={"session": session})
+    assert final.text == "Email sent."
+    assert retrieve.await_count == 2
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_background_recovery_preserves_explicit_approval_resume(stream: bool) -> None:
+    executions: list[str] = []
+
+    @tool(approval_mode="always_require")
+    def send_email(to: str) -> str:
+        """Record a harmless action after explicit approval."""
+        executions.append(to)
+        return "approved-once"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    session = AgentSession()
+    retrieve = AsyncMock(return_value=_completed_response("resp_bg", "function_call"))
+    create = AsyncMock(return_value=_completed_response("resp_done", "message"))
+    if stream:
+        create.return_value = _FakeAsyncEventStream([
+            MagicMock(type="response.output_text.delta", delta="Email sent.", logprobs=None),
+            _completed_response_event("resp_done", "message"),
+        ])
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        paused = await client.get_response(
+            [],
+            options=OpenAIChatOptions(continuation_token={"response_id": "resp_bg"}, tools=[send_email]),
+            client_kwargs={"session": session},
+        )
+        assert executions == []
+        request = next(
+            content
+            for message in paused.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        )
+        messages = [Message(role="user", contents=[request.to_function_approval_response(approved=True)])]
+        options = OpenAIChatOptions(background=True, tools=[send_email], conversation_id="resp_bg")
+        if stream:
+            final = await client.get_response(
+                messages, stream=True, options=options, client_kwargs={"session": session}
+            ).get_final_response()
+        else:
+            final = await client.get_response(messages, options=options, client_kwargs={"session": session})
+    assert final.text == "Email sent."
+    assert executions == ["bob"]
+    assert retrieve.await_count == create.await_count == 1
+
+
+@pytest.mark.parametrize("mode", ["non-streaming", "iterate", "final-only"])
+async def test_background_recovery_preserves_approved_results_in_history(
+    mode: str,
+    consume_response: Callable[[Any, str], Awaitable[Any]],
+    response_stream_factory: Callable[[Any], MagicMock],
+) -> None:
+    executions: list[str] = []
+
+    @tool(approval_mode="always_require")
+    def send_email(to: str) -> str:
+        """Record an approved action."""
+        executions.append(f"send:{to}")
+        return "approved-once"
+
+    @tool(approval_mode="never_require")
+    def record_delivery(to: str) -> str:
+        """Record a later automatic action."""
+        executions.append(f"record:{to}")
+        return "recorded-once"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    history = InMemoryHistoryProvider()
+    agent = Agent(client=client, tools=[send_email, record_delivery], context_providers=[history])
+    session = AgentSession()
+    retrieve = AsyncMock(return_value=_completed_response("resp_bg", "function_call"))
+    second_response = _completed_response("resp_second", "function_call")
+    second_response.output[0].name = "record_delivery"
+    second_response.output[0].call_id = "call_2"
+    second_response.output[0].id = "fc_2"
+    final_response = _completed_response("resp_done", "message")
+    request = _OPENAI_HTTPX.Request("POST", "https://unit-test.invalid/v1/responses")
+    error = RateLimitError("Rejected", response=_OPENAI_HTTPX.Response(429, request=request), body=None)
+    create = AsyncMock(
+        side_effect=[
+            response_stream_factory(second_response) if mode != "non-streaming" else second_response,
+            error,
+            response_stream_factory(final_response) if mode != "non-streaming" else final_response,
+        ]
+    )
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        paused = await agent.run(
+            session=session, options=OpenAIChatOptions(continuation_token={"response_id": "resp_bg"})
+        )
+        approval = next(
+            content
+            for message in paused.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        )
+        assert executions == []
+        messages = [Message(role="user", contents=[approval.to_function_approval_response(approved=True)])]
+        options = OpenAIChatOptions(background=True, conversation_id="resp_bg")
+        with pytest.raises(ChatClientException):
+            await consume_response(
+                agent.run(  # type: ignore[call-overload]
+                    messages, session=session, stream=mode != "non-streaming", options=options
+                ),
+                mode,
+            )
+        assert executions == ["send:bob", "record:bob"]
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        options["continuation_token"] = {"response_id": "resp_second"}
+        final = await consume_response(
+            agent.run(  # type: ignore[call-overload]
+                messages, session=session, stream=mode != "non-streaming", options=options
+            ),
+            mode,
+        )
+
+    expected_results = [("call_1", "approved-once"), ("call_2", "recorded-once")]
+    results = [
+        content for message in final.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert [(content.call_id, content.result) for content in results] == expected_results
+    stored = session.state[history.source_id]["messages"]
+    stored_calls = [content for message in stored for content in message.contents if content.type == "function_call"]
+    stored_results = [
+        content for message in stored for content in message.contents if content.type == "function_result"
+    ]
+    assert [(content.call_id, content.result) for content in stored_results] == expected_results
+    assert [content.id for content in stored_calls] == [content.id for content in stored_results]
+    assert executions == ["send:bob", "record:bob"]
+    assert retrieve.await_count == 1
+    assert create.await_count == 3
+
+
+async def test_background_recovery_capacity_does_not_evict_consumed_tokens() -> None:
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Record a harmless local action."""
+        executions.append(to)
+        return "sent-once"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    session = AgentSession()
+    options = OpenAIChatOptions(continuation_token={"response_id": "resp_bg"}, tools=[send_email])
+    retrieve = AsyncMock(return_value=_completed_response("resp_bg", "function_call"))
+    create = AsyncMock(return_value=_completed_response("resp_done", "message"))
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        await client.get_response([], options=options, client_kwargs={"session": session})
+        handled = session.state["_background_tool_recovery"]["handled"]
+        handled.extend(f"resp_old_{index}" for index in range(255))
+        with pytest.raises(ChatClientInvalidRequestException, match="stale"):
+            await client.get_response([], options=options, client_kwargs={"session": session})
+        options["continuation_token"] = {"response_id": "resp_new"}
+        retrieve.return_value = _completed_response("resp_new", "function_call")
+        with pytest.raises(ChatClientInvalidRequestException, match="capacity"):
+            await client.get_response([], options=options, client_kwargs={"session": session})
+    assert executions == ["bob"]
+    assert "resp_bg" in session.state["_background_tool_recovery"]["handled"]
+    assert retrieve.await_count == 2
+    assert create.await_count == 1
 
 
 async def test_streaming_resume_drops_continuation_token_before_the_terminal_update() -> None:

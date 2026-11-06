@@ -90,6 +90,7 @@ async def streaming_with_resumption() -> None:
         if chunk_count >= 3:
             print("\n  [simulated interruption]")
             break
+    await stream.close()
 
     # 4. Resume from the last continuation token.
     if last_token is not None:

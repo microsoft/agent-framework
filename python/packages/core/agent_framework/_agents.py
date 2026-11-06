@@ -1756,6 +1756,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         from ._tools import _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY  # pyright: ignore[reportPrivateUsage]
 
         effective_client_kwargs.pop(_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY, None)
+        if callable(getattr(self.client, "_background_tool_recovery_scope", None)):
+            effective_client_kwargs["_background_tool_recovery_inputs"] = input_messages
         if active_session is not None:
             effective_client_kwargs["session"] = active_session
             effective_client_kwargs[_APPROVAL_SESSION_IS_AUTHORITATIVE_KEY] = not framework_created_session
