@@ -274,6 +274,48 @@ def test_group_annotations_pair_nonadjacent_function_result_by_call_id() -> None
     assert _group_id(messages[1]) != call_group
 
 
+def test_group_annotations_keep_approval_request_response_and_result_atomic() -> None:
+    function_call = Content.from_function_call(id="c1", call_id="c1", name="f", arguments="{}")
+    request = Content.from_function_approval_request(id="c1", function_call=function_call)
+    response = Content.from_function_approval_response(approved=True, id="c1", function_call=function_call)
+    messages = [
+        Message(role="assistant", contents=[function_call, request]),
+        Message(role="user", contents=[response]),
+        _tool_result("c1", "ok"),
+        Message(role="assistant", contents=["done"]),
+    ]
+
+    annotate_message_groups(messages)
+
+    approval_group = _group_id(messages[0])
+    assert approval_group is not None
+    assert _group_id(messages[1]) == approval_group
+    assert _group_id(messages[2]) == approval_group
+    assert _group_id(messages[3]) != approval_group
+
+
+def test_group_annotations_link_separate_approval_request_to_original_call() -> None:
+    function_call = Content.from_function_call(id="c1", call_id="c1", name="f", arguments="{}")
+    request = Content.from_function_approval_request(id="c1", function_call=function_call)
+    response = Content.from_function_approval_response(approved=True, id="c1", function_call=function_call)
+    messages = [
+        Message(role="assistant", contents=[function_call]),
+        Message(role="assistant", contents=[request]),
+        Message(role="user", contents=[response]),
+        _tool_result("c1", "ok"),
+        Message(role="assistant", contents=["done"]),
+    ]
+
+    annotate_message_groups(messages)
+
+    approval_group = _group_id(messages[0])
+    assert approval_group is not None
+    assert _group_id(messages[1]) == approval_group
+    assert _group_id(messages[2]) == approval_group
+    assert _group_id(messages[3]) == approval_group
+    assert _group_id(messages[4]) != approval_group
+
+
 @pytest.mark.parametrize("screenshot", [Content.from_data(b"image", "image/png"), None])
 def test_group_annotations_keep_computer_call_result_and_reasoning_atomic(screenshot: Content | None) -> None:
     messages = [
