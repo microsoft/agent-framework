@@ -24,6 +24,13 @@ Use `OpenAIChatClient` for new work unless you specifically need the Chat Comple
 
 The previous deprecated Responses alias has been removed. Use `OpenAIChatClient` directly.
 
+## Failed responses
+
+`OpenAIChatClient` raises `ChatClientException` when the Responses API returns
+`status="failed"`, including failed background polls and streaming terminal events.
+The exception includes the provider's error code and message when available.
+Failed background polls clear their continuation token before raising.
+
 ## Citations and annotations
 
 `OpenAIChatClient` exposes Responses API URL, file, file-path, and container-file citations through
