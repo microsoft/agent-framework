@@ -14,6 +14,66 @@ from ._types import ShellExecutionError
 _ENV_OVERRIDE = "AGENT_FRAMEWORK_SHELL"
 
 
+def _split_windows_command_line(cmd: str) -> list[str]:
+    """Parse a Windows command line string into argv following CommandLineToArgvW rules."""
+    args: list[str] = []
+    buf: list[str] = []
+    in_quotes = False
+    has_token = False
+    i = 0
+    n = len(cmd)
+
+    while i < n:
+        c = cmd[i]
+        if c in " \t" and not in_quotes:
+            if has_token:
+                args.append("".join(buf))
+                buf = []
+                has_token = False
+            i += 1
+            continue
+
+        if c == "\\":
+            num_slashes = 0
+            while i < n and cmd[i] == "\\":
+                num_slashes += 1
+                i += 1
+            if i < n and cmd[i] == '"':
+                buf.append("\\" * (num_slashes // 2))
+                if num_slashes % 2 == 1:
+                    buf.append('"')
+                    has_token = True
+                    i += 1
+                else:
+                    in_quotes = not in_quotes
+                    has_token = True
+                    i += 1
+            else:
+                buf.append("\\" * num_slashes)
+                has_token = True
+        elif c == '"':
+            in_quotes = not in_quotes
+            has_token = True
+            i += 1
+        else:
+            buf.append(c)
+            has_token = True
+            i += 1
+
+    if has_token:
+        args.append("".join(buf))
+    return args
+
+
+def _split_shell_override(value: str) -> list[str]:
+    """Split a shell override string using platform-appropriate rules."""
+    if sys.platform == "win32":
+        return _split_windows_command_line(value)
+    import shlex
+
+    return shlex.split(value)
+
+
 def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> list[str]:
     """Resolve the shell invocation argv.
 
@@ -39,9 +99,7 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
     """
     if shell is not None:
         if isinstance(shell, str):
-            import shlex
-
-            parts = shlex.split(shell)
+            parts = _split_shell_override(shell)
             if not parts:
                 raise ShellExecutionError("shell override must not be empty")
         else:
@@ -52,9 +110,7 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
 
     env_override = os.environ.get(_ENV_OVERRIDE)
     if env_override:
-        import shlex
-
-        parts = shlex.split(env_override)
+        parts = _split_shell_override(env_override)
         if parts:
             return parts if interactive else _ensure_command_flag(parts)
 
@@ -85,7 +141,7 @@ def is_powershell(argv: Sequence[str]) -> bool:
     """Return True when ``argv[0]`` appears to be PowerShell."""
     if not argv:
         return False
-    name = os.path.basename(argv[0]).lower()
+    name = os.path.basename(argv[0].replace("\\", "/")).lower()
     return name in {"pwsh", "pwsh.exe", "powershell", "powershell.exe"}
 
 
