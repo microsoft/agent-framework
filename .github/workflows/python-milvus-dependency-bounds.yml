@@ -1,0 +1,52 @@
+name: Python - Milvus Dependency Bounds
+
+on:
+  pull_request:
+    branches: ["main", "feature*"]
+    paths:
+      - ".github/actions/python-setup/**"
+      - ".github/workflows/python-milvus-dependency-bounds.yml"
+      - "python/packages/milvus/**"
+      - "python/pyproject.toml"
+      - "python/scripts/dependencies/**"
+      - "python/shared_tasks.toml"
+      - "python/tooling/requirements-typing.txt"
+
+permissions:
+  contents: read
+
+env:
+  UV_CACHE_DIR: /tmp/.uv-cache
+  UV_PYTHON: "3.13"
+
+jobs:
+  milvus-dependency-bounds:
+    name: Milvus ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Lowest pymilvus whose AsyncMilvusClient exposes the full collection API
+          # this connector uses; anything below raises AttributeError at runtime.
+          - name: pymilvus 2.6 floor
+            package: milvus
+            module: agent_framework_milvus
+            requirement: pymilvus==2.6.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Install ${{ matrix.name }}
+        run: uv pip install "${{ matrix.requirement }}"
+        working-directory: ./python
+      - name: Test and type-check ${{ matrix.name }}
+        run: |
+          uv run --no-sync python -c "import pymilvus; print(f'pymilvus {pymilvus.__version__}')"
+          uv run --no-sync python -m pytest -m "not integration" --cov=${{ matrix.module }} --cov-report=term-missing:skip-covered tests
+          uv run --no-sync --with-requirements ../../tooling/requirements-typing.txt pyright
+        working-directory: ./python/packages/${{ matrix.package }}

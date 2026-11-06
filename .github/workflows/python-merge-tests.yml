@@ -41,6 +41,7 @@ jobs:
       cosmosChanged: ${{ steps.filter.outputs.cosmos }}
       duckdbChanged: ${{ steps.filter.outputs.duckdb }}
       qdrantChanged: ${{ steps.filter.outputs.qdrant }}
+      milvusChanged: ${{ steps.filter.outputs.milvus }}
       mongodbChanged: ${{ steps.filter.outputs.mongodb }}
       redisChanged: ${{ steps.filter.outputs.redis }}
       githubCopilotChanged: ${{ steps.filter.outputs.github_copilot }}
@@ -98,6 +99,9 @@ jobs:
               - 'python/packages/qdrant/**'
               - '.github/workflows/python-merge-tests.yml'
               - '.github/workflows/python-integration-tests.yml'
+            milvus:
+              - 'python/packages/milvus/**'
+              - '.github/workflows/python-merge-tests.yml'
             mongodb:
               - 'python/packages/mongodb/**'
               - '.github/workflows/python-merge-tests.yml'
@@ -143,6 +147,124 @@ jobs:
           os: ${{ runner.os }}
       - name: Test DuckDB package
         run: uv run poe test -P duckdb
+
+  python-tests-milvus:
+    name: Python Tests - Milvus
+    needs: paths-filter
+    if: >
+      github.event_name == 'pull_request' &&
+      (needs.paths-filter.outputs.milvusChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Test Milvus package
+        run: uv run poe test -P milvus
+
+  # Milvus integration tests run against a disposable standalone Milvus and need
+  # no cloud credentials, mirroring the Qdrant and MongoDB jobs. Milvus standalone
+  # needs a separate etcd (it rejects embedded etcd in this run mode) but can use
+  # local-disk object storage (COMMON_STORAGETYPE=local), so no MinIO is required.
+  # GitHub service containers cannot override the image command etcd and Milvus
+  # need, so the two containers are brought up with docker compose.
+  python-tests-milvus-integration:
+    name: Python Integration Tests - Milvus
+    needs: paths-filter
+    if: >
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+       needs.paths-filter.outputs.milvusChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      MILVUS_TEST_URI: "http://localhost:19530"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Start Milvus standalone
+        run: |
+          cat > docker-compose.milvus.yml <<'EOF'
+          services:
+            etcd:
+              container_name: milvus-etcd
+              image: quay.io/coreos/etcd:v3.5.25
+              environment:
+                - ETCD_AUTO_COMPACTION_MODE=revision
+                - ETCD_AUTO_COMPACTION_RETENTION=1000
+                - ETCD_QUOTA_BACKEND_BYTES=4294967296
+                - ETCD_SNAPSHOT_COUNT=50000
+              command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+            standalone:
+              container_name: milvus-standalone
+              image: milvusdb/milvus:v2.6.20
+              command: ["milvus", "run", "standalone"]
+              security_opt:
+                - seccomp:unconfined
+              environment:
+                ETCD_ENDPOINTS: etcd:2379
+                # Local-disk object storage; no MinIO/S3. The default standalone message queue
+                # (rocksmq, local disk) pairs with this, matching Milvus's standalone_embed.sh.
+                # Do not force MQ_TYPE=woodpecker here: woodpecker needs remote object storage
+                # for its WAL, so with local storage it never acks writes and data ops hang.
+                COMMON_STORAGETYPE: local
+              ports:
+                - "19530:19530"
+                - "9091:9091"
+              depends_on:
+                - etcd
+          EOF
+          docker compose -f docker-compose.milvus.yml up -d
+      - name: Wait for Milvus
+        run: |
+          for i in {1..90}; do
+            if curl --fail --silent http://localhost:9091/healthz > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Milvus did not become ready in time." >&2
+          docker compose -f docker-compose.milvus.yml logs --tail=100 || true
+          exit 1
+      - name: Test with pytest (Milvus integration)
+        run: >
+          uv run --directory packages/milvus poe test-integration
+          --junitxml=${{ github.workspace }}/python/pytest-milvus.xml
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@fdc7f18d9934e38aca411ca9557e6577bd25ca9c # v0.9.0
+        with:
+          path: ./python/pytest-milvus.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: Milvus integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results-milvus
+          path: ./python/pytest-milvus.xml
+          if-no-files-found: ignore
 
   python-tests-qdrant:
     name: Python Integration Tests - Qdrant
@@ -925,6 +1047,7 @@ jobs:
         python-tests-cosmos,
         python-tests-qdrant,
         python-tests-mongodb,
+        python-tests-milvus-integration,
         python-tests-github-copilot,
         python-tests-postgres,
         python-tests-redis,
@@ -982,6 +1105,7 @@ jobs:
     needs:
       [
         python-tests-duckdb,
+        python-tests-milvus,
         python-tests-unit,
         python-tests-openai,
         python-tests-azure-openai,
@@ -991,6 +1115,7 @@ jobs:
         python-tests-cosmos,
         python-tests-qdrant,
         python-tests-mongodb,
+        python-tests-milvus-integration,
         python-tests-github-copilot,
         python-tests-postgres,
         python-tests-redis,
