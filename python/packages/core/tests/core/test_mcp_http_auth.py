@@ -533,6 +533,57 @@ async def test_captured_prompt_reconciles_run_identity_at_invocation(mcp_http_se
         await tool.close()
 
 
+@pytest.mark.parametrize("detached_child", [False, True])
+async def test_direct_prompt_uses_current_ambient_identity(
+    mcp_http_server: MCPHTTPServer, detached_child: bool
+) -> None:
+    client, requests, _ = mcp_http_server
+    principal = ContextVar("direct_prompt_principal", default="token-a")
+    child_release = asyncio.Event()
+    children: list[asyncio.Task[str]] = []
+    tool = MCPStreamableHTTPTool(
+        name="direct-prompt",
+        url="https://mcp.example/mcp",
+        http_client=client,
+        static_headers={"X-Test-Prompts": "enabled"},
+        header_provider=lambda _: {"Authorization": principal.get()},
+    )
+
+    async def read_prompt() -> str:
+        if detached_child:
+            await child_release.wait()
+        token = principal.set("token-b")
+        try:
+            return await tool.get_prompt("principal-prompt", topic="current")
+        finally:
+            principal.reset(token)
+
+    async def spawn_child(request: httpx.Request) -> None:
+        if request.method == "POST" and json.loads(request.content).get("method") == "tools/call":
+            children.append(asyncio.create_task(read_prompt()))
+
+    async with tool, asyncio.timeout(5):
+        try:
+            if detached_child:
+                client.event_hooks["request"].append(spawn_child)
+                await tool.call_tool("record", marker="parent")
+                assert len(children) == 1
+                child_release.set()
+                result = await children[0]
+            else:
+                result = await read_prompt()
+            assert result == "token-b:current"
+            request = _requests_for_method(requests, "prompts/get")[-1]
+            assert request.headers["Authorization"] == "token-b"
+            assert request.headers["mcp-session-id"] == "session-token-b"
+            assert len(_requests_for_method(requests, "initialize")) == 2
+        finally:
+            child_release.set()
+            for child in children:
+                child.cancel()
+            await asyncio.gather(*children, return_exceptions=True)
+
+
 async def test_run_preparation_reconnects_before_exposing_principal_tools(mcp_http_server: MCPHTTPServer) -> None:
     client, requests, _ = mcp_http_server
     tool = _tool(client, "token-a")

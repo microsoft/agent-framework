@@ -4376,8 +4376,9 @@ class MCPStreamableHTTPTool(MCPTool):
                 of HTTP headers to inject into every outbound request to the MCP server.
                 Generated tool calls supply only this host runtime context, never model
                 arguments, even when names collide. Direct ``call_tool`` calls use their
-                caller-supplied kwargs. Model-over-runtime precedence applies only to
-                outbound tool arguments, not to authentication.
+                caller-supplied kwargs. Direct ``get_prompt`` calls resolve ambient headers
+                without using prompt arguments as authentication inputs. Model-over-runtime
+                precedence applies only to outbound tool arguments, not to authentication.
                 Use this to forward per-request context (e.g. authentication tokens set in
                 agent middleware) without creating a separate ``httpx2.AsyncClient``.
                 The complete header set used to initialize a connection becomes that session's
@@ -4886,11 +4887,29 @@ class MCPStreamableHTTPTool(MCPTool):
 
         headers = self._effective_headers(runtime_kwargs)
         async with self._use_call_headers(headers, runtime_kwargs):
-            return await super()._call_prompt_with_runtime_kwargs(
-                prompt_name,
-                prompt_arguments,
-                runtime_kwargs,
-            )
+            return await super().get_prompt(prompt_name, **prompt_arguments)
+
+    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> str:
+        """Call a prompt using the current ambient header identity.
+
+        Args:
+            prompt_name: The remote prompt name.
+
+        Keyword Args:
+            kwargs: Prompt arguments, not inputs to the authentication header provider.
+
+        Returns:
+            The parsed prompt result.
+
+        Raises:
+            ToolExecutionException: If admission, connection, or prompt execution fails.
+            KeyError: If the header provider requires unavailable runtime values.
+        """
+        if self._header_provider is None:
+            return await super().get_prompt(prompt_name, **kwargs)
+        headers = self._effective_headers({})
+        async with self._use_call_headers(headers, {}):
+            return await super().get_prompt(prompt_name, **kwargs)
 
     def _release_connection_kwargs(self) -> None:
         self._connection_kwargs = None

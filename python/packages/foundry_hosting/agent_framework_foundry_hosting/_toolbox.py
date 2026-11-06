@@ -318,6 +318,29 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             _strict_toolbox_header_provider.reset(token)
 
     @override
+    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> str:
+        """Retrieve a prompt using current platform headers.
+
+        Args:
+            prompt_name: The remote prompt name.
+
+        Keyword Args:
+            kwargs: Remote prompt arguments, not inputs to the authentication header provider.
+
+        Returns:
+            The parsed prompt result.
+
+        Raises:
+            ToolExecutionException: If prompts are disabled or the MCP prompt operation fails.
+            KeyError: If a custom header provider requires unavailable runtime values.
+        """
+        token = _strict_toolbox_header_provider.set(True)
+        try:
+            return await super().get_prompt(prompt_name, **kwargs)
+        finally:
+            _strict_toolbox_header_provider.reset(token)
+
+    @override
     async def _call_prompt_with_runtime_kwargs(
         self,
         prompt_name: str,
@@ -348,10 +371,10 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         return super().get_mcp_client()
 
     @override
-    async def close(self) -> None:
-        """Close the MCP session and toolbox HTTP client while preserving credentials and timeout for reconnection."""
+    async def _close_on_owner(self) -> None:
+        """Close the owned HTTP client after the lifecycle owner finishes MCP teardown."""
         try:
-            await super().close()
+            await super()._close_on_owner()
         finally:
             client = self._httpx_client
             if client is not None:
@@ -363,9 +386,9 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         headers = self._effective_resource_headers()
         connection = self._connection
         if not headers and connection is not None and not connection.is_framework_owned:
-            return await connection.read_resource(cast(str, uri))
+            return await connection.read_resource(str(uri))
         async with self._use_call_headers(headers, {}):
-            return await self._require_connection().read_resource(cast(str, uri))
+            return await self._require_connection().read_resource(str(uri))
 
     def _effective_resource_headers(self) -> dict[str, str]:
         """Resolve headers for a resource operation without caller runtime kwargs."""

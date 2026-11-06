@@ -182,12 +182,17 @@ You can explore additional agent samples [here](https://github.com/microsoft/age
 ### MCP HTTP concurrency and timeouts
 
 For connections created by `MCPTool`, `MCPStreamableHTTPTool` permits concurrent tool
-calls and generated prompt calls when their effective HTTP headers match.
+and prompt calls when their effective HTTP headers match.
 Fixed and dynamic headers together identify the
 MCP session; header names are compared case-insensitively and values case-sensitively.
 A caller with different headers waits for active operations to finish before the
 framework reconnects and refreshes session discovery. Foundry Toolbox resource reads
 use the same coordination.
+
+Direct `get_prompt()` calls resolve current ambient headers; generated prompts
+use their invocation's runtime headers. Prompt arguments never supply authentication.
+Foundry Toolbox closes its owned HTTP client on the lifecycle owner after MCP
+teardown, even if the caller waiting for `close()` is cancelled.
 
 The lifecycle owner completes connection setup and configured discovery before
 admitting operations. Concurrent failures reuse a replacement only after that

@@ -15,7 +15,13 @@ from unittest.mock import AsyncMock, patch
 
 import httpx2 as httpx
 import pytest
-from agent_framework import MCPStreamableHTTPTool, SkillsProvider, SkillsSourceContext, SupportsAgentRun
+from agent_framework import (
+    FunctionInvocationContext,
+    MCPStreamableHTTPTool,
+    SkillsProvider,
+    SkillsSourceContext,
+    SupportsAgentRun,
+)
 from agent_framework.exceptions import ToolException, ToolExecutionException
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
@@ -101,7 +107,7 @@ class _ToolboxLoopbackServer:
             headers["mcp-session-id"] = f"session-{self._session_count}-{call_id or 'none'}"
             result = {
                 "protocolVersion": payload["params"]["protocolVersion"],
-                "capabilities": {"tools": {}, "resources": {}},
+                "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
                 "serverInfo": {"name": "toolbox-loopback", "version": "1"},
             }
         elif method == "tools/list":
@@ -118,6 +124,21 @@ class _ToolboxLoopbackServer:
             }
         elif method == "tools/call":
             result = {"content": [{"type": "text", "text": call_id or "none"}]}
+        elif method == "prompts/list":
+            result = {
+                "prompts": [
+                    {
+                        "name": "record-prompt",
+                        "arguments": [{"name": "marker", "required": True}],
+                    }
+                ]
+            }
+        elif method == "prompts/get":
+            result = {
+                "messages": [
+                    {"role": "user", "content": {"type": "text", "text": call_id or "none"}},
+                ]
+            }
         elif method == "resources/read":
             uri = payload["params"]["uri"]
             if uri == "skill://index.json":
@@ -493,6 +514,102 @@ async def test_toolbox_concurrent_callers_use_their_own_call_id() -> None:
     assert calls_by_marker["request-c"].headers["mcp-session-id"].endswith("-CALL-C")
 
 
+async def test_toolbox_direct_prompt_resolves_current_call_id() -> None:
+    server = _ToolboxLoopbackServer()
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://loopback.invalid/mcp",
+        load_prompts=True,
+        load_tools=False,
+    )
+    await _attach_loopback_transport(toolbox, server)
+
+    try:
+        await _run_with_request_context("CALL-A", toolbox.connect)
+        first = await _run_with_request_context(
+            "CALL-A",
+            lambda: toolbox.get_prompt("record-prompt", marker="first-request"),
+        )
+        second = await _run_with_request_context(
+            "CALL-B",
+            lambda: toolbox.get_prompt("record-prompt", marker="second-request"),
+        )
+    finally:
+        await toolbox.close()
+
+    assert "CALL-A" in first
+    assert "CALL-B" in second
+    prompts = server.requests_for("prompts/get")
+    assert [request.headers["x-agent-foundry-call-id"] for request in prompts] == ["CALL-A", "CALL-B"]
+    assert all(
+        request.headers["mcp-session-id"].endswith(f"-{request.headers['x-agent-foundry-call-id']}")
+        for request in prompts
+    )
+    assert json.loads(prompts[-1].content)["params"]["arguments"] == {"marker": "second-request"}
+
+
+async def test_toolbox_direct_prompt_preserves_header_provider_errors_without_using_prompt_arguments() -> None:
+    server = _ToolboxLoopbackServer()
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://loopback.invalid/mcp",
+        load_prompts=True,
+        load_tools=False,
+        header_provider=lambda kwargs: {"X-Custom-Header": kwargs["custom"]},
+    )
+    await _attach_loopback_transport(toolbox, server)
+
+    try:
+        await _run_with_request_context("CALL-A", toolbox.connect)
+        with pytest.raises(KeyError, match="custom"):
+            await _run_with_request_context(
+                "CALL-B",
+                lambda: toolbox.get_prompt("record-prompt", marker="prompt-marker", custom="model-value"),
+            )
+        await _run_with_request_context("CALL-A", lambda: toolbox.connect(reset=True))
+    finally:
+        await toolbox.close()
+
+    assert server.requests_for("prompts/get") == []
+    assert all("X-Custom-Header" not in request.headers for request in server.requests_for("initialize"))
+
+
+async def test_toolbox_generated_prompt_uses_runtime_headers_not_prompt_arguments() -> None:
+    server = _ToolboxLoopbackServer()
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://loopback.invalid/mcp",
+        load_prompts=True,
+        load_tools=False,
+        header_provider=lambda kwargs: {"X-Custom-Header": kwargs["custom"]},
+    )
+    await _attach_loopback_transport(toolbox, server)
+
+    try:
+        await toolbox._prepare_for_run({"custom": "setup-value"})
+        await _run_with_request_context("CALL-A", toolbox.connect)
+        prompt = next(function for function in toolbox.functions if function.name == "record-prompt")
+        context = FunctionInvocationContext(
+            function=prompt,
+            arguments={"marker": "prompt-marker"},
+            kwargs={"custom": "runtime-value"},
+        )
+        result = await _run_with_request_context(
+            "CALL-B",
+            lambda: prompt.invoke(arguments={"marker": "prompt-marker"}, context=context),
+        )
+    finally:
+        await toolbox.close()
+
+    assert isinstance(result, list)
+    assert result[0].text == "CALL-B"
+    request = server.requests_for("prompts/get")[-1]
+    assert request.headers["x-agent-foundry-call-id"] == "CALL-B"
+    assert request.headers["mcp-session-id"].endswith("-CALL-B")
+    assert request.headers["X-Custom-Header"] == "runtime-value"
+    assert json.loads(request.content)["params"]["arguments"] == {"marker": "prompt-marker"}
+
+
 async def test_toolbox_concurrent_skill_reads_use_their_own_call_id() -> None:
     server = _ToolboxLoopbackServer()
     toolbox = FoundryToolbox(
@@ -617,6 +734,54 @@ async def test_close_closes_owned_http_client(monkeypatch: pytest.MonkeyPatch) -
     aclose.assert_awaited_once()
 
 
+async def test_cancelled_close_keeps_http_client_open_until_owner_teardown_finishes(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    server = _ToolboxLoopbackServer()
+    toolbox = FoundryToolbox(_FakeCredential(), url="https://loopback.invalid/mcp")  # type: ignore
+    await _attach_loopback_transport(toolbox, server)
+    client = toolbox._httpx_client
+    assert client is not None
+    teardown_started = asyncio.Event()
+    release_teardown = asyncio.Event()
+    owner: asyncio.Task[None] | None = None
+
+    async def pause_termination(request: httpx.Request) -> None:
+        if request.method == "DELETE":
+            teardown_started.set()
+            await release_teardown.wait()
+
+    try:
+        await toolbox.connect()
+        client.event_hooks["request"].append(pause_termination)
+
+        async with asyncio.timeout(5), asyncio.TaskGroup() as tasks:
+            close = tasks.create_task(toolbox.close())
+            await teardown_started.wait()
+            owner = toolbox._lifecycle_owner_task
+            assert owner is not None
+            close.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await close
+
+            assert not client.is_closed
+            assert toolbox._httpx_client is client
+            assert not owner.done()
+            release_teardown.set()
+            await owner
+
+        assert client.is_closed
+        assert toolbox._httpx_client is None
+        assert not toolbox.is_connected
+        assert "Session termination failed" not in caplog.text
+    finally:
+        release_teardown.set()
+        if owner is not None:
+            async with asyncio.timeout(5):
+                await owner
+        await toolbox.close()
+
+
 def test_as_skills_provider_returns_provider() -> None:
     toolbox = FoundryToolbox(
         _FakeCredential(),  # type: ignore
@@ -699,13 +864,13 @@ async def test_skills_source_uses_connected_session(monkeypatch: pytest.MonkeyPa
     assert provider() is resource_session
     first_uri = AnyUrl("skill://first")
     await resource_session.read_resource(cast(str, first_uri))
-    sentinel_session.read_resource.assert_awaited_once_with(first_uri)
+    sentinel_session.read_resource.assert_awaited_once_with(str(first_uri))
 
     new_session = AsyncMock()
     toolbox.session = new_session  # type: ignore
     second_uri = AnyUrl("skill://second")
     await resource_session.read_resource(cast(str, second_uri))
-    new_session.read_resource.assert_awaited_once_with(second_uri)
+    new_session.read_resource.assert_awaited_once_with(str(second_uri))
     # No archive options set -> MCPSkillsSource is constructed with defaults.
     assert captured_kwargs == {}
 
