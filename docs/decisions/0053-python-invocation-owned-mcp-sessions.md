@@ -32,8 +32,11 @@ client. This separates HTTP connection pooling from MCP protocol-session
 ownership without introducing a factory abstraction or new transport options.
 Core already supports both ownership modes, so no Core changes are necessary.
 
-Remove the initialized-client cache, `cache_max_size`, `aclose()`, and the handler
-async context manager. Hosts own admission, deadlines, cancellation, and shutdown
+Remove the initialized-client cache, `aclose()`, and the handler async context
+manager. Retain `cache_max_size` as a deprecated, ignored compatibility parameter;
+positive values emit `DeprecationWarning`, non-positive values still raise
+`ValueError`, and omission emits no warning. It does not restore session caching.
+Hosts own admission, deadlines, cancellation, and shutdown
 coordination. They must cancel and await active invocations before disposing
 borrowed HTTP clients.
 

@@ -72,7 +72,7 @@ on HTTPX internals. Compatibility tests cover HTTPX 0.27.0 and 0.28.1.
 
 ## MCP handler session lifetime
 
-**Breaking change:** `DefaultMCPToolHandler` creates and closes a fresh MCP
+**Security fix:** `DefaultMCPToolHandler` creates and closes a fresh MCP
 tool/session for every invocation, including `tools/list`. Independently
 constructed workflows may safely share a handler without sharing MCP protocol
 state, even with identical endpoint and header configuration. There is no
@@ -91,8 +91,13 @@ produce `MCPToolResult(is_error=True)` and populate `output.result` with an erro
 string. Custom handlers should return error results only for tool-level errors;
 raised exceptions are not converted into workflow results.
 
-The handler no longer accepts `cache_max_size` or implements `aclose()` or an
-async context manager. Replace `async with DefaultMCPToolHandler() as handler:`
+The legacy `cache_max_size` parameter is accepted for compatibility, but is
+deprecated and ignored. Passing a positive value emits `DeprecationWarning`;
+zero and negative values still raise `ValueError`. Omitting it emits no warning.
+It cannot restore session caching or sharing.
+
+The handler no longer implements `aclose()` or an async context manager.
+Replace `async with DefaultMCPToolHandler() as handler:`
 with `handler = DefaultMCPToolHandler()` and remove handler shutdown calls.
 Continue to manage caller-owned HTTP clients with their own context manager.
 Hosts must cancel and await active invocations before closing borrowed clients;

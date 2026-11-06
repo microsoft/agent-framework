@@ -54,15 +54,24 @@ async def test_invocations_own_separate_clients(
 
 @pytest.mark.parametrize("provider_mode", ["none", "fallback", "borrowed"])
 @pytest.mark.parametrize("concurrent", [False, True])
+@pytest.mark.parametrize("cache_max_size", [None, 1, 32])
 async def test_real_protocol_sessions_are_terminated_before_return(
     stateful_mcp_server: tuple[Server[Any], dict[str, list[str]], list[httpx.AsyncClient]],
     provider_mode: str,
     concurrent: bool,
+    cache_max_size: int | None,
 ) -> None:
     server, histories, clients = stateful_mcp_server
     caller_client = httpx.AsyncClient() if provider_mode == "borrowed" else None
     provider = AsyncMock(return_value=caller_client)
-    handler = DefaultMCPToolHandler(client_provider=None if provider_mode == "none" else provider)
+    if cache_max_size is None:
+        handler = DefaultMCPToolHandler(client_provider=None if provider_mode == "none" else provider)
+    else:
+        with pytest.warns(DeprecationWarning, match="cache_max_size is deprecated and has no effect"):
+            handler = DefaultMCPToolHandler(
+                client_provider=None if provider_mode == "none" else provider,
+                cache_max_size=cache_max_size,
+            )
     invocation = MCPToolInvocation("http://127.0.0.1:8000/mcp", "remember", headers={"X-Test": "same-config"})
     try:
         async with server.session_manager.run():
@@ -308,6 +317,17 @@ def test_invalid_discovery_limit_raises(option: str, value: int) -> None:
             DefaultMCPToolHandler(max_discovery_pages=value)
         else:
             DefaultMCPToolHandler(max_discovery_items=value)
+
+
+def test_default_cache_size_does_not_warn(recwarn: pytest.WarningsRecorder) -> None:
+    DefaultMCPToolHandler()
+    assert not recwarn
+
+
+@pytest.mark.parametrize("cache_max_size", [0, -1])
+def test_invalid_deprecated_cache_size_raises(cache_max_size: int) -> None:
+    with pytest.raises(ValueError, match="cache_max_size must be positive"):
+        DefaultMCPToolHandler(cache_max_size=cache_max_size)
 
 
 async def test_list_tools_rejects_arguments_before_provider(mcp_tool_constructor: MagicMock) -> None:

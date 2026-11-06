@@ -29,7 +29,10 @@ shared HTTP client without sharing protocol sessions. Invocation cleanup closes
 the session and any internally owned HTTP client, never caller-owned HTTP clients.
 The handler forwards its configurable `max_discovery_pages` and `max_discovery_items`
 limits to every internally created `MCPStreamableHTTPTool`.
-The handler has no cache, `cache_max_size`, `aclose()`, or async context manager.
+The handler has no cache, `aclose()`, or async context manager. It accepts the
+legacy `cache_max_size` parameter as a deprecated no-op for compatibility:
+positive values emit `DeprecationWarning`, non-positive values raise `ValueError`,
+and omission emits no warning. The parameter never enables session sharing.
 Hosts own admission, deadlines, cancellation, and shutdown of active calls; cancel
 and await them before closing any borrowed HTTP client.
 
