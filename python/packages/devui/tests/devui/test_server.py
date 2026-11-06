@@ -899,6 +899,50 @@ def test_devserver_accepts_request_with_valid_bearer_token(monkeypatch):
     assert response.status_code == 200
 
 
+@pytest.mark.parametrize(
+    ("configured_token", "presented_token", "expected_status"),
+    [
+        pytest.param("s3cret", "s3cret", 200, id="ascii-matches"),
+        pytest.param("s3cret", "s\u00e9cret", 401, id="non-ascii-presented-is-rejected"),
+        pytest.param("s\u00e9cret", "s\u00e9cret", 200, id="non-ascii-configured-matches"),
+        pytest.param("s\u00e9cret", "s3cret", 401, id="non-ascii-configured-wrong-token"),
+        # U+00E0 ("à") encodes to UTF-8 bytes 0xC3 0xA0, whose second byte is NBSP
+        # (U+00A0). A bare `.strip()` would drop that trailing 0xA0 and reject the
+        # correct token; trimming only HTTP whitespace must keep it intact.
+        pytest.param("secret\u00e0", "secret\u00e0", 200, id="trailing-a-grave-matches"),
+        pytest.param("secret\u00e0", "secret\u00e9", 401, id="trailing-a-grave-wrong-token"),
+    ],
+)
+def test_bearer_token_comparison_survives_non_ascii_tokens(
+    monkeypatch,
+    configured_token: str,
+    presented_token: str,
+    expected_status: int,
+) -> None:
+    """A non-ASCII bearer token must be compared, not answered with HTTP 500.
+
+    `secrets.compare_digest` raises `TypeError` for any `str` holding a non-ASCII
+    character, so a merely wrong token produced 500 instead of 401, and a non-ASCII
+    `DEVUI_AUTH_TOKEN` never matched even when the client presented it correctly.
+    """
+    monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
+
+    server = DevServer(auth_token=configured_token)
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1", raise_server_exceptions=False) as client:
+        # Emulate the bundled browser client: fetch() encodes a header value with
+        # ByteString (latin-1) semantics, so a non-ASCII token travels as its latin-1
+        # bytes. A bytes key keeps the mapping bytes/bytes so the raw token bytes are
+        # preserved and the mapping stays type-consistent for Pyright/Pyrefly.
+        response = client.get(
+            "/v1/entities",
+            headers={b"Authorization": b"Bearer " + presented_token.encode("latin-1")},
+        )
+
+    assert response.status_code == expected_status
+
+
 def test_meta_endpoint_requires_auth(monkeypatch):
     """/meta exposes capability flags (deployment, instrumentation, version) — gate it behind auth.
 
