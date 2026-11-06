@@ -351,6 +351,27 @@ class TestAGUIEventConverter:
         assert update.contents[0].message == "Connection timeout"
         assert update.contents[0].error_code == "RUN_ERROR"
 
+    def test_run_error_event_preserves_specific_code(self) -> None:
+        """Test conversion of RUN_ERROR event preserves specific error code."""
+        converter = AGUIEventConverter()
+        converter.thread_id = "thread_123"
+        converter.run_id = "run_456"
+
+        event = {
+            "type": "RUN_ERROR",
+            "message": "Function invocation is disabled",
+            "code": "APPROVAL_INVOCATION_DISABLED",
+        }
+
+        update = converter.convert_event(event)
+
+        assert update is not None
+        assert update.role == "assistant"
+        assert update.finish_reason is None
+        assert len(update.contents) == 1
+        assert update.contents[0].message == "Function invocation is disabled"
+        assert update.contents[0].error_code == "APPROVAL_INVOCATION_DISABLED"
+
     def test_unknown_event_type(self) -> None:
         """Test handling of unknown event types."""
         converter = AGUIEventConverter()
