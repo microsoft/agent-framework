@@ -22,8 +22,9 @@ Constructors resolve explicit arguments first, then an explicitly selected
 `.env` file, then process environment variables. URIs accept `str` or AF
 `SecretString` and are unwrapped only for PyMongo.
 
-You can instead inject an `AsyncMongoClient` and pass `database_name`. An
-injected client bypasses URI, app-name, and `.env` loading and always remains
+You can instead inject an `AsyncMongoClient`. The database name is required and
+resolves from an explicit `database_name`, then `MONGODB_DATABASE_NAME`. An injected
+client bypasses URI, app-name, and `.env` loading and always remains
 caller-owned. Connector-created clients are closed by `close()` or async context
 exit. Collections created by a store borrow its already-resolved client.
 

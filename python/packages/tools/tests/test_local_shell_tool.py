@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import ctypes
 import json
 import os
 import shlex
 import shutil
 import signal
 import sys
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import Awaitable, Iterator, Mapping, Sequence
 from contextlib import nullcontext, suppress
 from pathlib import Path
 from types import SimpleNamespace
@@ -413,6 +414,84 @@ async def test_stateless_timeout_kills_long_command() -> None:
     cmd = "Start-Sleep -Seconds 5" if sys.platform == "win32" else "sleep 5"
     result = await tool.run(cmd)
     assert result.timed_out is True
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="POSIX process-group regression")
+@pytest.mark.parametrize(
+    "template",
+    ["sleep 5 & echo $! > {pidfile}", "(sleep 5 & echo $! > {pidfile}); sleep 30"],
+    ids=["background", "double_forked"],
+)
+async def test_stateless_timeout_kills_background_jobs_holding_pipes(tmp_path: Path, template: str) -> None:
+    pidfile = tmp_path / "bg.pid"
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True, timeout=0.5)
+
+    started = asyncio.get_running_loop().time()
+    result = await asyncio.wait_for(tool.run(template.format(pidfile=pidfile)), timeout=10.0)
+    elapsed = asyncio.get_running_loop().time() - started
+
+    pid = int(pidfile.read_text().strip())
+    alive = _pid_alive(pid)
+    if alive:
+        os.kill(pid, signal.SIGKILL)
+    assert result.timed_out is True
+    assert elapsed < 2.0
+    assert not alive
+
+
+@pytest.mark.skipif(sys.platform != "linux" or shutil.which("setsid") is None, reason="needs /proc and setsid")
+async def test_stateless_timeout_closes_pipes_held_by_detached_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_framework_tools.shell import _capture
+
+    monkeypatch.setattr(_capture, "_DRAIN_GRACE", 0.2)
+    pidfile = tmp_path / "detached.pid"
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True, timeout=0.5)
+
+    fds_before = len(os.listdir("/proc/self/fd"))
+    result = await tool.run(f"(setsid sh -c 'echo $$ > {pidfile}; exec sleep 5' &); sleep 30")
+    await asyncio.sleep(0)  # pipe transports close their descriptors in connection_lost, one loop pass later
+    fds_after = len(os.listdir("/proc/self/fd"))
+
+    os.kill(int(pidfile.read_text().strip()), signal.SIGKILL)
+    assert result.timed_out is True
+    assert fds_after == fds_before
+
+
+@pytest.fixture
+def unreaped_orphans() -> Iterator[None]:
+    """Make this process the subreaper for orphans and leave them as zombies, like a slow container init."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    pr_set_child_subreaper = 36
+    assert libc.prctl(pr_set_child_subreaper, 1, 0, 0, 0) == 0
+    try:
+        yield
+    finally:
+        libc.prctl(pr_set_child_subreaper, 0, 0, 0, 0)
+        for child in psutil.Process().children():
+            with suppress(psutil.NoSuchProcess, ChildProcessError):
+                if child.status() == psutil.STATUS_ZOMBIE:
+                    os.waitpid(child.pid, 0)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux child subreaper")
+async def test_stateless_timeout_does_not_wait_for_unreaped_zombies(unreaped_orphans: None) -> None:
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True, timeout=0.5)
+
+    started = asyncio.get_running_loop().time()
+    result = await tool.run("sleep 30 & sleep 30")
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert result.timed_out is True
+    assert elapsed < 2.0
 
 
 async def test_policy_denies_before_execution() -> None:

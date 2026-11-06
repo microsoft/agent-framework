@@ -200,7 +200,7 @@ implementations.
 owns or re-exports `SessionStore` (this will be a breaking change in the `hosting` package).
 
 Actual `SessionStore` and `FileSessionStore` operations mark Python feature-usage index 17,
-`core.session_store`, following ADR-0033's use-not-presence policy. Construction and import alone do not mark the bit.
+`core.session_store`, following ADR-0037's use-not-presence policy. Construction and import alone do not mark the bit.
 
 `SessionStore` accepts opaque non-empty keys so custom backends can use their native key contracts. `FileSessionStore`
 accepts opaque keys up to 128 characters and encodes values that are not portable filename stems; this supports

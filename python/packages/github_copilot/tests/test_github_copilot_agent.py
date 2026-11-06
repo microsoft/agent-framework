@@ -16,20 +16,24 @@ from uuid import uuid4
 
 import pytest
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
     BaseAgent,
+    BaseChatClient,
+    ChatOptions,
     Content,
     ContextProvider,
     FunctionInvocationContext,
+    FunctionTool,
     HistoryProvider,
     MCPStdioTool,
     Message,
     ResponseStream,
     tool,
 )
-from agent_framework.exceptions import AgentException
+from agent_framework.exceptions import AgentException, MiddlewareException
 from copilot.session import PermissionHandler, PermissionInvocation, PreToolUseHookInput
 from copilot.session_events import (
     AssistantUsageData,
@@ -770,6 +774,44 @@ class TestGitHubCopilotAgentRunStreaming:
             "total_token_count": 14,
         }
         assert response.additional_properties["model"] == "gpt-5.1-mini"
+
+    async def test_run_streaming_sums_usage_across_multiple_model_calls(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test streaming sums per-call usage events instead of keeping only the last one."""
+        usage_events = [
+            SessionEvent(
+                data=AssistantUsageData(model="gpt-5.1-mini", input_tokens=n * 100, output_tokens=n * 10),
+                id=uuid4(),
+                timestamp=datetime.now(timezone.utc),
+                type=SessionEventType.ASSISTANT_USAGE,
+            )
+            for n in (1, 2, 3)
+        ]
+        events = [assistant_delta_event, *usage_events, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        stream = agent.run("Hello", stream=True)
+        async for _ in stream:
+            pass
+        response = await stream.get_final_response()
+
+        assert response.usage_details == {
+            "input_token_count": 600,
+            "output_token_count": 60,
+            "total_token_count": 660,
+        }
 
     async def test_run_streaming_with_session(
         self,
@@ -4454,6 +4496,102 @@ class TestGitHubCopilotAgentContextProviders:
         assert call_kwargs.get("tools") is not None
         tool_names = [t.name for t in call_kwargs["tools"]]
         assert "load_skill" in tool_names
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("resume", [False, True])
+    @pytest.mark.parametrize("agent_type", [GitHubCopilotAgent, RawGitHubCopilotAgent])
+    async def test_provider_function_middleware_rejected_before_sdk_session(
+        self,
+        mock_client: MagicMock,
+        completed_copilot_session: MagicMock,
+        provider_function_middleware: tuple[ContextProvider, FunctionTool, AsyncMock, AsyncMock],
+        stream: bool,
+        resume: bool,
+        agent_type: type[RawGitHubCopilotAgent[GitHubCopilotOptions]],
+    ) -> None:
+        provider, _, tool_body, policy = provider_function_middleware
+        agent = agent_type(client=mock_client, context_providers=[provider])
+        session = agent.create_session()
+        if resume:
+            session.service_session_id = "existing-id"
+
+        with pytest.raises(MiddlewareException, match="does not support function middleware.*context providers"):
+            if stream:
+                await agent.run("Hello", stream=True, session=session).get_final_response()
+            else:
+                await agent.run("Hello", session=session)
+
+        mock_client.create_session.assert_not_called()
+        mock_client.resume_session.assert_not_called()
+        completed_copilot_session.send.assert_not_called()
+        completed_copilot_session.send_and_wait.assert_not_called()
+        tool_body.assert_not_called()
+        policy.assert_not_called()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_provider_function_middleware_checked_on_each_run(
+        self,
+        mock_client: MagicMock,
+        completed_copilot_session: MagicMock,
+        provider_function_middleware: tuple[ContextProvider, FunctionTool, AsyncMock, AsyncMock],
+        stream: bool,
+    ) -> None:
+        provider, provider_tool, tool_body, policy = provider_function_middleware
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[provider])
+        session = agent.create_session()
+        session.state[provider.source_id] = {"include_middleware": False}
+
+        await agent.run("Hello", session=session)
+        sdk_tool = mock_client.create_session.call_args.kwargs["tools"][0]
+        assert sdk_tool.name == provider_tool.name
+        result = await sdk_tool.handler(ToolInvocation(arguments={"value": "test"}))
+        assert result.result_type == "success"
+        tool_body.assert_awaited_once_with("test")
+
+        session.state[provider.source_id]["include_middleware"] = True
+        with pytest.raises(MiddlewareException, match="does not support function middleware.*context providers"):
+            if stream:
+                await agent.run("Hello again", stream=True, session=session).get_final_response()
+            else:
+                await agent.run("Hello again", session=session)
+
+        mock_client.create_session.assert_awaited_once()
+        mock_client.resume_session.assert_not_called()
+        completed_copilot_session.send_and_wait.assert_awaited_once()
+        completed_copilot_session.send.assert_not_called()
+        tool_body.assert_awaited_once_with("test")
+        policy.assert_not_called()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("resume", [False, True])
+    async def test_provider_function_middleware_blocks_tool_with_agent(
+        self,
+        provider_function_middleware: tuple[ContextProvider, FunctionTool, AsyncMock, AsyncMock],
+        tool_calling_chat_client: BaseChatClient[ChatOptions[Any]],
+        stream: bool,
+        resume: bool,
+    ) -> None:
+        provider, _, tool_body, policy = provider_function_middleware
+        agent = Agent(client=tool_calling_chat_client, context_providers=[provider])
+        session = agent.create_session()
+        if resume:
+            session.service_session_id = "existing-id"
+
+        if stream:
+            response = await agent.run("Hello", stream=True, session=session).get_final_response()
+        else:
+            response = await agent.run("Hello", session=session)
+
+        results = [
+            content
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_result"
+        ]
+        assert len(results) == 1
+        assert "Function policy denied the call" in str(results[0].exception)
+        policy.assert_awaited_once()
+        tool_body.assert_not_called()
 
 
 class TestGitHubCopilotAttachments:

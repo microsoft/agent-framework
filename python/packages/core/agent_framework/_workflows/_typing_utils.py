@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 import typing
 from collections.abc import Callable, Mapping, Sequence
@@ -399,6 +401,13 @@ def _coerce_dict_to_dataclass(data: dict[str, Any], target_cls: type[Any]) -> An
         return data
 
 
+# ``type(None)`` reports ``builtins`` as its module and ``NoneType`` as its qualified name, but
+# ``builtins`` never binds that name: the class is only reachable as ``types.NoneType`` (3.10+)
+# or ``type(None)``. The name that ``serialize_type`` produces therefore has to come from this
+# table instead of from the module namespace.
+_SERIALIZED_TYPE_ALIASES: Mapping[str, type[Any]] = {"builtins.NoneType": type(None)}
+
+
 def serialize_type(t: type) -> str:
     """Serialize a type to a string.
 
@@ -416,7 +425,8 @@ def deserialize_type(
 ) -> type:
     """Deserialize a serialized type string.
 
-    Resolution is limited to exact caller-supplied types or types already present
+    Resolution is limited to exact caller-supplied types, a fixed alias table for builtin
+    names that their module never binds (``builtins.NoneType``), or types already present
     in loaded module namespaces. This function never imports a module selected by
     the serialized value.
 
@@ -427,6 +437,7 @@ def deserialize_type(
     For example,
 
     deserialize_type("builtins.int") => int
+    deserialize_type("builtins.NoneType") => type(None)
     """
     if allowed_types is not None and serialized_type_string in allowed_types:
         resolved = allowed_types[serialized_type_string]
@@ -435,6 +446,11 @@ def deserialize_type(
         if serialize_type(resolved) != serialized_type_string:
             raise ValueError(f"allowed_types entry {serialized_type_string!r} does not match the supplied type.")
         return resolved
+
+    # Types whose serialized name is not an attribute of their module.
+    alias = _SERIALIZED_TYPE_ALIASES.get(serialized_type_string)
+    if alias is not None:
+        return alias
 
     module_name, _, type_name = serialized_type_string.rpartition(".")
     module = sys.modules.get(module_name)

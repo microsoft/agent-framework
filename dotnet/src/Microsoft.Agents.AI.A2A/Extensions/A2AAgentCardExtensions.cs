@@ -48,7 +48,7 @@ public static class A2AAgentCardExtensions
     {
         var a2aClient = A2AClientFactory.Create(card, httpClient, options);
 
-        return a2aClient.AsAIAgent(name: card.Name, description: card.Description, loggerFactory: loggerFactory);
+        return a2aClient.AsAIAgent(new A2AAgentOptions { Name = card.Name, Description = card.Description }, loggerFactory);
     }
 
     /// <summary>
