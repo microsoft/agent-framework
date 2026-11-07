@@ -12,7 +12,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <NoWarn>$(NoWarn);MAAI001;OPENAI001</NoWarn>
-    <AgentFrameworkVersion>1.20.0-preview.260831.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.27.0-preview.261030.1</AgentFrameworkVersion>
     <!-- Repository builds use local source; the prepared ZIP restores standalone packages. -->
     <UseLocalFramework Condition="'$(UseLocalFramework)' == '' and Exists('..\..\..\..\..\src\Microsoft.Agents.AI.Harness\Microsoft.Agents.AI.Harness.csproj')">true</UseLocalFramework>
     <UseLocalFramework Condition="'$(UseLocalFramework)' == ''">false</UseLocalFramework>
@@ -25,7 +25,7 @@
   <ItemGroup Condition="'$(UseLocalFramework)' != 'true'">
     <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="$(AgentFrameworkVersion)" />
     <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="$(AgentFrameworkVersion)" />
-    <PackageReference Include="Microsoft.Agents.AI.Harness" Version="$(AgentFrameworkVersion)" />
+    <PackageReference Include="Microsoft.Agents.AI.Harness" Version="1.27.0" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(UseLocalFramework)' == 'true'">
