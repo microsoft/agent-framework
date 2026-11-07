@@ -23,7 +23,7 @@ This sample demonstrates how to use Azure AI Search with agentic mode for RAG
 - Slightly slower with more token consumption for query planning
 - See: https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/foundry-iq-boost-response-relevance-by-36-with-agentic-retrieval/4470720
 
-For simple queries where speed is critical, use semantic mode instead (see azure_ai_with_search_context_semantic.py).
+For simple queries where speed is critical, use semantic mode instead (see search_context_semantic.py).
 
 Prerequisites:
 1. An Azure AI Search service

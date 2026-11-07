@@ -39,6 +39,8 @@ Run with approval prompts:
     MCP_REQUIRE_APPROVAL=1 python -m samples.03-workflows.declarative.invoke_mcp_tool.main
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 from pathlib import Path
@@ -127,76 +129,75 @@ async def main() -> None:
     # requests through a pre-configured ``httpx.AsyncClient`` carrying the
     # appropriate credentials, or wrap the handler with one that injects
     # headers per call.
-    async with DefaultMCPToolHandler() as mcp_handler:
-        factory = WorkflowFactory(
-            agents=agents,
-            mcp_tool_handler=mcp_handler,
-        )
+    factory = WorkflowFactory(
+        agents=agents,
+        mcp_tool_handler=DefaultMCPToolHandler(),
+    )
 
-        workflow_path = Path(__file__).parent / "workflow.yaml"
-        workflow = factory.create_workflow_from_yaml_path(workflow_path)
+    workflow_path = Path(__file__).parent / "workflow.yaml"
+    workflow = factory.create_workflow_from_yaml_path(workflow_path)
 
-        print("=" * 60)
-        print("Invoke MCP Tool Workflow Demo")
-        if require_approval:
-            print("(MCP_REQUIRE_APPROVAL is set — you will be prompted before the tool runs)")
+    print("=" * 60)
+    print("Invoke MCP Tool Workflow Demo")
+    if require_approval:
+        print("(MCP_REQUIRE_APPROVAL is set — you will be prompted before the tool runs)")
+    else:
+        print("(set MCP_REQUIRE_APPROVAL=1 to enable the human-approval flow)")
+    print("=" * 60)
+    print()
+    print("Ask one question that can be answered from the Microsoft Learn docs or provide a keyword to search.")
+    print()
+
+    user_input = input("You: ").strip()  # noqa: ASYNC250
+    if not user_input:
+        user_input = "What is the Agent Framework declarative workflow runtime?"
+
+    # Drive the workflow via dict-shaped inputs so the YAML can read
+    # both the user's question (``Workflow.Inputs.text``) and the
+    # approval toggle (``Workflow.Inputs.requireApproval``) without
+    # any Python-side mutation of the workflow definition.
+    workflow_inputs: dict[str, object] = {
+        "text": user_input,
+        "requireApproval": require_approval,
+    }
+
+    # The request_info loop below handles the MCP approval flow when
+    # the YAML requests it. When ``requireApproval`` is false the
+    # workflow never emits an ``MCPToolApprovalRequest`` event, so
+    # the loop runs exactly once and exits cleanly — both modes share
+    # the same code path.
+    pending: tuple[str, MCPToolApprovalRequest] | None = None
+    produced_output = False
+    printed_agent_prefix = False
+
+    while True:
+        if pending is None:
+            stream = workflow.run(workflow_inputs, stream=True)
         else:
-            print("(set MCP_REQUIRE_APPROVAL=1 to enable the human-approval flow)")
-        print("=" * 60)
-        print()
-        print("Ask one question that can be answered from the Microsoft Learn docs or provide a keyword to search.")
-        print()
+            pending_id, pending_request = pending
+            response = _prompt_for_approval(pending_request)
+            stream = workflow.run(stream=True, responses={pending_id: response})
+            pending = None
 
-        user_input = input("You: ").strip()  # noqa: ASYNC250
-        if not user_input:
-            user_input = "What is the Agent Framework declarative workflow runtime?"
+        async for event in stream:
+            if event.type == "output" and isinstance(event.data, str):
+                if not printed_agent_prefix:
+                    print("\nAgent: ", end="", flush=True)
+                    printed_agent_prefix = True
+                print(event.data, end="", flush=True)
+                produced_output = True
+            elif event.type == "request_info" and isinstance(event.data, MCPToolApprovalRequest):
+                pending = (event.request_id, event.data)
 
-        # Drive the workflow via dict-shaped inputs so the YAML can read
-        # both the user's question (``Workflow.Inputs.text``) and the
-        # approval toggle (``Workflow.Inputs.requireApproval``) without
-        # any Python-side mutation of the workflow definition.
-        workflow_inputs: dict[str, object] = {
-            "text": user_input,
-            "requireApproval": require_approval,
-        }
-
-        # The request_info loop below handles the MCP approval flow when
-        # the YAML requests it. When ``requireApproval`` is false the
-        # workflow never emits an ``MCPToolApprovalRequest`` event, so
-        # the loop runs exactly once and exits cleanly — both modes share
-        # the same code path.
-        pending: tuple[str, MCPToolApprovalRequest] | None = None
-        produced_output = False
-        printed_agent_prefix = False
-
-        while True:
-            if pending is None:
-                stream = workflow.run(workflow_inputs, stream=True)
+        if pending is None:
+            if not produced_output:
+                # Workflow finished without producing any agent output
+                # (e.g. the user rejected the MCP tool call and the
+                # downstream agent had nothing to summarise).
+                print("\n(no response produced)")
             else:
-                pending_id, pending_request = pending
-                response = _prompt_for_approval(pending_request)
-                stream = workflow.run(stream=True, responses={pending_id: response})
-                pending = None
-
-            async for event in stream:
-                if event.type == "output" and isinstance(event.data, str):
-                    if not printed_agent_prefix:
-                        print("\nAgent: ", end="", flush=True)
-                        printed_agent_prefix = True
-                    print(event.data, end="", flush=True)
-                    produced_output = True
-                elif event.type == "request_info" and isinstance(event.data, MCPToolApprovalRequest):
-                    pending = (event.request_id, event.data)
-
-            if pending is None:
-                if not produced_output:
-                    # Workflow finished without producing any agent output
-                    # (e.g. the user rejected the MCP tool call and the
-                    # downstream agent had nothing to summarise).
-                    print("\n(no response produced)")
-                else:
-                    print()
-                break
+                print()
+            break
 
 
 if __name__ == "__main__":

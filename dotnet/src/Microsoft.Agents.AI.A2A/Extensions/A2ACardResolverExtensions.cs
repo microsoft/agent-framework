@@ -22,6 +22,12 @@ namespace A2A;
 /// with A2A agents by handling the conversion from A2A clients to
 /// <see cref="A2AAgent"/> instances that implement the <see cref="AIAgent"/> interface.
 /// </para>
+/// <para>
+/// To select gRPC, also reference the SDK's <c>A2A.Grpc</c> package,
+/// call <c>A2A.Grpc.A2AGrpcClientRegistration.Register()</c> once during application startup,
+/// and include <see cref="ProtocolBindingNames.Grpc"/> in <see cref="A2AClientOptions.PreferredBindings"/>.
+/// Agent card discovery still uses HTTP. Client ownership follows <see cref="A2AAgentCardExtensions"/>.
+/// </para>
 /// </remarks>
 public static class A2ACardResolverExtensions
 {

@@ -29,11 +29,27 @@ public sealed class FoundryResponsesOptions
     /// setting exactly as the container configured it, in which case hosting neither changes it nor
     /// checks it.
     /// </para>
+    /// <para>
+    /// A local conversation marker used by the framework to persist chat history in the agent
+    /// session does not count as service-stored output and does not require this option.
+    /// </para>
     /// </remarks>
     /// <value>
     /// Default is <see langword="false"/>.
     /// </value>
     public bool AllowStoredOutputEnabled { get; set; }
+
+    /// <summary>
+    /// Gets or sets the function result returned for calls that are not executed because another call
+    /// in the same batch requires OAuth consent.
+    /// </summary>
+    /// <remarks>
+    /// This result can be sent to the inference service when
+    /// <see cref="AllowStoredOutputEnabled"/> is enabled, so phrase it as context for the model rather
+    /// than as an instruction to the end user. It is also recorded in the Hosted Agent response for
+    /// sequential calls skipped by the consent handoff.
+    /// </remarks>
+    public string OAuthConsentInterruptedToolResult { get; set; } = McpConsentResults.NotExecuted;
 
     /// <summary>
     /// Gets or sets a value indicating whether to include an encrypted version of reasoning tokens in

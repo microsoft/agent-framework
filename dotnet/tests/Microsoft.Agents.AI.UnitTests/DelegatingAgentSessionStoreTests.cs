@@ -291,6 +291,38 @@ public class DelegatingAgentSessionStoreTests
         await resultTask;
     }
 
+    /// <summary>
+    /// Verify that DeleteSessionAsync delegates to inner store with correct parameters.
+    /// </summary>
+    [Fact]
+    public async Task DeleteSessionAsyncDelegatesToInnerStoreAsync()
+    {
+        // Arrange
+        var expectedKey = new AgentSessionStoreKey("test-conversation-id").WithPartition("user", "test-user-id");
+        var expectedCancellationToken = new CancellationToken();
+
+        this._innerStoreMock
+            .Setup(x => x.DeleteSessionAsync(
+                this._agentMock.Object,
+                expectedKey,
+                expectedCancellationToken))
+            .Returns(default(ValueTask));
+
+        // Act
+        await this._delegatingStore.DeleteSessionAsync(
+            this._agentMock.Object,
+            expectedKey,
+            expectedCancellationToken);
+
+        // Assert
+        this._innerStoreMock.Verify(
+            x => x.DeleteSessionAsync(
+                this._agentMock.Object,
+                expectedKey,
+                expectedCancellationToken),
+            Times.Once);
+    }
+
     #endregion
 
     #region Test Implementation

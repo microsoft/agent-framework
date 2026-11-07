@@ -126,14 +126,59 @@ async def test_injected_client_bypasses_settings_and_remains_borrowed(connector_
         {"env_file_encoding": "utf-16"},
     ],
 )
-def test_injected_client_rejects_connection_settings(connector_factory, settings):
+async def test_injected_client_ignores_connection_settings(connector_factory, settings):
     client = _client_mock()
     with (
         patch("agent_framework_mongodb._vector_store.load_settings") as loader,
-        pytest.raises(ValueError, match="async_client cannot be combined"),
+        patch("agent_framework_mongodb._vector_store.AsyncMongoClient") as factory,
     ):
-        connector_factory(async_client=client, database_name="vectors", **settings)
+        async with connector_factory(async_client=client, database_name="vectors", **settings) as connector:
+            assert connector.async_client is client
+            assert connector.database_name == "vectors"
     loader.assert_not_called()
+    factory.assert_not_called()
+    client.get_database.assert_called_once_with("vectors")
+    client.close.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("database_name", "expected_database_name"),
+    [(None, "environment_db"), ("explicit_db", "explicit_db")],
+)
+async def test_injected_client_database_name_precedence(
+    connector_factory, monkeypatch, tmp_path, database_name, expected_database_name
+):
+    monkeypatch.setenv("MONGODB_URI", "not-a-mongodb-uri")
+    monkeypatch.setenv("MONGODB_APP_NAME", "")
+    monkeypatch.setenv("MONGODB_DATABASE_NAME", "environment_db")
+    env_file = tmp_path / "mongodb.env"
+    env_file.write_text("MONGODB_DATABASE_NAME=file_db\n")
+    client = _client_mock()
+    with patch("agent_framework_mongodb._vector_store.AsyncMongoClient") as factory:
+        async with connector_factory(
+            async_client=client,
+            database_name=database_name,
+            uri="not-a-mongodb-uri",
+            app_name="",
+            env_file_path=str(env_file),
+            env_file_encoding="invalid-encoding",
+        ) as connector:
+            assert connector.async_client is client
+            assert connector.database_name == expected_database_name
+    factory.assert_not_called()
+    client.get_database.assert_called_once_with(expected_database_name)
+    client.close.assert_not_awaited()
+
+
+def test_injected_client_requires_database_name(connector_factory):
+    client = _client_mock()
+    with (
+        patch("agent_framework_mongodb._vector_store.AsyncMongoClient") as factory,
+        pytest.raises(ValueError, match="database_name"),
+    ):
+        connector_factory(async_client=client)
+    factory.assert_not_called()
+    client.get_database.assert_not_called()
 
 
 def test_store_collections_reuse_resolved_client_without_settings(definition):

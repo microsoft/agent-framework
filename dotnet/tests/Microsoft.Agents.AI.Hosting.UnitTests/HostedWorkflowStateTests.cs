@@ -10,6 +10,7 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Moq;
+using Shared.UnitTests;
 
 namespace Microsoft.Agents.AI.Hosting.UnitTests;
 

@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -207,7 +208,7 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         "requests; the container's root filesystem is read-only and paths outside it may be cleared between " +
         $"requests. Use {nameof(FileSystemAgentSessionStore)}.{nameof(CreateDefault)}() (which targets that " +
         $"directory), construct the store with a path under it, or register a different {nameof(AgentSessionStore)} " +
-        $"(for example {nameof(InMemoryAgentSessionStore)}) via AddFoundryResponses(agent, agentSessionStore).";
+        $"(for example {nameof(InMemoryAgentSessionStore)}) via builder.AddFoundryResponses(agent, agentSessionStore).";
 
     /// <inheritdoc/>
     public override async ValueTask<AgentSession?> GetSessionAsync(
@@ -234,6 +235,27 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         using JsonDocument document = JsonDocument.Parse(bytes);
         JsonElement element = document.RootElement.Clone();
         return await agent.DeserializeSessionAsync(element, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public override ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(agent);
+        _ = Throw.IfNull(key);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        string path = this.GetSessionPath(agent, key);
+
+        // No directory for this agent means nothing was ever stored.
+        if (Directory.Exists(Path.GetDirectoryName(path)))
+        {
+            File.Delete(path);
+        }
+
+        return default;
     }
 
     private string GetSessionPath(AIAgent agent, AgentSessionStoreKey key)

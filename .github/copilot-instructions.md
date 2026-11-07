@@ -7,6 +7,19 @@ Microsoft Agent Framework - a multi-language framework for building, orchestrati
 - `python/` - Python implementation → see [python/AGENTS.md](../python/AGENTS.md)
 - `dotnet/` - C#/.NET implementation → see [dotnet/AGENTS.md](../dotnet/AGENTS.md)
 - `docs/` - Design documents and architectural decision records
+- `skills/` - Public, installable Agent Skills for developers using Agent Framework
+
+## Public Consumer Skills
+
+The skills under `skills/` are distribution artifacts for developers building Agent Framework applications. They are
+not project skills for contributors working in this repository:
+
+- Do not load or invoke them as instructions for normal Agent Framework repository work.
+- Keep them outside `.github/skills`, `.agents/skills`, and `.claude/skills` so coding agents do not auto-discover them.
+- When a change affects public APIs, packages, samples, configuration, evaluation, integrations, or hosting guidance,
+  review and update the corresponding consumer skill as maintained product documentation.
+- Read a consumer skill during repository work only when that maintenance check is relevant; do not let its standalone
+  application defaults override repository-specific instructions.
 
 ## Architectural Decision Records (ADRs)
 

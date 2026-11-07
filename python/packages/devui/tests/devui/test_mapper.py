@@ -122,6 +122,30 @@ async def test_text_content_mapping(mapper: MessageMapper, test_request: AgentFr
     assert events[2].delta == "Hello, clean test!"
 
 
+@pytest.mark.parametrize(("reasoning_text", "expected_delta"), [(None, ""), ("", ""), ("Thinking...", "Thinking...")])
+async def test_reasoning_content_mapping_handles_missing_text(
+    mapper: MessageMapper,
+    test_request: AgentFrameworkRequest,
+    caplog: pytest.LogCaptureFixture,
+    reasoning_text: str | None,
+    expected_delta: str,
+) -> None:
+    """Missing reasoning text must not emit an error or discard the following answer."""
+    update = create_test_agent_update([
+        Content.from_text_reasoning(text=reasoning_text),
+        Content.from_text(text="Final answer."),
+    ])
+
+    events = await mapper.convert_event(update, test_request)
+
+    assert all(event.type != "error" for event in events)
+    reasoning_events = [event for event in events if event.type == "response.reasoning_text.delta"]
+    assert len(reasoning_events) == 1
+    assert reasoning_events[0].delta == expected_delta
+    assert any(event.type == "response.output_text.delta" and event.delta == "Final answer." for event in events)
+    assert "Error converting agent update" not in caplog.text
+
+
 async def test_marked_refusal_text_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     content = Content.from_text(
         "I cannot help.",
@@ -1179,3 +1203,34 @@ async def test_superstep_completed_event(mapper: MessageMapper, test_request: Ag
     # superstep_completed event (type='superstep_completed') may not emit events (internal workflow signal)
     # Just ensure it doesn't crash
     assert isinstance(events, list)
+
+
+# =============================================================================
+# Reasoning Content Tests
+# =============================================================================
+
+
+async def test_map_reasoning_content_with_none_text(mapper: MessageMapper) -> None:
+    """Test that TextReasoningContent with None text falls back to empty string without raising validation error."""
+    from unittest.mock import MagicMock
+
+    context = {"item_id": "item-1", "output_index": 0, "content_index": 0, "sequence_counter": 0}
+    content = MagicMock()
+    content.text = None
+
+    event = await mapper._map_reasoning_content(content, context)
+    assert event.type == "response.reasoning_text.delta"
+    assert event.delta == ""
+
+
+async def test_map_reasoning_content_with_valid_text(mapper: MessageMapper) -> None:
+    """Test that TextReasoningContent with valid text maps delta properly."""
+    from unittest.mock import MagicMock
+
+    context = {"item_id": "item-1", "output_index": 0, "content_index": 0, "sequence_counter": 0}
+    content = MagicMock()
+    content.text = "Thinking through the steps..."
+
+    event = await mapper._map_reasoning_content(content, context)
+    assert event.type == "response.reasoning_text.delta"
+    assert event.delta == "Thinking through the steps..."

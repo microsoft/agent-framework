@@ -103,7 +103,7 @@ class DeploymentManager:
 
                     # Get event from queue with short timeout
                     yield await asyncio.wait_for(event_queue.get(), timeout=0.1)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # No event in queue, continue waiting
                     continue
 
@@ -505,7 +505,7 @@ CMD ["devui", "/app/entity", "--mode", "{config.ui_mode}", "--host", "0.0.0.0", 
                 error_output = "\n".join(output_lines[-10:])  # Last 10 lines for context
                 raise ValueError(f"Azure deployment failed:\n{error_output}")
 
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             process.kill()
             raise ValueError(
                 "Azure deployment timed out after 10 minutes. Please check Azure portal for status."

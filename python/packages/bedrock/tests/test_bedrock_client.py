@@ -78,6 +78,20 @@ def test_agent_accepts_bedrock_chat_client() -> None:
     assert agent.client is client
 
 
+@pytest.mark.parametrize("injected", [False, True])
+async def test_bedrock_client_context_ownership(injected: bool) -> None:
+    runtime = MagicMock(spec=BaseClient)
+    session = MagicMock(spec=Boto3Session)
+    session.region_name = "us-west-2"
+    session.client.return_value = runtime
+    client = BedrockChatClient(model="test-model", boto3_session=session, client=runtime if injected else None)
+    async with client as entered:
+        assert entered is client
+        runtime.close.assert_not_called()
+    await client.close()
+    assert runtime.close.call_count == (0 if injected else 1)
+
+
 async def test_get_response_invokes_bedrock_runtime() -> None:
     stub = _StubBedrockRuntime()
     client = BedrockChatClient(
@@ -101,6 +115,71 @@ async def test_get_response_invokes_bedrock_runtime() -> None:
     assert payload["messages"][0]["content"][0]["text"] == "hello"
     assert response.messages[0].contents[0].text == "Bedrock says hi"
     assert response.usage_details and response.usage_details["input_token_count"] == 10
+
+
+class _StubConverseWithoutModelId(_StubBedrockRuntime):
+    """Returns the real Converse response shape, which does not echo the model id."""
+
+    def converse(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        return {
+            "output": {"message": {"role": "assistant", "content": [{"text": "hi"}]}},
+            "stopReason": "end_turn",
+            "usage": {"inputTokens": 3, "outputTokens": 1, "totalTokens": 4},
+        }
+
+
+@pytest.mark.parametrize("client_model", ["amazon.titan-text", None])
+async def test_get_response_reports_the_requested_model(client_model: str | None) -> None:
+    """A per-call model override must be the model reported on the response, like the streaming path."""
+    stub = _StubConverseWithoutModelId()
+    client = BedrockChatClient(
+        model=client_model,
+        region="us-west-2",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+
+    response = await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text(text="hello")])],
+        options={"model": "us.openai.gpt-6-sol"},
+    )
+
+    assert stub.calls[0]["modelId"] == "us.openai.gpt-6-sol"
+    assert response.model == "us.openai.gpt-6-sol"
+
+
+class _StubConverseAndStreamWithoutModelId(_StubConverseWithoutModelId):
+    def converse_stream(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        events: list[dict[str, Any]] = [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockDelta": {"delta": {"text": "hi"}, "contentBlockIndex": 0}},
+            {"contentBlockStop": {"contentBlockIndex": 0}},
+            {"messageStop": {"stopReason": "end_turn"}},
+        ]
+        return {"stream": _StubEventStream(events)}
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_streaming_and_non_streaming_report_the_same_model(stream: bool) -> None:
+    """Both paths must report the per-call model override, not the client default."""
+    stub = _StubConverseAndStreamWithoutModelId()
+    client = BedrockChatClient(
+        model="amazon.titan-text",
+        region="us-west-2",
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
+    )
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    if stream:
+        response_stream = client.get_response(messages=messages, options={"model": "us.openai.gpt-6-sol"}, stream=True)
+        response = await response_stream.get_final_response()
+    else:
+        response = await client.get_response(messages=messages, options={"model": "us.openai.gpt-6-sol"})
+
+    assert stub.calls[0]["modelId"] == "us.openai.gpt-6-sol"
+    assert response.text == "hi"
+    assert response.model == "us.openai.gpt-6-sol"
 
 
 async def test_stream_yields_updates_as_converse_stream_events_arrive() -> None:
@@ -589,11 +668,12 @@ def test_init_uses_boto3_session_when_runtime_client_not_supplied() -> None:
     ("region", "env_region", "session_region", "expected_region"),
     [
         (None, None, "eu-west-1", "eu-west-1"),
-        ("us-west-2", None, "eu-west-1", "us-west-2"),
-        (None, "ap-south-1", "eu-west-1", "ap-south-1"),
+        ("us-west-2", "ap-south-1", "eu-west-1", "us-west-2"),
+        (None, "ap-south-1", "eu-west-1", "eu-west-1"),
+        (None, "ap-south-1", None, "ap-south-1"),
         (None, None, None, "us-east-1"),
     ],
-    ids=["session-region", "region-argument-wins", "env-region-wins", "default-region"],
+    ids=["session-region", "region-argument-wins", "session-region-beats-env", "env-region", "default-region"],
 )
 def test_init_resolves_region_with_boto3_session(
     monkeypatch: pytest.MonkeyPatch,
@@ -602,7 +682,7 @@ def test_init_resolves_region_with_boto3_session(
     session_region: str | None,
     expected_region: str,
 ) -> None:
-    """A configured region wins, then the provided session's region, then the default region."""
+    """The region argument wins, then the provided session's region, then BEDROCK_REGION, then the default."""
     if env_region:
         monkeypatch.setenv("BEDROCK_REGION", env_region)
     else:
@@ -630,6 +710,18 @@ def test_init_ignores_boto3_session_region_when_runtime_client_supplied(monkeypa
     assert session.calls == []
     assert client.region == "us-east-1"
     assert client.service_url() == "https://bedrock-runtime.us-east-1.amazonaws.com"
+
+
+def test_init_reports_region_of_supplied_runtime_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A preconfigured runtime client defines the region, so BEDROCK_REGION should not change it."""
+    monkeypatch.setenv("BEDROCK_REGION", "ap-south-1")
+    runtime = _StubBedrockRuntime()
+    setattr(runtime, "meta", MagicMock(region_name="eu-west-1"))  # noqa: B010
+
+    client = BedrockChatClient(model="amazon.titan-text", client=cast(BaseClient, runtime))
+
+    assert client.region == "eu-west-1"
+    assert client.service_url() == "https://bedrock-runtime.eu-west-1.amazonaws.com"
 
 
 @pytest.mark.parametrize("secret_type", [str, SecretString], ids=["str", "secret"])
@@ -944,6 +1036,188 @@ def test_align_tool_results_handles_pending_edge_cases() -> None:
     assert aligned[2]["toolResult"]["toolUseId"] == "call-1"
     assert len(aligned) == 3
     assert unmatched == []
+
+
+def test_prepare_bedrock_messages_preserves_separate_parallel_tool_results() -> None:
+    """Parallel tool results arriving as separate tool messages must not be lost."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="c1", name="tool_a", arguments='{"arg": "value1"}'),
+                Content.from_function_call(call_id="c2", name="tool_b", arguments='{"arg": "value2"}'),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c2", result="result2")]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    # Should have assistant message with toolUse blocks and one user message with both toolResult blocks
+    assert len(conversation) == 2
+    assert conversation[0]["role"] == "assistant"
+    assert len(conversation[0]["content"]) == 2
+    assert conversation[0]["content"][0]["toolUse"]["toolUseId"] == "c1"
+    assert conversation[0]["content"][1]["toolUse"]["toolUseId"] == "c2"
+
+    assert conversation[1]["role"] == "user"
+    assert len(conversation[1]["content"]) == 2
+    assert conversation[1]["content"][0]["toolResult"]["toolUseId"] == "c1"
+    assert conversation[1]["content"][1]["toolResult"]["toolUseId"] == "c2"
+
+
+def test_prepare_bedrock_messages_rejects_duplicate_and_unknown_tool_results() -> None:
+    """Duplicate tool results must be deduplicated; unknown IDs must be rejected."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="c1", name="tool_a", arguments="{}")],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="unknown-id", result="result2")]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    # Should have assistant message and one user message with a single toolResult (c1)
+    assert len(conversation) == 2
+    assert conversation[0]["role"] == "assistant"
+    assert conversation[1]["role"] == "user"
+    assert len(conversation[1]["content"]) == 1
+    assert conversation[1]["content"][0]["toolResult"]["toolUseId"] == "c1"
+
+
+def test_prepare_bedrock_messages_handles_single_tool_call() -> None:
+    """Single tool calls must continue working correctly."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="c1", name="tool_a", arguments="{}")],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert len(conversation) == 2
+    assert conversation[0]["role"] == "assistant"
+    assert conversation[1]["role"] == "user"
+    assert len(conversation[1]["content"]) == 1
+    assert conversation[1]["content"][0]["toolResult"]["toolUseId"] == "c1"
+
+
+def test_prepare_bedrock_messages_handles_parallel_results_in_one_message() -> None:
+    """Parallel tool results in a single tool message must continue working."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+                Content.from_function_call(call_id="c2", name="tool_b", arguments="{}"),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="c1", result="result1"),
+                Content.from_function_result(call_id="c2", result="result2"),
+            ],
+        ),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert len(conversation) == 2
+    assert conversation[0]["role"] == "assistant"
+    assert conversation[1]["role"] == "user"
+    assert len(conversation[1]["content"]) == 2
+    assert conversation[1]["content"][0]["toolResult"]["toolUseId"] == "c1"
+    assert conversation[1]["content"][1]["toolResult"]["toolUseId"] == "c2"
+
+
+def test_prepare_bedrock_messages_handles_three_parallel_separate_results() -> None:
+    """Three or more parallel tool calls with separate results must all be preserved."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+                Content.from_function_call(call_id="c2", name="tool_b", arguments="{}"),
+                Content.from_function_call(call_id="c3", name="tool_c", arguments="{}"),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c2", result="result2")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c3", result="result3")]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert len(conversation) == 2
+    assert conversation[0]["role"] == "assistant"
+    assert conversation[1]["role"] == "user"
+    assert len(conversation[1]["content"]) == 3
+    assert conversation[1]["content"][0]["toolResult"]["toolUseId"] == "c1"
+    assert conversation[1]["content"][1]["toolResult"]["toolUseId"] == "c2"
+    assert conversation[1]["content"][2]["toolResult"]["toolUseId"] == "c3"
+
+
+def test_prepare_bedrock_messages_does_not_merge_unrelated_messages() -> None:
+    """Tool results followed by another assistant message must not merge incorrectly."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+                Content.from_function_call(call_id="c2", name="tool_b", arguments="{}"),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c2", result="result2")]),
+        Message(role="assistant", contents=[Content.from_text(text="next response")]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    # Should have: assistant (toolUse), user (toolResult), assistant (text)
+    assert len(conversation) == 3
+    assert conversation[0]["role"] == "assistant"
+    assert conversation[1]["role"] == "user"
+    assert conversation[2]["role"] == "assistant"
+    assert len(conversation[1]["content"]) == 2
+
+
+def test_prepare_bedrock_messages_does_not_invent_missing_results() -> None:
+    """Missing tool results must not be fabricated."""
+    client = _make_client()
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+                Content.from_function_call(call_id="c2", name="tool_b", arguments="{}"),
+            ],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="result1")]),
+        # c2 result is missing
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert len(conversation) == 2
+    assert conversation[0]["role"] == "assistant"
+    assert conversation[1]["role"] == "user"
+    # Only c1 result should be present
+    assert len(conversation[1]["content"]) == 1
+    assert conversation[1]["content"][0]["toolResult"]["toolUseId"] == "c1"
 
 
 def test_convert_content_to_bedrock_block_handles_errors_and_missing_items() -> None:

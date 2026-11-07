@@ -451,11 +451,29 @@ class TestFlowState:
             {"id": "call_2", "function": {"name": "tool2"}},
             {"id": "call_3", "function": {"name": "tool3"}},
         ]
+        flow.tool_calls_by_id = {tc["id"]: tc for tc in flow.pending_tool_calls}
         flow.tool_calls_ended = {"call_1", "call_3"}
 
         result = flow.get_pending_without_end()
         assert len(result) == 1
         assert result[0]["id"] == "call_2"
+
+    def test_get_pending_without_end_counts_a_reused_id_once(self):
+        """An earlier, ended occurrence must not become endable again when its id is reused."""
+        flow = FlowState()
+        flow.pending_tool_calls = [
+            {"id": "call_x", "function": {"name": "tool"}},
+            {"id": "call_x", "function": {"name": "tool"}},
+        ]
+        flow.tool_calls_by_id = {"call_x": flow.pending_tool_calls[-1]}
+        flow.tool_calls_ended = {"call_x"}
+
+        assert flow.get_pending_without_end() == []
+
+        flow.tool_calls_ended.discard("call_x")
+        result = flow.get_pending_without_end()
+        assert len(result) == 1
+        assert result[0]["id"] == "call_x"
 
 
 class TestNormalizeResponseStream:
@@ -756,6 +774,23 @@ def test_emit_text_rebases_delta_annotation_spans_and_deduplicates_full_replay()
     ]
     assert annotation["annotated_regions"] == [{"type": "text_span", "start_index": 0, "end_index": 6}]
     assert replay_events == []
+
+
+def test_emit_text_does_not_rebase_source_coordinate_annotation_spans() -> None:
+    """Source-document locations remain independent of accumulated response text."""
+    flow = FlowState()
+    annotation = Annotation(
+        type="citation",
+        url="https://example.com/source",
+        annotated_regions=[{"type": "text_span", "start_index": 2, "end_index": 5}],
+        annotated_regions_coordinate_space="source",
+    )
+    _emit_text(Content.from_text("Prefix "), flow)
+
+    events = _emit_text(Content.from_text("target", annotations=[annotation]), flow)
+
+    citation_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert citation_event.value["annotations"][0] == annotation
 
 
 def test_emit_text_preserves_annotation_only_spans() -> None:

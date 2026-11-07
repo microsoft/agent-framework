@@ -28,6 +28,7 @@ from contextvars import ContextVar, Token
 from copy import copy, deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from difflib import get_close_matches
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, NoReturn, cast
 from weakref import WeakKeyDictionary
@@ -35,12 +36,19 @@ from weakref import WeakKeyDictionary
 from pydantic import BaseModel, Field
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareFailure, MiddlewareTermination
+from ._middleware import (
+    _ACTIVE_FUNCTION_MIDDLEWARE_CONTEXT,  # pyright: ignore[reportPrivateUsage]
+    FunctionInvocationContext,
+    FunctionMiddleware,
+    MiddlewareFailure,
+    MiddlewareTermination,
+)
 from ._serialization import SerializationMixin
 from ._sessions import AgentSession, ContextProvider
 from ._tools import (
     _APPROVAL_REQUEST_ID_KEY,  # pyright: ignore[reportPrivateUsage]
     _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+    _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     FunctionTool,
     _argument_authority_token,  # pyright: ignore[reportPrivateUsage]
@@ -104,6 +112,23 @@ _INTERNAL_SECURITY_TOOL_MARKER = object()
 # with the content and break the lookup.
 _VARIABLE_ID_CONSUMERS = frozenset({"inspect_variable", "quarantined_llm"})
 _REWRITTEN_ARGUMENT_INDICES_KEY = "_rewritten_argument_indices"
+_SECURITY_POLICY_ERRORS_CONTEXT_KEY = "_agent_framework_core_security_policy_errors"
+_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY = "_agent_framework_core_security_arguments_materialized"
+_SECURITY_ARGUMENTS_REQUIRE_MATERIALIZATION_CONTEXT_KEY = (
+    "_agent_framework_core_security_arguments_require_materialization"
+)
+_SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY = "_agent_framework_core_security_materialized_authority"
+_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY = "_agent_framework_core_security_resolved_authority"
+_TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY = "accepts_untrusted"
+_TOOL_POLICY_CONFIDENTIALITY_KEY = "confidentiality"
+_TOOL_POLICY_MAX_ALLOWED_CONFIDENTIALITY_KEY = "max_allowed_confidentiality"
+_TOOL_POLICY_SOURCE_INTEGRITY_KEY = "source_integrity"
+_TOOL_SECURITY_POLICY_KEYS = frozenset({
+    _TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY,
+    _TOOL_POLICY_CONFIDENTIALITY_KEY,
+    _TOOL_POLICY_MAX_ALLOWED_CONFIDENTIALITY_KEY,
+    _TOOL_POLICY_SOURCE_INTEGRITY_KEY,
+})
 
 
 def _get_additional_properties(obj: Any) -> dict[str, Any]:
@@ -112,32 +137,35 @@ def _get_additional_properties(obj: Any) -> dict[str, Any]:
     return cast(dict[str, Any], props) if isinstance(props, dict) else {}
 
 
-def _top_level_argument_value(context: FunctionInvocationContext, arg_name: str) -> tuple[Any, str | None]:
-    """Locate a top-level argument value in either context.arguments or context.kwargs.
+def _top_level_argument_value(
+    arguments: Any,
+    kwargs: Mapping[str, Any],
+    arg_name: str,
+) -> tuple[Any, str | None]:
+    """Locate a top-level argument value in either arguments or runtime kwargs.
 
     Returns the value and a string indicating its source ('arguments' or 'kwargs'),
     or (None, None) if not found.
     """
-    args = cast(Any, context.arguments)
-    if isinstance(args, Mapping) and arg_name in args:
-        return cast(Any, args[arg_name]), "arguments"
+    args = cast(object, arguments)
+    if isinstance(args, Mapping):
+        args_mapping = cast(Mapping[str, Any], args)
+        if arg_name in args_mapping:
+            return args_mapping[arg_name], "arguments"
 
-    kwargs = cast(Any, context.kwargs)
-    if isinstance(kwargs, Mapping) and arg_name in kwargs:
-        return cast(Any, kwargs[arg_name]), "kwargs"
+    if arg_name in kwargs:
+        return kwargs[arg_name], "kwargs"
 
     return None, None
 
 
-def _top_level_argument_keys(context: FunctionInvocationContext) -> set[str]:
-    """Union of top level keys in context.arguments and context.kwargs."""
+def _top_level_argument_keys(arguments: Any, kwargs: Mapping[str, Any]) -> set[str]:
+    """Return the union of top-level argument and runtime-kwarg keys."""
     keys: set[str] = set()
-    args = cast(Any, context.arguments)
+    args = cast(object, arguments)
     if isinstance(args, Mapping):
         keys.update(cast(Mapping[str, Any], args).keys())
-    kwargs = cast(Any, context.kwargs)
-    if isinstance(kwargs, Mapping):
-        keys.update(cast(Mapping[str, Any], kwargs).keys())
+    keys.update(kwargs.keys())
     return keys
 
 
@@ -414,6 +442,113 @@ def combine_labels(*labels: ContentLabel) -> ContentLabel:
 
     return ContentLabel(
         integrity=integrity, confidentiality=confidentiality, metadata=merged_metadata if merged_metadata else None
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _ToolSecurityPolicy:
+    """Parsed FIDES tool metadata used consistently by tracking and enforcement."""
+
+    source_integrity: IntegrityLabel | None
+    confidentiality: ConfidentialityLabel
+    max_allowed_confidentiality: ConfidentialityLabel | None
+    accepts_untrusted: bool
+    principal_state: str
+    principals: tuple[_Principal, ...] | None
+    internal_security_tool: bool
+    errors: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SecurityInvocationAuthority:
+    """Exact security authority inspected for one function invocation."""
+
+    function: FunctionTool
+    tool_policy: _ToolSecurityPolicy
+    session: AgentSession | None
+    security_scope: _SecurityScope
+    arguments_token: Any
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedInvocationArguments:
+    """Detached variable expansion used for policy preflight and later materialization."""
+
+    arguments: Any
+    kwargs: dict[str, Any]
+    labels: tuple[ContentLabel, ...]
+    rewritten_arguments: dict[str, set[int]]
+    authority_token: _SecurityInvocationAuthority
+
+
+def _parse_tool_security_policy(
+    function: FunctionTool,
+    *,
+    default_confidentiality: ConfidentialityLabel = ConfidentialityLabel.PUBLIC,
+) -> _ToolSecurityPolicy:
+    """Parse FIDES metadata without silently accepting unknown values."""
+    props = _get_additional_properties(function)
+    errors: list[str] = []
+    for key in props:
+        if not isinstance(key, str) or key in _TOOL_SECURITY_POLICY_KEYS:
+            continue
+        matches = get_close_matches(key.casefold(), sorted(_TOOL_SECURITY_POLICY_KEYS), n=1, cutoff=0.9)
+        if matches:
+            errors.append(f"unknown FIDES policy key {key!r}; did you mean {matches[0]!r}?")
+
+    def parse_enum(
+        key: str,
+        enum_type: type[IntegrityLabel] | type[ConfidentialityLabel],
+    ) -> IntegrityLabel | ConfidentialityLabel | None:
+        if key not in props:
+            return None
+        raw_value = props[key]
+        if not isinstance(raw_value, str):
+            errors.append(f"{key} must be a string")
+            return None
+        try:
+            return enum_type(raw_value)
+        except ValueError:
+            errors.append(f"{key} has unknown value {raw_value!r}")
+            return None
+
+    source_integrity = parse_enum(_TOOL_POLICY_SOURCE_INTEGRITY_KEY, IntegrityLabel)
+    confidentiality = parse_enum(_TOOL_POLICY_CONFIDENTIALITY_KEY, ConfidentialityLabel)
+    max_allowed_confidentiality = parse_enum(
+        _TOOL_POLICY_MAX_ALLOWED_CONFIDENTIALITY_KEY,
+        ConfidentialityLabel,
+    )
+
+    accepts_untrusted = False
+    if _TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY in props:
+        accepts_untrusted_raw = props[_TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY]
+        if type(accepts_untrusted_raw) is bool:
+            accepts_untrusted = accepts_untrusted_raw
+        else:
+            errors.append(f"{_TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY} must be a boolean")
+
+    principal_state = "absent"
+    principals: tuple[_Principal, ...] | None = None
+    if PRINCIPAL_METADATA_KEY in props:
+        try:
+            principals = _canonical_principals(
+                props[PRINCIPAL_METADATA_KEY],
+                source=f"tool {function.name}",
+            )
+        except ValueError:
+            principal_state = "invalid"
+        else:
+            principal_state = "valid"
+
+    return _ToolSecurityPolicy(
+        source_integrity=cast(IntegrityLabel | None, source_integrity),
+        confidentiality=cast(ConfidentialityLabel | None, confidentiality) or default_confidentiality,
+        max_allowed_confidentiality=cast(ConfidentialityLabel | None, max_allowed_confidentiality),
+        accepts_untrusted=accepts_untrusted,
+        principal_state=principal_state,
+        principals=principals,
+        internal_security_tool=props.get(_INTERNAL_SECURITY_TOOL) is _INTERNAL_SECURITY_TOOL_MARKER,
+        errors=tuple(errors),
     )
 
 
@@ -885,8 +1020,32 @@ def _strict_json_value(
         if not math.isfinite(value):
             raise ValueError(f"{path} contains a non-finite float")
         return value
+    if canonical and type(value) is bytes:
+        return ["bytes", value.hex()]
     if canonical and isinstance(value, AgentSession):
         return ["agent_session", value.session_id]
+    if canonical and isinstance(value, VariableReferenceContent):
+        return [
+            "variable_reference",
+            _strict_json_value(
+                value.to_dict(),
+                path=path,
+                canonical=True,
+                active_container_ids=active_container_ids,
+            ),
+        ]
+    if canonical and isinstance(value, BaseModel):
+        value_type = type(value)
+        return [
+            "pydantic",
+            f"{value_type.__module__}.{value_type.__qualname__}",
+            _strict_json_value(
+                value.model_dump(exclude_unset=True),
+                path=path,
+                canonical=True,
+                active_container_ids=active_container_ids,
+            ),
+        ]
     if allow_content and isinstance(value, Content):
         return _strict_json_value(
             value.to_dict(),
@@ -956,6 +1115,57 @@ def _strict_json_value(
     raise TypeError(f"{path} contains unsupported type {type(value).__name__}")
 
 
+def _security_invocation_authority_token(
+    function: FunctionTool,
+    *,
+    tool_policy: _ToolSecurityPolicy,
+    session: AgentSession | None,
+    security_scope: _SecurityScope,
+    source_arguments: Any,
+    source_kwargs: Mapping[str, Any],
+    resolved_arguments: Any,
+    resolved_kwargs: Mapping[str, Any],
+    labels: Sequence[ContentLabel],
+) -> _SecurityInvocationAuthority:
+    """Bind inspected references, resolved values, and policy labels without validators."""
+    arguments_token = _argument_authority_token(
+        {
+            "name": function.name,
+            "source_arguments": source_arguments,
+            "source_kwargs": dict(source_kwargs),
+            "resolved_arguments": resolved_arguments,
+            "resolved_kwargs": dict(resolved_kwargs),
+            "labels": [label.to_dict() for label in labels],
+        },
+        boundary="security policy",
+    )
+    return _SecurityInvocationAuthority(
+        function=function,
+        tool_policy=tool_policy,
+        session=session,
+        security_scope=security_scope,
+        arguments_token=arguments_token,
+    )
+
+
+def _bindable_runtime_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize runtime kwargs using the same canonical identities as approval binding."""
+    bindable: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        try:
+            bindable[key] = _strict_json_value(
+                value,
+                path=f"security policy runtime kwarg {key!r}",
+                canonical=True,
+            )
+        except (RecursionError, TypeError, ValueError) as exc:
+            raise MiddlewareFailure(
+                "Cannot safely bind security policy to opaque runtime authority. "
+                "Use JSON-native values, bytes, or a supported framework identity."
+            ) from exc
+    return bindable
+
+
 def _durable_state_snapshot(
     value: Any,
     *,
@@ -1022,7 +1232,7 @@ def _durable_state_snapshot(
 def _encode_durable_state(value: Any, *, path: str, allow_content: bool = False) -> str:
     """Encode user-controlled state so AgentSession cannot reinterpret type discriminators."""
     snapshot = _durable_state_snapshot(value, path=path, allow_content=allow_content)
-    return json.dumps(snapshot, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    return json.dumps(snapshot, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
 
 
 def _decode_durable_state(value: Any, *, path: str) -> Any:
@@ -1379,6 +1589,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         self.auto_hide_untrusted = auto_hide_untrusted
         self.hide_threshold = hide_threshold
         self._standing_guidance_cache: WeakKeyDictionary[Any, tuple[str, ...]] = WeakKeyDictionary()
+        self._quarantine_client_bound = False
+        self._quarantine_client_override: SupportsChatGetResponse | None = None
         self._initialize_security_scope(security_scope, session_state_key=session_state_key)
 
     def _clone_for_scope(self, scope: _SecurityScope) -> LabelTrackingFunctionMiddleware:
@@ -1458,12 +1670,12 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         rewritten = context.metadata.get(_REWRITTEN_ARGUMENT_INDICES_KEY)
         if not rewritten:
             return
-        final_keys = _top_level_argument_keys(context)
+        final_keys = _top_level_argument_keys(context.arguments, context.kwargs)
         pre_validation_keys = set(cast(dict[str, set[int]], rewritten).keys())
         iterable_keys = final_keys if pre_validation_keys != final_keys else pre_validation_keys
         degraded: dict[str, set[int]] = {}
         for arg_name in iterable_keys:
-            value, _ = _top_level_argument_value(context, arg_name)
+            value, _ = _top_level_argument_value(context.arguments, context.kwargs, arg_name)
             if isinstance(value, (list, tuple)):
                 degraded[arg_name] = set(range(len(cast(Sequence[Any], value))))
             else:
@@ -1665,30 +1877,37 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             )
         return value
 
-    def _expand_variable_references_in_context(self, context: FunctionInvocationContext) -> list[ContentLabel]:
-        """Expand owned references in invocation values and return their stored labels."""
-        if context.function.name in _VARIABLE_ID_CONSUMERS:
-            return []
-
+    def _resolve_invocation_arguments(
+        self,
+        context: FunctionInvocationContext,
+        *,
+        tool_policy: _ToolSecurityPolicy | None = None,
+    ) -> _ResolvedInvocationArguments:
+        """Resolve hidden references into detached values without invoking validators."""
         labels: list[ContentLabel] = []
         active_variables: set[str] = set()
         reference_count = [0]
         rewritten_paths: set[tuple[str | int, ...]] = set()
         kwargs_rewritten_paths: set[tuple[str | int, ...]] = set()
-        if context.arguments:
-            context.arguments = self._resolve_value(
-                context.arguments,
+
+        source_arguments = context.arguments
+        source_kwargs = dict(context.kwargs)
+        arguments = source_arguments
+        kwargs = dict(source_kwargs)
+        if context.function.name not in _VARIABLE_ID_CONSUMERS and arguments:
+            arguments = self._resolve_value(
+                arguments,
                 labels,
                 depth=0,
                 active_variables=active_variables,
                 reference_count=reference_count,
                 rewritten_paths=rewritten_paths,
             )
-        if context.kwargs:
-            context.kwargs = cast(
+        if context.function.name not in _VARIABLE_ID_CONSUMERS and kwargs:
+            kwargs = cast(
                 dict[str, Any],
                 self._resolve_value(
-                    context.kwargs,
+                    kwargs,
                     labels,
                     depth=0,
                     active_variables=active_variables,
@@ -1697,7 +1916,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 ),
             )
 
-        args_mapping = cast(Any, context.arguments)
+        args_mapping = cast(Any, arguments)
         arg_names_in_arguments: set[str] = (
             set(cast(dict[str, Any], args_mapping).keys()) if isinstance(args_mapping, Mapping) else set()
         )
@@ -1714,7 +1933,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             if arg_name not in rewritten_args:
                 rewritten_args[arg_name] = set()
 
-            arg_value, arg_source = _top_level_argument_value(context, arg_name)
+            arg_value, arg_source = _top_level_argument_value(arguments, kwargs, arg_name)
 
             if arg_source is None:
                 rewritten_args[arg_name].add(-1)
@@ -1734,8 +1953,112 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             else:
                 rewritten_args[arg_name].add(-1)
 
-        context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] = rewritten_args
-        return labels
+        source_security_kwargs = _bindable_runtime_kwargs(source_kwargs)
+        security_kwargs = _bindable_runtime_kwargs(kwargs)
+        resolved_tool_policy = tool_policy or _parse_tool_security_policy(
+            context.function,
+            default_confidentiality=self.default_confidentiality,
+        )
+        authority_token = _security_invocation_authority_token(
+            context.function,
+            tool_policy=resolved_tool_policy,
+            session=context.session,
+            security_scope=self._scope,
+            source_arguments=source_arguments,
+            source_kwargs=source_security_kwargs,
+            resolved_arguments=arguments,
+            resolved_kwargs=security_kwargs,
+            labels=labels,
+        )
+        return _ResolvedInvocationArguments(
+            arguments=arguments,
+            kwargs=kwargs,
+            labels=tuple(labels),
+            rewritten_arguments=rewritten_args,
+            authority_token=authority_token,
+        )
+
+    def _ensure_preflight_authority_unchanged(
+        self,
+        context: FunctionInvocationContext,
+    ) -> _ResolvedInvocationArguments:
+        """Reject argument or runtime-kwarg changes after detached security preflight."""
+        resolved = self._resolve_invocation_arguments(context)
+        expected_authority = context.metadata.get(_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY)
+        if expected_authority is None:
+            return resolved
+        if resolved.authority_token != expected_authority:
+            raise MiddlewareFailure(
+                "Function arguments changed after security middleware processed them. "
+                "Install argument-repair middleware before security middleware."
+            )
+        return resolved
+
+    def _materialized_authority_token(self, context: FunctionInvocationContext) -> _SecurityInvocationAuthority:
+        """Bind one fully materialized execution attempt."""
+        tool_policy = _parse_tool_security_policy(
+            context.function,
+            default_confidentiality=self.default_confidentiality,
+        )
+        arguments_token = _argument_authority_token(
+            {
+                "name": context.function.name,
+                "arguments": context.arguments,
+                "kwargs": _bindable_runtime_kwargs(context.kwargs),
+            },
+            boundary="materialized security policy",
+        )
+        return _SecurityInvocationAuthority(
+            function=context.function,
+            tool_policy=tool_policy,
+            session=context.session,
+            security_scope=self._scope,
+            arguments_token=arguments_token,
+        )
+
+    def _materialize_arguments(self, context: FunctionInvocationContext) -> None:
+        """Apply preflighted hidden values and validate only after policy allows the call."""
+        if context.metadata.get(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY) is True:
+            expected_materialized_authority = context.metadata.get(_SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY)
+            if (
+                expected_materialized_authority is not None
+                and self._materialized_authority_token(context) != expected_materialized_authority
+            ):
+                raise MiddlewareFailure(
+                    "Function arguments changed after security middleware processed them. "
+                    "Install argument-repair middleware before security middleware."
+                )
+            return
+
+        policy_errors = context.metadata.get(_SECURITY_POLICY_ERRORS_CONTEXT_KEY)
+        if policy_errors:
+            raise MiddlewareFailure(
+                f"Invalid FIDES policy for tool '{context.function.name}': {'; '.join(policy_errors)}"
+            )
+
+        resolved = self._ensure_preflight_authority_unchanged(context)
+
+        context.arguments = resolved.arguments
+        context.kwargs = resolved.kwargs
+        context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] = resolved.rewritten_arguments
+        context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = _argument_authority_token(
+            context.arguments,
+            boundary="security policy",
+        )
+        if context.metadata.get(_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY) is True:
+            pre_validation_token = _argument_authority_token(context.arguments, boundary="security policy")
+            context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
+                context,
+                context.arguments,
+            )
+            post_validation_token = _argument_authority_token(context.arguments, boundary="security policy")
+            context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = post_validation_token
+            if pre_validation_token != post_validation_token:
+                if context.metadata.get("user_approved_violation") is True:
+                    raise MiddlewareFailure("Function arguments changed during validation after FIDES policy approval.")
+                self._degrade_rewritten_arguments(context)
+        context.metadata[_SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY] = self._materialized_authority_token(context)
+        context.metadata[_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY] = True
 
     def _get_input_labels(self, context: FunctionInvocationContext) -> list[ContentLabel]:
         """Extract security labels from tool input arguments.
@@ -1815,18 +2138,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         Returns:
             IntegrityLabel if declared, None if not declared.
         """
-        function_props = _get_additional_properties(context.function)
-        source_integrity_str = function_props.get("source_integrity", None)
-
-        if source_integrity_str is not None:
-            try:
-                return IntegrityLabel(source_integrity_str)
-            except ValueError:
-                logger.warning(
-                    f"Invalid source_integrity '{source_integrity_str}' for function "
-                    f"'{context.function.name}', ignoring"
-                )
-        return None
+        return _parse_tool_security_policy(
+            context.function,
+            default_confidentiality=self.default_confidentiality,
+        ).source_integrity
 
     # ========== Helper utilities ==========
 
@@ -1891,10 +2206,11 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         context: FunctionInvocationContext,
         call_next: Callable[[], Awaitable[None]],
     ) -> None:
-        """Resolve hidden arguments, publish their labels, and label the result."""
+        """Preflight hidden arguments, publish their labels, and label the result."""
         scope_token = self._activate_security_scope(context)
         middleware_token = _current_middleware.set(self)
         context_token = _current_context.set(context)
+        materialization_token: Token[tuple[Any, Callable[[Any], None], asyncio.Task[Any] | None] | None] | None = None
         try:
             function_name = context.function.name
             if "original_arguments_for_messages" not in context.metadata:
@@ -1905,35 +2221,37 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 context.metadata["security_original_runtime_kwargs"] = dict(context.kwargs)
             else:
                 context.kwargs = dict(cast(dict[str, Any], context.metadata["security_original_runtime_kwargs"]))
+            context.metadata.pop(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY, None)
+            context.metadata.pop(_SECURITY_ARGUMENTS_REQUIRE_MATERIALIZATION_CONTEXT_KEY, None)
+            context.metadata.pop(_SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY, None)
+            context.metadata.pop(_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY, None)
+            context.metadata.pop(_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY, None)
 
+            tool_policy = _parse_tool_security_policy(
+                context.function,
+                default_confidentiality=self.default_confidentiality,
+            )
+            context.metadata[_SECURITY_POLICY_ERRORS_CONTEXT_KEY] = tool_policy.errors
             input_labels = self._get_input_labels(context)
-            declared_source_integrity = self._get_source_integrity(context)
-            confidentiality = self._get_function_confidentiality(context)
+            declared_source_integrity = tool_policy.source_integrity
+            confidentiality = tool_policy.confidentiality
             standing_guidance_snapshot = self._get_standing_guidance(context.function)
 
-            # Expand hidden references before execution and retain their stored labels.
-            resolved_labels = self._expand_variable_references_in_context(context)
-            context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = _argument_authority_token(
-                context.arguments,
-                boundary="security policy",
+            # Resolve into detached values for label and approval preflight only.
+            resolved = self._resolve_invocation_arguments(context, tool_policy=tool_policy)
+            resolved_labels = list(resolved.labels)
+            context.metadata[_REWRITTEN_ARGUMENT_INDICES_KEY] = resolved.rewritten_arguments
+            context.metadata[_SECURITY_ARGUMENTS_REQUIRE_MATERIALIZATION_CONTEXT_KEY] = bool(
+                resolved.rewritten_arguments
             )
-            if context.metadata.get(_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY) is True:
-                pre_validation_token = _argument_authority_token(context.arguments, boundary="security policy")
-                context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
-                    context,
-                    context.arguments,
-                )
-                post_validation_token = _argument_authority_token(context.arguments, boundary="security policy")
-                context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = post_validation_token
-                if pre_validation_token != post_validation_token:
-                    self._degrade_rewritten_arguments(context)
+            context.metadata[_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY] = resolved.authority_token
 
             argument_labels = [*input_labels, *resolved_labels]
             argument_label = combine_labels(*argument_labels) if argument_labels else ContentLabel()
 
             declared_confidentiality_label = ContentLabel(
                 confidentiality=confidentiality,
-                metadata=self._get_function_principal_metadata(context, confidentiality),
+                metadata=self._get_function_principal_metadata(context.function, tool_policy),
             )
             result_policy_label = combine_labels(declared_confidentiality_label, argument_label)
             result_confidentiality = result_policy_label.confidentiality
@@ -1976,11 +2294,25 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             context.metadata["argument_label"] = argument_label
             context.metadata["effective_invocation_label"] = combine_labels(context_label, argument_label)
 
-            await call_next()
+            materialization_token = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.set((
+                context,
+                self._materialize_arguments,
+                asyncio.current_task(),
+            ))
+            try:
+                await call_next()
+            except MiddlewareTermination:
+                if context.metadata.get(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY) is not True:
+                    self._ensure_preflight_authority_unchanged(context)
+                raise
+            if context.metadata.get(_SECURITY_ARGUMENTS_MATERIALIZED_CONTEXT_KEY) is not True:
+                self._ensure_preflight_authority_unchanged(context)
             if isinstance(context.result, Content) and context.result.type == "function_approval_request":
                 return
             self._label_result(context, function_name, fallback_label, standing_guidance_snapshot)
         finally:
+            if materialization_token is not None:
+                _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.reset(materialization_token)
             _current_context.reset(context_token)
             _current_middleware.reset(middleware_token)
             self._active_security_scope.reset(scope_token)
@@ -2083,39 +2415,23 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         Returns:
             The confidentiality label for this function.
         """
-        # Check function's additional_properties for confidentiality setting
-        function_props = _get_additional_properties(context.function)
-        confidentiality_str = function_props.get("confidentiality", None)
-
-        if confidentiality_str:
-            try:
-                return ConfidentialityLabel(confidentiality_str)
-            except ValueError:
-                logger.warning(
-                    f"Invalid confidentiality label '{confidentiality_str}' "
-                    f"for function '{context.function.name}', using default"
-                )
-
-        return self.default_confidentiality
+        return _parse_tool_security_policy(
+            context.function,
+            default_confidentiality=self.default_confidentiality,
+        ).confidentiality
 
     def _get_function_principal_metadata(
         self,
-        context: FunctionInvocationContext,
-        confidentiality: ConfidentialityLabel,
+        function: FunctionTool,
+        tool_policy: _ToolSecurityPolicy,
     ) -> dict[str, Any]:
         """Read a locally declared source principal set."""
-        if confidentiality != ConfidentialityLabel.USER_IDENTITY:
+        if tool_policy.confidentiality != ConfidentialityLabel.USER_IDENTITY:
             return {}
-        function_props = _get_additional_properties(context.function)
-        try:
-            principals = _canonical_principals(
-                function_props.get(PRINCIPAL_METADATA_KEY),
-                source=f"tool {context.function.name}",
-            )
-        except ValueError as exc:
-            logger.warning("Invalid USER_IDENTITY source principals for tool '%s': %s", context.function.name, exc)
+        if tool_policy.principal_state != "valid" or tool_policy.principals is None:
+            logger.warning("Invalid USER_IDENTITY source principals for tool '%s'.", function.name)
             return {}
-        return {PRINCIPAL_METADATA_KEY: _principal_list(principals)}
+        return {PRINCIPAL_METADATA_KEY: _principal_list(tool_policy.principals)}
 
     def _process_result_with_embedded_labels(
         self,
@@ -2531,11 +2847,11 @@ def rewritten_arguments(context: FunctionInvocationContext | None = None) -> dic
         current_snapshot = _argument_authority_token(context.arguments, boundary="security policy")
         if current_snapshot != indices_snapshot:
             rewritten_keys = set(cast(dict[str, set[int]], rewritten).keys())
-            final_keys = _top_level_argument_keys(context)
+            final_keys = _top_level_argument_keys(context.arguments, context.kwargs)
             iterable_keys = final_keys if rewritten_keys != final_keys else rewritten_keys
             result: dict[str, set[int]] = {}
             for arg_name in iterable_keys:
-                value, _ = _top_level_argument_value(context, arg_name)
+                value, _ = _top_level_argument_value(context.arguments, context.kwargs, arg_name)
                 if isinstance(value, (list, tuple)):
                     result[arg_name] = set(range(len(cast(Sequence[Any], value))))
                 else:
@@ -2824,6 +3140,13 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         return dict(context.arguments)
 
     def _resolved_call_signature(self, context: FunctionInvocationContext) -> str:
+        tracker = _current_middleware.get()
+        if tracker is not None:
+            resolved = tracker._resolve_invocation_arguments(context)  # pyright: ignore[reportPrivateUsage]
+            return self._signature_from_parts(
+                context.function.name,
+                {"arguments": resolved.arguments, "kwargs": resolved.kwargs},
+            )
         return self._signature_from_parts(
             context.function.name,
             {"arguments": self._resolved_arguments(context), "kwargs": dict(context.kwargs)},
@@ -2858,10 +3181,12 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         return "/"
 
     def _destination_principal_key(self, context: FunctionInvocationContext) -> str:
-        function_props = _get_additional_properties(context.function)
-        if function_props.get("max_allowed_confidentiality") != ConfidentialityLabel.USER_IDENTITY.value:
+        tool_policy = _parse_tool_security_policy(context.function)
+        if tool_policy.max_allowed_confidentiality != ConfidentialityLabel.USER_IDENTITY:
             return ""
-        return _principal_binding_key(function_props.get(PRINCIPAL_METADATA_KEY), source="approval destination")
+        if tool_policy.principal_state != "valid" or tool_policy.principals is None:
+            raise ValueError("USER_IDENTITY destination principals are missing or invalid")
+        return _principal_binding_key(_principal_list(tool_policy.principals), source="approval destination")
 
     def _session_key(self, context: FunctionInvocationContext) -> str:
         return context.session.session_id if context.session is not None else ""
@@ -3062,6 +3387,44 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         }
         raise MiddlewareTermination("Unsafe policy approval binding")
 
+    def _block_invalid_tool_policy(
+        self,
+        context: FunctionInvocationContext,
+        *,
+        context_label: ContentLabel,
+        errors: Sequence[str],
+    ) -> NoReturn:
+        reason = "; ".join(errors)
+        self._log_violation({
+            "type": "invalid_policy",
+            "function": context.function.name,
+            "context_label": context_label.to_dict(),
+            "turn": context.metadata.get("turn_number", -1),
+            "reason": reason,
+        })
+        context.result = {
+            "error": f"Invalid FIDES tool policy: {reason}",
+            "function": context.function.name,
+            "context_label": context_label.to_dict(),
+            "violation_type": "invalid_policy",
+        }
+        raise MiddlewareTermination("Invalid FIDES tool policy")
+
+    @staticmethod
+    def _ensure_terminal_materialization_boundary(context: FunctionInvocationContext) -> None:
+        """Reject allowed hidden arguments when no terminal pipeline boundary can materialize them."""
+        if context.metadata.get(_SECURITY_ARGUMENTS_REQUIRE_MATERIALIZATION_CONTEXT_KEY) is not True:
+            return
+        active_pipeline = _ACTIVE_FUNCTION_MIDDLEWARE_CONTEXT.get()
+        if (
+            active_pipeline is None
+            or active_pipeline[0] is not context
+            or active_pipeline[1] is not asyncio.current_task()
+        ):
+            raise MiddlewareFailure(
+                "Hidden function arguments require FunctionMiddlewarePipeline for terminal materialization."
+            )
+
     async def process(
         self,
         context: FunctionInvocationContext,
@@ -3100,10 +3463,14 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         argument_label = self._resolve_label(context.metadata.get("argument_label"))
         effective_label = combine_labels(context_label, argument_label)
         context.metadata["effective_invocation_label"] = effective_label
-        function_props = _get_additional_properties(context.function)
-        accepts_untrusted = (
-            function_name in self.allow_untrusted_tools or function_props.get("accepts_untrusted") is True
-        )
+        tool_policy = _parse_tool_security_policy(context.function)
+        if tool_policy.errors:
+            self._block_invalid_tool_policy(
+                context,
+                context_label=context_label,
+                errors=tool_policy.errors,
+            )
+        accepts_untrusted = function_name in self.allow_untrusted_tools or tool_policy.accepts_untrusted
         violations: list[dict[str, Any]] = []
 
         if context_label.integrity == IntegrityLabel.UNTRUSTED and not accepts_untrusted:
@@ -3167,6 +3534,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
             })
 
         if not violations:
+            self._ensure_terminal_materialization_boundary(context)
             await call_next()
             return
         for violation in violations:
@@ -3204,6 +3572,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         else:
             logger.warning("WARNING: Tool '%s' policy violation(s) [%s] (allowed)", function_name, disclosed)
 
+        self._ensure_terminal_materialization_boundary(context)
         await call_next()
 
     @staticmethod
@@ -3254,7 +3623,13 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         Returns:
             Dict with keys: passed (bool), failure_type (str), reason (str).
         """
-        function_props = _get_additional_properties(context.function)
+        tool_policy = _parse_tool_security_policy(context.function)
+        if tool_policy.errors:
+            return {
+                "passed": False,
+                "failure_type": "invalid_policy",
+                "reason": "; ".join(tool_policy.errors),
+            }
 
         conf_hierarchy = {
             ConfidentialityLabel.PUBLIC: 0,
@@ -3265,27 +3640,16 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         # Check max_allowed_confidentiality (output restriction / data exfiltration prevention)
         # Context confidentiality must be <= max allowed level
         # This prevents PRIVATE data from being written to PUBLIC destinations
-        max_allowed_conf = function_props.get("max_allowed_confidentiality", None)
-        if max_allowed_conf is not None:
-            try:
-                max_allowed_level = ConfidentialityLabel(max_allowed_conf)
-                if conf_hierarchy[label.confidentiality] > conf_hierarchy[max_allowed_level]:
-                    return {
-                        "passed": False,
-                        "failure_type": "max_allowed_confidentiality",
-                        "reason": (
-                            f"Cannot write {label.confidentiality.value.upper()} data to "
-                            f"{max_allowed_level.value.upper()} destination (data exfiltration blocked)"
-                        ),
-                    }
-            except ValueError:
-                logger.warning(f"Invalid max_allowed_confidentiality: {max_allowed_conf}")
-                if label.confidentiality == ConfidentialityLabel.USER_IDENTITY:
-                    return {
-                        "passed": False,
-                        "failure_type": "principal_mismatch",
-                        "reason": "USER_IDENTITY destination policy is invalid",
-                    }
+        max_allowed_level = tool_policy.max_allowed_confidentiality
+        if max_allowed_level is not None and conf_hierarchy[label.confidentiality] > conf_hierarchy[max_allowed_level]:
+            return {
+                "passed": False,
+                "failure_type": "max_allowed_confidentiality",
+                "reason": (
+                    f"Cannot write {label.confidentiality.value.upper()} data to "
+                    f"{max_allowed_level.value.upper()} destination (data exfiltration blocked)"
+                ),
+            }
 
         if label.confidentiality == ConfidentialityLabel.USER_IDENTITY:
             try:
@@ -3295,21 +3659,20 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                         source="source label",
                     )
                 )
-                if function_props.get(_INTERNAL_SECURITY_TOOL) is _INTERNAL_SECURITY_TOOL_MARKER:
+                if tool_policy.internal_security_tool:
                     destination_principals = source_principals
                 else:
-                    if max_allowed_conf != ConfidentialityLabel.USER_IDENTITY.value:
+                    if (
+                        max_allowed_level != ConfidentialityLabel.USER_IDENTITY
+                        or tool_policy.principal_state != "valid"
+                        or tool_policy.principals is None
+                    ):
                         return {
                             "passed": False,
                             "failure_type": "principal_mismatch",
                             "reason": "USER_IDENTITY destination does not declare an authorized principal set",
                         }
-                    destination_principals = set(
-                        _canonical_principals(
-                            function_props.get(PRINCIPAL_METADATA_KEY),
-                            source=f"tool {context.function.name}",
-                        )
-                    )
+                    destination_principals = set(tool_policy.principals)
             except ValueError:
                 return {
                     "passed": False,
@@ -3364,15 +3727,11 @@ class SecureAgentConfig(ContextProvider):
         auto_hide_untrusted: Whether to automatically hide untrusted content.
 
     Note:
-        The quarantine chat client is stored per-instance (see ``get_quarantine_client``)
-        but is *also* registered in a single process-global slot via
-        ``set_quarantine_client``. The ``quarantined_llm`` tool always reads that global
-        slot, so the behavior is **last-writer-wins**: when multiple ``SecureAgentConfig``
-        instances are constructed in the same process with different ``quarantine_chat_client``
-        values, the most recently constructed instance's client is the one every agent's
-        ``quarantined_llm`` tool will use. Running multiple instances is supported, but they
-        share this one global quarantine client rather than each using their own. If you need
-        distinct quarantine clients per agent, run them in separate processes.
+        During calls mediated by this config's label-tracking middleware,
+        ``quarantined_llm`` uses this config's ``quarantine_chat_client``.
+        An explicitly missing client cannot inherit one from another config.
+        Direct standalone calls without an active config retain the legacy
+        process-global fallback configured by ``set_quarantine_client``.
 
     Examples:
         .. code-block:: python
@@ -3433,9 +3792,8 @@ class SecureAgentConfig(ContextProvider):
                 If provided, the quarantined_llm tool will make actual isolated LLM calls
                 instead of returning placeholder responses. This client should ideally be
                 a separate instance using a cheaper model (e.g., gpt-4o-mini) since it
-                processes untrusted content. Note: this client is registered in a
-                process-global slot shared by all instances (last-writer-wins); see the
-                class docstring for details on running multiple instances.
+                processes untrusted content. Scoped agent calls use this client;
+                standalone calls retain the legacy process-global fallback.
             source_id: Optional source identifier for context provider attribution.
                 Defaults to "secure_agent".
 
@@ -3492,14 +3850,23 @@ class SecureAgentConfig(ContextProvider):
             raise ValueError("Security provider state must be a dictionary.")
         return _SecurityScope(cast(dict[str, Any], provider_state), scope_id=session.session_id)
 
+    def _bind_quarantine_client_to_stack(self, middleware_stack: list[FunctionMiddleware]) -> list[FunctionMiddleware]:
+        """Bind this config's client to each active tracker, including replacements."""
+        for middleware in middleware_stack:
+            if isinstance(middleware, LabelTrackingFunctionMiddleware):
+                middleware._quarantine_client_bound = True  # pyright: ignore[reportPrivateUsage]
+                middleware._quarantine_client_override = self._quarantine_chat_client  # pyright: ignore[reportPrivateUsage]
+        return middleware_stack
+
     def _middleware_for_scope(self, scope: _SecurityScope) -> list[FunctionMiddleware]:
         """Clone the current overridable middleware stack into one scope."""
-        return [
+        scoped = [
             middleware._clone_for_scope(scope)  # pyright: ignore[reportPrivateUsage]
             if isinstance(middleware, (LabelTrackingFunctionMiddleware, PolicyEnforcementFunctionMiddleware))
             else middleware
             for middleware in self.get_middleware()
         ]
+        return self._bind_quarantine_client_to_stack(scoped)
 
     def _function_middleware_for_approval_resolution(self, session: AgentSession) -> list[FunctionMiddleware]:
         """Return provider-customized middleware bound to one restored session scope."""
@@ -3557,7 +3924,7 @@ class SecureAgentConfig(ContextProvider):
         middleware: list[FunctionMiddleware] = [self.label_tracker]
         if self.policy_enforcer:
             middleware.append(self.policy_enforcer)
-        return middleware
+        return self._bind_quarantine_client_to_stack(middleware)
 
     def get_audit_log(self, session: AgentSession | None = None) -> list[dict[str, Any]]:
         """Get the audit log for an optional session.
@@ -3974,7 +4341,12 @@ async def quarantined_llm(
     actual_metadata = metadata or {}
 
     # Build the response - use real LLM if quarantine client is configured
-    quarantine_client = get_quarantine_client()
+    # Scoped security middleware wins, including an explicitly missing client.
+    quarantine_client = (
+        middleware._quarantine_client_override  # pyright: ignore[reportPrivateUsage]
+        if middleware is not None and middleware._quarantine_client_bound  # pyright: ignore[reportPrivateUsage]
+        else get_quarantine_client()
+    )
 
     if quarantine_client is not None:
         # Build the quarantined prompt with retrieved content
@@ -4401,7 +4773,8 @@ def _apply_mcp_security_label_to_function(
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
-async def apply_mcp_security_labels(
+# Keep this async for public API compatibility now that annotations come from the retained catalog snapshot.
+async def apply_mcp_security_labels(  # ruff: ignore[unused-async]
     mcp_tool: Any,
     *,
     default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
@@ -4467,19 +4840,7 @@ async def apply_mcp_security_labels(
             "MCPTool is not connected. Call connect() or use 'async with' before applying security labels."
         )
 
-    connection = mcp_tool._require_connection()
-
-    from mcp import types as mcp_types
-
-    annotation_map: dict[str, Any] = {}
-    params: mcp_types.PaginatedRequestParams | None = None
-    while True:
-        tool_list = await connection.list_tools_page(params)
-        for remote_tool in tool_list.tools:
-            annotation_map[remote_tool.name] = remote_tool.annotations
-        if not tool_list.next_cursor:
-            break
-        params = mcp_types.PaginatedRequestParams(cursor=tool_list.next_cursor)
+    annotation_map = dict(mcp_tool._tool_annotations_by_name)
 
     loaded_functions = getattr(mcp_tool, "_functions", None)
     if not isinstance(loaded_functions, list):
@@ -4670,6 +5031,10 @@ class SecureMCPToolProxy:
         name: Tool name used when creating the internal
             ``MCPStreamableHTTPTool`` (defaults to ``"mcp"``).
         description: Tool description for the internal tool.
+        max_discovery_pages: Maximum pages accepted independently for each tool or prompt catalog fetch in
+            *url* mode. Defaults to 100; ``None`` disables the limit.
+        max_discovery_items: Maximum entries accepted independently for each tool or prompt catalog fetch in
+            *url* mode. Defaults to 1,000; ``None`` disables the limit.
         default_integrity: Default integrity for tools without annotations.
         annotation_overrides: Per-tool-name label overrides (keyed by remote
             MCP tool name), applied only to this proxy's MCP connection.
@@ -4691,6 +5056,8 @@ class SecureMCPToolProxy:
         headers: dict[str, str] | None = None,
         name: str | None = None,
         description: str | None = None,
+        max_discovery_pages: int | None = 100,
+        max_discovery_items: int | None = 1_000,
         default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
         annotation_overrides: dict[str, tuple[IntegrityLabel, ConfidentialityLabel | None]] | None = None,
         mark_write_tools_as_sinks: bool = True,
@@ -4711,6 +5078,10 @@ class SecureMCPToolProxy:
             name: Tool name used when creating the internal ``MCPStreamableHTTPTool``
                 (defaults to ``"mcp"``).
             description: Tool description for the internal tool.
+            max_discovery_pages: Maximum pages accepted independently for each tool or prompt catalog fetch in
+                ``url`` mode. Defaults to 100; ``None`` disables the limit.
+            max_discovery_items: Maximum entries accepted independently for each tool or prompt catalog fetch in
+                ``url`` mode. Defaults to 1,000; ``None`` disables the limit.
             default_integrity: Default integrity for tools without annotations.
                 Defaults to ``IntegrityLabel.UNTRUSTED``.
             annotation_overrides: Per-tool-name label overrides keyed by remote MCP tool name,
@@ -4741,6 +5112,8 @@ class SecureMCPToolProxy:
                 url=url,
                 description=description,
                 static_headers=static_headers,
+                max_discovery_pages=max_discovery_pages,
+                max_discovery_items=max_discovery_items,
             )
 
         # The validation above guarantees a tool is set (passed directly or built
@@ -4808,15 +5181,17 @@ class SecureMCPToolProxy:
             self._unbind_function_load_callback()
 
     async def refresh_labels(self) -> None:
-        """Re-apply labels and wrappers to all currently discovered functions.
+        """Refresh enabled tool discovery, then re-apply labels to discovered functions.
 
-        Later-discovered functions are labeled automatically while the proxy
-        is active.
+        When tool loading is disabled, this only reapplies labels to the existing catalog snapshot.
+        Later-discovered functions are labeled automatically while the proxy is active.
         """
         if not self.is_connected:
             raise RuntimeError("MCPTool is not connected. Connect before refreshing labels.")
         callback_bound = self._bind_function_load_callback()
         try:
+            if self._mcp_tool.load_tools_flag:
+                await self._mcp_tool.load_tools()
             await self._apply_labels()
         except BaseException:
             if callback_bound:

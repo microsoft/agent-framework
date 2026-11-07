@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -63,6 +64,19 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
         }
 
         return await agent.DeserializeSessionAsync(existingSession, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public override ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(agent);
+        _ = Throw.IfNull(key);
+
+        this._sessions.TryRemove(GetKey(agent, key), out _);
+        return default;
     }
 
     private static (string AgentIdentity, AgentSessionStoreKey Key) GetKey(

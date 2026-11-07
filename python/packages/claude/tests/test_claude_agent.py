@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import copy
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,8 +11,9 @@ import pytest
 from agent_framework import AgentResponseUpdate, AgentSession, Content, MCPStdioTool, Message, tool
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import AgentInvalidRequestException
+from claude_agent_sdk import ClaudeSDKClient
 
-from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
+from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings, RawClaudeAgent
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
 from agent_framework_claude._feature_usage import FeatureIndex
 
@@ -101,6 +104,74 @@ class TestClaudeAgentInit:
         assert agent._settings["model"] == "sonnet"  # type: ignore[reportPrivateUsage]
         assert agent._settings["permission_mode"] == "default"  # type: ignore[reportPrivateUsage]
         assert agent._settings["max_turns"] == 10  # type: ignore[reportPrivateUsage]
+
+    @pytest.mark.parametrize("agent_type", [RawClaudeAgent, ClaudeAgent])
+    @pytest.mark.parametrize("env_var", ["CLAUDE_AGENT_MAX_TURNS", "CLAUDE_AGENT_MAX_BUDGET_USD"])
+    def test_injected_client_ignores_invalid_environment(
+        self, monkeypatch: pytest.MonkeyPatch, agent_type: type[RawClaudeAgent[Any]], env_var: str
+    ) -> None:
+        monkeypatch.setenv(env_var, "not-a-number")
+        with pytest.raises(ValueError, match=env_var):
+            agent_type()
+
+        client = MagicMock(spec=ClaudeSDKClient)
+        agent = agent_type(client=client)
+        assert agent._client is client
+
+    @pytest.mark.parametrize("agent_type", [RawClaudeAgent, ClaudeAgent])
+    async def test_injected_client_bypasses_settings_and_remains_caller_owned(
+        self, tmp_path: Path, agent_type: type[RawClaudeAgent[Any]]
+    ) -> None:
+        client = MagicMock(spec=ClaudeSDKClient)
+        client.connect = AsyncMock()
+        client.disconnect = AsyncMock()
+        with (
+            patch("agent_framework_claude._agent.load_settings", side_effect=AssertionError("Must not load settings")),
+            patch("agent_framework_claude._agent.ClaudeSDKClient") as factory,
+        ):
+            agent = agent_type(
+                client=client,
+                instructions="Follow the task instructions.",
+                tools=["Read"],
+                default_options={
+                    "cli_path": "/configured/claude",
+                    "model": "configured-model",
+                    "cwd": str(tmp_path),
+                    "permission_mode": "default",
+                    "max_turns": 10,
+                    "max_budget_usd": 5.0,
+                },
+                env_file_path=str(tmp_path / "missing.env"),
+                env_file_encoding="invalid-encoding",
+            )
+            assert agent._settings == {}
+            assert agent._default_options["system_prompt"] == "Follow the task instructions."
+            assert agent._builtin_tools == ["Read"]
+            acquired, owned = await agent._acquire_client(agent.create_session())
+            await agent.stop()
+
+        assert acquired is client
+        assert not owned
+        factory.assert_not_called()
+        client.connect.assert_awaited_once()
+        client.disconnect.assert_not_awaited()
+
+    @pytest.mark.parametrize("agent_type", [RawClaudeAgent, ClaudeAgent])
+    def test_owned_client_settings_precedence(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, agent_type: type[RawClaudeAgent[Any]]
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_AGENT_MODEL", "environment-model")
+        monkeypatch.setenv("CLAUDE_AGENT_MAX_TURNS", "8")
+        monkeypatch.setenv("CLAUDE_AGENT_MAX_BUDGET_USD", "1.25")
+        env_file = tmp_path / "claude.env"
+        env_file.write_text("CLAUDE_AGENT_MODEL=file-model\nCLAUDE_AGENT_MAX_TURNS=12\n", encoding="utf-8")
+
+        agent = agent_type(default_options={"model": "explicit-model"}, env_file_path=str(env_file))
+        options = agent._prepare_client_options()
+
+        assert options.model == "explicit-model"
+        assert options.max_turns == 12
+        assert options.max_budget_usd == 1.25
 
     def test_with_function_tool(self) -> None:
         """Test agent with function tool."""
@@ -795,6 +866,88 @@ class TestClaudeAgentToolConversion:
         assert "Address" in input_schema["$defs"]
         # Verify the nested reference exists in properties
         assert "person" in input_schema["properties"]
+
+    async def test_function_tool_to_sdk_mcp_tool_uses_json_schema(self) -> None:
+        """Test that a tool declared with a JSON schema keeps the full schema, including additionalProperties."""
+        schema: dict[str, Any] = {
+            "type": "object",
+            "title": "WeatherInput",
+            "properties": {
+                "city": {"type": "string", "description": "City name"},
+                "unit": {"$ref": "#/$defs/Unit"},
+            },
+            "required": ["city"],
+            "additionalProperties": False,
+            "$defs": {"Unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}},
+        }
+
+        @tool(schema=schema)
+        def get_weather(city: str, unit: str = "celsius") -> str:
+            """Get the weather."""
+            return f"Sunny in {city}"
+
+        agent = ClaudeAgent()
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(get_weather)  # type: ignore[reportPrivateUsage]
+
+        assert sdk_tool.input_schema == schema
+        assert cast(dict[str, Any], sdk_tool.input_schema)["additionalProperties"] is False
+        result = await sdk_tool.handler({"city": "Paris"})
+        assert result["content"][0]["text"] == "Sunny in Paris"
+
+    def test_function_tool_to_sdk_mcp_tool_keeps_input_model_keywords(self) -> None:
+        """Test that top-level keywords of a pydantic input model, such as additionalProperties, are kept."""
+        from pydantic import BaseModel, ConfigDict
+
+        class WeatherInput(BaseModel):
+            model_config = ConfigDict(extra="forbid")
+            city: str
+
+        @tool(schema=WeatherInput)
+        def get_weather(city: str) -> str:
+            """Get the weather."""
+            return f"Sunny in {city}"
+
+        agent = ClaudeAgent()
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(get_weather)  # type: ignore[reportPrivateUsage]
+
+        assert sdk_tool.input_schema == WeatherInput.model_json_schema()
+        assert cast(dict[str, Any], sdk_tool.input_schema)["additionalProperties"] is False
+
+    @pytest.mark.parametrize(
+        ("schema", "expected"),
+        [
+            (
+                {"properties": {"city": {"type": "string"}}},
+                {"type": "object", "properties": {"city": {"type": "string"}}},
+            ),
+            (
+                {"type": "object", "additionalProperties": False},
+                {"type": "object", "properties": {}, "additionalProperties": False},
+            ),
+            (
+                {"type": ["object", "null"], "properties": {"city": {"type": "string"}}},
+                {"type": "object", "properties": {"city": {"type": "string"}}},
+            ),
+            ({"type": "object", "properties": None}, {"type": "object", "properties": {}}),
+            ({}, {"type": "object", "properties": {}}),
+        ],
+        ids=["no-type", "no-properties", "list-type", "null-properties", "empty"],
+    )
+    def test_function_tool_to_sdk_mcp_tool_sets_type_and_properties(
+        self, schema: dict[str, Any], expected: dict[str, Any]
+    ) -> None:
+        """Test that a schema without an object type or properties still reaches the SDK as a JSON schema."""
+        declared = copy.deepcopy(schema)
+
+        @tool(name="lookup", description="Look something up.", schema=schema)
+        def lookup(**kwargs: Any) -> str:
+            return "ok"
+
+        agent = ClaudeAgent()
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(lookup)  # type: ignore[reportPrivateUsage]
+
+        assert sdk_tool.input_schema == expected
+        assert lookup.parameters() == declared
 
     async def test_tool_handler_success(self) -> None:
         """Test tool handler executes successfully."""

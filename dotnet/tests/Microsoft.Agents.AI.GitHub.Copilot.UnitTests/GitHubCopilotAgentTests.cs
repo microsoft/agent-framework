@@ -219,19 +219,76 @@ public sealed class GitHubCopilotAgentTests
     }
 
     [Fact]
-    public void ToResumeSessionConfig_WithFileHooksDisabled_PreservesDisabledValue()
+    public void CopySessionConfig_WithNullSource_DefaultsFileHooksToDisabled()
+    {
+        // Act
+        SessionConfig result = GitHubCopilotAgent.CopySessionConfig(null);
+
+        // Assert
+        Assert.False(result.EnableFileHooks);
+        Assert.True(result.Streaming);
+    }
+
+    [Fact]
+    public void CopySessionConfig_WithFileHooksUnset_DefaultsToDisabled()
+    {
+        // Arrange
+        var source = new SessionConfig();
+
+        // Act
+        SessionConfig result = GitHubCopilotAgent.CopySessionConfig(source);
+
+        // Assert
+        Assert.False(result.EnableFileHooks);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CopySessionConfig_WithFileHooksConfigured_PreservesValue(bool enabled)
     {
         // Arrange
         var source = new SessionConfig
         {
-            EnableFileHooks = false,
+            EnableFileHooks = enabled,
         };
+
+        // Act
+        SessionConfig result = GitHubCopilotAgent.CopySessionConfig(source);
+
+        // Assert
+        Assert.Equal(enabled, result.EnableFileHooks);
+    }
+
+    [Fact]
+    public void ToResumeSessionConfig_WithFileHooksUnset_DefaultsToDisabled()
+    {
+        // Arrange
+        var source = new SessionConfig();
 
         // Act
         ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
 
         // Assert
         Assert.False(result.EnableFileHooks);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ToResumeSessionConfig_WithFileHooksConfigured_PreservesValue(bool enabled)
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            EnableFileHooks = enabled,
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
+
+        // Assert
+        Assert.Equal(enabled, result.EnableFileHooks);
     }
 
     [Fact]
@@ -299,6 +356,7 @@ public sealed class GitHubCopilotAgentTests
         Assert.Null(result.Hooks);
         Assert.Null(result.WorkingDirectory);
         Assert.Null(result.ConfigDirectory);
+        Assert.False(result.EnableFileHooks);
         Assert.True(result.Streaming);
         Assert.False(result.SuppressResumeEvent);
         Assert.Null(result.ContinuePendingWork);
@@ -484,6 +542,44 @@ public sealed class GitHubCopilotAgentTests
         Assert.Contains(result.Contents, c => c is TextContent);
         Assert.Null(result.MessageId);
         Assert.Null(result.ResponseId);
+    }
+
+    [Theory]
+    [InlineData(42L, true)]
+    [InlineData(0L, true)]
+    [InlineData(null, true)]
+    [InlineData(null, false)]
+    public void ConvertToAgentResponseUpdate_AssistantUsageEvent_PreservesReasoningTokens(long? reasoningTokens, bool hasUsageData)
+    {
+        // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
+        var usageEvent = new AssistantUsageEvent
+        {
+            Data = hasUsageData ? new AssistantUsageData
+            {
+                Model = "test-model",
+                InputTokens = 100,
+                OutputTokens = 50,
+                CacheReadTokens = 25,
+                ReasoningTokens = reasoningTokens
+            } : null!
+        };
+        MethodInfo method = typeof(GitHubCopilotAgent).GetMethod(
+            "ConvertToAgentResponseUpdate",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            [typeof(AssistantUsageEvent)])!;
+
+        // Act
+        var result = (AgentResponseUpdate)method.Invoke(agent, [usageEvent])!;
+
+        // Assert
+        UsageContent usage = Assert.IsType<UsageContent>(Assert.Single(result.Contents));
+        Assert.Equal(reasoningTokens, usage.Details.ReasoningTokenCount);
+        Assert.Equal(hasUsageData ? 100L : null, usage.Details.InputTokenCount);
+        Assert.Equal(hasUsageData ? 50L : null, usage.Details.OutputTokenCount);
+        Assert.Equal(hasUsageData ? 25L : null, usage.Details.CachedInputTokenCount);
+        Assert.Equal(hasUsageData ? 150L : 0L, usage.Details.TotalTokenCount);
     }
 
     [Fact]

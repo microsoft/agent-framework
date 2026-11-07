@@ -144,15 +144,36 @@ async def test_injected_client_bypasses_loader_and_remains_borrowed(constructor,
         {"env_file_path": ""},
         {"env_file_encoding": "utf-16"},
         {"env_file_encoding": ""},
+        {
+            "connection_string": "invalid conninfo",
+            "env_file_path": "missing.env",
+            "env_file_encoding": "invalid-encoding",
+        },
     ],
 )
-def test_injected_client_rejects_conflicting_settings_without_reading(constructor, kwargs):
-    client = MagicMock(spec=AsyncConnection)
+@pytest.mark.parametrize("client_type", [AsyncConnection, AsyncConnectionPool])
+async def test_injected_client_ignores_conflicting_settings_without_reading(
+    constructor, monkeypatch, kwargs, client_type
+):
+    monkeypatch.setenv("POSTGRES_CONNECTION_STRING", "not valid conninfo; must not be read")
+    client = MagicMock(spec=client_type)
+    client.close = AsyncMock()
     with (
         patch.object(module, "load_settings", side_effect=AssertionError("Must not read settings")),
-        pytest.raises(ValueError, match="cannot be combined"),
+        patch.object(
+            AsyncConnectionPool, "__init__", side_effect=AssertionError("Must not create a pool")
+        ) as create_pool,
     ):
-        constructor(client=client, **kwargs)
+        instance = constructor(client=client, schema="caller_schema", **kwargs)
+        assert instance._client.client is client
+        assert not instance.managed_client
+        assert instance.schema == "caller_schema"
+        await instance.close()
+    create_pool.assert_not_called()
+    client.close.assert_not_awaited()
+    if client_type is AsyncConnection:
+        client.commit.assert_not_called()
+        client.rollback.assert_not_called()
 
 
 async def test_store_children_reuse_resolved_client_without_loading_again(monkeypatch, definition_factory):

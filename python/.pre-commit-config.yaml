@@ -45,7 +45,7 @@ repos:
     hooks:
       - id: pyupgrade
         name: Upgrade Python syntax
-        args: [--py310-plus]
+        args: [--py311-plus]
         exclude: ^packages/lab/cookiecutter-agent-framework-lab/
   - repo: local
     hooks:
@@ -62,7 +62,7 @@ repos:
         additional_dependencies: ["bandit[toml]"]
   - repo: https://github.com/astral-sh/uv-pre-commit
     # uv version.
-    rev: 0.13.1
+    rev: 0.13.5
     hooks:
       # Update the uv lockfile
       - id: uv-lock

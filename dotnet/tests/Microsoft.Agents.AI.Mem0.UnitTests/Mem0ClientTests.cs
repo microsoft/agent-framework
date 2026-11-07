@@ -81,17 +81,15 @@ public sealed class Mem0ClientTests : IDisposable
         Assert.Contains($"user_id={Uri.EscapeDataString("user=3")}", queryParts);
     }
 
-    [Fact]
-    public async Task ClearMemoryAsync_ProducesNoQueryParameters_WhenNoScopeValuesProvidedAsync()
+    [Theory]
+    [InlineData(null, null, null, null)]
+    [InlineData("", null, " ", "\t")]
+    public async Task ClearMemoryAsync_Throws_WhenAllScopeValuesBlankAsync(string? applicationId, string? agentId, string? threadId, string? userId)
     {
-        // Act
-        await this._client.ClearMemoryAsync(null, null, null, null, CancellationToken.None);
-
-        // Assert
-        Assert.Single(this._handler.Requests);
-        var requestUri = this._handler.Requests[0].RequestMessage.RequestUri!;
-        Assert.Equal("/v1/memories/", requestUri.AbsolutePath);
-        Assert.Equal("?", requestUri.Query);
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => this._client.ClearMemoryAsync(applicationId, agentId, threadId, userId, CancellationToken.None));
+        Assert.StartsWith("At least one of applicationId, agentId, threadId, or userId must be provided.", ex.Message);
+        Assert.Empty(this._handler.Requests);
     }
 
     [Fact]

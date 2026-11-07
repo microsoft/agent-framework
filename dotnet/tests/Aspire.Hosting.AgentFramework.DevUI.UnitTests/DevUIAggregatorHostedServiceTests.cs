@@ -489,6 +489,112 @@ public class DevUIAggregatorHostedServiceTests
         Assert.Single(proxy.BackendRequests);
     }
 
+    [Fact]
+    public async Task ProxyRequest_ForeignHost_IsRejectedBeforeBackendAsync()
+    {
+        // Arrange
+        await using var proxy = await ProxyTestContext.StartAsync();
+
+        // Act
+        var response = await proxy.SendAsync("/v1/conversations", host: "attacker.example");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Empty(proxy.BackendRequests);
+    }
+
+    [Fact]
+    public async Task ProxyRequest_MismatchedOriginPost_IsRejectedBeforeBackendAsync()
+    {
+        // Arrange
+        await using var proxy = await ProxyTestContext.StartAsync();
+
+        // Act
+        var response = await proxy.SendAsync(
+            "/v1/conversations",
+            HttpMethod.Post,
+            origin: "https://attacker.example");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Empty(proxy.BackendRequests);
+    }
+
+    [Fact]
+    public async Task ProxyRequest_CrossSiteFetchPost_IsRejectedBeforeBackendAsync()
+    {
+        // Arrange
+        await using var proxy = await ProxyTestContext.StartAsync();
+
+        // Act
+        var response = await proxy.SendAsync(
+            "/v1/conversations",
+            HttpMethod.Post,
+            secFetchSite: "cross-site");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Empty(proxy.BackendRequests);
+    }
+
+    [Fact]
+    public async Task ProxyRequest_SameOriginPost_IsForwardedAsync()
+    {
+        // Arrange
+        await using var proxy = await ProxyTestContext.StartAsync();
+
+        // Act
+        var response = await proxy.SendAsync(
+            "/v1/conversations",
+            HttpMethod.Post,
+            origin: proxy.Origin,
+            secFetchSite: "same-origin");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var forwarded = Assert.Single(proxy.BackendRequests);
+        Assert.Equal(HttpMethod.Post.Method, forwarded.Method);
+    }
+
+    [Fact]
+    public async Task ProxyRequest_SameOriginPost_ToDevUIBackend_PreservesApplicationHeadersOnlyAsync()
+    {
+        // Arrange
+        await using var proxy = await ProxyTestContext.StartAsync(useDevUIRequestValidation: true);
+
+        // Act
+        var response = await proxy.SendAsync(
+            "/v1/conversations",
+            HttpMethod.Post,
+            origin: proxy.Origin,
+            secFetchSite: "same-origin",
+            authorization: "Bearer backend-token",
+            secFetchMode: "cors");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var forwarded = Assert.Single(proxy.BackendRequests);
+        Assert.Equal("Bearer backend-token", forwarded.Authorization);
+        Assert.Null(forwarded.Origin);
+        Assert.Null(forwarded.SecFetchSite);
+        Assert.Null(forwarded.SecFetchMode);
+    }
+
+    [Fact]
+    public async Task ProxyRequest_NonBrowserPost_IsForwardedAsync()
+    {
+        // Arrange
+        await using var proxy = await ProxyTestContext.StartAsync();
+
+        // Act
+        var response = await proxy.SendAsync("/v1/conversations", HttpMethod.Post);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var forwarded = Assert.Single(proxy.BackendRequests);
+        Assert.Equal(HttpMethod.Post.Method, forwarded.Method);
+    }
+
     #region Proxy Test Helpers
 
     /// <summary>
@@ -501,13 +607,13 @@ public class DevUIAggregatorHostedServiceTests
         private readonly WebApplication _backend;
         private readonly DevUIAggregatorHostedService _aggregator;
         private readonly HttpClient _client;
-        private readonly List<(string Path, string QueryString)> _backendRequests;
+        private readonly List<BackendRequest> _backendRequests;
 
         private ProxyTestContext(
             WebApplication backend,
             DevUIAggregatorHostedService aggregator,
             HttpClient client,
-            List<(string Path, string QueryString)> backendRequests)
+            List<BackendRequest> backendRequests)
         {
             this._backend = backend;
             this._aggregator = aggregator;
@@ -516,12 +622,15 @@ public class DevUIAggregatorHostedServiceTests
         }
 
         /// <summary>Gets the requests received by the stub backend, in arrival order.</summary>
-        public IReadOnlyList<(string Path, string QueryString)> BackendRequests => this._backendRequests;
+        public IReadOnlyList<BackendRequest> BackendRequests => this._backendRequests;
 
-        public static async Task<ProxyTestContext> StartAsync()
+        /// <summary>Gets the aggregator origin used by the test client.</summary>
+        public string Origin => this._client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+
+        public static async Task<ProxyTestContext> StartAsync(bool useDevUIRequestValidation = false)
         {
-            var backendRequests = new List<(string Path, string QueryString)>();
-            var backend = await StartStubBackendAsync(backendRequests).ConfigureAwait(false);
+            var backendRequests = new List<BackendRequest>();
+            var backend = await StartStubBackendAsync(backendRequests, useDevUIRequestValidation).ConfigureAwait(false);
 
             var aggregator = await StartAggregatorAsync(GetBaseAddress(backend)).ConfigureAwait(false);
             var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{aggregator.AllocatedPort}") };
@@ -529,9 +638,45 @@ public class DevUIAggregatorHostedServiceTests
             return new ProxyTestContext(backend, aggregator, client, backendRequests);
         }
 
-        /// <summary>Sends a GET request to the aggregator using the given relative path.</summary>
-        public Task<HttpResponseMessage> SendAsync(string relativePath)
-            => this._client.GetAsync(new Uri(relativePath, UriKind.Relative));
+        /// <summary>Sends a request to the aggregator using the given method and browser request headers.</summary>
+        public async Task<HttpResponseMessage> SendAsync(
+            string relativePath,
+            HttpMethod? method = null,
+            string? host = null,
+            string? origin = null,
+            string? secFetchSite = null,
+            string? authorization = null,
+            string? secFetchMode = null)
+        {
+            using var request = new HttpRequestMessage(method ?? HttpMethod.Get, new Uri(relativePath, UriKind.Relative));
+
+            if (host is not null)
+            {
+                request.Headers.Host = host;
+            }
+
+            if (origin is not null)
+            {
+                request.Headers.TryAddWithoutValidation("Origin", origin);
+            }
+
+            if (secFetchSite is not null)
+            {
+                request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", secFetchSite);
+            }
+
+            if (authorization is not null)
+            {
+                request.Headers.TryAddWithoutValidation("Authorization", authorization);
+            }
+
+            if (secFetchMode is not null)
+            {
+                request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", secFetchMode);
+            }
+
+            return await this._client.SendAsync(request).ConfigureAwait(false);
+        }
 
         public async ValueTask DisposeAsync()
         {
@@ -545,16 +690,29 @@ public class DevUIAggregatorHostedServiceTests
     /// <summary>
     /// Starts a minimal backend that records the path and query string of every request it receives.
     /// </summary>
-    private static async Task<WebApplication> StartStubBackendAsync(List<(string Path, string QueryString)> requests)
+    private static async Task<WebApplication> StartStubBackendAsync(
+        List<BackendRequest> requests,
+        bool useDevUIRequestValidation)
     {
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
+        if (useDevUIRequestValidation)
+        {
+            builder.Services.AddDevUI();
+        }
 
         var app = builder.Build();
         app.Urls.Add("http://127.0.0.1:0");
         app.Map("{**path}", (HttpContext context) =>
         {
-            requests.Add((context.Request.Path.Value ?? string.Empty, context.Request.QueryString.Value ?? string.Empty));
+            requests.Add(new BackendRequest(
+                context.Request.Method,
+                context.Request.Path.Value ?? string.Empty,
+                context.Request.QueryString.Value ?? string.Empty,
+                context.Request.Headers.Authorization.FirstOrDefault(),
+                context.Request.Headers.Origin.FirstOrDefault(),
+                context.Request.Headers["Sec-Fetch-Site"].FirstOrDefault(),
+                context.Request.Headers["Sec-Fetch-Mode"].FirstOrDefault()));
             return Results.Json(new { ok = true });
         });
 
@@ -573,7 +731,8 @@ public class DevUIAggregatorHostedServiceTests
         using var loggerFactory = LoggerFactory.Create(_ => { });
         var aggregator = new DevUIAggregatorHostedService(
             resource,
-            loggerFactory.CreateLogger<DevUIAggregatorHostedService>());
+            loggerFactory.CreateLogger<DevUIAggregatorHostedService>(),
+            loadFrontendResources: false);
 
         await aggregator.StartAsync(CancellationToken.None).ConfigureAwait(false);
         return aggregator;
@@ -604,6 +763,15 @@ public class DevUIAggregatorHostedServiceTests
 
     private static string GetBaseAddress(WebApplication app)
         => app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
+
+    private sealed record BackendRequest(
+        string Method,
+        string Path,
+        string QueryString,
+        string? Authorization,
+        string? Origin,
+        string? SecFetchSite,
+        string? SecFetchMode);
 
     private sealed class TestBackendResource(string name) : Resource(name), IResourceWithEndpoints;
 

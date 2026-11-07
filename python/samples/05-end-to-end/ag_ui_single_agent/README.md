@@ -13,7 +13,7 @@ and human-in-the-loop resumes, see [`../ag_ui_workflow_handoff`](../ag_ui_workfl
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11–3.15
 - Node.js 20.19+ or 22.12+
 - npm 9+
 - Azure AI project + model deployment configured in environment variables:
