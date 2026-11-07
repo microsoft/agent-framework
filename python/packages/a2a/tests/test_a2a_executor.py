@@ -648,14 +648,18 @@ class TestA2AExecutorHandleEvents:
         mock_updater.update_status.assert_called_once()
         assert mock_updater.new_agent_message.called
 
+    @mark.parametrize("escape_payload", [False, True])
     @mark.parametrize("data", [b"test file data", b""])
-    async def test_handle_data_content(self, executor: A2AExecutor, mock_updater: MagicMock, data: bytes) -> None:
+    async def test_handle_data_content(
+        self, executor: A2AExecutor, mock_updater: MagicMock, data: bytes, escape_payload: bool
+    ) -> None:
         """Test handling messages with data content, including empty attachments."""
         # Arrange
-        message = Message(
-            contents=[Content.from_data(data=data, media_type="application/octet-stream")],
-            role="assistant",
-        )
+        content = Content.from_data(data=data, media_type="application/octet-stream")
+        if escape_payload:
+            assert content.uri is not None
+            content = Content.from_uri(content.uri.replace("=", "%3D"), media_type="application/octet-stream")
+        message = Message(contents=[content], role="assistant")
 
         # Act
         await executor.handle_events(message, mock_updater)

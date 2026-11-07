@@ -58,3 +58,21 @@ def test_get_uri_data_empty() -> None:
     """Test get_uri_data with empty string."""
     with pytest.raises(ValueError, match="Invalid data URI format"):
         get_uri_data("")
+
+
+@pytest.mark.parametrize(
+    ("uri", "expected"),
+    [
+        ("data:application/octet-stream;base64,+/8=", "+/8="),
+        ("data:application/octet-stream;base64,%2B%2F8%3D", "+/8="),
+        ("data:application/octet-stream;base64,+%2F8=", "+/8="),
+        ("data:text/plain;name=keep%2Fraw;base64,SGVsbG8%3D", "SGVsbG8="),
+    ],
+)
+def test_get_uri_data_percent_encoded_payload(uri: str, expected: str) -> None:
+    assert get_uri_data(uri) == expected
+
+
+def test_get_uri_data_does_not_decode_percent_escapes_twice() -> None:
+    with pytest.raises(ValueError, match="Invalid data URI format"):
+        get_uri_data("data:application/octet-stream;base64,%252B%252F8%253D")
