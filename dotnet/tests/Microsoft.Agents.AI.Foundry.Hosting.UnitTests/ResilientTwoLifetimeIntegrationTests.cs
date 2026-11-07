@@ -20,6 +20,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using CreateResponse = Azure.AI.AgentServer.Responses.Models.CreateResponse;
 using ResponseStreamEvent = Azure.AI.AgentServer.Responses.Models.ResponseStreamEvent;
 
@@ -238,7 +239,7 @@ public sealed class ResilientTwoLifetimeIntegrationTests
         builder.Services.AddFoundryResponses(
             agent,
             sessionStore,
-            new FoundryResponsesOptions { ResilientBackground = true });
+            new FoundryResponsesServerOptions { ResilientBackground = true });
         builder.Services.AddLogging();
         if (recoveryCoordinator is not null)
         {
@@ -246,7 +247,8 @@ public sealed class ResilientTwoLifetimeIntegrationTests
             builder.Services.AddSingleton<ResponseHandler>(serviceProvider =>
                 new CheckpointObservingResponseHandler(
                     ActivatorUtilities.CreateInstance<AgentFrameworkResponseHandler>(
-                        serviceProvider),
+                        serviceProvider,
+                        serviceProvider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value),
                     recoveryCoordinator));
         }
 

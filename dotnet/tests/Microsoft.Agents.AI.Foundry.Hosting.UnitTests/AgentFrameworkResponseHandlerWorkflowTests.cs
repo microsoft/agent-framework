@@ -11,7 +11,6 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -209,11 +208,10 @@ public class AgentFrameworkResponseHandlerWorkflowTests
         var handler = new AgentFrameworkResponseHandler(
             sp,
             NullLogger<AgentFrameworkResponseHandler>.Instance,
-            Options.Create(
-                new FoundryResponsesOptions
-                {
-                    ResilientBackground = resilient,
-                }));
+            new FoundryResponsesServerOptions
+            {
+                ResilientBackground = resilient,
+            });
         var request = new CreateResponse
         {
             Model = "test",

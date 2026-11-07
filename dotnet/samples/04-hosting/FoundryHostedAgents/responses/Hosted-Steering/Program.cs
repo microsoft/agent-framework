@@ -34,7 +34,7 @@ var builder = WebApplication.CreateBuilder(args);
 #if USE_LOCAL_AGENT_FRAMEWORK_SOURCE
 builder.AddFoundryResponses(
     agent,
-    options: new FoundryResponsesOptions { SteerableConversations = true });
+    options: new FoundryResponsesServerOptions { SteerableConversations = true });
 #else
 builder.AddFoundryResponses(
     agent,

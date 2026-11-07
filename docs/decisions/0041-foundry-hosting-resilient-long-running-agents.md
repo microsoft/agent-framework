@@ -33,7 +33,7 @@ and checkpoint storage introduced for Foundry state stores (PR #7649).
 - Pair each persisted workflow response snapshot with the exact workflow checkpoint it represents.
 - Opt-in and off by default; non-resilient hosts pay nothing.
 - Prefer workflows: they already checkpoint between supersteps.
-- Keep a lean API on `FoundryResponsesOptions`, forwarded to `ResponsesServerOptions`.
+- Keep a lean API on `FoundryResponsesServerOptions`, forwarded to `ResponsesServerOptions`.
 - Persist agent sessions through the Foundry state store (or its local fallback), not a second disk layout.
 
 ## Decision Outcome
@@ -42,7 +42,7 @@ Chosen option: **turn resilience on through the existing handler and registratio
 
 ### Public surface
 
-`FoundryResponsesOptions.ResilientBackground` and `FoundryResponsesOptions.SteerableConversations`
+`FoundryResponsesServerOptions.ResilientBackground` and `FoundryResponsesServerOptions.SteerableConversations`
 are forwarded to `ResponsesServerOptions` so the AgentServer SDK enables recovery and steering.
 This forwarding must happen in the callback passed directly to `AddResponsesServer`. The SDK makes
 two process-level choices during that registration call: whether local SSE replay uses durable

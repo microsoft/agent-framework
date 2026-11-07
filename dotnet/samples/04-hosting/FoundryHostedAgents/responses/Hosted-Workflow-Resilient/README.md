@@ -13,7 +13,7 @@ needed.
 ```csharp
 builder.AddFoundryResponses(
     agent,
-    options: new FoundryResponsesOptions { ResilientBackground = true });
+    options: new FoundryResponsesServerOptions { ResilientBackground = true });
 ```
 
 Each workflow agent has a fixed `Id` and `Name`. A restarted process must reconstruct the same

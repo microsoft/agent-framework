@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -15,7 +14,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 
@@ -217,36 +215,19 @@ public class AgentFrameworkResponseHandlerResilienceTests
     }
 
     [Fact]
-    public void Constructor_ExistingThreeParameterSignature_IsPreserved()
+    public void Constructor_UsesConcreteOptionsSnapshot()
     {
         // Act
         var constructor = typeof(AgentFrameworkResponseHandler).GetConstructor(
             [
                 typeof(IServiceProvider),
                 typeof(ILogger<AgentFrameworkResponseHandler>),
+                typeof(FoundryResponsesServerOptions),
                 typeof(FoundryToolboxService),
             ]);
 
         // Assert
         Assert.NotNull(constructor);
-    }
-
-    [Fact]
-    public void Constructor_OptionsSignature_IsPreferredForActivatorUtilities()
-    {
-        // Act
-        var constructor = typeof(AgentFrameworkResponseHandler).GetConstructor(
-            [
-                typeof(IServiceProvider),
-                typeof(ILogger<AgentFrameworkResponseHandler>),
-                typeof(IOptions<FoundryResponsesOptions>),
-                typeof(FoundryToolboxService),
-            ]);
-
-        // Assert
-        Assert.NotNull(constructor);
-        Assert.NotNull(
-            constructor.GetCustomAttribute<ActivatorUtilitiesConstructorAttribute>());
     }
 
     [Fact]
@@ -259,7 +240,7 @@ public class AgentFrameworkResponseHandlerResilienceTests
         services.AddFoundryResponses(
             agent,
             store,
-            new FoundryResponsesOptions { ResilientBackground = true });
+            new FoundryResponsesServerOptions { ResilientBackground = true });
         services.AddLogging();
         using ServiceProvider provider = services.BuildServiceProvider();
         var handler = Assert.IsType<AgentFrameworkResponseHandler>(
@@ -282,8 +263,11 @@ public class AgentFrameworkResponseHandlerResilienceTests
         services.AddSingleton(agent);
         var sp = services.BuildServiceProvider();
 
-        var options = Options.Create(new FoundryResponsesOptions { ResilientBackground = resilient });
-        return new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance, toolboxService: null, foundryResponsesOptions: options);
+        var options = new FoundryResponsesServerOptions { ResilientBackground = resilient };
+        return new AgentFrameworkResponseHandler(
+            sp,
+            NullLogger<AgentFrameworkResponseHandler>.Instance,
+            options);
     }
 
     private static CreateResponse NewBackgroundStoreRequest(string text)

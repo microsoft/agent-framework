@@ -73,7 +73,7 @@ if (!string.IsNullOrEmpty(port))
     builder.WebHost.UseUrls($"http://+:{port}");
 }
 
-builder.AddFoundryResponses(agent, options: new FoundryResponsesOptions
+builder.AddFoundryResponses(agent, options: new FoundryResponsesServerOptions
 {
     ResilientBackground = scenario is "resilient-workflow" or "steerable-long-running",
     SteerableConversations = scenario == "steerable-long-running",

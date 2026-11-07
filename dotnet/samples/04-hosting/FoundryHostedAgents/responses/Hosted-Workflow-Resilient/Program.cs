@@ -57,7 +57,7 @@ var builder = WebApplication.CreateBuilder(args);
 #if USE_LOCAL_AGENT_FRAMEWORK_SOURCE
 builder.AddFoundryResponses(
     agent,
-    options: new FoundryResponsesOptions { ResilientBackground = true });
+    options: new FoundryResponsesServerOptions { ResilientBackground = true });
 #else
 builder.AddFoundryResponses(
     agent,

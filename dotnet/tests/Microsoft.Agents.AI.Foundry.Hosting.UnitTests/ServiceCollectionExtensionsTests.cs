@@ -119,16 +119,16 @@ public class ServiceCollectionExtensionsTests
 
         // Act
         services.AddFoundryResponses();
-        services.AddFoundryResponses(new FoundryResponsesOptions
+        services.AddFoundryResponses(new FoundryResponsesServerOptions
         {
-            AllowStoredOutputEnabled = true,
+            InferenceStoredOutputAllowed = true,
         });
         using ServiceProvider provider = services.BuildServiceProvider();
 
         // Assert
         Assert.True(
-            provider.GetRequiredService<IOptions<FoundryResponsesOptions>>()
-                .Value.AllowStoredOutputEnabled);
+            provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>()
+                .Value.InferenceStoredOutputAllowed);
     }
 
     [Fact]
@@ -137,11 +137,11 @@ public class ServiceCollectionExtensionsTests
         // Arrange
         var services = new ServiceCollection();
         services.AddLogging();
-        var suppliedOptions = new FoundryResponsesOptions
+        var suppliedOptions = new FoundryResponsesServerOptions
         {
-            AllowStoredOutputEnabled = true,
+            InferenceStoredOutputAllowed = true,
             OAuthConsentInterruptedToolResult = "consent interrupted",
-            IncludeReasoningEncryptedContent = false,
+            ExcludeReasoningEncryptedContent = true,
             DefaultModel = "server-model",
             DefaultFetchHistoryCount = 42,
             ResilientBackground = true,
@@ -151,13 +151,13 @@ public class ServiceCollectionExtensionsTests
         // Act
         services.AddFoundryResponses(suppliedOptions);
         using ServiceProvider provider = services.BuildServiceProvider();
-        FoundryResponsesOptions registeredOptions =
-            provider.GetRequiredService<IOptions<FoundryResponsesOptions>>().Value;
+        FoundryResponsesServerOptions registeredOptions =
+            provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value;
 
         // Assert
-        Assert.True(registeredOptions.AllowStoredOutputEnabled);
+        Assert.True(registeredOptions.InferenceStoredOutputAllowed);
         Assert.Equal("consent interrupted", registeredOptions.OAuthConsentInterruptedToolResult);
-        Assert.False(registeredOptions.IncludeReasoningEncryptedContent);
+        Assert.True(registeredOptions.ExcludeReasoningEncryptedContent);
         Assert.Equal("server-model", registeredOptions.DefaultModel);
         Assert.Equal(42, registeredOptions.DefaultFetchHistoryCount);
         Assert.True(registeredOptions.ResilientBackground);
@@ -181,7 +181,7 @@ public class ServiceCollectionExtensionsTests
 
         // Act
         var exception = Assert.Throws<InvalidOperationException>(
-            () => services.AddFoundryResponses(new FoundryResponsesOptions
+            () => services.AddFoundryResponses(new FoundryResponsesServerOptions
             {
                 SteerableConversations = true,
             }));

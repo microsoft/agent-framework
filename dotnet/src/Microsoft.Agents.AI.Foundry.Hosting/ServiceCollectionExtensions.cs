@@ -41,7 +41,7 @@ public static class ServiceCollectionExtensions
     /// <remarks>
     /// <para>
     /// This overload is for local or non-hosted scenarios. Foundry hosted applications must call
-    /// <see cref="HostApplicationBuilderExtensions.AddFoundryResponses(IHostApplicationBuilder, FoundryResponsesOptions)"/>
+    /// <see cref="HostApplicationBuilderExtensions.AddFoundryResponses(IHostApplicationBuilder, FoundryResponsesServerOptions)"/>
     /// so AgentServer can bind response and task storage from the host configuration.
     /// </para>
     /// <para>
@@ -64,15 +64,15 @@ public static class ServiceCollectionExtensions
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="options">
-    /// Optional <see cref="FoundryResponsesOptions"/>, for example to allow the
+    /// Optional <see cref="FoundryResponsesServerOptions"/>, for example to allow the
     /// agent's own service to store the responses it produces, or to opt in to durable long-running
     /// (resilient) background responses via <see cref="ResponsesServerOptions.ResilientBackground"/>.
     /// </param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, FoundryResponsesOptions? options = null)
+    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, FoundryResponsesServerOptions? options = null)
     {
         _ = Throw.IfNull(services);
-        FoundryResponsesOptions configuredOptions = CopyFoundryResponsesOptions(options);
+        FoundryResponsesServerOptions configuredOptions = CopyFoundryResponsesServerOptions(options);
         bool serverAdded = AddResponsesServerOnce(
             services,
             host: null,
@@ -80,7 +80,7 @@ public static class ServiceCollectionExtensions
             options is not null);
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
-        ConfigureFoundryResponsesOptions(
+        ConfigureFoundryResponsesServerOptions(
             services,
             configuredOptions,
             includeServerOptions: serverAdded,
@@ -122,7 +122,7 @@ public static class ServiceCollectionExtensions
     /// <param name="agent">The agent instance to register.</param>
     /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, the default store uses the AgentServer SDK's local state-store fallback.</param>
     /// <param name="options">
-    /// Optional <see cref="FoundryResponsesOptions"/>, for example to allow the
+    /// Optional <see cref="FoundryResponsesServerOptions"/>, for example to allow the
     /// agent's own service to store the responses it produces, or to opt in to durable long-running
     /// (resilient) background responses via <see cref="ResponsesServerOptions.ResilientBackground"/>.
     /// </param>
@@ -131,12 +131,12 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         AIAgent agent,
         AgentSessionStore? agentSessionStore = null,
-        FoundryResponsesOptions? options = null)
+        FoundryResponsesServerOptions? options = null)
     {
         _ = Throw.IfNull(services);
         _ = Throw.IfNull(agent);
 
-        FoundryResponsesOptions configuredOptions = CopyFoundryResponsesOptions(options);
+        FoundryResponsesServerOptions configuredOptions = CopyFoundryResponsesServerOptions(options);
         bool serverAdded = AddResponsesServerOnce(
             services,
             host: null,
@@ -144,7 +144,7 @@ public static class ServiceCollectionExtensions
             options is not null);
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
-        ConfigureFoundryResponsesOptions(
+        ConfigureFoundryResponsesServerOptions(
             services,
             configuredOptions,
             includeServerOptions: serverAdded,
@@ -168,7 +168,7 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Applies the caller's <see cref="FoundryResponsesOptions"/> and registers the readiness checks
+    /// Applies the caller's <see cref="FoundryResponsesServerOptions"/> and registers the readiness checks
     /// that report a misconfigured agent: one having its own service store the responses it produces,
     /// and a workflow agent writing its checkpoints somewhere hosting does not manage.
     /// </summary>
@@ -177,21 +177,21 @@ public static class ServiceCollectionExtensions
     /// <see cref="EndpointRouteBuilderExtensions.MapFoundryResponses"/>
     /// maps, so such a container never takes traffic.
     /// <c>AddCheck</c> does not dedupe by name, so a repeated registration is guarded here.
-    /// Resilience flags on <see cref="FoundryResponsesOptions"/> are forwarded to
+    /// Resilience flags on <see cref="FoundryResponsesServerOptions"/> are forwarded to
     /// <see cref="ResponsesServerOptions"/> so the AgentServer SDK enables recovery for the same host.
     /// </remarks>
-    internal static FoundryResponsesOptions CopyFoundryResponsesOptions(FoundryResponsesOptions? source)
+    internal static FoundryResponsesServerOptions CopyFoundryResponsesServerOptions(FoundryResponsesServerOptions? source)
     {
         if (source is null)
         {
             return new();
         }
 
-        return new FoundryResponsesOptions
+        return new FoundryResponsesServerOptions
         {
-            AllowStoredOutputEnabled = source.AllowStoredOutputEnabled,
+            InferenceStoredOutputAllowed = source.InferenceStoredOutputAllowed,
             OAuthConsentInterruptedToolResult = source.OAuthConsentInterruptedToolResult,
-            IncludeReasoningEncryptedContent = source.IncludeReasoningEncryptedContent,
+            ExcludeReasoningEncryptedContent = source.ExcludeReasoningEncryptedContent,
             DefaultModel = source.DefaultModel,
             DefaultFetchHistoryCount = source.DefaultFetchHistoryCount,
             ResilientBackground = source.ResilientBackground,
@@ -206,23 +206,23 @@ public static class ServiceCollectionExtensions
             new AgentFrameworkResponseHandler(
                 serviceProvider,
                 serviceProvider.GetRequiredService<ILogger<AgentFrameworkResponseHandler>>(),
-                serviceProvider.GetRequiredService<IOptions<FoundryResponsesOptions>>(),
+                serviceProvider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value,
                 serviceProvider.GetService<FoundryToolboxService>()));
     }
 
-    internal static void ConfigureFoundryResponsesOptions(
+    internal static void ConfigureFoundryResponsesServerOptions(
         IServiceCollection services,
-        FoundryResponsesOptions configuredOptions,
+        FoundryResponsesServerOptions configuredOptions,
         bool includeServerOptions,
         bool applyOptions)
     {
         if (applyOptions)
         {
-            services.Configure<FoundryResponsesOptions>(options =>
+            services.Configure<FoundryResponsesServerOptions>(options =>
             {
-                options.AllowStoredOutputEnabled = configuredOptions.AllowStoredOutputEnabled;
+                options.InferenceStoredOutputAllowed = configuredOptions.InferenceStoredOutputAllowed;
                 options.OAuthConsentInterruptedToolResult = configuredOptions.OAuthConsentInterruptedToolResult;
-                options.IncludeReasoningEncryptedContent = configuredOptions.IncludeReasoningEncryptedContent;
+                options.ExcludeReasoningEncryptedContent = configuredOptions.ExcludeReasoningEncryptedContent;
                 if (includeServerOptions)
                 {
                     options.DefaultModel = configuredOptions.DefaultModel;
@@ -234,7 +234,12 @@ public static class ServiceCollectionExtensions
             });
         }
 
-        AddReadinessCheckOnce(services, "foundry-stored-output", sp => ActivatorUtilities.CreateInstance<HostedStoredOutputHealthCheck>(sp));
+        AddReadinessCheckOnce(
+            services,
+            "foundry-stored-output",
+            sp => ActivatorUtilities.CreateInstance<HostedStoredOutputHealthCheck>(
+                sp,
+                sp.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value));
         AddReadinessCheckOnce(services, "foundry-workflow-checkpointing", sp => ActivatorUtilities.CreateInstance<HostedWorkflowCheckpointingHealthCheck>(sp));
     }
 
@@ -432,7 +437,7 @@ public static class ServiceCollectionExtensions
     internal static bool AddResponsesServerOnce(
         IServiceCollection services,
         IHostApplicationBuilder? host,
-        FoundryResponsesOptions configuredOptions,
+        FoundryResponsesServerOptions configuredOptions,
         bool hasConfigureCallback)
     {
         FoundryResponsesServerMarker? marker = services

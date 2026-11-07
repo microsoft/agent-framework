@@ -13,19 +13,19 @@ public sealed class HostApplicationBuilderExtensionsTests
     {
         // Arrange
         HostApplicationBuilder builder = Host.CreateApplicationBuilder();
-        builder.Configuration[$"ResponsesServer:{nameof(FoundryResponsesOptions.ResilientBackground)}"] = "true";
+        builder.Configuration[$"ResponsesServer:{nameof(FoundryResponsesServerOptions.ResilientBackground)}"] = "true";
 
         // Act
-        builder.AddFoundryResponses(new FoundryResponsesOptions
+        builder.AddFoundryResponses(new FoundryResponsesServerOptions
         {
-            AllowStoredOutputEnabled = true,
+            InferenceStoredOutputAllowed = true,
         });
         using ServiceProvider provider = builder.Services.BuildServiceProvider();
-        FoundryResponsesOptions registeredOptions =
-            provider.GetRequiredService<IOptions<FoundryResponsesOptions>>().Value;
+        FoundryResponsesServerOptions registeredOptions =
+            provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value;
 
         // Assert
-        Assert.True(registeredOptions.AllowStoredOutputEnabled);
+        Assert.True(registeredOptions.InferenceStoredOutputAllowed);
         Assert.False(registeredOptions.ResilientBackground);
     }
 
@@ -34,10 +34,10 @@ public sealed class HostApplicationBuilderExtensionsTests
     {
         // Arrange
         HostApplicationBuilder builder = Host.CreateApplicationBuilder();
-        builder.Configuration[$"ResponsesServer:{nameof(FoundryResponsesOptions.ResilientBackground)}"] = "true";
+        builder.Configuration[$"ResponsesServer:{nameof(FoundryResponsesServerOptions.ResilientBackground)}"] = "true";
 
         // Act
-        builder.AddFoundryResponses(new FoundryResponsesOptions
+        builder.AddFoundryResponses(new FoundryResponsesServerOptions
         {
             ResilientBackground = false,
         });
@@ -45,7 +45,7 @@ public sealed class HostApplicationBuilderExtensionsTests
 
         // Assert
         Assert.False(
-            provider.GetRequiredService<IOptions<FoundryResponsesOptions>>()
+            provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>()
                 .Value.ResilientBackground);
     }
 }

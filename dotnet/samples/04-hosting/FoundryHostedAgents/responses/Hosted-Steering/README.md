@@ -11,7 +11,7 @@ packages, builds it, and runs `HostedSteering.dll`. No Dockerfile or container r
 ```csharp
 builder.AddFoundryResponses(
     agent,
-    options: new FoundryResponsesOptions { SteerableConversations = true });
+    options: new FoundryResponsesServerOptions { SteerableConversations = true });
 ```
 
 Steering and resilient background execution are separate options. This sample enables only

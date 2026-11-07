@@ -13,7 +13,6 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Microsoft.Shared.Diagnostics;
 
 // The terminal stream events are named the same in two namespaces this file pulls in, and the short
@@ -40,14 +39,8 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
 
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<AgentFrameworkResponseHandler> _logger;
+    private readonly FoundryResponsesServerOptions _options;
     private readonly FoundryToolboxService? _toolboxService;
-
-    /// <summary>
-    /// Whether the host was configured for durable long-running (resilient) background responses
-    /// (<see cref="ResponsesServerOptions.ResilientBackground"/>). When <see langword="false"/> the
-    /// handler never does mid-turn session saves or recovery exit and behaves exactly as a non-resilient host.
-    /// </summary>
-    private readonly bool _resilientBackground;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFrameworkResponseHandler"/> class
@@ -55,16 +48,13 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
     /// </summary>
     /// <param name="serviceProvider">The service provider for resolving agents.</param>
     /// <param name="logger">The logger instance.</param>
-    /// <param name="toolboxService">Optional Foundry Toolbox service providing MCP tools.</param>
     public AgentFrameworkResponseHandler(
         IServiceProvider serviceProvider,
-        ILogger<AgentFrameworkResponseHandler> logger,
-        FoundryToolboxService? toolboxService = null)
+        ILogger<AgentFrameworkResponseHandler> logger)
         : this(
             serviceProvider,
             logger,
-            Options.Create(new FoundryResponsesOptions()),
-            toolboxService)
+            new FoundryResponsesServerOptions())
     {
     }
 
@@ -78,11 +68,10 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
     /// Hosting options, used to read whether resilient background responses are enabled.
     /// </param>
     /// <param name="toolboxService">Optional Foundry Toolbox service providing MCP tools.</param>
-    [ActivatorUtilitiesConstructor]
     public AgentFrameworkResponseHandler(
         IServiceProvider serviceProvider,
         ILogger<AgentFrameworkResponseHandler> logger,
-        IOptions<FoundryResponsesOptions> foundryResponsesOptions,
+        FoundryResponsesServerOptions foundryResponsesOptions,
         FoundryToolboxService? toolboxService = null)
     {
         _ = Throw.IfNull(serviceProvider);
@@ -91,8 +80,8 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
 
         this._serviceProvider = serviceProvider;
         this._logger = logger;
+        this._options = foundryResponsesOptions;
         this._toolboxService = toolboxService;
-        this._resilientBackground = foundryResponsesOptions.Value.ResilientBackground;
     }
 
     /// <inheritdoc/>
@@ -151,8 +140,6 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         }
 
         var agentOptions = agent.GetService<ChatClientAgentOptions>();
-        var hostingOptions = this._serviceProvider.GetService<IOptions<FoundryResponsesOptions>>()?.Value;
-        var allowStoredOutputEnabled = hostingOptions?.AllowStoredOutputEnabled ?? false;
 
         // Load the session for this conversation, or start a new one. The store returns null when
         // nothing is persisted for the key, so a fresh conversation and a resumed one both end up with
@@ -265,7 +252,7 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         var chatOptions = InputConverter.ConvertToChatOptions(
             request,
             agentOptions?.ChatOptions?.RawRepresentationFactory,
-            hostingOptions);
+            this._options);
         chatOptions.Instructions = request.Instructions;
 
         // Inject pre-registered Foundry Toolbox tools when the toolbox service is available.
@@ -301,7 +288,7 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
             }
         }
 
-        if (allowStoredOutputEnabled &&
+        if (this._options.InferenceStoredOutputAllowed &&
             agent.GetService<FunctionInvokingChatClient>() is { } functionInvokingClient)
         {
             // The FICC instance is shared, so install one AsyncLocal-aware gate rather than
@@ -317,7 +304,7 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         // state. For workflows, that includes the workflow checkpoint reference.
         var useVolatileChatHistoryProvider =
             shouldInjectRequestInput
-            && !allowStoredOutputEnabled
+            && !this._options.InferenceStoredOutputAllowed
             && agent.GetService<ChatClientAgent>() is not null
             && agentOptions?.ChatHistoryProvider is null;
 
@@ -343,9 +330,8 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         var consentState = new RequestConsentState
         {
             CancellationSource = consentCts,
-            ReconcileDownstreamHistory = allowStoredOutputEnabled,
-            InterruptedToolResult = hostingOptions?.OAuthConsentInterruptedToolResult
-                ?? McpConsentResults.NotExecuted,
+            ReconcileDownstreamHistory = this._options.InferenceStoredOutputAllowed,
+            InterruptedToolResult = this._options.OAuthConsentInterruptedToolResult,
         };
 
         // 7. Run the agent and convert output
@@ -682,7 +668,7 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         // A per-service-call history provider uses a local marker in ConversationId to keep
         // function invocation working; only a real service conversation indicates stored output.
         bool CheckNotAllowedStoreUsage() =>
-            !allowStoredOutputEnabled
+            !this._options.InferenceStoredOutputAllowed
             && session is ChatClientAgentSession { ConversationId: not null } chatSession
             && !string.Equals(
                 chatSession.ConversationId,
@@ -887,7 +873,7 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
     /// host (the recovery path is gated separately on <c>ResponseContext.IsRecovery</c>).
     /// </summary>
     private bool ShouldPersistForResilience(CreateResponse request)
-        => this._resilientBackground && request.Background == true && request.Store != false;
+        => this._options.ResilientBackground && request.Background == true && request.Store != false;
 
     /// <summary>
     /// Resolves an <see cref="AIAgent"/> from the request.

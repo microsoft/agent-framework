@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// are supplied directly to <c>AddFoundryResponses</c>.
 /// </para>
 /// </remarks>
-public sealed class FoundryResponsesOptions : ResponsesServerOptions
+public sealed class FoundryResponsesServerOptions : ResponsesServerOptions
 {
     /// <summary>
     /// Gets or sets a value indicating whether the agent's own chat client is allowed to store the
@@ -47,7 +47,7 @@ public sealed class FoundryResponsesOptions : ResponsesServerOptions
     /// <value>
     /// Default is <see langword="false"/>.
     /// </value>
-    public bool AllowStoredOutputEnabled { get; set; }
+    public bool InferenceStoredOutputAllowed { get; set; }
 
     /// <summary>
     /// Gets or sets the function result returned for calls that are not executed because another call
@@ -55,26 +55,27 @@ public sealed class FoundryResponsesOptions : ResponsesServerOptions
     /// </summary>
     /// <remarks>
     /// This result can be sent to the inference service when
-    /// <see cref="AllowStoredOutputEnabled"/> is enabled, so phrase it as context for the model rather
-    /// than as an instruction to the end user. It is also recorded in the Hosted Agent response for
-    /// sequential calls skipped by the consent handoff.
+    /// <see cref="InferenceStoredOutputAllowed"/> is <see langword="true"/>, so phrase it as context
+    /// for the model rather than as an instruction to the end user. It is also recorded in the
+    /// Hosted Agent response for sequential calls skipped by the consent handoff.
     /// </remarks>
     public string OAuthConsentInterruptedToolResult { get; set; } = McpConsentResults.NotExecuted;
 
     /// <summary>
-    /// Gets or sets a value indicating whether to include an encrypted version of reasoning tokens in
+    /// Gets or sets a value indicating whether to exclude an encrypted version of reasoning tokens from
     /// reasoning item outputs.
     /// </summary>
     /// <remarks>
-    /// This enables reasoning items to be used in multi-turn conversations when using the Responses API
-    /// statelessly (like when the store parameter is set to false, or when an organization is enrolled
-    /// in the zero data retention program). It applies only while
-    /// <see cref="AllowStoredOutputEnabled"/> is <see langword="false"/>, because that is when hosting
+    /// By default, encrypted reasoning tokens are included so reasoning items can be used in multi-turn
+    /// conversations when using the Responses API statelessly (like when the store parameter is set to
+    /// false, or when an organization is enrolled in the zero data retention program). Set this option
+    /// to <see langword="true"/> to omit them. It applies only while
+    /// <see cref="InferenceStoredOutputAllowed"/> is <see langword="false"/>, because that is when hosting
     /// turns storage off and the reasoning items would otherwise be lost between turns.
     /// </remarks>
     /// <value>
-    /// Default is <see langword="true"/>.
+    /// Default is <see langword="false"/>.
     /// </value>
-    public bool IncludeReasoningEncryptedContent { get; set; } = true;
+    public bool ExcludeReasoningEncryptedContent { get; set; }
 
 }

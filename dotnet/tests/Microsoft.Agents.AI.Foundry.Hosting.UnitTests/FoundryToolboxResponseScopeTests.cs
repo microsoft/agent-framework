@@ -110,6 +110,7 @@ public sealed class FoundryToolboxResponseScopeTests
         var handler = new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
+            new FoundryResponsesServerOptions(),
             toolboxService);
 
         // Act: two responses deliberately share the same public response id. Their internally

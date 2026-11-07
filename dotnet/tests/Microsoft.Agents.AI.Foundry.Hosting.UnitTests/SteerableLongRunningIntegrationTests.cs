@@ -97,7 +97,7 @@ public sealed class SteerableLongRunningIntegrationTests
         builder.Services.AddFoundryResponses(
             agent,
             new TestAgentSessionStore(),
-            new FoundryResponsesOptions
+            new FoundryResponsesServerOptions
             {
                 ResilientBackground = true,
                 SteerableConversations = true,

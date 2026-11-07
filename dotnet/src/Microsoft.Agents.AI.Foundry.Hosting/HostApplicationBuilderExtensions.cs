@@ -31,10 +31,10 @@ public static class HostApplicationBuilderExtensions
     /// <returns>The host application builder for chaining.</returns>
     public static IHostApplicationBuilder AddFoundryResponses(
         this IHostApplicationBuilder host,
-        FoundryResponsesOptions? options = null)
+        FoundryResponsesServerOptions? options = null)
     {
         _ = Throw.IfNull(host);
-        FoundryResponsesOptions configuredOptions = ResolveFoundryResponsesOptions(host, options);
+        FoundryResponsesServerOptions configuredOptions = ResolveFoundryResponsesServerOptions(host, options);
         bool serverAdded = ServiceCollectionExtensions.AddResponsesServerOnce(
             host.Services,
             host,
@@ -42,7 +42,7 @@ public static class HostApplicationBuilderExtensions
             options is not null);
         host.Services.AddHealthChecks();
         ServiceCollectionExtensions.ConfigureFoundryListenPort(host.Services);
-        ServiceCollectionExtensions.ConfigureFoundryResponsesOptions(
+        ServiceCollectionExtensions.ConfigureFoundryResponsesServerOptions(
             host.Services,
             configuredOptions,
             includeServerOptions: serverAdded,
@@ -71,12 +71,12 @@ public static class HostApplicationBuilderExtensions
         this IHostApplicationBuilder host,
         AIAgent agent,
         AgentSessionStore? agentSessionStore = null,
-        FoundryResponsesOptions? options = null)
+        FoundryResponsesServerOptions? options = null)
     {
         _ = Throw.IfNull(host);
         _ = Throw.IfNull(agent);
 
-        FoundryResponsesOptions configuredOptions = ResolveFoundryResponsesOptions(host, options);
+        FoundryResponsesServerOptions configuredOptions = ResolveFoundryResponsesServerOptions(host, options);
         bool serverAdded = ServiceCollectionExtensions.AddResponsesServerOnce(
             host.Services,
             host,
@@ -84,7 +84,7 @@ public static class HostApplicationBuilderExtensions
             options is not null);
         host.Services.AddHealthChecks();
         ServiceCollectionExtensions.ConfigureFoundryListenPort(host.Services);
-        ServiceCollectionExtensions.ConfigureFoundryResponsesOptions(
+        ServiceCollectionExtensions.ConfigureFoundryResponsesServerOptions(
             host.Services,
             configuredOptions,
             includeServerOptions: serverAdded,
@@ -105,34 +105,34 @@ public static class HostApplicationBuilderExtensions
         return host;
     }
 
-    private static FoundryResponsesOptions ResolveFoundryResponsesOptions(
+    private static FoundryResponsesServerOptions ResolveFoundryResponsesServerOptions(
         IHostApplicationBuilder host,
-        FoundryResponsesOptions? suppliedOptions)
+        FoundryResponsesServerOptions? suppliedOptions)
     {
         if (suppliedOptions is not null)
         {
             // AgentServer applies code configuration after host configuration. A supplied options
             // object follows the same contract, including its inherited AgentServer defaults.
-            return ServiceCollectionExtensions.CopyFoundryResponsesOptions(suppliedOptions);
+            return ServiceCollectionExtensions.CopyFoundryResponsesServerOptions(suppliedOptions);
         }
 
-        FoundryResponsesOptions options = new();
+        FoundryResponsesServerOptions options = new();
         IConfigurationSection section =
             host.Configuration.GetSection(ServiceCollectionExtensions.ResponsesServerSettingsSectionName);
-        options.DefaultModel = section[nameof(FoundryResponsesOptions.DefaultModel)];
+        options.DefaultModel = section[nameof(FoundryResponsesServerOptions.DefaultModel)];
         if (int.TryParse(
-            section[nameof(FoundryResponsesOptions.DefaultFetchHistoryCount)],
+            section[nameof(FoundryResponsesServerOptions.DefaultFetchHistoryCount)],
             out int defaultFetchHistoryCount))
         {
             options.DefaultFetchHistoryCount = defaultFetchHistoryCount;
         }
 
-        if (bool.TryParse(section[nameof(FoundryResponsesOptions.ResilientBackground)], out bool resilientBackground))
+        if (bool.TryParse(section[nameof(FoundryResponsesServerOptions.ResilientBackground)], out bool resilientBackground))
         {
             options.ResilientBackground = resilientBackground;
         }
 
-        if (bool.TryParse(section[nameof(FoundryResponsesOptions.SteerableConversations)], out bool steerableConversations))
+        if (bool.TryParse(section[nameof(FoundryResponsesServerOptions.SteerableConversations)], out bool steerableConversations))
         {
             options.SteerableConversations = steerableConversations;
         }

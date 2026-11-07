@@ -236,6 +236,7 @@ public class OAuthConsentPolicyHandlerTests
         var handler = new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
+            new FoundryResponsesServerOptions(),
             toolboxService);
 
         var context = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };

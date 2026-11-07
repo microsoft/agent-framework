@@ -2,13 +2,13 @@
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
-public sealed class FoundryResponsesOptionsTests
+public sealed class FoundryResponsesServerOptionsTests
 {
     [Fact]
     public void Constructor_UsesAgentServerDefaults()
     {
         // Arrange
-        var options = new FoundryResponsesOptions();
+        var options = new FoundryResponsesServerOptions();
 
         // Act + Assert
         Assert.False(options.ResilientBackground);

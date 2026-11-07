@@ -13,7 +13,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 using ChatCompletionOptions = OpenAI.Chat.ChatCompletionOptions;
 using CreateResponseOptions = OpenAI.Responses.CreateResponseOptions;
@@ -1215,7 +1214,7 @@ public class AgentFrameworkResponseHandlerTests
         var handler = BuildHandlerWith(
             agent,
             new TestAgentSessionStore(),
-            hostingOptions: new FoundryResponsesOptions { AllowStoredOutputEnabled = true });
+            hostingOptions: new FoundryResponsesServerOptions { InferenceStoredOutputAllowed = true });
 
         // Act
         var names = new List<string>();
@@ -1246,7 +1245,7 @@ public class AgentFrameworkResponseHandlerTests
         var handler = BuildHandlerWith(
             agent,
             store,
-            hostingOptions: new FoundryResponsesOptions { AllowStoredOutputEnabled = true });
+            hostingOptions: new FoundryResponsesServerOptions { InferenceStoredOutputAllowed = true });
 
         // First turn: nothing holds the conversation yet, so the platform history is what seeds it.
         await DrainEventsAsync(handler.CreateAsync(
@@ -1330,7 +1329,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_ReasoningEncryptedContentTurnedOff_IsNotAskedForAsync()
+    public async Task CreateAsync_ReasoningEncryptedContentExcluded_IsNotAskedForAsync()
     {
         // Arrange: a container that does not want the encrypted reasoning tokens asked for.
         ChatOptions? sentToTheClient = null;
@@ -1347,7 +1346,7 @@ public class AgentFrameworkResponseHandlerTests
         var handler = BuildHandlerWith(
             agent,
             new TestAgentSessionStore(),
-            hostingOptions: new FoundryResponsesOptions { IncludeReasoningEncryptedContent = false });
+            hostingOptions: new FoundryResponsesServerOptions { ExcludeReasoningEncryptedContent = true });
 
         // Act
         await DrainEventsAsync(handler.CreateAsync(
@@ -1387,7 +1386,7 @@ public class AgentFrameworkResponseHandlerTests
         var handler = BuildHandlerWith(
             agent,
             new TestAgentSessionStore(),
-            hostingOptions: new FoundryResponsesOptions { AllowStoredOutputEnabled = true });
+            hostingOptions: new FoundryResponsesServerOptions { InferenceStoredOutputAllowed = true });
 
         // Act
         await DrainEventsAsync(handler.CreateAsync(
@@ -1923,17 +1922,16 @@ public class AgentFrameworkResponseHandlerTests
     private static AgentFrameworkResponseHandler BuildHandlerWith(
         AIAgent agent,
         AgentSessionStore store,
-        FoundryResponsesOptions? hostingOptions = null)
+        FoundryResponsesServerOptions? hostingOptions = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(store);
         services.AddSingleton(agent);
-        if (hostingOptions is not null)
-        {
-            services.AddSingleton(Options.Create(hostingOptions));
-        }
 
-        return new AgentFrameworkResponseHandler(services.BuildServiceProvider(), NullLogger<AgentFrameworkResponseHandler>.Instance);
+        return new AgentFrameworkResponseHandler(
+            services.BuildServiceProvider(),
+            NullLogger<AgentFrameworkResponseHandler>.Instance,
+            hostingOptions ?? new FoundryResponsesServerOptions());
     }
 
     private static (CreateResponse Request, Mock<ResponseContext> Context) BuildChainRequest(string responseId, string? callId)

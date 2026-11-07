@@ -103,7 +103,7 @@ internal static class InputConverter
     public static ChatOptions ConvertToChatOptions(
         CreateResponse request,
         Func<IChatClient, object?>? agentRawRepresentationFactory = null,
-        FoundryResponsesOptions? hostingOptions = null)
+        FoundryResponsesServerOptions? hostingOptions = null)
     {
         var options = new ChatOptions
         {
@@ -116,7 +116,7 @@ internal static class InputConverter
             // clients send placeholder values like "hosted-agent").
         };
 
-        if (hostingOptions?.AllowStoredOutputEnabled is true)
+        if (hostingOptions?.InferenceStoredOutputAllowed is true)
         {
             // The container opted into keeping its own recording, so nothing here touches the setting,
             // not even to pass the agent's own factory along: leaving it unset lets ChatClientAgent fall
@@ -128,7 +128,7 @@ internal static class InputConverter
         DisableStoredOutput(
             options,
             agentRawRepresentationFactory,
-            hostingOptions?.IncludeReasoningEncryptedContent ?? true);
+            includeReasoningEncryptedContent: hostingOptions?.ExcludeReasoningEncryptedContent is not true);
 
         return options;
     }

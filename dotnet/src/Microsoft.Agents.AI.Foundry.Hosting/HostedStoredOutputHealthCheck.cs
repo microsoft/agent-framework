@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -36,18 +35,19 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
 {
     private readonly IServiceProvider _serviceProvider;
-    private readonly FoundryResponsesOptions _hostingOptions;
+    private readonly FoundryResponsesServerOptions _options;
     private readonly ILogger<HostedStoredOutputHealthCheck>? _logger;
 
     public HostedStoredOutputHealthCheck(
         IServiceProvider serviceProvider,
-        IOptions<FoundryResponsesOptions>? hostingOptions = null,
+        FoundryResponsesServerOptions hostingOptions,
         ILogger<HostedStoredOutputHealthCheck>? logger = null)
     {
         _ = Throw.IfNull(serviceProvider);
+        _ = Throw.IfNull(hostingOptions);
 
         this._serviceProvider = serviceProvider;
-        this._hostingOptions = hostingOptions?.Value ?? new FoundryResponsesOptions();
+        this._options = hostingOptions;
         this._logger = logger;
     }
 
@@ -55,10 +55,10 @@ internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
     {
         _ = Throw.IfNull(context);
 
-        if (this._hostingOptions.AllowStoredOutputEnabled)
+        if (this._options.InferenceStoredOutputAllowed)
         {
             return HealthCheckResult.Healthy(
-                "The hosted agent backend storage usage was detected and the stored output enabled setting is explicitly allowing it.");
+                "The hosted agent backend storage usage was detected and inference stored output is explicitly allowed.");
         }
 
         List<string> storingAgents = [];
@@ -86,7 +86,7 @@ internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
                 status: context.Registration.FailureStatus,
                 description: string.Create(
                     CultureInfo.InvariantCulture,
-                    $"Stored output: {storingAgents.Count} registered agent(s) should not have server side storage enabled. This will produce a new untracked conversation/response in the server while the hosted agent will also generate a conversation for the request of the agent. This setting is only allowed when enabling the FoundryResponsesOptions.AllowStoredOutputEnabled flag, which leaves the agent's own storage setting untouched and keeps that second recording on purpose."),
+                    $"Stored output: {storingAgents.Count} registered agent(s) should not have server side storage enabled. This will produce a new untracked conversation/response in the server while the hosted agent will also generate a conversation for the request of the agent. This setting is only allowed when enabling the FoundryResponsesServerOptions.InferenceStoredOutputAllowed flag, which leaves the agent's own storage setting untouched and keeps that second recording on purpose."),
                 data: new Dictionary<string, object>(StringComparer.Ordinal) { ["storingAgents"] = storingAgents });
         }
 
