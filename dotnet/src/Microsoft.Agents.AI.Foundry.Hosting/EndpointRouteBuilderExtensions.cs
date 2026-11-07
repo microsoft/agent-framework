@@ -45,16 +45,15 @@ public static class EndpointRouteBuilderExtensions
     /// </para>
     /// </remarks>
     /// <param name="endpoints">The endpoint route builder.</param>
-    /// <param name="prefix">Optional route prefix (e.g., "/openai/v1"). Default: empty (routes at /responses).</param>
     /// <returns>The endpoint route builder for chaining.</returns>
-    public static IEndpointRouteBuilder MapFoundryResponses(this IEndpointRouteBuilder endpoints, string prefix = "")
+    public static IEndpointRouteBuilder MapFoundryResponses(this IEndpointRouteBuilder endpoints)
     {
         _ = Throw.IfNull(endpoints);
         RouteGroupBuilder responsesEndpoints = endpoints.MapGroup(string.Empty);
         responsesEndpoints.AddEndpointFilter(new HostedProtocolCompatibilityFilter(
             endpoints.ServiceProvider.GetRequiredService<IConfiguration>(),
             endpoints.ServiceProvider.GetRequiredService<ILogger<HostedProtocolCompatibilityFilter>>()));
-        responsesEndpoints.MapResponsesServer(prefix);
+        responsesEndpoints.MapResponsesServer();
         MapReadinessIfMissing(endpoints);
         ServiceCollectionExtensions.MarkFeatureUsed();
         return endpoints;

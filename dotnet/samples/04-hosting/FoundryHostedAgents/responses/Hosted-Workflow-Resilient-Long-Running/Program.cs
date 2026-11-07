@@ -56,10 +56,6 @@ builder.AddFoundryResponses(
 var app = builder.Build();
 app.MapFoundryResponses();
 Task? requestedShutdown = null;
-if (app.Environment.IsDevelopment())
-{
-    app.MapFoundryResponses("openai/v1");
-}
 
 // This configuration is for local development demonstration purposes only.
 // When hosted in Foundry the lifetime of the agent process is managed and shutdowns are handled gracefully.

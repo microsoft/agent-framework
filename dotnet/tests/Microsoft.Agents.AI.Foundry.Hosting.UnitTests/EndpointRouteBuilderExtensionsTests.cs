@@ -69,12 +69,11 @@ public class EndpointRouteBuilderExtensionsTests
     [Fact]
     public async Task MapFoundryResponses_CalledTwice_StillOnlyMapsReadinessOnceAsync()
     {
-        // Arrange: defensive coverage for callers that map the responses pipeline twice
-        // (e.g. once at the root and once under "openai/v1" in the existing AF samples).
+        // Arrange: defensive coverage for callers that map the responses pipeline twice.
         using var host = await BuildTestHostAsync(static app =>
         {
             app.MapFoundryResponses();
-            app.MapFoundryResponses("openai/v1");
+            app.MapFoundryResponses();
         });
 
         // Act + Assert: a single GET /readiness must succeed without ambiguous-match throw.
