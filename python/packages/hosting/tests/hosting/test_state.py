@@ -351,3 +351,40 @@ class TestWorkflowState:
         state: WorkflowState[Workflow] = WorkflowState(_FakeOrchestrationBuilder())
 
         assert await state.get_target() is workflow
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_factory_that_creates_executors_gives_each_target_its_own_agent_session(self, stream: bool) -> None:
+        client = _workflow_fixture("RecordingClient")()
+        build_workflow = _workflow_fixture("build_agent_executor_workflow")
+        run_workflow = _workflow_fixture("run_workflow")
+        state: WorkflowState[Workflow] = WorkflowState(lambda: build_workflow(client), cache_target=False)
+
+        first = await state.get_target()
+        second = await state.get_target()
+        await run_workflow(first, "FIRST_CALLER", stream=stream)
+        await run_workflow(second, "SECOND_CALLER", stream=stream)
+
+        assert first.get_start_executor() is not second.get_start_executor()
+        assert client.calls == [["FIRST_CALLER"], ["SECOND_CALLER"]]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_builder_target_reuses_the_executors_registered_on_it(self, stream: bool) -> None:
+        """``cache_target=False`` returns a new ``Workflow`` per call, not new executors.
+
+        An ``AgentExecutor`` registered on the builder keeps its ``AgentSession`` across every
+        target, so one request's history reaches the next. The README tells hosts to create
+        executors inside a factory when requests must stay independent.
+        """
+        client = _workflow_fixture("RecordingClient")()
+        run_workflow = _workflow_fixture("run_workflow")
+        builder = _workflow_fixture("agent_executor_workflow_builder")(client)
+        state: WorkflowState[Workflow] = WorkflowState(builder, cache_target=False)
+
+        first = await state.get_target()
+        second = await state.get_target()
+        await run_workflow(first, "FIRST_CALLER", stream=stream)
+        await run_workflow(second, "SECOND_CALLER", stream=stream)
+
+        assert first is not second
+        assert first.get_start_executor() is second.get_start_executor()
+        assert client.calls[-1] == ["FIRST_CALLER", "response", "SECOND_CALLER"]

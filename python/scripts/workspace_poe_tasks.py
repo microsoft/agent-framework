@@ -20,8 +20,8 @@ from pathlib import Path
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 from rich import print
-from scripts._toml import tomllib
 
+from scripts._toml import tomllib
 from scripts.task_runner import (
     build_work_items,
     discover_projects,
@@ -281,9 +281,7 @@ def run_fan_out(task_names: list[str], project_pattern: str, task_args: list[str
 
 
 def sample_pyright_config() -> str:
-    """Return the sample Pyright configuration for the current interpreter."""
-    if sys.version_info < (3, 11):
-        return "pyrightconfig.samples.py310.json"
+    """Return the sample Pyright configuration."""
     return "pyrightconfig.samples.json"
 
 

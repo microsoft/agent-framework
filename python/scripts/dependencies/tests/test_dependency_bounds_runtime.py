@@ -179,6 +179,15 @@ dependency-pyright = "pyright --project pyrightconfig.dependency.json"
     assert plans[0].typing_task == "dependency-pyright"
 
 
+def test_a2a_test_plan_includes_orchestrations() -> None:
+    workspace_root = Path(__file__).resolve().parents[3]
+
+    plans = _build_test_plans(workspace_root, "a2a")
+
+    assert len(plans) == 1
+    assert (workspace_root / "packages/orchestrations").resolve() in plans[0].internal_editables
+
+
 def test_dependency_pyright_uses_the_shared_runtime_environment() -> None:
     command = ["uv", "run"]
 

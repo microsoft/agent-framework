@@ -183,9 +183,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         await this.EnsureClientStartedAsync(cancellationToken).ConfigureAwait(false);
 
         // Create or resume a session with streaming enabled by default
-        SessionConfig sessionConfig = this._sessionConfig != null
-            ? CopySessionConfig(this._sessionConfig)
-            : new SessionConfig { Streaming = true };
+        SessionConfig sessionConfig = CopySessionConfig(this._sessionConfig);
 
         bool isStreaming = sessionConfig.Streaming ?? true;
         CopilotSession copilotSession;
@@ -314,19 +312,22 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     /// <summary>
     /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance,
-    /// preserving <see cref="SessionConfigBase.Streaming"/> from the source (defaulting to <c>true</c> if unset).
+    /// defaulting <see cref="SessionConfigBase.Streaming"/> to <see langword="true"/> and
+    /// <see cref="SessionConfigBase.EnableFileHooks"/> to <see langword="false"/> when unset.
     /// </summary>
-    internal static SessionConfig CopySessionConfig(SessionConfig source)
+    internal static SessionConfig CopySessionConfig(SessionConfig? source)
     {
-        SessionConfig copy = source.Clone();
-        copy.Streaming = source.Streaming ?? true;
+        SessionConfig copy = source?.Clone() ?? new SessionConfig();
+        copy.Streaming = source?.Streaming ?? true;
+        copy.EnableFileHooks = source?.EnableFileHooks ?? false;
         return copy;
     }
 
     /// <summary>
     /// Converts a source <see cref="SessionConfig"/> into a new
-    /// <see cref="ResumeSessionConfig"/>, preserving <see cref="SessionConfigBase.Streaming"/>
-    /// from the source (defaulting to <c>true</c> if unset).
+    /// <see cref="ResumeSessionConfig"/>, defaulting <see cref="SessionConfigBase.Streaming"/>
+    /// to <see langword="true"/> and <see cref="SessionConfigBase.EnableFileHooks"/>
+    /// to <see langword="false"/> when unset.
     /// </summary>
     internal static ResumeSessionConfig ToResumeSessionConfig(SessionConfig? source)
     {
@@ -358,7 +359,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             EnableConfigDiscovery = source?.EnableConfigDiscovery,
             EnableExperimentalMode = source?.EnableExperimentalMode,
             EnableFileChangeTracking = source?.EnableFileChangeTracking,
-            EnableFileHooks = source?.EnableFileHooks,
+            EnableFileHooks = source?.EnableFileHooks ?? false,
             EnableHostGitOperations = source?.EnableHostGitOperations,
             EnableManagedSettings = source?.EnableManagedSettings,
             EnableMcpApps = source?.EnableMcpApps ?? default,
@@ -535,6 +536,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             OutputTokenCount = (int?)(usageEvent.Data?.OutputTokens),
             TotalTokenCount = (int?)((usageEvent.Data?.InputTokens ?? 0) + (usageEvent.Data?.OutputTokens ?? 0)),
             CachedInputTokenCount = (int?)(usageEvent.Data?.CacheReadTokens),
+            ReasoningTokenCount = usageEvent.Data?.ReasoningTokens,
             AdditionalCounts = GetAdditionalCounts(usageEvent),
         };
 

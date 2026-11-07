@@ -16,7 +16,7 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, TypedDict, cast, overload
 from uuid import uuid4
 
 from agent_framework._clients import BaseChatClient
@@ -83,10 +83,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 _prompt_cache_options_supported = hasattr(completion_create_params, "PromptCacheOptions")
 
@@ -418,9 +414,12 @@ class RawOpenAIChatCompletionClient(
         """Initialize a raw OpenAI Chat completion client.
 
         Keyword Args:
-            model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_CHAT_COMPLETION_MODEL`` and then ``OPENAI_MODEL`` for OpenAI routing,
-                or ``AZURE_OPENAI_CHAT_COMPLETION_MODEL`` and then ``AZURE_OPENAI_MODEL`` for Azure routing.
+            model: Model identifier to use for the request. An explicit value wins over an
+                injected ``AsyncAzureOpenAI`` deployment, which wins over environment variables.
+                Otherwise the constructor reads ``OPENAI_CHAT_COMPLETION_MODEL`` and then
+                ``OPENAI_MODEL`` for OpenAI routing, or ``AZURE_OPENAI_CHAT_COMPLETION_MODEL``
+                and then ``AZURE_OPENAI_MODEL`` for Azure routing. An injected ``AsyncOpenAI``
+                client has no deployment, so the OpenAI variables still apply.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,
@@ -488,6 +487,8 @@ class RawOpenAIChatCompletionClient(
         )
 
         self.client = client
+        self._owns_client = async_client is None
+        self._client_closed = False
         self.model: str = settings.get("model") or ""
 
         # Store configuration for serialization
@@ -1416,6 +1417,13 @@ class RawOpenAIChatCompletionClient(
                 return {}
 
     @override
+    async def close(self) -> None:
+        """Close the connector-owned SDK connection, not caller-supplied credentials."""
+        if self._owns_client and not self._client_closed:
+            await self.client.close()
+            self._client_closed = True
+
+    @override
     def service_url(self) -> str:
         """Get the URL of the service.
 
@@ -1559,10 +1567,12 @@ class OpenAIChatCompletionClient(
         """Initialize an OpenAI Chat completion client.
 
         Keyword Args:
-            model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_CHAT_COMPLETION_MODEL`` and then ``OPENAI_MODEL`` for OpenAI routing,
-                or ``AZURE_OPENAI_CHAT_COMPLETION_MODEL`` and then
-                ``AZURE_OPENAI_MODEL`` for Azure routing.
+            model: Model identifier to use for the request. An explicit value wins over an
+                injected ``AsyncAzureOpenAI`` deployment, which wins over environment variables.
+                Otherwise the constructor reads ``OPENAI_CHAT_COMPLETION_MODEL`` and then
+                ``OPENAI_MODEL`` for OpenAI routing, or ``AZURE_OPENAI_CHAT_COMPLETION_MODEL``
+                and then ``AZURE_OPENAI_MODEL`` for Azure routing. An injected ``AsyncOpenAI``
+                client has no deployment, so the OpenAI variables still apply.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,

@@ -2,6 +2,7 @@
 
 using System;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -55,5 +56,82 @@ public sealed class CodeActEndToEndTests
         Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
         Assert.Contains("hi", doc.RootElement.GetProperty("stdout").GetString()!);
         Assert.Equal(0, doc.RootElement.GetProperty("exit_code").GetInt32());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteCode_HostErrorDetailsRequireOptInAsync(bool includeDetailedErrors)
+    {
+        // Arrange
+        if (string.IsNullOrWhiteSpace(GuestPath))
+        {
+            Assert.Skip(SkipReason);
+            return;
+        }
+
+        const string Detail = "synthetic backend diagnostic";
+        var options = HyperlightCodeActProviderOptions.CreateForWasm(GuestPath!);
+        options.IncludeDetailedErrors = includeDetailedErrors;
+        options.Tools = [AIFunctionFactory.Create(
+            (Func<string>)(() => throw new InvalidOperationException(Detail)), name: "failing_tool")];
+        using var function = new HyperlightExecuteCodeFunction(options);
+
+        // Act
+        var result = await function.InvokeAsync(new AIFunctionArguments
+        {
+            ["code"] = """
+                try:
+                    print(call_tool('failing_tool'))
+                except Exception as exc:
+                    print(str(exc))
+                """,
+        });
+
+        // Assert
+        var json = Assert.IsType<string>(result);
+        Assert.Equal(includeDetailedErrors, json.Contains(Detail, StringComparison.Ordinal));
+        if (!includeDetailedErrors)
+        {
+            Assert.Contains("Host tool execution failed.", json, StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteCode_RestoreFailureObeysPolicyAndRebuildsSandboxAsync(bool includeDetailedErrors)
+    {
+        // Arrange
+        if (string.IsNullOrWhiteSpace(GuestPath))
+        {
+            Assert.Skip(SkipReason);
+            return;
+        }
+
+        var options = HyperlightCodeActProviderOptions.CreateForWasm(GuestPath!);
+        options.IncludeDetailedErrors = includeDetailedErrors;
+        using var function = new HyperlightExecuteCodeFunction(options);
+        await function.InvokeAsync(new AIFunctionArguments { ["code"] = "print('first')" });
+        var executor = typeof(HyperlightExecuteCodeFunction)
+            .GetField("_executor", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(function)!;
+        var snapshotField = executor.GetType().GetField("_warmSnapshot", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        Assert.IsAssignableFrom<IDisposable>(snapshotField.GetValue(executor)).Dispose();
+
+        // Act
+        var failed = await function.InvokeAsync(new AIFunctionArguments { ["code"] = "print('second')" });
+
+        // Assert
+        using var error = JsonDocument.Parse(Assert.IsType<string>(failed));
+        Assert.False(error.RootElement.GetProperty("success").GetBoolean());
+        var message = error.RootElement.GetProperty("stderr").GetString();
+        Assert.Equal(!includeDetailedErrors, string.Equals(message, "Code execution failed.", StringComparison.Ordinal));
+        Assert.Null(snapshotField.GetValue(executor));
+        Assert.Null(executor.GetType().GetField("_sandbox", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(executor));
+        Assert.Null(executor.GetType().GetField("_lastConfigFingerprint", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(executor));
+        var recovered = await function.InvokeAsync(new AIFunctionArguments { ["code"] = "print('recovered')" });
+        using var success = JsonDocument.Parse(Assert.IsType<string>(recovered));
+        Assert.True(success.RootElement.GetProperty("success").GetBoolean());
+        Assert.Contains("recovered", success.RootElement.GetProperty("stdout").GetString()!, StringComparison.Ordinal);
     }
 }

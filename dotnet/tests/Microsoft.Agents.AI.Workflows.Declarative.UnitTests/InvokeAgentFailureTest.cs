@@ -71,7 +71,7 @@ public sealed class InvokeAgentFailureTest(ITestOutputHelper output) : WorkflowT
     /// <summary>
     /// A contentless update is not a failure signal to the engine. Translating a failed Responses
     /// run into <see cref="ErrorContent"/> is the provider's job, so a mocked provider cannot
-    /// produce that signal. See <c>AzureAgentProviderFailureTest</c>.
+    /// produce that signal. See <c>FoundryAgentProviderFailureTest</c>.
     /// </summary>
     [Fact]
     public async Task ContentlessResponseDoesNotFailWorkflowAsync()
@@ -220,7 +220,7 @@ public sealed class InvokeAgentFailureTest(ITestOutputHelper output) : WorkflowT
     [Fact]
     public async Task FailedResponseFromProviderFailsWorkflowAsync()
     {
-        // Arrange - the provider emits what AzureAgentProvider produces for a failed run.
+        // Arrange - the provider emits what FoundryAgentProvider produces for a failed run.
         List<AgentResponseUpdate> updates =
             await AgentUpdateTestHelpers.ApplyFailureDetectionAsync(
                 AgentName,

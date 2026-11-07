@@ -1,0 +1,124 @@
+# Declarative agents and workflows
+
+Use declarative construction when YAML should be the source of truth for supported agent or workflow behavior. Keep
+credentials, custom tools, transports, authorization, and application services in code.
+
+## Selection rules
+
+- Use the declarative agent factories in `Microsoft.Agents.AI.Declarative` (for example `ChatClientPromptAgentFactory`
+  over an `IChatClient`) for declarative agents, and `Microsoft.Agents.AI.Workflows.Declarative` for declarative
+  workflows. Add `Microsoft.Agents.AI.Workflows.Declarative.Foundry` or `.Mcp` only when the definition uses those
+  actions.
+- Prefer code-first construction when custom C# logic, strong typing, unsupported actions, or dynamic routing would
+  make the definition harder to validate than code.
+- Do not invent schema kinds or parse definitions into ad hoc constructor calls; use the published schema and factory.
+- Declarative workflows evaluate Power Fx expressions (values beginning with `=`); test expressions with realistic
+  data and never build expressions from untrusted input.
+
+Package maturity differs per package and surface; check current status and XML docs before making compatibility
+commitments.
+
+## Host responsibilities
+
+- Supply the chat clients, project clients, connections, tools, and external handlers the definition references.
+- Provide handlers for HTTP, MCP, or Foundry actions when a workflow uses them.
+- `DefaultHttpRequestHandler` requires an application-owned `IHttpMessageHandlerFactory`, registered by
+  `AddHttpClient`. It creates and disposes a client for each request, including redirects, without disposing
+  the factory-owned handler pipeline. It has no disposal method.
+- `DefaultHttpRequestHandler` accepts HTTP(S) URLs only and denies every request unless the application supplies
+  allowed hosts, for example `new DefaultHttpRequestHandler(["api.example.com"], httpMessageHandlerFactory, "WorkflowHttp")`.
+  Configure the allowlist in trusted application code, not in workflow content; an empty list allows no hosts.
+  The handler copies the list and checks it before creating a client and on every handler-managed redirect.
+  Workflow-supplied `Host` headers are rejected before client creation; the transport derives the authority
+  from the allowed request URL.
+- Allowed hosts are exact DNS names or IP literals with optional ports, without schemes, paths, or wildcards. Matching is
+  case-insensitive, normalizes internationalized names and trailing DNS dots, and does not implicitly include
+  subdomains. An omitted port defaults to 443; specify another port explicitly, for example `api.example.com:8443`
+  or `[::1]:8080` (IPv6 requires brackets when specifying a port). Ports must be from 1 to 65535.
+  The request's effective port must match before client creation and on every handler-managed redirect.
+  Both HTTP and HTTPS remain supported, subject to existing redirect restrictions; `api.example.com` also
+  permits `http://api.example.com:443`, but not `http://api.example.com` (port 80). Enforce HTTPS separately
+  before supplying an authenticated client if plaintext HTTP must not be allowed.
+  Explicitly allowed internal hosts are supported on every target framework. Normal DNS resolution, proxy use,
+  and routing are delegated to the HTTP transport; allowing a name trusts the host's DNS and network configuration.
+- Configure the factory's named pipeline with an `HttpClientHandler`, or on .NET a `SocketsHttpHandler`,
+  with `AllowAutoRedirect = false` and `UseCookies = false`. Other primary transports, incomplete pipelines,
+  and transports with either setting enabled are rejected before sending. Configure certificate revocation
+  checking and a finite handler lifetime. Application-owned delegating handlers must preserve the validated
+  destination and must not follow redirects themselves.
+  `IHttpClientFactory` client configuration, including default headers, base address, and timeout, does not
+  apply. Configure headers and origin-bound authentication in delegating handlers; workflow headers are
+  removed on redirects, but delegating handlers still apply. Bind credentials to the intended scheme, host,
+  and port on every request.
+  A positive workflow request timeout governs the whole operation, including redirects and response body reads,
+  without the client's default 100-second timeout imposing an earlier deadline.
+- Migrate direct `HttpClient`, callback, and allowlist-only construction to the factory constructor. Remove
+  handler disposal calls, await active requests before disposing application services, and keep the factory
+  alive for the workflow's lifetime.
+- `DefaultMcpToolHandler` creates and disposes an MCP client per invocation, including discovery; it does not retain
+  implicit server-side session state across calls, approval waits, or checkpoint resumes. Use explicit state handles
+  or a custom handler with a documented session-lifetime contract when continuity is required.
+- Standalone MCP GET/SSE streams for unsolicited messages are disabled; request-scoped SSE tool responses remain
+  supported. Use an explicitly scoped integration for background subscriptions.
+- Construct `DefaultMcpToolHandler(IHttpClientFactory, string)` with an application-provided factory and stable named
+  configuration for HTTP handler reuse and rotation. Factory-created clients are disposed per invocation; the
+  factory remains application-owned. Configure the factory once with pooled handlers to avoid connection churn and
+  port exhaustion. Parameterless construction, callback-based constructors, and handler-level disposal are unsupported.
+- Leave `DefaultMcpToolHandler.ProtocolVersion` unset for SDK automatic negotiation. When a server's protocol is
+  known, an explicit legacy version skips the discovery probe but still creates a fresh session per invocation.
+  Selection restricts negotiation and incompatible versions fail. Configure separate handlers for differing server
+  policies; explicit newer revisions still perform discovery and do not downgrade to legacy-only servers.
+- Configure factory clients with cookies and redirects disabled, certificate revocation checking enabled, and
+  origin-bound credential injection. Do not retain per-workflow credentials or mutable origin state in pooled
+  handlers, and do not derive client names from workflow IDs, credentials, or arbitrary URLs.
+- Bound concurrent MCP work and supply invocation deadlines/cancellation from the host. The handler owns no shared
+  disposable resources; cancel and await calls before disposing the application's HTTP factory infrastructure.
+- Keep configuration exposure restricted to intentional values.
+- Treat definitions as executable configuration and load them only from trusted sources.
+- Allowlist external destinations and register only resources the definition may invoke.
+- Review the documented handler ownership rules; use a custom handler when host policy requires different
+  authentication, retries, SSRF controls, or transport behavior.
+
+## Validation
+
+Validate definitions at startup and fail clearly on unknown providers, actions, tools, variables, or resources. Apply
+the same approval, evaluation, and telemetry policy used for code-first agents and workflows.
+
+`Question` skip modes that inspect an existing variable require a non-sensitive value.
+Use `alwaysPrompt: true` or `skipQuestionMode: AlwaysAsk` when prompting should be unconditional.
+
+`Local` and `Topic` address the same declarative workflow state. On restore, legacy `Topic` entries identified by
+declarative sensitivity metadata migrate to `Local` before post-load hooks or resumed actions run. Only migrated
+entries are removed from `Topic`; unmarked entries, including code-first state, remain untouched.
+Older checkpoints containing an identified declarative key in both physical scopes without canonical ownership
+metadata are rejected because assignment order is unavailable. Reconcile those entries explicitly or start a fresh
+session before resuming. Legacy entries without declarative metadata require explicit reconciliation rather than
+automatic migration.
+
+For code-first executors using the declarative sensitivity helpers without a formula-state restoration callback,
+reads fall back to the requested metadata-marked legacy entry without modifying it. Writes use `Local` and remove
+only that entry from `Topic`; unrelated legacy entries are not migrated by these point operations.
+Ad hoc expression evaluation also reads legacy entries without persisting migration, so parallel expression readers
+do not queue competing updates. Persisted migration still runs in registered formula-state restoration callbacks.
+New canonical assignments, managed initializations, and migrated entries persist separate, versioned ownership
+metadata. This identifies their sensitivity metadata as belonging to `Local`, not to a same-key raw code-first `Topic` entry. Concurrent
+code-first `Topic` and canonical `Local` assignments can therefore coexist; reads and restoration preserve the
+unrelated raw `Topic` value. Preserve these private metadata scopes together with values in custom checkpoint stores.
+Initialization leaves existing values and their sensitivity metadata unchanged. Legacy initialization preserves the
+stored native payload even when the caller requests a formula or variant value.
+Without recorded canonical ownership, writes still reject a visible same-key unmarked code-first `Topic` entry
+before changing state; reconcile such collisions explicitly.
+
+A plain sensitivity-helper null update deletes the canonical value, sensitivity metadata, and ownership metadata.
+A wrapped declarative clear retains a blank value with its sensitivity and ownership metadata.
+
+`ParseValue` preserves the input's sensitivity label. If conversion of a sensitivity-labeled value fails, the action
+assigns a blank result with that label, emits a warning without the input value, and continues. Successful conversions
+are unchanged; invalid inputs without a sensitivity label still fail normally.
+
+## Learn more
+
+- [Declarative agents](https://learn.microsoft.com/agent-framework/agents/declarative)
+- [Declarative workflows](https://learn.microsoft.com/agent-framework/workflows/declarative)
+- [Declarative agent samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/02-agents/DeclarativeAgents)
+- [Declarative workflow samples](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/03-workflows/Declarative)

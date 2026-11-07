@@ -113,6 +113,7 @@ class RawAnthropicBedrockClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
         secret_key_secret = settings.get("aws_secret_access_key")
         session_token_secret = settings.get("aws_session_token")
 
+        owns_client = anthropic_client is None
         if anthropic_client is None:
             anthropic_client = AsyncAnthropicBedrock(
                 aws_secret_key=secret_key_secret.get_secret_value() if secret_key_secret is not None else None,
@@ -130,6 +131,7 @@ class RawAnthropicBedrockClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
             additional_beta_flags=additional_beta_flags,
             additional_properties=additional_properties,
         )
+        self._owns_client = owns_client
 
 
 class AnthropicBedrockClient(

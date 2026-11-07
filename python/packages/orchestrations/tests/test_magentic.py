@@ -303,6 +303,34 @@ async def test_magentic_limit_termination_yields_update_in_streaming() -> None:
     assert terminal.text
 
 
+async def test_magentic_max_round_count_below_one_is_coerced_to_one() -> None:
+    """A max round count below 1 gets the base group chat contract: coerce to 1
+    instead of terminating before any coordination round runs."""
+
+    class LedgerCountingManager(FakeManager):
+        def __init__(self, *, max_round_count: int | None = None) -> None:
+            super().__init__(max_round_count=max_round_count)
+            self.ledger_calls = 0
+
+        @override
+        async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
+            self.ledger_calls += 1
+            return await super().create_progress_ledger(magentic_context)
+
+    manager = LedgerCountingManager(max_round_count=0)
+
+    workflow = MagenticBuilder(
+        participants=[DummyExec(name=manager.next_speaker_name)],
+        manager=manager,
+    ).build()
+
+    outputs = [event async for event in workflow.run("round coercion test", stream=True)]
+
+    # One coordination round ran before the round limit ended the workflow.
+    assert manager.ledger_calls == 1
+    assert outputs
+
+
 async def test_magentic_as_agent_does_not_accept_conversation() -> None:
     manager = FakeManager()
     writer = StubAgent(manager.next_speaker_name, "summary response")

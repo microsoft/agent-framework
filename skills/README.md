@@ -8,6 +8,7 @@ These are public distribution artifacts, not contributor instructions for workin
 | Skill | Purpose |
 | --- | --- |
 | `agent-framework-builder-python` | Build, modify, evaluate, integrate, and host Python Agent Framework applications. |
+| `agent-framework-builder-dotnet` | Build, modify, evaluate, integrate, and host .NET Agent Framework applications. |
 
 ## Install
 
@@ -16,6 +17,9 @@ Preview and install the default-branch version with GitHub CLI:
 ```bash
 gh skill preview microsoft/agent-framework agent-framework-builder-python@main
 gh skill install microsoft/agent-framework agent-framework-builder-python@main
+
+gh skill preview microsoft/agent-framework agent-framework-builder-dotnet@main
+gh skill install microsoft/agent-framework agent-framework-builder-dotnet@main
 ```
 
 The explicit `@main` ref is required until a tagged Agent Framework release includes the skill. Until then,
@@ -25,6 +29,7 @@ Or use the cross-agent skills CLI:
 
 ```bash
 npx skills add microsoft/agent-framework --skill agent-framework-builder-python
+npx skills add microsoft/agent-framework --skill agent-framework-builder-dotnet
 ```
 
 ## Repository maintenance contract
@@ -33,6 +38,6 @@ npx skills add microsoft/agent-framework --skill agent-framework-builder-python
   instructions or automatically load them for normal framework development.
 - Keep the skills outside `.github/skills`, `.agents/skills`, and `.claude/skills` so repository agents do not
   discover them as project skills.
-- Review the Python consumer skill whenever a change affects public APIs, package names or maturity, canonical samples,
-  configuration, evaluation, integrations, or hosting guidance.
+- Review the Python and .NET consumer skills whenever a change affects public APIs, package names or maturity,
+  canonical samples, configuration, evaluation, integrations, or hosting guidance.
 - Update only the affected guidance. Do not copy internal contributor conventions into the consumer skill.
