@@ -148,6 +148,20 @@ def test_memory_topic_record_normalizes_multiline_memories() -> None:
     assert MemoryTopicRecord.from_markdown(record.to_markdown()) == record
 
 
+def test_memory_topic_record_preserves_single_line_whitespace_on_reload() -> None:
+    """Single-line spaces and tabs are content, and distinct values must not deduplicate."""
+    memories = ['the literal "a  b"', 'the literal "a b"', "keep\ttabs"]
+    record = MemoryTopicRecord(
+        topic="compatibility",
+        summary="Compatibility",
+        memories=memories,
+        updated_at="2026-04-21T10:05:00+00:00",
+    )
+
+    assert record.memories == memories
+    assert MemoryTopicRecord.from_markdown(record.to_markdown()).memories == memories
+
+
 @pytest.mark.parametrize(
     "summary",
     [

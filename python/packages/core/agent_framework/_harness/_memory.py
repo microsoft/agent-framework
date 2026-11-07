@@ -102,7 +102,8 @@ def _normalize_topic(topic: str) -> str:
 
 
 def _normalize_memory_text(memory: str) -> str:
-    normalized = " ".join(memory.strip().split())
+    """Fold line breaks without changing meaningful spaces or tabs within a line."""
+    normalized = re.sub(r"\s*(?:\r\n|\r|\n)\s*", " ", memory.strip())
     if not normalized:
         raise ValueError("memory must not be empty.")
     return normalized
