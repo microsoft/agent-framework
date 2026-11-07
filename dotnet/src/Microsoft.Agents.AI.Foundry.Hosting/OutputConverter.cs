@@ -7,7 +7,9 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Unicode;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
@@ -46,6 +48,9 @@ internal abstract record OutputConverterItem
 /// </summary>
 internal static class OutputConverter
 {
+    // Keep non-ASCII characters as-is while continuing to escape HTML-sensitive characters.
+    private static readonly JsonSerializerOptions s_jsonOptions = new() { Encoder = JavaScriptEncoder.Create(UnicodeRanges.All) };
+
     /// <summary>
     /// Converts a stream of <see cref="AgentResponseUpdate"/> into a stream of
     /// <see cref="ResponseStreamEvent"/> using the SDK builder pattern.
@@ -209,7 +214,7 @@ internal static class OutputConverter
                         previousMessageId = null;
 
                         var arguments = functionCall.Arguments is not null
-                            ? JsonSerializer.Serialize(functionCall.Arguments)
+                            ? JsonSerializer.Serialize(functionCall.Arguments, s_jsonOptions)
                             : "{}";
 
                         var fcBuilder = stream.AddOutputItemFunctionCall(functionCall.Name, functionCall.CallId);
@@ -328,7 +333,7 @@ internal static class OutputConverter
                         var wireId = ToolApprovalIdMap.ComputeWireId(approvalRequest.RequestId);
 
                         var approvalArguments = approvalFunctionCall.Arguments is not null
-                            ? JsonSerializer.Serialize(approvalFunctionCall.Arguments)
+                            ? JsonSerializer.Serialize(approvalFunctionCall.Arguments, s_jsonOptions)
                             : "{}";
 
                         ToolApprovalIdMap.Record(
@@ -755,7 +760,7 @@ internal static class OutputConverter
     /// </remarks>
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing function call result payload.")]
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing function call result payload.")]
-    private static string EncodeFunctionResultAsJsonStringPayload(object? result)
+    internal static string EncodeFunctionResultAsJsonStringPayload(object? result)
     {
         string innerText = result switch
         {
@@ -763,13 +768,13 @@ internal static class OutputConverter
             string s => s,
             JsonElement je => je.ValueKind == JsonValueKind.String
                 ? (je.GetString() ?? string.Empty)
-                : je.GetRawText(),
+                : JsonSerializer.Serialize(je, s_jsonOptions),
             JsonDocument jd => jd.RootElement.ValueKind == JsonValueKind.String
                 ? (jd.RootElement.GetString() ?? string.Empty)
-                : jd.RootElement.GetRawText(),
-            _ => JsonSerializer.Serialize(result),
+                : JsonSerializer.Serialize(jd.RootElement, s_jsonOptions),
+            _ => JsonSerializer.Serialize(result, s_jsonOptions),
         };
 
-        return JsonSerializer.Serialize(innerText);
+        return JsonSerializer.Serialize(innerText, s_jsonOptions);
     }
 }

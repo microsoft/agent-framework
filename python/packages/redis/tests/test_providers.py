@@ -416,20 +416,69 @@ class TestRedisHistoryProviderInit:
     @pytest.mark.parametrize(
         "connection_kwargs",
         [
-            {"redis_url": "redis://localhost:6379"},
-            {"credential_provider": MagicMock(), "host": "myhost"},
+            {"redis_url": "redis://ignored:6379"},
+            {"credential_provider": MagicMock()},
+            {
+                "credential_provider": MagicMock(),
+                "host": "ignored",
+                "port": 1234,
+                "ssl": False,
+                "username": "ignored",
+            },
+            {
+                "redis_url": "redis://ignored:6379",
+                "credential_provider": MagicMock(),
+            },
         ],
     )
-    def test_borrowed_client_rejects_other_connection_sources(self, connection_kwargs: dict[str, Any]):
+    def test_borrowed_client_takes_precedence_over_other_connection_sources(self, connection_kwargs: dict[str, Any]):
+        # A caller-owned client is the connection. URL, credential provider and the
+        # individual connection settings describe how to build one, so supplying
+        # them alongside it is redundant rather than conflicting, and none of them
+        # is validated. This matches what the Redis vector stores already do.
         borrowed = Redis(decode_responses=True)
-
-        with pytest.raises(ValueError, match="mutually exclusive"):
-            RedisHistoryProvider(
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            provider = RedisHistoryProvider(
                 "mem",
                 redis_client=borrowed,
                 application_id="test-app",
                 **connection_kwargs,
             )
+
+        assert provider._redis_client is borrowed
+        assert provider._owns_client is False
+        assert provider.redis_url is None
+        mock_from_url.assert_not_called()
+
+    def test_borrowed_client_still_passes_compatibility_checks_with_redundant_settings(self):
+        # The settings are ignored; the client itself is not.
+        with pytest.raises(ValueError, match="decode_responses=True"):
+            RedisHistoryProvider(
+                "mem",
+                redis_client=Redis(decode_responses=False),
+                redis_url="redis://ignored:6379",
+                application_id="test-app",
+            )
+
+    def test_borrowed_client_keeps_provider_scoping_and_retention(self):
+        # Connection precedence does not reach provider-level storage settings.
+        borrowed = Redis(decode_responses=True)
+        provider = RedisHistoryProvider(
+            "mem",
+            redis_client=borrowed,
+            redis_url="redis://ignored:6379",
+            application_id="app",
+            tenant_id="tenant",
+            agent_id="agent",
+            max_messages=7,
+            key_prefix="hist",
+        )
+
+        assert provider.max_messages == 7
+        assert provider.key_prefix == "hist"
+        key = provider._redis_key("session")
+        assert "|v2|" in key
+        assert "tenant" in key and "agent" in key
 
     def test_borrowed_client_must_be_async_redis(self):
         with pytest.raises(TypeError, match=r"redis\.asyncio\.Redis"):

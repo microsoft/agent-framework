@@ -6,7 +6,10 @@ from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 
+from scripts._toml import tomllib
 from scripts.dependencies._dependency_bounds_release_impl import (
     _PROBE_RESULT_PREFIX,
     ReleaseProbePlan,
@@ -19,6 +22,49 @@ from scripts.dependencies._dependency_bounds_release_impl import (
     run_release_mode,
 )
 from scripts.dependencies.validate_dependency_bounds import main
+
+
+@pytest.mark.parametrize("python_version", ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"])
+@pytest.mark.parametrize(
+    ("sys_platform", "platform_machine", "supported"),
+    [
+        ("darwin", "x86_64", False),
+        ("darwin", "arm64", True),
+        ("linux", "x86_64", True),
+        ("linux", "aarch64", True),
+        ("linux", "armv7l", False),
+        ("win32", "AMD64", True),
+        ("win32", "ARM64", True),
+        ("win32", "x86_64", True),
+        ("win32", "aarch64", True),
+        ("win32", "x86", False),
+    ],
+)
+def test_foundry_local_dependencies_select_supported_environments(
+    python_version: str, sys_platform: str, platform_machine: str, supported: bool
+) -> None:
+    workspace = Path(__file__).resolve().parents[3]
+    core = tomllib.loads((workspace / "packages/core/pyproject.toml").read_text())["project"]
+    integration = tomllib.loads((workspace / "packages/foundry_local/pyproject.toml").read_text())["project"]
+    adapter = next(
+        req
+        for value in core["optional-dependencies"]["all"]
+        if (req := Requirement(value)).name == "agent-framework-foundry-local"
+    )
+    sdk = next(req for value in integration["dependencies"] if (req := Requirement(value)).name == "foundry-local-sdk")
+    environment = {
+        "python_version": python_version,
+        "sys_platform": sys_platform,
+        "platform_machine": platform_machine,
+    }
+
+    assert adapter.marker is not None
+    assert adapter.marker.evaluate(environment) == (supported and python_version in {"3.11", "3.12", "3.13", "3.14"})
+    assert sdk.marker is not None
+    assert sdk.marker.evaluate(environment) == supported
+    assert (python_version in SpecifierSet(integration["requires-python"])) == (
+        python_version in {"3.11", "3.12", "3.13", "3.14"}
+    )
 
 
 def _write_project(path: Path, content: str) -> None:

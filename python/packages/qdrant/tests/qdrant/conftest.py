@@ -97,15 +97,18 @@ async def collection_factory(client, definition):
 async def server_collection(definition):
     if not os.getenv("QDRANT_TEST_URL"):
         pytest.skip("Set QDRANT_TEST_URL to a disposable Qdrant server.")
-    async with QdrantCollection(
-        dict,
-        definition=definition,
-        collection_name=f"af_qdrant_test_{uuid4().hex}",
-        async_client=AsyncQdrantClient(url=os.environ["QDRANT_TEST_URL"], check_compatibility=False),
-        managed_client=True,
-    ) as collection:
-        await collection.ensure_collection_exists()
-        try:
-            yield collection
-        finally:
-            await collection.ensure_collection_deleted()
+    client = AsyncQdrantClient(url=os.environ["QDRANT_TEST_URL"], check_compatibility=False)
+    try:
+        async with QdrantCollection(
+            dict,
+            definition=definition,
+            collection_name=f"af_qdrant_test_{uuid4().hex}",
+            async_client=client,
+        ) as collection:
+            await collection.ensure_collection_exists()
+            try:
+                yield collection
+            finally:
+                await collection.ensure_collection_deleted()
+    finally:
+        await client.close()

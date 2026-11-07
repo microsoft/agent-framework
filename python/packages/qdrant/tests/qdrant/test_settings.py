@@ -137,12 +137,78 @@ async def test_injected_client_bypasses_environment_settings(connector_factory, 
     client.close.assert_not_awaited()
 
 
-@pytest.mark.parametrize("settings", [{"env_file_path": "unused.env"}, {"env_file_encoding": "utf-16"}])
-def test_injected_client_rejects_explicit_env_options(connector_factory, settings):
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"url": "https://ignored.example"},
+        {"url": ""},
+        {"url": {}},
+        {"api_key": "ignored-key"},
+        {"api_key": SecretString("ignored-key")},
+        {"api_key": ""},
+        {"api_key": 123},
+        {"env_file_path": "missing.env"},
+        {"env_file_encoding": "invalid-encoding"},
+        {"managed_client": True},
+        {
+            "url": "https://ignored.example",
+            "api_key": SecretString("ignored-key"),
+            "env_file_path": "missing.env",
+            "env_file_encoding": "invalid-encoding",
+            "managed_client": True,
+        },
+    ],
+)
+async def test_injected_client_ignores_connection_settings(connector_factory, monkeypatch, settings):
+    monkeypatch.setenv("QDRANT_URL", "not-a-url")
+    monkeypatch.setenv("QDRANT_API_KEY", "ambient-key")
+    client = AsyncMock(spec=AsyncQdrantClient)
+    client.init_options = {}
+    with (
+        patch(
+            "agent_framework_qdrant._vector_store.load_settings",
+            side_effect=AssertionError("Unexpected settings read"),
+        ),
+        patch("agent_framework_qdrant._vector_store.AsyncQdrantClient") as factory,
+    ):
+        async with connector_factory(async_client=client, **settings) as connector:
+            assert connector.async_client is client
+            assert connector.managed_client is False
+            if isinstance(connector, QdrantCollection):
+                assert connector.collection_name == "test"
+                assert connector.definition.key_field.name == "id"
+                with pytest.raises(ValueError, match="Unsupported"):
+                    await connector.get(operation_options={"with_payload": False})
+        await connector.aclose()
+    factory.assert_not_called()
+    client.close.assert_not_awaited()
+
+
+async def test_store_collection_reuses_injected_client(definition, monkeypatch):
+    monkeypatch.setenv("QDRANT_URL", "not-a-url")
+    monkeypatch.setenv("QDRANT_API_KEY", "ambient-key")
     client = AsyncMock(spec=AsyncQdrantClient)
     with (
-        patch("agent_framework_qdrant._vector_store.load_settings") as loader,
-        pytest.raises(ValueError, match="connection settings"),
+        patch(
+            "agent_framework_qdrant._vector_store.load_settings",
+            side_effect=AssertionError("Unexpected settings read"),
+        ),
+        patch("agent_framework_qdrant._vector_store.AsyncQdrantClient") as factory,
     ):
-        connector_factory(async_client=client, **settings)
-    loader.assert_not_called()
+        async with QdrantStore(
+            async_client=client,
+            url="https://ignored.example",
+            api_key=SecretString("ignored-key"),
+            env_file_path="missing.env",
+            env_file_encoding="invalid-encoding",
+            managed_client=True,
+        ) as store:
+            collection = store.get_collection(dict, definition=definition, collection_name="documents")
+            assert collection.async_client is client
+            assert collection.managed_client is False
+            assert collection.collection_name == "documents"
+            assert collection.definition is definition
+            await collection.aclose()
+        await store.aclose()
+    factory.assert_not_called()
+    client.close.assert_not_awaited()

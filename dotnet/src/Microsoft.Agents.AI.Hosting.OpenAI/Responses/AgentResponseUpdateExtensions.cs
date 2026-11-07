@@ -147,7 +147,11 @@ internal static class AgentResponseUpdateExtensions
                 continue;
             }
 
-            if (!IsSameMessage(update, previousUpdate))
+            if (previousUpdate is null)
+            {
+                previousUpdate = update;
+            }
+            else if (!IsSameMessage(update, previousUpdate))
             {
                 // Finalize the current generator when moving to a new message.
                 foreach (var evt in generator?.Complete() ?? [])
@@ -170,6 +174,21 @@ internal static class AgentResponseUpdateExtensions
                 if (content is UsageContent usageContent && usageContent.Details != null)
                 {
                     latestUsage += usageContent.Details.ToResponseUsage();
+                    continue;
+                }
+
+                // Preserve annotation-only updates on the active assistant message without closing it.
+                if (content.GetType() == typeof(AIContent))
+                {
+                    if (generator is AssistantMessageEventGenerator assistantGenerator && content.Annotations is { Count: > 0 })
+                    {
+                        foreach (var evt in assistantGenerator.ProcessContent(content))
+                        {
+                            OnEvent(evt);
+                            yield return evt;
+                        }
+                    }
+
                     continue;
                 }
 
