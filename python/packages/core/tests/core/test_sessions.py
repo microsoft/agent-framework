@@ -969,6 +969,8 @@ class TestStateTypeRegistry:
         }
 
     def test_registered_child_tag_does_not_hijack_message_payload(self) -> None:
+        from agent_framework import _sessions
+
         @dataclass
         class TextState:
             value: str
@@ -979,13 +981,17 @@ class TestStateTypeRegistry:
             encoder=lambda value: {"value": value.value},
             decoder=lambda value: TextState(str(value["value"])),
         )
-        session = AgentSession(session_id="message")
-        session.state["message"] = Message(role="user", contents=["hello"])
+        try:
+            session = AgentSession(session_id="message")
+            session.state["message"] = Message(role="user", contents=["hello"])
 
-        restored = AgentSession.from_dict(session.to_dict())
+            restored = AgentSession.from_dict(session.to_dict())
 
-        assert isinstance(restored.state["message"], Message)
-        assert restored.state["message"].text == "hello"
+            assert isinstance(restored.state["message"], Message)
+            assert restored.state["message"].text == "hello"
+        finally:
+            _sessions._STATE_TYPE_REGISTRY.pop("text", None)
+            _sessions._STATE_CLASS_REGISTRY.pop(TextState, None)
 
     @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
     def test_non_finite_float_preserves_legacy_dictionary_serialization(self, value: float) -> None:
