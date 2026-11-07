@@ -5,9 +5,9 @@ const fs = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { afterEach, beforeEach, describe, it } = require('node:test');
-const { checkPublication, validateRequests } = require('../scripts/issue-routing-publish.js');
+const { checkIssueUpdates, validateRequests } = require('../scripts/issue-routing-publish.js');
 
-describe('Issue routing publication checks', () => {
+describe('Issue update checks', () => {
   let directory;
   let input;
   let outputs;
@@ -37,7 +37,7 @@ describe('Issue routing publication checks', () => {
 
   it('permits valid updates without rewriting them', async () => {
     const original = fs.readFileSync(input.outputPath, 'utf8');
-    await checkPublication(input);
+    await checkIssueUpdates(input);
     assert.equal(outputs.allowed, 'true');
     assert.equal(fs.readFileSync(input.outputPath, 'utf8'), original);
   });
@@ -49,29 +49,29 @@ describe('Issue routing publication checks', () => {
       }), /only set.*Feature/);
     }
     for (const output of [{}, { items: null }, { items: [null] }]) {
-      assert.throws(() => validateRequests(output), /items array|Invalid/);
+      assert.throws(() => validateRequests(output), /list of issue update requests|Invalid/);
     }
   });
 
-  it('replaces every queued write with an explicit no-op when current labels stop publication', async () => {
+  it('replaces every queued write with an explicit no-op when current labels stop issue updates', async () => {
     for (const labels of [['spam'], ['suspected-spam', 'safe-to-triage'], [{ name: 'NEEDS-MAINTAINER-TRIAGE' }]]) {
       input.github.rest.issues.get = async () => ({ data: { number: 42, labels } });
-      await checkPublication(input);
+      await checkIssueUpdates(input);
       assert.equal(outputs.allowed, 'false');
       const { items } = JSON.parse(fs.readFileSync(input.outputPath, 'utf8'));
       assert.equal(items.length, 1);
       assert.equal(items[0].type, 'noop');
-      assert.match(notices.at(-1), /Skipping routing publication/);
+      assert.match(notices.at(-1), /Skipping issue updates/);
     }
   });
 
   it('checks again after evidence preparation, even if the first check allowed updates', async () => {
-    await checkPublication(input);
+    await checkIssueUpdates(input);
     assert.equal(outputs.allowed, 'true');
     input.github.rest.issues.get = async () => ({
       data: { number: 42, labels: ['spam', 'safe-to-triage'] },
     });
-    await checkPublication(input);
+    await checkIssueUpdates(input);
     assert.equal(outputs.allowed, 'false');
     assert.equal(JSON.parse(fs.readFileSync(input.outputPath, 'utf8')).items[0].type, 'noop');
   });
@@ -80,15 +80,15 @@ describe('Issue routing publication checks', () => {
     input.github.rest.issues.get = async () => ({
       data: { number: 42, labels: ['needs-maintainer-triage', 'safe-to-triage'] },
     });
-    await checkPublication(input);
+    await checkIssueUpdates(input);
     assert.equal(outputs.allowed, 'true');
     input.github.rest.issues.get = async () => { throw new Error('Access denied'); };
-    await assert.rejects(checkPublication(input), /Access denied/);
+    await assert.rejects(checkIssueUpdates(input), /Access denied/);
     assert.equal(outputs.allowed, 'false');
     input.github.rest.issues.get = async () => ({ data: { number: 42, pull_request: {} } });
-    await assert.rejects(checkPublication(input), /not a pull request/);
-    await assert.rejects(checkPublication({ ...input, issueNumber: '0' }), /positive, safe integer/);
+    await assert.rejects(checkIssueUpdates(input), /not a pull request/);
+    await assert.rejects(checkIssueUpdates({ ...input, issueNumber: '0' }), /positive, safe integer/);
     fs.writeFileSync(input.outputPath, 'invalid');
-    await assert.rejects(checkPublication(input), SyntaxError);
+    await assert.rejects(checkIssueUpdates(input), SyntaxError);
   });
 });
