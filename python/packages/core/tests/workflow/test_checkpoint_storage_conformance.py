@@ -318,6 +318,106 @@ async def test_concurrent_variant_saves_do_not_overwrite(tmp_path: Path) -> None
     assert (await storage.load(saved_ids[0])).state["marker"] == ("upper" if saved_ids[0] == "Round-B" else "lower")
 
 
+def test_directory_aliases_share_one_variant_write_queue(tmp_path: Path) -> None:
+    """Parent-directory case aliases must not split ownership of one folded destination."""
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    upper_directory = tmp_path / "Checkpoints"
+    lower_directory = tmp_path / "checkpoints"
+    upper_directory.mkdir()
+    if not lower_directory.exists() or not upper_directory.samefile(lower_directory):
+        pytest.skip("directory aliases require a case-insensitive filesystem")
+
+    first = checkpoint_module._enqueue_write((upper_directory / "Round-A.json").resolve())
+    second = checkpoint_module._enqueue_write((lower_directory / "round-a.json").resolve())
+    try:
+        assert second.predecessor is first.completion
+    finally:
+        checkpoint_module._release_write(first)
+        checkpoint_module._release_write(second)
+
+
+def test_distinct_directories_keep_independent_write_queues(tmp_path: Path) -> None:
+    """Filesystem identity must not merge queues for genuinely separate directories."""
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    first_directory = tmp_path / "first"
+    second_directory = tmp_path / "second"
+    first_directory.mkdir()
+    second_directory.mkdir()
+
+    first = checkpoint_module._enqueue_write(first_directory / "same.json")
+    second = checkpoint_module._enqueue_write(second_directory / "same.json")
+    try:
+        assert second.predecessor is None
+    finally:
+        checkpoint_module._release_write(first)
+        checkpoint_module._release_write(second)
+
+
+async def test_concurrent_variant_saves_share_aliased_storage_directory(tmp_path: Path) -> None:
+    """Two storage objects for one physical directory must serialize variant saves."""
+    if not _filesystem_is_case_insensitive(tmp_path):
+        pytest.skip("directory aliases require a case-insensitive filesystem")
+    upper_storage = FileCheckpointStorage(tmp_path / "Checkpoints")
+    lower_storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    assert upper_storage.storage_path.samefile(lower_storage.storage_path)
+
+    upper = WorkflowCheckpoint(
+        workflow_name="upper-workflow",
+        graph_signature_hash="topology-a",
+        checkpoint_id="Round-A",
+        state={"marker": "upper"},
+    )
+    lower = WorkflowCheckpoint(
+        workflow_name="lower-workflow",
+        graph_signature_hash="topology-b",
+        checkpoint_id="round-a",
+        state={"marker": "lower"},
+    )
+
+    results = await asyncio.gather(upper_storage.save(upper), lower_storage.save(lower), return_exceptions=True)
+    errors = [result for result in results if isinstance(result, WorkflowCheckpointException)]
+    saved_ids = [result for result in results if isinstance(result, str)]
+    assert len(errors) == 1, f"expected exactly one save to be rejected, got {results!r}"
+    assert "collides" in str(errors[0])
+    assert len(saved_ids) == 1
+
+    winner = upper_storage if saved_ids[0] == "Round-A" else lower_storage
+    assert (await winner.load(saved_ids[0])).state["marker"] == ("upper" if saved_ids[0] == "Round-A" else "lower")
+
+
+async def test_file_load_validates_read_identity_when_variant_disappears(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrent delete must not bypass the identity in an already-read snapshot."""
+    if not _filesystem_is_case_insensitive(tmp_path):
+        pytest.skip("case-variant collision only occurs on case-insensitive filesystems")
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    checkpoint = WorkflowCheckpoint(
+        workflow_name="workflow",
+        graph_signature_hash="topology",
+        checkpoint_id="Round-A",
+        state={"marker": "original"},
+    )
+    await storage.save(checkpoint)
+
+    original_iterdir = Path.iterdir
+    removed = False
+
+    def remove_before_listing(path: Path):
+        nonlocal removed
+        if path == storage.storage_path and not removed:
+            (storage.storage_path / "Round-A.json").unlink()
+            removed = True
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", remove_before_listing)
+    with pytest.raises(WorkflowCheckpointException, match="spelled 'Round-A'"):
+        await storage.load("round-a")
+    assert removed
+
+
 def _filesystem_folds_unicode_normalization(path: Path) -> bool:
     """True when the volume treats NFC and NFD spellings of a name as one file."""
     import unicodedata

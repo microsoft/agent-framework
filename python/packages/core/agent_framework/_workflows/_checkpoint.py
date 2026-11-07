@@ -340,7 +340,8 @@ def _encode_checkpoint_for_storage(checkpoint: WorkflowCheckpoint, allowed_types
 # checkpoint ID from different processes still rely on ``os.replace`` being atomic on
 # the underlying filesystem for the file not to be seen half-written; which write
 # survives is undefined.
-_destination_queues: dict[tuple[Path, str], _DestinationQueue] = {}
+_DestinationKey = tuple[tuple[int, int] | Path, str]
+_destination_queues: dict[_DestinationKey, _DestinationQueue] = {}
 # A completed predecessor invokes callbacks synchronously. If cancellation lands while
 # a save is entering the queue, its deferred release can therefore run re-entrantly on
 # the same thread before the enqueue frame has left this guard. A plain Lock deadlocks
@@ -374,6 +375,8 @@ class _WriteTicket:
     #: never sees it, and a cancelled task hides its own exception, so the ticket is the
     #: only place it survives.
     error: BaseException | None = None
+    #: Captured once at enqueue so release does not stat a removed or replaced directory.
+    key: _DestinationKey | None = None
 
 
 def _fs_key(file_name: str) -> str:
@@ -387,15 +390,25 @@ def _fs_key(file_name: str) -> str:
     return unicodedata.normalize("NFC", file_name).casefold()
 
 
-def _destination_key(file_path: Path) -> tuple[Path, str]:
-    """The queue key for *file_path*: one entry per filesystem-folded name.
+def _destination_key(file_path: Path) -> _DestinationKey:
+    """The queue key for *file_path*: physical directory plus folded filename.
 
     Variant spellings of one checkpoint (``Round-A.json`` and ``round-a.json``)
     resolve to a single file on a folding volume, so their writes must share one
     queue or the second replace can land first and overwrite the newer one
-    (#9466 review).
+    (#9466 review). Parent spellings can differ too, so the resolved ``Path`` is
+    not a sufficient directory key. Device and inode identify the directory itself;
+    genuinely distinct directories keep independent queues even when their names fold.
     """
-    return (file_path.parent, _fs_key(file_path.name))
+    try:
+        directory_stat = file_path.parent.stat()
+        directory_identity: tuple[int, int] | Path = (directory_stat.st_dev, directory_stat.st_ino)
+    except OSError:
+        # Private queue tests also use never-created paths. A missing directory cannot
+        # have a filesystem identity yet; the path fallback preserves the old behavior,
+        # and the real write will surface the directory error to the caller.
+        directory_identity = file_path.parent
+    return (directory_identity, _fs_key(file_path.name))
 
 
 def _enqueue_write(file_path: Path) -> _WriteTicket:
@@ -410,7 +423,7 @@ def _enqueue_write(file_path: Path) -> _WriteTicket:
         predecessor = queue.tail
         queue.tail = completion
         queue.pending += 1
-    return _WriteTicket(path=file_path, predecessor=predecessor, completion=completion)
+    return _WriteTicket(path=file_path, predecessor=predecessor, completion=completion, key=key)
 
 
 def _wait_for_signal(
@@ -567,11 +580,12 @@ def _release_one_write(ticket: _WriteTicket) -> None:
         if ticket.released:
             return
         ticket.released = True
-        queue = _destination_queues.get(_destination_key(ticket.path))
+        key = ticket.key if ticket.key is not None else _destination_key(ticket.path)
+        queue = _destination_queues.get(key)
         if queue is not None:
             queue.pending -= 1
             if queue.pending <= 0:
-                del _destination_queues[_destination_key(ticket.path)]
+                del _destination_queues[key]
     # Outside the guard: waking the successor must not happen while holding the lock its
     # own release will need.
     if not ticket.completion.done():
@@ -715,8 +729,9 @@ class FileCheckpointStorage:
                 "the storage directory could not be listed."
             ) from exc
         variant = next((name for name in siblings if _fs_key(name) == _fs_key(expected_name)), None)
-        if variant is None:
-            return
+        # Validate the snapshot even if a concurrent delete removed the directory entry
+        # after it was read. Otherwise an alias load can return another checkpoint just
+        # because the matching name disappeared before this directory scan (#9466 review).
         if encoded_checkpoint is None:
             stored_id = FileCheckpointStorage._read_stored_checkpoint_id(file_path)
         elif isinstance(encoded_checkpoint, dict) and isinstance(encoded_checkpoint.get("checkpoint_id"), str):
@@ -725,9 +740,10 @@ class FileCheckpointStorage:
             raise WorkflowCheckpointException(f"Cannot verify the checkpoint identity stored in {file_path}.")
         if stored_id == checkpoint_id:
             return
+        colliding = variant.removesuffix(".json") if variant is not None else stored_id
         raise WorkflowCheckpointException(
             f"No checkpoint found with ID {checkpoint_id}: the stored checkpoint is spelled "
-            f"{variant.removesuffix('.json')!r}, and on this filesystem both names resolve to "
+            f"{colliding!r}, and on this filesystem both names resolve to "
             "one file. Refusing to read or delete another checkpoint's data."
         )
 
