@@ -31,6 +31,70 @@ except (ImportError, RuntimeError):
 logger = logging.getLogger("agent_framework.declarative")
 
 
+def _find_top_level_operator(formula: str, operators: tuple[str, ...]) -> tuple[int, str] | None:
+    """Return the last occurrence of any `operators` outside string literals and brackets.
+
+    Picking the last occurrence makes a chain of same-precedence operators left-associative.
+    Quoted text (with doubled-quote escapes) and anything inside `()`, `[]` or `{}` is
+    skipped so an operator spelled inside a literal or a nested call is not split on.
+
+    Returns:
+        The `(index, operator)` pair, or `None` when no operator is at the top level.
+    """
+    depth = 0
+    quote: str | None = None
+    found: tuple[int, str] | None = None
+    index = 0
+    while index < len(formula):
+        char = formula[index]
+        if quote is not None:
+            if char == quote:
+                if index + 1 < len(formula) and formula[index + 1] == quote:
+                    index += 2
+                    continue
+                quote = None
+            index += 1
+            continue
+        if char in ('"', "'"):
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            for operator in operators:
+                if formula.startswith(operator, index):
+                    found = (index, operator)
+                    break
+        index += 1
+    return found
+
+
+def _matching_paren_index(formula: str) -> int:
+    """Return the index of the `)` matching the leading `(`, or -1 when it never closes."""
+    depth = 0
+    quote: str | None = None
+    index = 0
+    while index < len(formula):
+        char = formula[index]
+        if quote is not None:
+            if char == quote:
+                if index + 1 < len(formula) and formula[index + 1] == quote:
+                    index += 2
+                    continue
+                quote = None
+        elif char in ('"', "'"):
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    return -1
+
+
 class WorkflowState:
     """Manages standalone workflow state and expression evaluation.
 
@@ -445,13 +509,7 @@ class WorkflowState:
 
         formula = formula.strip()
 
-        # Handle negation prefix
-        if formula.startswith("!"):
-            inner = formula[1:].strip()
-            result = self._eval_simple(inner)
-            return not bool(result)
-
-        # Handle Not() function
+        # Handle Not() function (a whole-call formula, so no operator precedence is involved)
         not_args = whole_call_args(formula, "Not")
         if not_args is not None:
             result = self._eval_simple(not_args.strip())
@@ -470,95 +528,85 @@ class WorkflowState:
                     logger.warning(f"Function {func_name} failed: {e}")
                     return formula
 
-        # Handle And operator
-        if " And " in formula:
-            parts = formula.split(" And ", 1)
-            left = self._eval_simple(parts[0])
-            right = self._eval_simple(parts[1])
-            return bool(left) and bool(right)
-
-        # Handle Or operator (||)
-        if " || " in formula or " Or " in formula:
-            parts = formula.split(" || ", 1) if " || " in formula else formula.split(" Or ", 1)
-            left = self._eval_simple(parts[0])
-            right = self._eval_simple(parts[1])
+        # Binary operators, lowest to highest precedence. Each level splits on the *last*
+        # top-level occurrence so chains are left-associative (`10 - 2 - 3` is `(10 - 2) - 3`),
+        # and operators inside string literals or brackets are never treated as operators.
+        # Handle Or operator (lowest precedence)
+        found = _find_top_level_operator(formula, (" || ", " Or "))
+        if found is not None:
+            index, op = found
+            left = self._eval_simple(formula[:index])
+            right = self._eval_simple(formula[index + len(op) :])
             return bool(left) or bool(right)
 
+        # Handle And operator
+        found = _find_top_level_operator(formula, (" And ",))
+        if found is not None:
+            index, op = found
+            left = self._eval_simple(formula[:index])
+            right = self._eval_simple(formula[index + len(op) :])
+            return bool(left) and bool(right)
+
+        # Handle negation prefix. It binds tighter than And/Or, so it is applied after they are split.
+        if formula.startswith("!"):
+            inner = formula[1:].strip()
+            result = self._eval_simple(inner)
+            return not bool(result)
+
         # Handle comparison operators
-        for op in [" < ", " > ", " <= ", " >= ", " <> ", " = "]:
-            if op in formula:
-                parts = formula.split(op, 1)
-                left = self._eval_simple(parts[0].strip())
-                right = self._eval_simple(parts[1].strip())
-                if op == " < ":
-                    return left < right
-                if op == " > ":
-                    return left > right
-                if op == " <= ":
-                    return left <= right
-                if op == " >= ":
-                    return left >= right
-                if op == " <> ":
-                    return left != right
-                if op == " = ":
-                    return left == right
+        found = _find_top_level_operator(formula, (" < ", " > ", " <= ", " >= ", " <> ", " = "))
+        if found is not None:
+            index, op = found
+            left = self._eval_simple(formula[:index].strip())
+            right = self._eval_simple(formula[index + len(op) :].strip())
+            if op == " < ":
+                return left < right
+            if op == " > ":
+                return left > right
+            if op == " <= ":
+                return left <= right
+            if op == " >= ":
+                return left >= right
+            if op == " <> ":
+                return left != right
+            return left == right
 
-        # Handle arithmetic operators
-        if " + " in formula:
-            parts = formula.split(" + ", 1)
-            left = self._eval_simple(parts[0].strip())
-            right = self._eval_simple(parts[1].strip())
+        # Handle addition and subtraction (same precedence, left-associative)
+        found = _find_top_level_operator(formula, (" + ", " - "))
+        if found is not None:
+            index, op = found
+            left = self._eval_simple(formula[:index].strip())
+            right = self._eval_simple(formula[index + len(op) :].strip())
             # Treat None as 0 for arithmetic (PowerFx behavior)
             if left is None:
                 left = 0
             if right is None:
                 right = 0
-            # Try numeric addition first, fall back to string concat
-            try:
-                return float(left) + float(right)
-            except (ValueError, TypeError):
-                return str(left) + str(right)
-
-        if " - " in formula:
-            parts = formula.split(" - ", 1)
-            left = self._eval_simple(parts[0].strip())
-            right = self._eval_simple(parts[1].strip())
-            # Treat None as 0 for arithmetic (PowerFx behavior)
-            if left is None:
-                left = 0
-            if right is None:
-                right = 0
+            if op == " + ":
+                # Try numeric addition first, fall back to string concat
+                try:
+                    return float(left) + float(right)
+                except (ValueError, TypeError):
+                    return str(left) + str(right)
             try:
                 return float(left) - float(right)
             except (ValueError, TypeError):
                 return formula
 
-        # Handle multiplication
-        if " * " in formula:
-            parts = formula.split(" * ", 1)
-            left = self._eval_simple(parts[0].strip())
-            right = self._eval_simple(parts[1].strip())
+        # Handle multiplication and division (same precedence, left-associative)
+        found = _find_top_level_operator(formula, (" * ", " / "))
+        if found is not None:
+            index, op = found
+            left = self._eval_simple(formula[:index].strip())
+            right = self._eval_simple(formula[index + len(op) :].strip())
             # Treat None as 0 for arithmetic (PowerFx behavior)
             if left is None:
                 left = 0
             if right is None:
                 right = 0
             try:
-                return float(left) * float(right)
-            except (ValueError, TypeError):
-                return formula
-
-        # Handle division with div-by-zero protection
-        if " / " in formula:
-            parts = formula.split(" / ", 1)
-            left = self._eval_simple(parts[0].strip())
-            right = self._eval_simple(parts[1].strip())
-            # Treat None as 0 for arithmetic (PowerFx behavior)
-            if left is None:
-                left = 0
-            if right is None:
-                right = 0
-            try:
+                if op == " * ":
+                    return float(left) * float(right)
                 right_float = float(right)
                 if right_float == 0:
                     # PowerFx returns Error for division by zero; we return None (Blank)
@@ -567,6 +615,10 @@ class WorkflowState:
                 return float(left) / right_float
             except (ValueError, TypeError):
                 return formula
+
+        # Handle a fully parenthesized sub-expression
+        if formula.startswith("(") and _matching_paren_index(formula) == len(formula) - 1:
+            return self._eval_simple(formula[1:-1])
 
         # Handle string literals
         if (formula.startswith('"') and formula.endswith('"')) or (formula.startswith("'") and formula.endswith("'")):

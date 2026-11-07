@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent_framework_declarative._workflows import _state as state_module
+import agent_framework_declarative._workflows._state as state_module
 from agent_framework_declarative._workflows._state import WorkflowState
 
 
@@ -750,3 +750,56 @@ class TestWorkflowStateConversationIdInit:
         state1 = WorkflowState()
         state2 = WorkflowState()
         assert state1.get("System.ConversationId") != state2.get("System.ConversationId")
+
+
+class TestWorkflowStateEvalSimpleOperatorPrecedence:
+    """The no-PowerFx fallback evaluator must honour operator precedence and associativity."""
+
+    @pytest.fixture
+    def state(self, monkeypatch: pytest.MonkeyPatch) -> WorkflowState:
+        # Force the pure-Python fallback regardless of whether PowerFx is installed.
+        import agent_framework_declarative._workflows._state as state_module
+
+        monkeypatch.setattr(state_module, "_powerfx_engine", None)
+        workflow_state = WorkflowState()
+        for name, value in {"a": True, "b": False, "c": False, "x": 10, "text": "a And b"}.items():
+            workflow_state.set(f"Local.{name}", value)
+        return workflow_state
+
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [
+            # And binds tighter than Or, whichever side the And sits on.
+            ("=Local.a Or Local.b And Local.c", True),
+            ("=Local.b And Local.c Or Local.a", True),
+            ("=Local.a || Local.b And Local.c", True),
+            ("=Local.x = 10 Or Local.x = 11 And Local.b", True),
+            # Parentheses override precedence.
+            ("=(Local.a Or Local.b) And Local.c", False),
+            # Negation binds tighter than And.
+            ("=!Local.b And Local.a", True),
+            ("=!Local.a And Local.a", False),
+        ],
+    )
+    def test_logical_operator_precedence(self, state: WorkflowState, expression: str, expected: bool) -> None:
+        assert state.eval(expression) is expected
+
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [
+            ("=10 - 2 - 3", 5.0),
+            ("=Local.x - 2 - 3", 5.0),
+            ("=100 / 10 / 2", 5.0),
+            ("=10 - 2 + 3", 11.0),
+            ("=10 - 4 / 2", 8.0),
+            ("=2 + 3 * 4", 14.0),
+            ("=2 * 3 + 4", 10.0),
+        ],
+    )
+    def test_arithmetic_is_left_associative(self, state: WorkflowState, expression: str, expected: float) -> None:
+        assert state.eval(expression) == expected
+
+    def test_operator_inside_string_literal_is_not_split(self, state: WorkflowState) -> None:
+        assert state.eval('=Local.text = "a And b"') is True
+        assert state.eval('="a - b"') == "a - b"
+        assert state.eval('="x" = "x Or y"') is False
