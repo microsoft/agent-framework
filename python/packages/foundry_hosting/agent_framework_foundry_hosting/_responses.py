@@ -120,6 +120,7 @@ from ._request import (
     UnsupportedOptions,
     WorkflowTurn,
     prepare_response_options,
+    reject_caller_tool_context,
     response_run_options,
     validate_default_transport_options,
     validate_request_options,
@@ -1301,6 +1302,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 _initialize_agent_history(agent, configuration)
             if configuration.workflow:
                 self._warn_legacy_workflow()
+            try:
+                reject_caller_tool_context(request)
+            except ValueError as exc:
+                raise _PublicResponseFailure(exc) from None
             hosted_request: HostedResponseRequest | None = None
             if configuration.workflow:
                 if self._prepare_options is not None:
