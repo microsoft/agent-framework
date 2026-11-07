@@ -307,6 +307,7 @@ class RawOpenAIChatCompletionClient(
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a raw OpenAI Chat completion client.
 
@@ -329,9 +330,9 @@ class RawOpenAIChatCompletionClient(
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
-            env_file_path: Optional ``.env`` file that is checked before the process environment
-                for ``OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: Optional HTTP timeout in seconds for requests. Ignored when ``async_client``
+                is provided; configure the timeout on that client instead.
         """
         ...
 
@@ -355,6 +356,7 @@ class RawOpenAIChatCompletionClient(
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a raw OpenAI Chat completion client.
 
@@ -384,9 +386,9 @@ class RawOpenAIChatCompletionClient(
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
-            env_file_path: Optional ``.env`` file that is checked before process environment
-                variables for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: Optional HTTP timeout in seconds for requests. Ignored when ``async_client``
+                is provided; configure the timeout on that client instead.
         """
         ...
 
@@ -410,6 +412,7 @@ class RawOpenAIChatCompletionClient(
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a raw OpenAI Chat completion client.
 
@@ -455,6 +458,10 @@ class RawOpenAIChatCompletionClient(
                 variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
                 lookups.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: HTTP timeout in seconds for requests. When not provided, the OpenAI SDK
+                default is used (connect: 5s, read/write/pool: 600s). A single value applies to
+                every phase, including connect. Ignored when ``async_client`` is provided;
+                configure the timeout on that client instead.
 
         Notes:
             Environment resolution and routing precedence are:
@@ -484,6 +491,7 @@ class RawOpenAIChatCompletionClient(
             env_file_encoding=env_file_encoding,
             openai_model_fields=("chat_completion_model", "model"),
             azure_model_fields=("chat_completion_model", "model"),
+            timeout=timeout,
         )
 
         self.client = client
@@ -506,6 +514,9 @@ class RawOpenAIChatCompletionClient(
         self.response_parser = response_parser
         self.message_preparer = message_preparer
         self._use_azure_client = use_azure_client
+        # Settings dict contains OpenAI/Azure configuration values (model, org_id, base_url, etc.)
+        # Client behavior parameters like timeout are stored directly as instance attributes
+        self.timeout = timeout
         if use_azure_client:
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
@@ -1464,6 +1475,7 @@ class OpenAIChatCompletionClient(
         env_file_encoding: str | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize an OpenAI Chat completion client.
 
@@ -1510,6 +1522,7 @@ class OpenAIChatCompletionClient(
         env_file_encoding: str | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize an OpenAI Chat completion client.
 
@@ -1537,10 +1550,12 @@ class OpenAIChatCompletionClient(
             message_preparer: Optional hook to customize outgoing request messages.
                 See ``OpenAIChatMessagePreparer``.
             env_file_path: Optional ``.env`` file that is checked before process environment
-                variables for ``AZURE_OPENAI_*`` values.
+                for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
             middleware: Optional sequence of ChatAndFunctionMiddlewareTypes to apply to requests.
             function_invocation_configuration: Optional configuration for function invocation support.
+            timeout: Optional HTTP timeout in seconds for requests. Ignored when ``async_client``
+                is provided; configure the timeout on that client instead.
         """
         ...
 
@@ -1563,6 +1578,7 @@ class OpenAIChatCompletionClient(
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize an OpenAI Chat completion client.
 
@@ -1663,6 +1679,7 @@ class OpenAIChatCompletionClient(
             message_preparer=message_preparer,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
+            timeout=timeout,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
         )

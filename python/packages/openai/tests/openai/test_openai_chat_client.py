@@ -451,6 +451,18 @@ def test_serialize(openai_unit_test_env: dict[str, str]) -> None:
     assert "User-Agent" not in dumped_settings["default_headers"]
 
 
+def test_serialize_with_timeout(openai_unit_test_env: dict[str, str]) -> None:
+    settings = {
+        "model": openai_unit_test_env["OPENAI_MODEL"],
+        "api_key": openai_unit_test_env["OPENAI_API_KEY"],
+        "timeout": 30.0,
+    }
+
+    client = OpenAIChatClient.from_dict(settings)
+    dumped_settings = client.to_dict()
+    assert dumped_settings["timeout"] == 30.0
+
+
 def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
     settings = {
         "model": openai_unit_test_env["OPENAI_MODEL"],

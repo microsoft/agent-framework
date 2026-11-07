@@ -832,6 +832,8 @@ class RawOpenAIChatClient(
         self.model: str = settings.get("model") or ""
 
         # Store configuration for serialization
+        # Settings dict contains OpenAI/Azure configuration values (model, org_id, base_url, etc.)
+        # Client behavior parameters like timeout are stored directly as instance attributes
         self.org_id = settings.get("org_id")
         self.base_url = settings.get("base_url")
         self.azure_endpoint = settings.get("endpoint")
@@ -843,6 +845,7 @@ class RawOpenAIChatClient(
         else:
             self.default_headers = None
         self.instruction_role = instruction_role
+        self.timeout = timeout
         if use_azure_client:
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
@@ -4755,6 +4758,7 @@ class OpenAIChatClient(
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize an OpenAI Responses client.
 
@@ -4778,6 +4782,8 @@ class OpenAIChatClient(
             env_file_path: Optional ``.env`` file that is checked before the process environment
                 for ``OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: Optional HTTP timeout in seconds for requests. Ignored when ``async_client``
+                is provided; configure the timeout on that client instead.
         """
         ...
 
@@ -4801,6 +4807,7 @@ class OpenAIChatClient(
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize an OpenAI Responses client.
 
@@ -4831,6 +4838,8 @@ class OpenAIChatClient(
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: Optional HTTP timeout in seconds for requests. Ignored when ``async_client``
+                is provided; configure the timeout on that client instead.
         """
         ...
 
@@ -4854,6 +4863,7 @@ class OpenAIChatClient(
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize an OpenAI Responses client.
 
@@ -4894,6 +4904,10 @@ class OpenAIChatClient(
                 variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
                 lookups.
             env_file_encoding: Encoding for the ``.env`` file.
+            timeout: HTTP timeout in seconds for requests. When not provided, the OpenAI SDK
+                default is used (connect: 5s, total: 600s). A single value applies to
+                every phase, including connect. Ignored when ``async_client`` is provided;
+                configure the timeout on that client instead.
 
         Notes:
             Environment resolution and routing precedence are:
@@ -4949,6 +4963,7 @@ class OpenAIChatClient(
             instruction_role=instruction_role,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
+            timeout=timeout,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             compaction_strategy=compaction_strategy,
