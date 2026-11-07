@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// not whether every pre-registered toolbox is usable. Pending and Unhealthy use the
 /// registration's failure status; Healthy, NoEndpoint, ConsentRequired, and Degraded
 /// report <c>Healthy</c>. Registered automatically by
-/// <see cref="ServiceCollectionExtensions.AddFoundryToolboxes(IServiceCollection, TokenCredential, string[])"/>
+/// <see cref="ServiceCollectionExtensions.AddFoundryToolboxService(IServiceCollection, TokenCredential, string[])"/>
 /// and its overloads.
 /// </summary>
 internal sealed class FoundryToolboxHealthCheck : IHealthCheck

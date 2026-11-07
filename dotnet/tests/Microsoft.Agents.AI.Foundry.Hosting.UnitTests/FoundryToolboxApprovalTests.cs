@@ -34,7 +34,7 @@ public sealed class FoundryToolboxApprovalTests
         }
 
         await using var service = new FoundryToolboxService(
-            new FoundryToolboxOptions(),
+            new FoundryToolboxServiceOptions(),
             Mock.Of<TokenCredential>());
 
         // Act
@@ -347,7 +347,7 @@ public sealed class FoundryToolboxApprovalTests
             var credential = new Mock<TokenCredential>();
             credential.Setup(c => c.GetTokenAsync(It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new AccessToken("test-token", DateTimeOffset.UtcNow.AddHours(1)));
-            var options = new FoundryToolboxOptions
+            var options = new FoundryToolboxServiceOptions
             {
                 EndpointOverride = app.Urls.Single(),
             };

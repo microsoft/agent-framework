@@ -10,9 +10,9 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </summary>
 /// <remarks>
 /// This type contains optional toolbox behavior only. The required credential and toolbox names are
-/// supplied directly to <c>AddFoundryToolboxes</c>.
+/// supplied directly to <c>AddFoundryToolboxService</c>.
 /// </remarks>
-public sealed class FoundryToolboxOptions
+public sealed class FoundryToolboxServiceOptions
 {
     internal const string ApiVersion = "v1";
     internal const string DefaultTokenScope = "https://ai.azure.com/.default";

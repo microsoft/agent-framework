@@ -22,7 +22,7 @@ public class FoundryToolboxServiceTests
     public void TokenScope_DefaultsToAzurePublicCloud()
     {
         // Act
-        var options = new FoundryToolboxOptions();
+        var options = new FoundryToolboxServiceOptions();
 
         // Assert
         Assert.Equal("https://ai.azure.com/.default", options.TokenScope);
@@ -32,7 +32,7 @@ public class FoundryToolboxServiceTests
     public void Constructor_InvalidAllowedOAuthConsentOrigin_Throws()
     {
         // Arrange
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             AllowedOAuthConsentOrigins =
                 new HashSet<Uri> { new("https://auth.example.com/path") },
@@ -57,7 +57,7 @@ public class FoundryToolboxServiceTests
         Environment.SetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT", null);
         try
         {
-            var options = new FoundryToolboxOptions();
+            var options = new FoundryToolboxServiceOptions();
             options.ToolboxNames.Add("any");
             var service = new FoundryToolboxService(
                 options,
@@ -88,7 +88,7 @@ public class FoundryToolboxServiceTests
             "https://example.invalid/api/projects/proj");
         try
         {
-            var options = new FoundryToolboxOptions();
+            var options = new FoundryToolboxServiceOptions();
             options.ToolboxNames.Add("my-toolbox");
             var service = new FoundryToolboxService(
                 options,
@@ -120,7 +120,7 @@ public class FoundryToolboxServiceTests
             "https://example.invalid/api/projects/proj/");
         try
         {
-            var options = new FoundryToolboxOptions();
+            var options = new FoundryToolboxServiceOptions();
             options.ToolboxNames.Add("tb");
             var service = new FoundryToolboxService(
                 options,
@@ -151,7 +151,7 @@ public class FoundryToolboxServiceTests
         try
         {
             // EndpointOverride should take precedence over the env var.
-            var options = new FoundryToolboxOptions
+            var options = new FoundryToolboxServiceOptions
             {
                 EndpointOverride = "http://127.0.0.1:1/from-override",
             };
@@ -181,7 +181,7 @@ public class FoundryToolboxServiceTests
         // to throw inside the catch-and-defer path. The service must still complete StartAsync
         // (so the host doesn't crash) and keep the container routable, deferring the toolbox to
         // per-request resolution rather than failing readiness.
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "http://127.0.0.1:1/unreachable",
         };
@@ -213,7 +213,7 @@ public class FoundryToolboxServiceTests
         // Arrange: a deferred toolbox (open failed at startup against an unreachable endpoint).
         // A per-request retry that still cannot reach the proxy must keep the toolbox deferred
         // and the container routable (Degraded), never throwing into the request pipeline.
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "http://127.0.0.1:1/unreachable",
         };
@@ -244,7 +244,7 @@ public class FoundryToolboxServiceTests
     {
         // No pre-registered toolboxes is a legitimate "lazy-only" setup. Health-check
         // should report Healthy so the readiness probe passes.
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "http://127.0.0.1:1/unused",
         };
@@ -281,7 +281,7 @@ public class FoundryToolboxServiceTests
         // percent-encoded forms — must be rejected before any
         // request URL is built, so it can never carry the managed-identity token to an unintended
         // endpoint.
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
@@ -325,7 +325,7 @@ public class FoundryToolboxServiceTests
         // through the opener. Validation is effect-based (does the name change the request target?),
         // so it does not lock out legitimate names.
         AITool tool = AIFunctionFactory.Create(() => "ok", name: "some_tool");
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
@@ -351,7 +351,7 @@ public class FoundryToolboxServiceTests
     public async Task RetryDeferredToolboxesAsync_DifferentRequestContexts_RetryIndependentlyAsync()
     {
         // Arrange
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
@@ -392,7 +392,7 @@ public class FoundryToolboxServiceTests
     public async Task ResolvePendingConsentsAsync_DifferentRequestContexts_ResolveIndependentlyAsync()
     {
         // Arrange
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
@@ -440,7 +440,7 @@ public class FoundryToolboxServiceTests
     public async Task RequestToolboxScope_Dispose_ReleasesScopedClientAsync()
     {
         // Arrange
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
@@ -484,7 +484,7 @@ public class FoundryToolboxServiceTests
     public async Task RetryDeferredToolboxesAsync_ConcurrentOpaqueScopes_DoNotCollideAsync()
     {
         // Arrange
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
@@ -551,7 +551,7 @@ public class FoundryToolboxServiceTests
         // Arrange
         var logs = new RecordingLoggerFactory();
         var handlers = new ConcurrentDictionary<string, TrackingHttpMessageHandler>(StringComparer.Ordinal);
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
@@ -620,7 +620,7 @@ public class FoundryToolboxServiceTests
         // Arrange
         var logs = new RecordingLoggerFactory();
         var handlers = new ConcurrentDictionary<string, TrackingHttpMessageHandler>(StringComparer.Ordinal);
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "https://proj.example/api/projects/proj",
         };

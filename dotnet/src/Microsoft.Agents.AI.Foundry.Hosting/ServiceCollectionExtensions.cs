@@ -287,7 +287,7 @@ public static class ServiceCollectionExtensions
     /// <para>
     /// Example:
     /// <code>
-    /// builder.Services.AddFoundryToolboxes(credential, "my-toolbox", "another-toolbox");
+    /// builder.Services.AddFoundryToolboxService(credential, "my-toolbox", "another-toolbox");
     /// </code>
     /// </para>
     /// </remarks>
@@ -295,32 +295,32 @@ public static class ServiceCollectionExtensions
     /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
     /// <param name="toolboxNames">Names of the Foundry toolboxes to connect to.</param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryToolboxes(
+    public static IServiceCollection AddFoundryToolboxService(
         this IServiceCollection services,
         TokenCredential credential,
         params string[] toolboxNames)
-        => services.AddFoundryToolboxes(credential, options: null, toolboxNames);
+        => services.AddFoundryToolboxService(credential, options: null, toolboxNames);
 
     /// <summary>
     /// Registers the Foundry Toolbox service with optional behavior configuration.
     /// </summary>
     /// <remarks>
     /// Toolbox readiness follows the same startup and per-request resolution behavior as
-    /// <see cref="AddFoundryToolboxes(IServiceCollection, TokenCredential, string[])"/>.
+    /// <see cref="AddFoundryToolboxService(IServiceCollection, TokenCredential, string[])"/>.
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
     /// <param name="options">
-    /// Optional <see cref="FoundryToolboxOptions"/>, such as
-    /// <see cref="FoundryToolboxOptions.TokenScope"/>, or
-    /// <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>.
+    /// Optional <see cref="FoundryToolboxServiceOptions"/>, such as
+    /// <see cref="FoundryToolboxServiceOptions.TokenScope"/>, or
+    /// <see cref="FoundryToolboxServiceOptions.AllowedOAuthConsentOrigins"/>.
     /// </param>
     /// <param name="toolboxNames">Names of the Foundry toolboxes to pre-register at startup.</param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryToolboxes(
+    public static IServiceCollection AddFoundryToolboxService(
         this IServiceCollection services,
         TokenCredential credential,
-        FoundryToolboxOptions? options,
+        FoundryToolboxServiceOptions? options,
         params string[] toolboxNames)
     {
         _ = Throw.IfNull(services);
@@ -330,10 +330,10 @@ public static class ServiceCollectionExtensions
         {
             throw new InvalidOperationException(
                 $"{nameof(FoundryToolboxService)} is already registered. " +
-                $"Call {nameof(AddFoundryToolboxes)} only once per service collection.");
+                $"Call {nameof(AddFoundryToolboxService)} only once per service collection.");
         }
 
-        FoundryToolboxOptions configuredOptions = CopyFoundryToolboxOptions(options, toolboxNames);
+        FoundryToolboxServiceOptions configuredOptions = CopyFoundryToolboxServiceOptions(options, toolboxNames);
         // Register FoundryToolboxService as a singleton, injecting the caller-provided credential
         // directly rather than resolving TokenCredential from DI.
         services.AddSingleton(sp => new FoundryToolboxService(
@@ -371,11 +371,11 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
-    private static FoundryToolboxOptions CopyFoundryToolboxOptions(
-        FoundryToolboxOptions? source,
+    private static FoundryToolboxServiceOptions CopyFoundryToolboxServiceOptions(
+        FoundryToolboxServiceOptions? source,
         string[] toolboxNames)
     {
-        var copy = new FoundryToolboxOptions();
+        var copy = new FoundryToolboxServiceOptions();
         if (source is not null)
         {
             copy.TokenScope = source.TokenScope;

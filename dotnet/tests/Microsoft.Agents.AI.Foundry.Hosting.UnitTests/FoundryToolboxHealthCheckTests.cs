@@ -67,7 +67,7 @@ public class FoundryToolboxHealthCheckTests
         // Arrange: a pre-registered toolbox at an unreachable endpoint forces StartAsync to defer
         // the toolbox (non-consent failure). The container must stay routable so the toolbox can be
         // retried per-request, where the platform injects the per-user isolation key on egress.
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "http://127.0.0.1:1/unreachable",
         };
@@ -93,7 +93,7 @@ public class FoundryToolboxHealthCheckTests
     {
         // Arrange: an endpoint set but no pre-registered toolboxes is the legitimate
         // lazy-only setup. StartAsync reports Healthy and the check must agree.
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "http://127.0.0.1:1/unused",
         };
@@ -112,7 +112,7 @@ public class FoundryToolboxHealthCheckTests
 
     private static FoundryToolboxService CreateServiceWithoutStarting(string? toolbox = null)
     {
-        var options = new FoundryToolboxOptions();
+        var options = new FoundryToolboxServiceOptions();
         if (toolbox is not null)
         {
             options.ToolboxNames.Add(toolbox);

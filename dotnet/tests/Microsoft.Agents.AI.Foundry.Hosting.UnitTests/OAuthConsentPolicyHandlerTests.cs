@@ -194,7 +194,7 @@ public class OAuthConsentPolicyHandlerTests
         IList<string> toolboxNames,
         Func<string, CancellationToken, Task<FoundryToolboxService.ToolboxOpenResult>>? opener)
     {
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "http://127.0.0.1:1/unused",
             AllowedOAuthConsentOrigins = allowedOrigins,

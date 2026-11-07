@@ -35,13 +35,13 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddFoundryToolboxes_MarksFeatureUsed()
+    public void AddFoundryToolboxService_MarksFeatureUsed()
     {
         // Arrange
         var services = new ServiceCollection();
 
         // Act
-        services.AddFoundryToolboxes(Mock.Of<TokenCredential>(), "toolbox");
+        services.AddFoundryToolboxService(Mock.Of<TokenCredential>(), "toolbox");
 
         // Assert
         AssertFeatureUsed(52);
@@ -229,11 +229,11 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public async Task AddFoundryToolboxes_OptionsObject_CopiesOptionalBehaviorAsync()
+    public async Task AddFoundryToolboxService_OptionsObject_CopiesOptionalBehaviorAsync()
     {
         // Arrange
         var services = new ServiceCollection();
-        var suppliedOptions = new FoundryToolboxOptions
+        var suppliedOptions = new FoundryToolboxServiceOptions
         {
             TokenScope = "https://example.test/.default",
             AllowedOAuthConsentOrigins =
@@ -241,7 +241,7 @@ public class ServiceCollectionExtensionsTests
         };
 
         // Act
-        services.AddFoundryToolboxes(
+        services.AddFoundryToolboxService(
             Mock.Of<TokenCredential>(),
             suppliedOptions,
             "first-toolbox",
@@ -255,8 +255,8 @@ public class ServiceCollectionExtensionsTests
             "_options",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("Foundry toolbox options field not found.");
-        FoundryToolboxOptions registeredOptions =
-            Assert.IsType<FoundryToolboxOptions>(optionsField.GetValue(service));
+        FoundryToolboxServiceOptions registeredOptions =
+            Assert.IsType<FoundryToolboxServiceOptions>(optionsField.GetValue(service));
 
         // Assert
         Assert.Equal("https://example.test/.default", registeredOptions.TokenScope);

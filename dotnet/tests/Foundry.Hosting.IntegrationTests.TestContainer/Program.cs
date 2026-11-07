@@ -84,7 +84,7 @@ builder.AddFoundryResponses(agent, options: new FoundryResponsesOptions
 var toolboxName = Environment.GetEnvironmentVariable("IT_TOOLBOX_NAME");
 if (!string.IsNullOrEmpty(toolboxName))
 {
-    builder.Services.AddFoundryToolboxes(credential, toolboxName);
+    builder.Services.AddFoundryToolboxService(credential, toolboxName);
 }
 
 var app = builder.Build();
@@ -154,7 +154,7 @@ static AIAgent CreateMcpToolboxAgent(AIProjectClient client, string deployment) 
         description: "MCP toolbox test agent (placeholder).");
 
 // toolbox-oauth-consent scenario: a plain agent whose tools come from a pre-registered Foundry
-// toolbox (wired via AddFoundryToolboxes from IT_TOOLBOX_NAME). The toolbox's tool source requires
+// toolbox (wired via AddFoundryToolboxService from IT_TOOLBOX_NAME). The toolbox's tool source requires
 // per-user OAuth consent, so the first request that needs the tool surfaces an oauth_consent_request
 // instead of running the tool.
 static AIAgent CreateToolboxOAuthConsentAgent(AIProjectClient client, string deployment) =>

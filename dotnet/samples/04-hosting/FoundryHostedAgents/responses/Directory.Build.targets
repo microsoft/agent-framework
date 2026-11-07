@@ -8,6 +8,7 @@
   <PropertyGroup>
     <_AgentFrameworkSourceRoot>$(MSBuildThisFileDirectory)..\..\..\..\src</_AgentFrameworkSourceRoot>
     <UseLocalAgentFramework Condition="'$(UseLocalAgentFramework)' == '' and Exists('$(_AgentFrameworkSourceRoot)\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj')">true</UseLocalAgentFramework>
+    <DefineConstants Condition="'$(UseLocalAgentFramework)' == 'true'">$(DefineConstants);USE_LOCAL_AGENT_FRAMEWORK_SOURCE</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(UseLocalAgentFramework)' == 'true'">

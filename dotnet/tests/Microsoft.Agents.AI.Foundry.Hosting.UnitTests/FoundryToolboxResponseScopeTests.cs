@@ -41,7 +41,7 @@ public sealed class FoundryToolboxResponseScopeTests
         var chatCallCount = 0;
         var openCount = 0;
 
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "https://proj.example/api/projects/proj",
         };

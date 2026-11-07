@@ -54,7 +54,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </remarks>
 internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisposable
 {
-    private readonly FoundryToolboxOptions _options;
+    private readonly FoundryToolboxServiceOptions _options;
     private readonly TokenCredential _credential;
     private readonly ILogger<FoundryToolboxService> _logger;
 
@@ -73,7 +73,7 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
     private string _agentVersion = "1.0.0";
 
     /// <summary>
-    /// Gets the consent link policy built from <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>.
+    /// Gets the consent link policy built from <see cref="FoundryToolboxServiceOptions.AllowedOAuthConsentOrigins"/>.
     /// The response handler applies it before surfacing any consent link from these toolboxes.
     /// </summary>
     internal OAuthConsentLinkPolicy ConsentLinkPolicy { get; }
@@ -129,7 +129,7 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
     /// Initializes a new instance of <see cref="FoundryToolboxService"/>.
     /// </summary>
     public FoundryToolboxService(
-        FoundryToolboxOptions options,
+        FoundryToolboxServiceOptions options,
         TokenCredential credential,
         ILogger<FoundryToolboxService>? logger = null)
     {
@@ -628,7 +628,7 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
         }
 
         var baseUri = new Uri(this._resolvedEndpoint, UriKind.Absolute);
-        var candidate = $"{this._resolvedEndpoint}/toolboxes/{toolboxName}/mcp?api-version={FoundryToolboxOptions.ApiVersion}";
+        var candidate = $"{this._resolvedEndpoint}/toolboxes/{toolboxName}/mcp?api-version={FoundryToolboxServiceOptions.ApiVersion}";
 
         if (Uri.TryCreate(candidate, UriKind.Absolute, out var uri)
             && string.Equals(uri.Scheme, baseUri.Scheme, StringComparison.Ordinal)
@@ -719,7 +719,7 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
             return await opener(toolboxName, cancellationToken).ConfigureAwait(false);
         }
 
-        var proxyUrl = $"{this._resolvedEndpoint!}/toolboxes/{toolboxName}/mcp?api-version={FoundryToolboxOptions.ApiVersion}";
+        var proxyUrl = $"{this._resolvedEndpoint!}/toolboxes/{toolboxName}/mcp?api-version={FoundryToolboxServiceOptions.ApiVersion}";
 
         LogConnectingToToolbox(this._logger, toolboxName, proxyUrl);
 

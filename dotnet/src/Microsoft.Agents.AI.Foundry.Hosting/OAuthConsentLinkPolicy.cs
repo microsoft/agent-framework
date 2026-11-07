@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// control characters, or backslashes. This check always runs.
 /// </para>
 /// <para>
-/// When the host configures <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>, the link's
+/// When the host configures <see cref="FoundryToolboxServiceOptions.AllowedOAuthConsentOrigins"/>, the link's
 /// normalized origin (scheme, host, and port) must also match one of the configured origins. A
 /// <see langword="null"/> configuration skips only this origin check; an empty configuration rejects
 /// every link.
