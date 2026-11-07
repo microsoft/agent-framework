@@ -13,6 +13,7 @@ using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
+#pragma warning disable SYSLIB1006 // Preserve the legacy EventId 0 for every migrated log message.
 
 /// <summary>
 /// Reports, on the <c>GET /readiness</c> probe, a registered agent configured to have its own service
@@ -35,7 +36,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-internal sealed class HostedStoredOutputHealthCheck : IHealthCheck
+internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly FoundryResponsesOptions _hostingOptions;
@@ -137,19 +138,20 @@ internal sealed class HostedStoredOutputHealthCheck : IHealthCheck
             // about how it stores responses and is not held against it. A cancellation of its own, a
             // timeout inside the agent for instance, lands here too; only the health check's own
             // cancellation is left to propagate.
-            if (this._logger?.IsEnabled(LogLevel.Debug) is true)
+            if (this._logger is { } logger)
             {
-                this._logger.LogDebug(ex, "Could not probe the stored output setting for agent '{AgentName}'.", agent.Name);
+                LogStoredOutputProbeFailed(logger, agent.Name, ex);
             }
 
             return false;
         }
 
-        if (probe.StoredOutputEnabled is null && this._logger?.IsEnabled(LogLevel.Debug) is true)
+        if (probe.StoredOutputEnabled is null)
         {
-            this._logger.LogDebug(
-                "Agent '{AgentName}' builds a request whose stored output setting could not be determined.",
-                agent.Name);
+            if (this._logger is { } logger)
+            {
+                LogStoredOutputSettingUnknown(logger, agent.Name);
+            }
         }
 
         return probe.StoredOutputEnabled is true;
@@ -159,4 +161,13 @@ internal sealed class HostedStoredOutputHealthCheck : IHealthCheck
     /// Every agent this container can serve: the ones registered under a name, plus the default.
     /// </summary>
     private List<AIAgent> ResolveAgents() => FoundryHostingExtensions.ResolveRegisteredAgents(this._serviceProvider);
+
+    [LoggerMessage(LogLevel.Debug, "Could not probe the stored output setting for agent '{AgentName}'.", EventId = 0)]
+    private static partial void LogStoredOutputProbeFailed(
+        ILogger logger,
+        string? agentName,
+        Exception exception);
+
+    [LoggerMessage(LogLevel.Debug, "Agent '{AgentName}' builds a request whose stored output setting could not be determined.", EventId = 0)]
+    private static partial void LogStoredOutputSettingUnknown(ILogger logger, string? agentName);
 }

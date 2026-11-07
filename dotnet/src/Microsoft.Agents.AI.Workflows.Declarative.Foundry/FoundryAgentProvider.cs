@@ -1,11 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics.CodeAnalysis;
-using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -27,7 +25,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// project endpoint and credentials to authenticate requests.</remarks>
 /// <param name="projectEndpoint">A <see cref="Uri"/> instance representing the endpoint URL of the Foundry project. This must be a valid, non-null URI pointing to the project.</param>
 /// <param name="projectCredentials">The credentials used to authenticate with the Foundry project. This must be a valid instance of <see cref="TokenCredential"/>.</param>
-public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential projectCredentials) : ResponseAgentProvider
+public sealed class FoundryAgentProvider(Uri projectEndpoint, TokenCredential projectCredentials) : ResponseAgentProvider
 {
     private readonly Dictionary<string, ProjectsAgentVersion> _versionCache = [];
     private readonly Dictionary<string, AIAgent> _agentCache = [];
@@ -44,12 +42,6 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// Optional options used when invoking the <see cref="AIAgent"/>.
     /// </summary>
     public ProjectOpenAIClientOptions? OpenAIClientOptions { get; init; }
-
-    /// <summary>
-    /// An optional <see cref="HttpClient"/> instance to be used for making HTTP requests.
-    /// If not provided, a default client will be used.
-    /// </summary>
-    public HttpClient? HttpClient { get; init; }
 
     /// <inheritdoc/>
     public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
@@ -319,11 +311,6 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         if (this._agentClient is null)
         {
             AIProjectClientOptions clientOptions = this.AIProjectClientOptions ?? new();
-
-            if (this.HttpClient is not null)
-            {
-                clientOptions.Transport = new HttpClientPipelineTransport(this.HttpClient);
-            }
 
             AIProjectClient newClient = new(projectEndpoint, projectCredentials, clientOptions);
 

@@ -67,6 +67,18 @@ actions:
 
 ### Tool Invocation
 - `InvokeFunctionTool` - Call a registered Python function
+- `InvokeMcpTool` - Call an MCP tool through a host-supplied handler
+
+The `invoke_mcp_tool` and `invoke_foundry_toolbox_mcp` samples use
+`DefaultMCPToolHandler`. Create this handler as a normal object; it has no
+shutdown method or async context manager. Each invocation connects and closes
+a fresh MCP protocol session, including calls after approval waits or checkpoint
+resumes. Do not rely on implicit server-side session state between calls.
+
+The toolbox sample supplies a caller-owned HTTP client through `client_provider`
+to reuse its authenticated HTTP connection pool without sharing MCP sessions.
+Keep that client's context open until every workflow call has finished; cancel
+and await outstanding calls before closing it.
 
 ### Human-in-Loop
 - `Question` - Request user input

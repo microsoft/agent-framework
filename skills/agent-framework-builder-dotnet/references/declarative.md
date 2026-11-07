@@ -22,6 +22,39 @@ commitments.
 
 - Supply the chat clients, project clients, connections, tools, and external handlers the definition references.
 - Provide handlers for HTTP, MCP, or Foundry actions when a workflow uses them.
+- `DefaultHttpRequestHandler` requires an application-owned `IHttpMessageHandlerFactory`, registered by
+  `AddHttpClient`. It creates and disposes a client for each request, including redirects, without disposing
+  the factory-owned handler pipeline. It has no disposal method.
+- `DefaultHttpRequestHandler` accepts HTTP(S) URLs only and denies every request unless the application supplies
+  allowed hosts, for example `new DefaultHttpRequestHandler(["api.example.com"], httpMessageHandlerFactory, "WorkflowHttp")`.
+  Configure the allowlist in trusted application code, not in workflow content; an empty list allows no hosts.
+  The handler copies the list and checks it before creating a client and on every handler-managed redirect.
+  Workflow-supplied `Host` headers are rejected before client creation; the transport derives the authority
+  from the allowed request URL.
+- Allowed hosts are exact DNS names or IP literals with optional ports, without schemes, paths, or wildcards. Matching is
+  case-insensitive, normalizes internationalized names and trailing DNS dots, and does not implicitly include
+  subdomains. An omitted port defaults to 443; specify another port explicitly, for example `api.example.com:8443`
+  or `[::1]:8080` (IPv6 requires brackets when specifying a port). Ports must be from 1 to 65535.
+  The request's effective port must match before client creation and on every handler-managed redirect.
+  Both HTTP and HTTPS remain supported, subject to existing redirect restrictions; `api.example.com` also
+  permits `http://api.example.com:443`, but not `http://api.example.com` (port 80). Enforce HTTPS separately
+  before supplying an authenticated client if plaintext HTTP must not be allowed.
+  Explicitly allowed internal hosts are supported on every target framework. Normal DNS resolution, proxy use,
+  and routing are delegated to the HTTP transport; allowing a name trusts the host's DNS and network configuration.
+- Configure the factory's named pipeline with an `HttpClientHandler`, or on .NET a `SocketsHttpHandler`,
+  with `AllowAutoRedirect = false` and `UseCookies = false`. Other primary transports, incomplete pipelines,
+  and transports with either setting enabled are rejected before sending. Configure certificate revocation
+  checking and a finite handler lifetime. Application-owned delegating handlers must preserve the validated
+  destination and must not follow redirects themselves.
+  `IHttpClientFactory` client configuration, including default headers, base address, and timeout, does not
+  apply. Configure headers and origin-bound authentication in delegating handlers; workflow headers are
+  removed on redirects, but delegating handlers still apply. Bind credentials to the intended scheme, host,
+  and port on every request.
+  A positive workflow request timeout governs the whole operation, including redirects and response body reads,
+  without the client's default 100-second timeout imposing an earlier deadline.
+- Migrate direct `HttpClient`, callback, and allowlist-only construction to the factory constructor. Remove
+  handler disposal calls, await active requests before disposing application services, and keep the factory
+  alive for the workflow's lifetime.
 - `DefaultMcpToolHandler` creates and disposes an MCP client per invocation, including discovery; it does not retain
   implicit server-side session state across calls, approval waits, or checkpoint resumes. Use explicit state handles
   or a custom handler with a documented session-lifetime contract when continuity is required.
@@ -40,8 +73,6 @@ commitments.
   handlers, and do not derive client names from workflow IDs, credentials, or arbitrary URLs.
 - Bound concurrent MCP work and supply invocation deadlines/cancellation from the host. The handler owns no shared
   disposable resources; cancel and await calls before disposing the application's HTTP factory infrastructure.
-- When using `DefaultHttpRequestHandler`, its client provider is also called for redirect destinations. Return `null`
-  to continue with the internal client or throw to reject a destination; returning a client on a redirect is rejected.
 - Keep configuration exposure restricted to intentional values.
 - Treat definitions as executable configuration and load them only from trusted sources.
 - Allowlist external destinations and register only resources the definition may invoke.

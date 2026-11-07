@@ -3,6 +3,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
@@ -152,7 +153,7 @@ internal static class ObjectExtensions
             sourceValue switch
             {
                 null => null,
-                string s => int.Parse(s),
+                string s => int.Parse(s, CultureInfo.InvariantCulture),
                 int i => i,
                 long l => Convert.ToInt32(l),
                 decimal c => Convert.ToInt32(c),
@@ -166,7 +167,7 @@ internal static class ObjectExtensions
             sourceValue switch
             {
                 null => null,
-                string s => long.Parse(s),
+                string s => long.Parse(s, CultureInfo.InvariantCulture),
                 int i => i,
                 long l => l,
                 decimal c => Convert.ToInt64(c),
@@ -180,7 +181,7 @@ internal static class ObjectExtensions
             sourceValue switch
             {
                 null => null,
-                string s => decimal.Parse(s),
+                string s => decimal.Parse(s, CultureInfo.InvariantCulture),
                 int i => i,
                 long l => l,
                 decimal c => c,
@@ -194,7 +195,7 @@ internal static class ObjectExtensions
             sourceValue switch
             {
                 null => null,
-                string s => double.Parse(s),
+                string s => double.Parse(s, CultureInfo.InvariantCulture),
                 int i => i,
                 long l => l,
                 decimal c => Convert.ToDouble(c),
@@ -208,7 +209,7 @@ internal static class ObjectExtensions
             sourceValue switch
             {
                 null => null,
-                string s => DateTime.Parse(s),
+                string s => DateTime.Parse(s, CultureInfo.InvariantCulture),
                 int i => new DateTime(i),
                 long l => new DateTime(l),
                 decimal c => new DateTime(Convert.ToInt64(c)),
@@ -222,7 +223,7 @@ internal static class ObjectExtensions
             sourceValue switch
             {
                 null => null,
-                string s => TimeSpan.Parse(s),
+                string s => TimeSpan.Parse(s, CultureInfo.InvariantCulture),
                 int i => TimeSpan.FromTicks(i),
                 long l => TimeSpan.FromTicks(l),
                 decimal c => TimeSpan.FromTicks(Convert.ToInt64(c)),
@@ -253,8 +254,9 @@ internal static class ObjectExtensions
             {
                 null => null,
                 string sourceText => sourceText,
-                DateTime dateTime => dateTime.ToString("o"), // ISO 8601
-                TimeSpan timeSpan => timeSpan.ToString("c"), // Constant ("c") format
+                DateTime dateTime => dateTime.ToString("o", CultureInfo.InvariantCulture), // ISO 8601
+                TimeSpan timeSpan => timeSpan.ToString("c", CultureInfo.InvariantCulture), // Constant ("c") format
+                IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
                 _ => $"{sourceValue}",
             };
     }

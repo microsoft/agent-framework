@@ -128,6 +128,33 @@ Caller-supplied `ClientSession` connections always call the server directly. Age
 shared cache store or cache-mode configuration. Reconnect or an effective header-identity change replaces the
 framework-owned Client and its per-client cache.
 
+### Concurrent HTTP operations and identity transitions
+
+Concurrent operations on a framework-owned HTTP connection may share a session only when their complete effective
+header identity matches. Agent Framework copies owner-tagged header snapshots onto individual outgoing requests,
+including redirects, rather than retaining a mutable active-call fallback. The supported MCP SDK propagates the
+sending operation's ContextVars into its HTTP tasks. Transport request entry points must retain the owner tag;
+unsupported untagged sending methods fail explicitly instead of silently dropping dynamic headers.
+
+Admission tracks network attempts, not complete logical calls. Retries release the failed attempt before recovery,
+then reconcile the original identity and rebuild arguments and metadata from the replacement catalog. Identity
+changes, explicit discovery, reset, close, and recovery require exclusive access and wait for active attempts.
+A queued exclusive operation blocks unrelated arrivals, including new calls with the old identity. Same-identity
+callbacks needed by an active attempt may finish first; invocation depth keeps that permission live through nested
+operation scopes. Exclusive operations from active callbacks fail explicitly rather than waiting on their parent.
+Resource reads enter admission before requiring a ready connection, including during replacement initialization.
+
+This request-owned approach is preferred over a lease spanning an entire logical call: it avoids shared mutable
+request headers, permits recovery after releasing the failed attempt, and distinguishes required nested callbacks
+from unrelated arrivals. Its cost is explicit admission and callback-lifetime tracking. It does not create independent
+server-side session state, so applications must still order state-dependent operations.
+
+Catalog cursors and staged pages belong to one connection. Replacement restarts the complete snapshot once from
+its first page; a second replacement fails explicitly. Configured discovery also reloads tools if prompt discovery
+replaces their connection. Caller-owned Clients and ClientSessions remain caller-owned and are never recreated.
+Admission/reconciliation and recovery have separate `request_timeout` budgets, not one end-to-end deadline;
+`None` disables those budgets. Cleanup remains owned by the lifecycle task after waiter cancellation.
+
 ### MRTR
 
 For both framework-owned and caller-owned high-level connections, `tools/call`, `prompts/get`, and `resources/read`
@@ -259,6 +286,6 @@ Committed contract tests cover:
 - [MCP MRTR specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr)
 - [MCP subscriptions specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions)
 - [MCP caching specification](https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching)
-- [ADR 0043: MCP runtime context](0043-python-mcp-runtime-context.md)
+- [ADR 0047: MCP runtime context](0047-python-mcp-runtime-context.md)
 
 This ADR was accepted through the repository ADR review process.

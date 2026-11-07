@@ -81,7 +81,7 @@ If you already know the gRPC endpoint, create the client directly. No registrati
 ```csharp
 using var client = new A2AGrpcClient(new Uri("https://agent.example.com:5001"));
 
-AIAgent agent = client.AsAIAgent(name: "Remote agent");
+AIAgent agent = client.AsAIAgent();
 
 Console.WriteLine(await agent.RunAsync("Hello!"));
 ```

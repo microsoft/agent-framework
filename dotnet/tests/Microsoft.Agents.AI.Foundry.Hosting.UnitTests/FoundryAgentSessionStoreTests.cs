@@ -241,8 +241,18 @@ public sealed class FoundryAgentSessionStoreTests
         // Assert
         var entry = Assert.Single(logs.Entries);
         Assert.Equal(LogLevel.Debug, entry.Level);
-        Assert.Contains("conv-1", entry.Message, StringComparison.Ordinal);
+        Assert.Equal(0, entry.EventId.Id);
+        Assert.Equal("LogSessionNotFound", entry.EventId.Name);
+        Assert.Equal(
+            "Session 'conv-1' was not found in the Foundry state store 'agent-framework/sessions'. Nothing to delete.",
+            entry.Message);
         Assert.IsType<FoundryStorageNotFoundException>(entry.Exception);
+        AssertProperty(entry.Properties, "SessionId", "conv-1");
+        AssertProperty(entry.Properties, "StoreName", FoundryAgentSessionStore.DefaultStoreName);
+        AssertProperty(
+            entry.Properties,
+            "{OriginalFormat}",
+            "Session '{SessionId}' was not found in the Foundry state store '{StoreName}'. Nothing to delete.");
     }
 
     [Fact]
@@ -468,6 +478,15 @@ public sealed class FoundryAgentSessionStoreTests
 
     private static FoundryAgentSessionStore NewStore(FakeStateStore backing, ILoggerFactory? loggerFactory = null)
         => new(_ => Task.FromResult<FoundryStateStore>(backing), loggerFactory: loggerFactory);
+
+    private static void AssertProperty(
+        IReadOnlyList<KeyValuePair<string, object?>> properties,
+        string name,
+        object expectedValue)
+    {
+        var property = Assert.Single(properties, property => property.Key == name);
+        Assert.Equal(expectedValue, property.Value);
+    }
 
     private static AgentSessionStoreKey Key(
         string sessionId,

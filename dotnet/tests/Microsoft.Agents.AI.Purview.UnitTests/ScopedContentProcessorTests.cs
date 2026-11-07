@@ -742,6 +742,56 @@ public sealed class ScopedContentProcessorTests
     }
 
     [Fact]
+    public async Task ProcessMessagesAsync_WithAppTokenHistory_InheritsAndUpdatesMessageUserIdsAsync()
+    {
+        // Arrange
+        string firstUserId = Guid.NewGuid().ToString();
+        string secondUserId = Guid.NewGuid().ToString();
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.System, "System context"),
+            new(ChatRole.User, "First user's message")
+            {
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    { "userId", firstUserId }
+                }
+            },
+            new(ChatRole.Assistant, "Assistant response"),
+            new(ChatRole.Tool, "Tool response"),
+            new(ChatRole.User, "Second user's message")
+            {
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    { "userId", secondUserId }
+                }
+            },
+            new(ChatRole.Assistant, "Second assistant response")
+        ];
+        PurviewSettings settings = CreateValidPurviewSettings();
+        TokenInfo tokenInfo = new() { TenantId = "tenant-123", ClientId = "client-123" };
+        List<string> capturedUserIds = [];
+
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), settings.TenantId))
+            .ReturnsAsync(tokenInfo);
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProtectionScopesResponse?)null);
+        this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ProcessContentRequest, CancellationToken>((request, _) => capturedUserIds.Add(request.UserId))
+            .ReturnsAsync(new ProcessContentResponse());
+
+        // Act
+        var result = await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, null, CancellationToken.None);
+
+        // Assert
+        Assert.Equal([firstUserId, firstUserId, firstUserId, firstUserId, secondUserId, secondUserId], capturedUserIds);
+        Assert.Equal(secondUserId, result.userId);
+    }
+
+    [Fact]
     public async Task ProcessMessagesAsync_IgnoresInvalidAdditionalPropertiesUserId_Async()
     {
         // Arrange
