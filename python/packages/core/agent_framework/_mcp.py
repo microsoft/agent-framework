@@ -1213,6 +1213,7 @@ class MCPTool:
         max_discovery_items: int | None = _DEFAULT_MCP_DISCOVERY_MAX_ITEMS,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
+        trust_server_idempotency_hints: bool = False,
     ) -> None:
         """Initialize the MCP Tool base.
 
@@ -1270,6 +1271,7 @@ class MCPTool:
         self.max_discovery_pages = max_discovery_pages
         self.max_discovery_items = max_discovery_items
         self.max_host_payload_size_bytes = max_host_payload_size_bytes
+        self.trust_server_idempotency_hints = trust_server_idempotency_hints
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
@@ -1320,8 +1322,8 @@ class MCPTool:
         self._progressive_loader_functions: list[FunctionTool] | None = None
         self._progressive_loaded_tool_names: set[str] = set()
         self._tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
+        self._tool_annotations_by_name: dict[str, types.ToolAnnotations | None] = {}
         self._tool_param_names_by_name: dict[str, set[str]] = {}
-        self._tool_annotations_by_name: dict[str, Any] = {}
         self._global_extra_arg_names, self._tool_extra_arg_names = _normalize_additional_tool_argument_names(
             additional_tool_argument_names
         )
@@ -2375,8 +2377,8 @@ class MCPTool:
             if not isinstance((function.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY), str)
         ]
         self._tool_call_meta_by_name.clear()
-        self._tool_param_names_by_name.clear()
         self._tool_annotations_by_name.clear()
+        self._tool_param_names_by_name.clear()
         self._progressive_loaded_tool_names.clear()
 
     def _reset_session_state(self) -> None:
@@ -3520,8 +3522,8 @@ class MCPTool:
                 function.approval_mode = tool_approval_updates[function.name]
         self._functions[:] = current_functions
         self._tool_call_meta_by_name = tool_call_meta_by_name
-        self._tool_param_names_by_name = tool_param_names_by_name
         self._tool_annotations_by_name = tool_annotations_by_name
+        self._tool_param_names_by_name = tool_param_names_by_name
         self._progressive_loaded_tool_names.difference_update(existing_tools.keys() - reused_tool_names)
 
     async def _cancel_pending_reload_tasks(self) -> None:
@@ -3722,6 +3724,8 @@ class MCPTool:
         from anyio import ClosedResourceError
         from mcp import MCPError
 
+        # A catalog refresh cannot retroactively make the first dispatch safe to repeat.
+        replay_eligible = self._is_call_replayable(tool_name)
         for attempt in range(2):
             failed_connection = self._connection
             close_generation = self._close_generation
@@ -3766,6 +3770,21 @@ class MCPTool:
                         if span.is_recording():
                             set_mcp_span_error(span, type(recovery_error).__name__, str(recovery_error))
                         raise
+                    if not replay_eligible or not self._is_call_replayable(tool_name):
+                        # The request may have reached the server before the connection
+                        # dropped, so replaying it could execute a non-idempotent operation
+                        # twice. Surface the unknown outcome instead of a replay; the
+                        # connection is already back up for whoever decides to retry.
+                        if span.is_recording():
+                            set_mcp_span_error(span, type(call_ex).__name__, str(call_ex))
+                        raise _mcp_tool_execution_exception(
+                            f"Failed to call tool '{tool_name}' - connection lost and the remote "
+                            "execution outcome is unknown. The connection was re-established but "
+                            "the call was not replayed, because replay requires both a server "
+                            "idempotent/read-only hint and the client-owned "
+                            "trust_server_idempotency_hints opt-in; retry explicitly if safe.",
+                            inner_exception=call_ex,
+                        ) from call_ex
                     continue
 
                 # Second attempt also failed, give up.
@@ -3790,6 +3809,22 @@ class MCPTool:
         if span.is_recording():
             set_mcp_span_error(span, type(retries_exhausted).__name__, str(retries_exhausted))
         raise retries_exhausted
+
+    def _is_call_replayable(self, tool_name: str) -> bool:
+        """Return True if *tool_name* may be replayed after connection loss.
+
+        Replay requires both a client-owned trust decision
+        (``trust_server_idempotency_hints=True``) and a server annotation carrying
+        ``idempotentHint`` or ``readOnlyHint``. Annotations are supplied by the
+        server and are untrusted by default, consistent with how the rest of the
+        package treats ``ToolAnnotations`` as restriction-only hints: without the
+        client's explicit opt-in, a misannotated or untrusted server could get a
+        non-idempotent ``tools/call`` executed twice on a lost response.
+        """
+        if not self.trust_server_idempotency_hints:
+            return False
+        annotations = self._tool_annotations_by_name.get(tool_name)
+        return bool(annotations and (annotations.idempotent_hint or annotations.read_only_hint))
 
     def _resolved_extra_args(self, tool_name: str) -> set[str]:
         """Return the user-configured extra argument names allowed for a tool."""
@@ -4034,6 +4069,7 @@ class MCPStdioTool(MCPTool):
         max_discovery_items: int | None = _DEFAULT_MCP_DISCOVERY_MAX_ITEMS,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
+        trust_server_idempotency_hints: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP stdio tool.
@@ -4157,6 +4193,11 @@ class MCPStdioTool(MCPTool):
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
+            trust_server_idempotency_hints: When ``True``, treat server-declared
+                ``idempotentHint``/``readOnlyHint`` tool annotations as trustworthy, allowing
+                a ``tools/call`` whose response was lost to a dropped connection to be retried
+                once after reconnect. Annotations are server-supplied and untrusted by default,
+                so the default ``False`` never replays an ambiguous call.
             kwargs: Additional arguments for framework-owned ``StdioServerParameters`` construction.
         """
         if mcp_client is not None and session is not None:
@@ -4215,6 +4256,7 @@ class MCPStdioTool(MCPTool):
             max_discovery_items=max_discovery_items,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
+            trust_server_idempotency_hints=trust_server_idempotency_hints,
         )
         self.command = command
         self.args = args or []
@@ -4317,6 +4359,7 @@ class MCPStreamableHTTPTool(MCPTool):
         max_discovery_items: int | None = _DEFAULT_MCP_DISCOVERY_MAX_ITEMS,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
+        trust_server_idempotency_hints: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
@@ -4514,6 +4557,11 @@ class MCPStreamableHTTPTool(MCPTool):
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
+            trust_server_idempotency_hints: When ``True``, treat server-declared
+                ``idempotentHint``/``readOnlyHint`` tool annotations as trustworthy, allowing
+                a ``tools/call`` whose response was lost to a dropped connection to be retried
+                once after reconnect. Annotations are server-supplied and untrusted by default,
+                so the default ``False`` never replays an ambiguous call.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
         if mcp_client is not None and session is not None:
@@ -4572,6 +4620,7 @@ class MCPStreamableHTTPTool(MCPTool):
             max_discovery_items=max_discovery_items,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
+            trust_server_idempotency_hints=trust_server_idempotency_hints,
         )
         self.url = url
         self.terminate_on_close = terminate_on_close
@@ -5169,6 +5218,7 @@ class MCPWebsocketTool(MCPTool):
         max_discovery_items: int | None = _DEFAULT_MCP_DISCOVERY_MAX_ITEMS,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
+        trust_server_idempotency_hints: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the deprecated MCP WebSocket compatibility wrapper.
@@ -5276,6 +5326,11 @@ class MCPWebsocketTool(MCPTool):
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
+            trust_server_idempotency_hints: When ``True``, treat server-declared
+                ``idempotentHint``/``readOnlyHint`` tool annotations as trustworthy, allowing
+                a ``tools/call`` whose response was lost to a dropped connection to be retried
+                once after reconnect. Annotations are server-supplied and untrusted by default,
+                so the default ``False`` never replays an ambiguous call.
             kwargs: Deprecated compatibility arguments. They are not used.
         """
         super().__init__(
@@ -5303,6 +5358,7 @@ class MCPWebsocketTool(MCPTool):
             max_discovery_items=max_discovery_items,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
+            trust_server_idempotency_hints=trust_server_idempotency_hints,
         )
         self.url = url
         self._client_kwargs = kwargs
