@@ -48,10 +48,12 @@ from anthropic.types.beta import (
     BetaMessageDeltaUsage,
     BetaRawContentBlockDeltaEvent,
     BetaRawContentBlockStartEvent,
+    BetaRawMessageStreamEvent,
     BetaRedactedThinkingBlock,
     BetaServerToolUseBlock,
     BetaTextBlock,
     BetaTextDelta,
+    BetaThinkingBlock,
     BetaToolUseBlock,
     BetaUsage,
     BetaWebSearchResultBlock,
@@ -673,6 +675,27 @@ def test_prepare_message_for_anthropic_text_reasoning_with_signature(
     assert result["content"][0]["signature"] == "sig_abc123"
 
 
+def test_prepare_message_for_anthropic_unsigned_native_thinking_is_thinking(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """An unsigned Anthropic thinking block still replays as thinking, not as text.
+
+    Parsed thinking items carry a generated Content.id, which is also used for
+    provider reasoning summaries. The native block marker keeps the two apart.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=client._parse_contents_from_anthropic([
+            BetaThinkingBlock(type="thinking", thinking="Visible summary.", signature="")
+        ]),
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"] == [{"type": "thinking", "thinking": "Visible summary."}]
+
+
 def test_prepare_message_for_anthropic_provider_reasoning_without_signature_is_text(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -736,6 +759,171 @@ def test_prepare_message_for_anthropic_empty_signed_thinking_is_replayed(
     }
     assert result["content"][1]["type"] == "tool_use"
     assert result["content"][1]["id"] == "toolu_test"
+
+
+def test_prepare_message_for_anthropic_redacted_thinking_with_tool_use(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Redacted reasoning round-trips unchanged before a tool call.
+
+    Anthropic requires the thinking blocks of the last assistant turn, including
+    ``redacted_thinking``, to be replayed unmodified while tool use continues.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=client._parse_contents_from_anthropic([
+            BetaRedactedThinkingBlock(type="redacted_thinking", data="synthetic-opaque-data"),
+            BetaToolUseBlock(type="tool_use", id="toolu_test", name="lookup", input={}),
+        ]),
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"] == [
+        {"type": "redacted_thinking", "data": "synthetic-opaque-data"},
+        {"type": "tool_use", "id": "toolu_test", "name": "lookup", "input": {}},
+    ]
+
+
+def test_parse_then_replay_anthropic_redacted_thinking_preserves_payload(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Persisted history replays redacted reasoning without its raw SDK representation."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=client._parse_contents_from_anthropic([
+            BetaRedactedThinkingBlock(type="redacted_thinking", data="synthetic-opaque-data"),
+            BetaToolUseBlock(type="tool_use", id="toolu_test", name="lookup", input={}),
+        ]),
+    )
+
+    restored = Message.from_dict(message.to_dict())
+    prepared = client._prepare_message_for_anthropic(restored)
+
+    assert prepared["content"] == [
+        {"type": "redacted_thinking", "data": "synthetic-opaque-data"},
+        {"type": "tool_use", "id": "toolu_test", "name": "lookup", "input": {}},
+    ]
+
+
+def test_prepare_message_for_anthropic_thinking_then_redacted_thinking_with_tool_use(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A normal thinking block and a redacted thinking block stay separate blocks."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=client._parse_contents_from_anthropic([
+            BetaThinkingBlock(type="thinking", thinking="Visible summary.", signature="synthetic-signature"),
+            BetaRedactedThinkingBlock(type="redacted_thinking", data="synthetic-opaque-data"),
+            BetaToolUseBlock(type="tool_use", id="toolu_test", name="lookup", input={}),
+        ]),
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert [block["type"] for block in result["content"]] == ["thinking", "redacted_thinking", "tool_use"]
+    assert result["content"][0] == {
+        "type": "thinking",
+        "thinking": "Visible summary.",
+        "signature": "synthetic-signature",
+    }
+    assert result["content"][1] == {"type": "redacted_thinking", "data": "synthetic-opaque-data"}
+
+
+def test_prepare_message_for_anthropic_redacted_thinking_without_payload_raises(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A marked redacted reasoning item without its opaque payload fails loudly instead of vanishing."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text_reasoning(
+                id="reasoning-test",
+                additional_properties={"anthropic": {"reasoning_block": "redacted_thinking"}},
+            ),
+            Content.from_function_call(call_id="toolu_test", name="lookup", arguments={}),
+        ],
+    )
+
+    with pytest.raises(ContentError, match="redacted thinking"):
+        client._prepare_message_for_anthropic(message)
+
+
+def test_streaming_replay_preserves_redacted_thinking_block(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Streamed redacted reasoning stays its own reasoning item and is replayed before tool_use.
+
+    Offline synthetic SDK events — no network. Regression for microsoft/agent-framework#10104.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    events: list[BetaRawMessageStreamEvent] = [
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": "Visible summary.", "signature": ""},
+        }),
+        BetaRawContentBlockDeltaEvent.model_validate({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "signature_delta", "signature": "synthetic-signature"},
+        }),
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "redacted_thinking", "data": "synthetic-opaque-data"},
+        }),
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 2,
+            "content_block": {"type": "tool_use", "id": "toolu_test", "name": "lookup", "input": {}},
+        }),
+    ]
+
+    updates = [client._process_stream_event(event) for event in events]
+    response = ChatResponse.from_updates([update for update in updates if update is not None])
+    message = response.messages[0]
+    reasoning = [content for content in message.contents if content.type == "text_reasoning"]
+    assert len(reasoning) == 2
+
+    prepared = client._prepare_message_for_anthropic(message)
+    assert [block["type"] for block in prepared["content"]] == ["thinking", "redacted_thinking", "tool_use"]
+    assert prepared["content"][0]["signature"] == "synthetic-signature"
+    assert prepared["content"][1]["data"] == "synthetic-opaque-data"
+
+
+def test_streaming_replay_preserves_only_redacted_thinking_block(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A streamed response containing only a redacted thinking block still replays it."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    events: list[BetaRawMessageStreamEvent] = [
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "redacted_thinking", "data": "synthetic-opaque-data"},
+        }),
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "tool_use", "id": "toolu_test", "name": "lookup", "input": {}},
+        }),
+    ]
+
+    updates = [client._process_stream_event(event) for event in events]
+    response = ChatResponse.from_updates([update for update in updates if update is not None])
+
+    prepared = client._prepare_message_for_anthropic(response.messages[0])
+    assert prepared["content"] == [
+        {"type": "redacted_thinking", "data": "synthetic-opaque-data"},
+        {"type": "tool_use", "id": "toolu_test", "name": "lookup", "input": {}},
+    ]
 
 
 def test_streaming_replay_preserves_empty_signed_thinking_block(
@@ -2368,10 +2556,10 @@ def test_parse_contents_from_anthropic_text(mock_anthropic_client: MagicMock) ->
     assert result[0].text == "Hello!"
 
 
-def test_parse_contents_records_dropped_redacted_thinking(
+def test_parse_contents_preserves_redacted_thinking(
     mock_anthropic_client: MagicMock,
 ) -> None:
-    """Dropped native blocks remain visible to the pause-turn replay guard."""
+    """Redacted reasoning is kept as an opaque reasoning item instead of being dropped."""
     client = create_test_anthropic_client(mock_anthropic_client)
     request_state = _AnthropicRequestState()
 
@@ -2380,8 +2568,12 @@ def test_parse_contents_records_dropped_redacted_thinking(
         request_state,
     )
 
-    assert result == []
-    assert request_state.dropped_content_types == {"redacted_thinking"}
+    assert len(result) == 1
+    assert result[0].type == "text_reasoning"
+    assert result[0].text is None
+    assert result[0].protected_data == "opaque"
+    assert result[0].additional_properties["anthropic"]["reasoning_block"] == "redacted_thinking"
+    assert request_state.dropped_content_types == set()
 
 
 def test_parse_contents_from_anthropic_tool_use(
@@ -3944,11 +4136,11 @@ async def test_streaming_mcp_pause_turn_is_not_auto_continued(
     assert response.messages[0].contents[0].parse_arguments() == {}
 
 
-async def test_non_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
+async def test_non_streaming_redacted_thinking_pause_turn_continues(
     mock_anthropic_client: MagicMock,
 ) -> None:
-    """Dropped redacted reasoning prevents an incomplete continuation transcript."""
-    message = BetaMessage(
+    """Redacted reasoning is replayed faithfully, so a paused turn is continued."""
+    paused = BetaMessage(
         id="msg_redacted_pause",
         content=[
             BetaRedactedThinkingBlock(type="redacted_thinking", data="opaque"),
@@ -3960,7 +4152,22 @@ async def test_non_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
         type="message",
         usage=BetaUsage(input_tokens=1, output_tokens=1),
     )
-    mock_anthropic_client.beta.messages.create.return_value = message
+    finished = BetaMessage(
+        id="msg_finished",
+        content=[BetaTextBlock(type="text", text="Finished.")],
+        model="claude-test",
+        role="assistant",
+        stop_reason="end_turn",
+        type="message",
+        usage=BetaUsage(input_tokens=2, output_tokens=1),
+    )
+    requests: list[dict[str, Any]] = []
+
+    async def create(**kwargs: Any) -> BetaMessage:
+        requests.append(kwargs)
+        return [paused, finished][len(requests) - 1]
+
+    mock_anthropic_client.beta.messages.create.side_effect = create
     client = create_test_anthropic_client(mock_anthropic_client)
 
     response = await client._inner_get_response(  # type: ignore[attr-defined]
@@ -3968,17 +4175,21 @@ async def test_non_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
         options={"max_tokens": 64},
     )
 
-    assert mock_anthropic_client.beta.messages.create.call_count == 1
-    assert response.finish_reason == "pause_turn"
-    assert response.text == "Still working."
+    assert len(requests) == 2
+    assert requests[1]["messages"][1]["content"] == [
+        {"type": "redacted_thinking", "data": "opaque"},
+        {"type": "text", "text": "Still working."},
+    ]
+    assert response.finish_reason == "stop"
+    assert [message.text for message in response.messages] == ["Still working.", "Finished."]
 
 
-async def test_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
+async def test_streaming_redacted_thinking_pause_turn_continues(
     mock_anthropic_client: MagicMock,
 ) -> None:
-    """Streaming also retains pause_turn when redacted reasoning was dropped."""
+    """Streaming keeps redacted reasoning replayable, so a paused turn is continued."""
 
-    async def events() -> Any:
+    async def paused_events() -> Any:
         yield _message_start_event("msg_redacted_pause")
         redacted_start = MagicMock()
         redacted_start.type = "content_block_start"
@@ -3997,7 +4208,27 @@ async def test_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
         yield _message_delta_event("pause_turn")
         yield _message_stop_event()
 
-    mock_anthropic_client.beta.messages.create.return_value = events()
+    async def final_events() -> Any:
+        yield _message_start_event("msg_finished")
+        text_start = MagicMock()
+        text_start.type = "content_block_start"
+        text_start.index = 0
+        text_start.content_block.type = "text"
+        text_start.content_block.text = "Finished."
+        text_start.content_block.citations = None
+        yield text_start
+        yield _content_block_stop_event(index=0)
+        yield _message_delta_event("end_turn")
+        yield _message_stop_event()
+
+    requests: list[dict[str, Any]] = []
+    streams = [paused_events(), final_events()]
+
+    async def create(**kwargs: Any) -> Any:
+        requests.append(kwargs)
+        return streams[len(requests) - 1]
+
+    mock_anthropic_client.beta.messages.create.side_effect = create
     client = create_test_anthropic_client(mock_anthropic_client)
     stream = client._inner_get_response(  # type: ignore[attr-defined]
         messages=[Message(role="user", contents=["Think carefully."])],
@@ -4009,9 +4240,13 @@ async def test_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
     _ = [update async for update in stream]
     response = await stream.get_final_response()
 
-    assert mock_anthropic_client.beta.messages.create.call_count == 1
-    assert response.finish_reason == "pause_turn"
-    assert response.text == "Still working."
+    assert len(requests) == 2
+    assert requests[1]["messages"][1]["content"] == [
+        {"type": "redacted_thinking", "data": "opaque"},
+        {"type": "text", "text": "Still working."},
+    ]
+    assert response.finish_reason == "stop"
+    assert [message.text for message in response.messages] == ["Still working.", "Finished."]
 
 
 async def test_anthropic_pause_turn_limit_preserves_finish_reason(monkeypatch: pytest.MonkeyPatch) -> None:

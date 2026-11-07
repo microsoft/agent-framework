@@ -28,6 +28,15 @@ into application code.
   factory.
 - Make session, checkpoint, response, identity, approval, storage, and cleanup ownership explicit.
 
+MCP `approval_mode` supports a synchronous callable so server-specific policies can be composed without
+subclassing a transport. It receives a discovered `mcp.types.Tool` or `mcp.types.Prompt` and must return
+`"always_require"` or `"never_require"` for every item, including its default decision. It runs on discovery
+and refresh, not invocation; invalid results fail discovery. Ordinary MCP `approval_mode=None` means no approval.
+
+`FoundryToolbox` instead uses `None` to select its metadata policy. See
+[Toolbox approvals and trust boundary](https://github.com/microsoft/agent-framework/blob/main/python/packages/foundry_hosting/README.md#toolbox-tool-approvals)
+for vendor-specific configuration, caller overrides, and the trust placed in read-only labels.
+
 For MCP agent tools, `AgentMCPTool.call_tool(...)` validates the generated input schema before execution or
 session-store access. Applications using `mcp_to_run(...)` directly must validate their own schema before conversion.
 Keep schemas in trusted application configuration. Regex validation is synchronous and has no execution timeout;
