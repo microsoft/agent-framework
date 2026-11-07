@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
@@ -103,6 +104,8 @@ class DefaultMCPToolHandler:
 
     Keyword Args:
         client_provider: Optional per-invocation provider of a borrowed HTTP client.
+        cache_max_size: Deprecated compatibility parameter. Non-``None`` values
+            emit a warning but are ignored; sessions are never cached.
         max_discovery_pages: Maximum pages accepted per tool catalog fetch.
             Defaults to 100; ``None`` disables the limit.
         max_discovery_items: Maximum tools accepted per tool catalog fetch.
@@ -121,9 +124,16 @@ class DefaultMCPToolHandler:
         self,
         *,
         client_provider: ClientProvider | None = None,
+        cache_max_size: int | None = None,
         max_discovery_pages: int | None = 100,
         max_discovery_items: int | None = 1_000,
     ) -> None:
+        if cache_max_size is not None:
+            warnings.warn(
+                "cache_max_size is deprecated and has no effect. Each invocation uses a new MCP session.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if max_discovery_pages is not None and max_discovery_pages <= 0:
             raise ValueError("max_discovery_pages must be positive or None.")
         if max_discovery_items is not None and max_discovery_items <= 0:

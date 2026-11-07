@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 
-// Share the same label rules before investigation and before publication.
+// Use the same label rules before investigation and before updating the issue.
 // An allow label can release a review hold, but cannot override a deny label.
 function stopReason(issue) {
   const labels = new Set((issue.labels ?? []).map(label =>
@@ -20,11 +20,11 @@ function stopReason(issue) {
 // type change after earlier requests have already updated the issue.
 function validateRequests(output) {
   if (!Array.isArray(output.items)) {
-    throw new Error('Routing publication requires an items array.');
+    throw new Error('The agent output must contain a list of issue update requests.');
   }
   for (const item of output.items) {
     if (!item || typeof item.type !== 'string') {
-      throw new Error('Invalid routing publication request.');
+      throw new Error('Invalid issue update request.');
     }
     if (item.type === 'set_issue_type' && item.issue_type !== 'Feature') {
       throw new Error('Routing may only set the issue type to Feature; clearing it is not allowed.');
@@ -33,9 +33,9 @@ function validateRequests(output) {
 }
 
 // Called before evidence uploads and issue updates. This helper does not write to
-// GitHub; it permits publication or replaces queued requests with a logged no-op.
-async function checkPublication({ github, context, core, issueNumber, outputPath }) {
-  // Errors must leave publication disabled, not fall back to allowing updates.
+// GitHub; it allows the updates or replaces queued requests with a logged no-op.
+async function checkIssueUpdates({ github, context, core, issueNumber, outputPath }) {
+  // Errors must leave issue updates blocked, not fall back to allowing updates.
   core.setOutput('allowed', 'false');
   if (!/^[1-9][0-9]*$/.test(String(issueNumber)) || !Number.isSafeInteger(Number(issueNumber))) {
     throw new Error('Issue number must be a positive, safe integer.');
@@ -52,13 +52,13 @@ async function checkPublication({ github, context, core, issueNumber, outputPath
   }
   const reason = stopReason(issue);
   if (reason) {
-    core.notice(`Skipping routing publication: ${reason}`);
+    core.notice(`Skipping issue updates: ${reason}`);
     // Keep an explicit no-op for the publisher instead of leaving an ambiguous empty result.
-    output.items = [{ type: 'noop', reason: `Publication stopped: ${reason}` }];
+    output.items = [{ type: 'noop', reason: `Issue updates stopped: ${reason}` }];
     fs.writeFileSync(outputPath, JSON.stringify(output));
     return;
   }
   core.setOutput('allowed', 'true');
 }
 
-module.exports = { stopReason, validateRequests, checkPublication };
+module.exports = { stopReason, validateRequests, checkIssueUpdates };

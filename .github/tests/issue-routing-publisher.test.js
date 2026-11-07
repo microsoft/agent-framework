@@ -5,7 +5,7 @@ const { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require(
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 const { beforeEach, describe, it } = require('node:test');
-const stageBundle = require('../scripts/issue-routing-bundle.js');
+const checkEvidenceFiles = require('../scripts/issue-routing-evidence.js');
 const { validateRequests } = require('../scripts/issue-routing-publish.js');
 
 const runtime = process.env.GH_AW_TEST_RUNTIME;
@@ -173,28 +173,28 @@ describe('Issue routing pinned publisher', { skip: runtime ? false : 'Set GH_AW_
         mkdirSync(join(staging, `issue-routing-issue-${issue}`), { recursive: true });
         writeFileSync(join(staging, `issue-routing-issue-${issue}`, 'report.md'), 'Observed failure.');
       }
-      const bundle = join(staging, 'issue-routing-issue-42');
+      const evidence = join(staging, 'issue-routing-issue-42');
       const historical = { ...record, run_url: record.run_url.replace('/123', '/100'), commit: 'b'.repeat(40) };
-      mkdirSync(join(bundle, 'history', '100'), { recursive: true });
-      writeFileSync(join(bundle, 'history', '100', 'reproduction.json'), JSON.stringify(historical, null, 2));
-      writeFileSync(join(bundle, 'report.md'), confirmed
+      mkdirSync(join(evidence, 'history', '100'), { recursive: true });
+      writeFileSync(join(evidence, 'history', '100', 'reproduction.json'), JSON.stringify(historical, null, 2));
+      writeFileSync(join(evidence, 'report.md'), confirmed
         ? 'Current run: reproduced. Retained earlier evidence from run 100.'
         : 'Current run: inconclusive. Retained earlier evidence from run 100; no new reproduction.');
-      if (confirmed) writeFileSync(join(bundle, 'reproduction.json'), JSON.stringify(record, null, 2));
-      const transfer = join(directory, 'checked-transfer');
+      if (confirmed) writeFileSync(join(evidence, 'reproduction.json'), JSON.stringify(record, null, 2));
+      const copy = join(directory, 'temporary-copy');
       const final = join(directory, 'checked-final');
-      assert.equal(stageBundle({ source: bundle, destination: transfer, core: global.core }), true);
-      assert.equal(stageBundle({ source: transfer, destination: final, core: global.core }), true);
+      assert.equal(checkEvidenceFiles({ source: evidence, destination: copy, core: global.core }), true);
+      assert.equal(checkEvidenceFiles({ source: copy, destination: final, core: global.core }), true);
       assert.deepEqual(JSON.parse(readFileSync(join(final, 'history', '100', 'reproduction.json'), 'utf8')), historical);
       if (confirmed) assert.deepEqual(JSON.parse(readFileSync(join(final, 'reproduction.json'), 'utf8')), record);
-      assert.equal(readFileSync(join(final, 'report.md'), 'utf8'), readFileSync(join(bundle, 'report.md'), 'utf8'));
+      assert.equal(readFileSync(join(final, 'report.md'), 'utf8'), readFileSync(join(evidence, 'report.md'), 'utf8'));
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
   }
 
   for (const confirmed of [true, false]) {
-    it(`preserves a ${confirmed ? 'newly reproduced' : 'retained-only'} bundle through both evidence checks`,
+    it(`preserves a ${confirmed ? 'newly reproduced' : 'retained-only'} evidence folder through both evidence checks`,
       () => checkArtifactUpload(confirmed));
   }
 });

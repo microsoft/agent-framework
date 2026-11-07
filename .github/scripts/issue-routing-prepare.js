@@ -2,15 +2,20 @@
 
 const checkTeamMembership = require('./check_team_membership.js');
 const { stopReason } = require('./issue-routing-publish.js');
+const { automaticSkipReason } = require('./issue-routing-history.js');
 
-async function prepareIssueRouting({ github, context, core, issueNumber = '', teamSlug = '' }) {
+// `github` uses the App token for issue and team reads. `actionsGithub` uses the
+// workflow token, which can read this repository's earlier workflow runs.
+async function prepareIssueRouting({ github, actionsGithub, context, core, issueNumber = '', teamSlug = '' }) {
   // Keep the agent disabled unless every required check below passes.
   core.setOutput('should_route', 'false');
 
-  // Manual runs take an explicit issue number; automatic runs come from issue events.
+  // Manual runs take an explicit issue number; automatic runs come from issue
+  // events or a reporter's reply comment.
   const manual = context.eventName === 'workflow_dispatch';
-  if (!manual && context.eventName !== 'issues') {
-    throw new Error('Issue routing requires an issue event or manual dispatch.');
+  const reply = context.eventName === 'issue_comment';
+  if (!manual && !reply && context.eventName !== 'issues') {
+    throw new Error('Issue routing requires an issue event, a reply comment, or manual dispatch.');
   }
 
   // Validate the number before making API calls or passing it to later jobs.
@@ -62,6 +67,26 @@ async function prepareIssueRouting({ github, context, core, issueNumber = '', te
     });
     if (isTeamMember) {
       core.info('Skipping automatic routing: the issue author belongs to the developer team.');
+      return;
+    }
+
+    // Reply re-runs need a reply from the original reporter while details were
+    // requested. Recheck the fetched issue rather than trusting the event payload.
+    if (reply) {
+      const labels = (issue.labels ?? []).map(label => typeof label === 'string' ? label : label?.name);
+      if (context.payload.comment?.user?.login !== issue.user.login || !labels.includes('requested-info')) {
+        core.info('Skipping automatic routing: the comment is not a reporter reply to a request for details.');
+        return;
+      }
+    }
+
+    // Avoid routing the same issue twice.
+    if (!actionsGithub) {
+      throw new Error('A workflow-run reader is required for automatic routing.');
+    }
+    const skip = await automaticSkipReason({ github: actionsGithub, context, issue });
+    if (skip) {
+      core.info(`Skipping automatic routing: ${skip}`);
       return;
     }
   }

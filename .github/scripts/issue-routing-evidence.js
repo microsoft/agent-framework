@@ -4,24 +4,24 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 // Check files as data and prepare an upload copy, without executing their contents.
-// Used before the temporary transfer and again after the publishing job downloads it.
-function stageBundle({ source, destination, core }) {
+// Used in the agent job before uploading a temporary copy, and again after the publishing job downloads it.
+function checkEvidenceFiles({ source, destination, core }) {
   const root = path.resolve(source);
   let parent = path.parse(root).root;
-  // Check ancestors too: a link above the bundle must not redirect a host read.
+  // Check ancestors too: a link above the evidence folder must not redirect a host read.
   for (const component of root.slice(parent.length).split(path.sep)) {
     parent = path.join(parent, component);
     const stat = fs.lstatSync(parent, { throwIfNoEntry: false });
     if (!stat) {
-      core.info('No current routing bundle was saved.');
+      core.info('No evidence files were saved in this run.');
       return false;
     }
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw new Error('Routing bundle paths must be directories, not links.');
+      throw new Error('Evidence folder paths must be directories, not links.');
     }
   }
 
-  // Inspect the whole bundle before copying anything. Empty folders and long paths
+  // Inspect the whole evidence folder before copying anything. Empty folders and long paths
   // consume archive space too, even when the file contents are small.
   const files = [];
   let entries = 0;
@@ -39,7 +39,7 @@ function stageBundle({ source, destination, core }) {
         const relative = path.relative(root, file);
         pathBytes += Buffer.byteLength(relative);
         if (++entries > 2000 || pathBytes > 1024 * 1024) {
-          throw new Error('Routing bundle exceeds the folder or path metadata limit.');
+          throw new Error('Evidence files exceed the limit on folders or path name length.');
         }
         const stat = fs.lstatSync(file);
         if (stat.isDirectory()) {
@@ -47,11 +47,11 @@ function stageBundle({ source, destination, core }) {
         } else if (stat.isFile() && stat.nlink === 1) {
           bytes += stat.size;
           if (bytes > 10 * 1024 * 1024 || files.length >= 1000) {
-            throw new Error('Routing bundle exceeds 10 MiB or 1,000 files.');
+            throw new Error('Evidence files exceed 10 MiB or 1,000 files.');
           }
           files.push({ file, relative, size: stat.size });
         } else {
-          throw new Error('Routing bundles may contain only ordinary files and directories, not links.');
+          throw new Error('Evidence files must be ordinary files and folders, not links.');
         }
       }
     } finally {
@@ -60,12 +60,12 @@ function stageBundle({ source, destination, core }) {
   }
   collect(root);
   if (!files.length) {
-    core.info('The current routing bundle has no files.');
+    core.info('The evidence folder for this run has no files.');
     return false;
   }
   // Retained history still needs a report describing the current run's findings.
   if (!files.some(file => file.relative === 'report.md')) {
-    throw new Error('Routing bundles require a current report.md.');
+    throw new Error('Evidence files must include a current report.md.');
   }
 
   // Callers place this fresh copy outside the agent's writable folders.
@@ -107,4 +107,4 @@ function stageBundle({ source, destination, core }) {
   return true;
 }
 
-module.exports = stageBundle;
+module.exports = checkEvidenceFiles;
