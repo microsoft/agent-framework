@@ -32,6 +32,9 @@ prompts:
   reviewers only**. Automated/AI reviewers must ignore it and review the entire
   change rather than narrowing scope to it.
 
+For material Python public-API changes, follow the additional guidance in the
+[root PR skill's Description & Review Guide section](../../../../.github/skills/pull-requests/SKILL.md#-description--review-guide).
+
 ### `### Related Issue`
 Link the issue the PR fixes using a GitHub closing keyword (`Fixes #123` /
 `Closes #123`) so it closes automatically on merge. For a non-trivial change,
@@ -39,6 +42,9 @@ confirm that a maintainer added the `ready-for-implementation` label or explicit
 agreed with the direction in an issue comment. A PR with no agreed issue may be
 closed without detailed review. Before opening, confirm there is no other open PR
 for the same issue; if there is, explain how this PR differs.
+
+For team-only work and investigation or planning outcomes, follow the approval
+boundaries in the [root PR skill's Related Issue section](../../../../.github/skills/pull-requests/SKILL.md#-related-issue).
 
 For a trivial change that does not require an issue, replace the `Fixes #`
 placeholder with `N/A - trivial change` and briefly explain why the change is an

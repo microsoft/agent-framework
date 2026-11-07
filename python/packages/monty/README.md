@@ -22,6 +22,24 @@ Monty-backed CodeAct integrations for Microsoft Agent Framework.
 > enforce authorization and destination restrictions inside host functions.
 > See the [FIDES guide](../../samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md).
 
+## Error diagnostics
+
+Host tool failures raise a generic `RuntimeError("Host tool execution failed.")`
+inside generated code by default. Execution error contents omit raw diagnostic
+details. This applies to both direct tool calls and `call_tool(...)`, including
+failures that generated code catches and prints or returns.
+
+Both `MontyCodeActProvider` and `MontyExecuteCodeTool` accept the host-side option
+`include_detailed_errors=True` to retain original host exception types/messages
+and execution diagnostics. Enable it only for a trusted channel: exception
+messages can contain credentials or other sensitive data. This option is not a
+parameter of `execute_code` and is independent of the outer chat client's error
+policy and sensitive-data logging. Run snapshots and serialized state retain it.
+
+Code that catches a specific host exception type, such as `ValueError`, must
+instead handle the generic `RuntimeError` in the default mode. Failure signaling
+and successful tool results are unchanged.
+
 ## Installation
 
 ```bash
@@ -179,8 +197,8 @@ codeact = MontyCodeActProvider(
             write_bytes_limit=10 * 1024 * 1024,
         ),
     ],
-    resource_limits={                       # Monty ResourceLimits TypedDict
-        "max_duration_secs": 5.0,
+    resource_limits={                       # Monty 1.x ResourceLimits TypedDict
+        "max_feed_duration_secs": 5.0,
         "max_memory": 64 * 1024 * 1024,
     },
 )
@@ -206,10 +224,15 @@ codeact = MontyCodeActProvider(
   attachment capture, not filesystem traversal, disk use, or all host memory.
 - `overlay` mounts buffer writes in memory (nothing leaks to the host and
   nothing is captured). `read-only` mounts reject writes.
-- **`resource_limits`** is forwarded straight to Monty's
-  [`ResourceLimits`](https://github.com/pydantic/monty) TypedDict
-  (`max_duration_secs`, `max_memory`, `gc_interval`, `max_recursion_depth`,
-  `max_suspensions`). These interpreter limits do not independently bound
+- **`resource_limits`** accepts Monty 1.x
+  [`ResourceLimits`](https://github.com/pydantic/monty) keys. Monty 1.0 or later
+  is required. `max_feed_duration_secs` limits total sandbox execution time
+  across host round trips; `max_turn_duration_secs` resets at each host round
+  trip. Both exclude time spent waiting on the host. The documented legacy
+  `max_duration_secs` option remains supported as an alias for
+  `max_feed_duration_secs`; specifying both is an error. Other keys include
+  `max_memory`, `gc_interval`, `max_recursion_depth`, `max_suspensions`, and
+  `max_total_sleep_secs`. These interpreter limits do not independently bound
   host-side post-execution attachment capture.
 
 ## DSL inside `execute_code`

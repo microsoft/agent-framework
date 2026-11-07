@@ -8,7 +8,7 @@ import logging
 import sys
 from collections import OrderedDict
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from typing import Any, ClassVar, Generic, cast
+from typing import Any, ClassVar, Generic, TypedDict, cast
 from uuid import uuid4
 
 from agent_framework import (
@@ -30,7 +30,7 @@ from agent_framework import (
     detect_media_type_from_base64,
     validate_tool_mode,
 )
-from agent_framework._settings import SecretString, load_settings
+from agent_framework._settings import SecretString
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._types import _get_data_bytes  # type: ignore[reportPrivateUsage]
 from agent_framework.exceptions import (
@@ -51,6 +51,7 @@ from ._feature_usage import FeatureIndex
 from ._sdk_client import (
     GoogleGeminiSettings,
     create_genai_client,
+    load_gemini_settings,
 )
 
 if sys.version_info >= (3, 13):
@@ -63,10 +64,6 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # pragma: no cover
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.gemini")
 
@@ -307,7 +304,10 @@ class RawGeminiChatClient(
                 Application Default Credentials.
             env_file_path: Path to a ``.env`` file for credential loading.
             env_file_encoding: Encoding for the ``.env`` file.
-            client: Pre-built ``genai.Client`` instance. When provided, connector auth settings are not required.
+            client: Pre-built ``genai.Client`` instance. When provided, it is used as-is: the API key,
+                project, and location arguments and connection environment settings are not read.
+                ``GOOGLE_MODEL`` still applies. Explicit mode arguments only apply when the client does not
+                expose its own mode.
             additional_properties: Extra properties stored on the client instance.
             max_tracked_thought_signatures: Maximum number of Gemini 3 thought signatures retained
                 for replay, keyed by call ID. Least-recently-used entries are evicted beyond this.
@@ -317,9 +317,8 @@ class RawGeminiChatClient(
         """
         if max_tracked_thought_signatures < 1:
             raise ValueError("max_tracked_thought_signatures must be greater than 0.")
-        google_settings = load_settings(
-            GoogleGeminiSettings,
-            env_prefix="GOOGLE_",
+        google_settings = load_gemini_settings(
+            client=client,
             api_key=api_key,
             model=model,
             genai_use_enterprise=enterprise,
@@ -1397,7 +1396,10 @@ class GeminiChatClient(
                 Application Default Credentials.
             env_file_path: Path to a ``.env`` file for credential loading.
             env_file_encoding: Encoding for the ``.env`` file.
-            client: Pre-built ``genai.Client`` instance. When provided, connector auth settings are not required.
+            client: Pre-built ``genai.Client`` instance. When provided, it is used as-is: the API key,
+                project, and location arguments and connection environment settings are not read.
+                ``GOOGLE_MODEL`` still applies. Explicit mode arguments only apply when the client does not
+                expose its own mode.
             additional_properties: Extra properties stored on the client instance.
             middleware: Optional middleware chain applied to every call.
             function_invocation_configuration: Optional configuration for the function invocation loop.

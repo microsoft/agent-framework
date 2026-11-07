@@ -11,10 +11,7 @@ describes the connection and pool settings resolved through Agent Framework.
 pip install agent-framework-oracle --pre
 ```
 
-Supports Python 3.11–3.15. Python 3.10 installation remains permitted, but
-compatibility is not guaranteed.
-
-Requires Oracle AI Database 26ai with `COMPATIBLE` set to
+Supports Python 3.11–3.15. Requires Oracle AI Database 26ai with `COMPATIBLE` set to
 **23.4.0 or higher**, `python-oracledb` 3.x, and permission to
 create/drop tables in the connected user's schema. The connector uses the
 driver's async Thin-mode API; it does not initialize the Thick client or
@@ -67,7 +64,7 @@ pass them through `pool_parameters` or use a configured client.
 
 Alternatively, pass a configured `oracledb.AsyncConnection` or
 `oracledb.AsyncConnectionPool` as `client` for advanced authentication. A
-supplied client cannot be combined with connection settings and remains
+supplied client takes precedence over connection settings and remains
 caller-owned. A connector-created pool opens on first use and closes on
 `close()` or async context exit. A collection obtained from a store borrows its
 client; closing that collection does not close the store. The store must remain

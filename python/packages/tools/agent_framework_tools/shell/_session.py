@@ -230,7 +230,7 @@ class ShellSession:
                         pass
                 try:
                     await asyncio.wait_for(proc.wait(), timeout=_SHUTDOWN_GRACE)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     await kill_process_tree(proc, grace=_SHUTDOWN_GRACE)
             except Exception:  # nosec B110 - best-effort shutdown; falls through to forced kill in finally
                 pass
@@ -311,7 +311,7 @@ class ShellSession:
                 self._stdout_event.clear()
                 try:
                     await asyncio.wait_for(self._stdout_event.wait(), timeout=0.1)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
 
         exit_code: int
@@ -323,12 +323,12 @@ class ShellSession:
                 raise RuntimeError("persistent shell session is no longer alive") from exc
             try:
                 exit_code = await asyncio.wait_for(_wait_for_sentinel(), timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 timed_out = True
                 await self._interrupt_current_command()
                 try:
                     exit_code = await asyncio.wait_for(_wait_for_sentinel(), timeout=_SHUTDOWN_GRACE)
-                except (asyncio.TimeoutError, RuntimeError, _SentinelOverflow):
+                except (TimeoutError, RuntimeError, _SentinelOverflow):
                     await self._close_process()
                     exit_code = 124
                 if sys.platform == "win32":

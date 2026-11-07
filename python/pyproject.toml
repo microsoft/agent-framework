@@ -3,8 +3,8 @@ name = "agent-framework"
 description = "Microsoft Agent Framework for building AI Agents with Python. This package contains core and a curated set of optional integrations."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
-requires-python = ">=3.10"
-version = "1.24.0"
+requires-python = ">=3.11"
+version = "1.25.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,14 +23,14 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.24.0",
+    "agent-framework-core[all]==1.25.0",
 ]
 
 [dependency-groups]
 dev = [
     "uv==0.13.5",
-    "pytest==9.1.1",
-    "pytest-asyncio==1.4.0",
+    "pytest==9.2.0",
+    "pytest-asyncio==1.4.1",
     "pytest-cov==7.1.0",
     "pytest-xdist[psutil]==3.8.0",
     "pytest-timeout==2.4.0",
@@ -46,7 +46,6 @@ dev = [
 tool-runtime = [
     "packaging==26.3",
     "rich>=13.7.1,<16.0.0",
-    'tomli==2.5.0; python_version < "3.11"',
 ]
 tool-hooks = [
     "prek==0.5.7",
@@ -123,7 +122,7 @@ agent-framework-typesafe = { workspace = true }
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 fix = true
 include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
 exclude = ["scripts"]
@@ -159,6 +158,7 @@ select = [
     "W", # pycodestyle warning checks
 ]
 ignore = [
+    "ASYNC109", # timeout parameters are intentional API contracts
     "D100", # allow missing docstring in public module
     "D104", # allow missing docstring in public package
     "D421", # allow property docstrings that start with a verb
@@ -228,7 +228,7 @@ reportUnnecessaryTypeIgnoreComment = "error"
 # annotating every function. See docs/skills/python-code-quality.
 [tool.mypy]
 plugins = ['pydantic.mypy']
-python_version = "3.10"
+python_version = "3.11"
 ignore_missing_imports = true
 check_untyped_defs = true
 disallow_untyped_defs = false
@@ -240,7 +240,7 @@ warn_unused_ignores = false
 show_error_codes = true
 
 # NumPy 2.5 stubs use Python 3.12 type-statement syntax while mypy intentionally
-# targets Python 3.10 for test typing; skip parsing NumPy internals.
+# targets Python 3.11 for test typing; skip parsing NumPy internals.
 [[tool.mypy.overrides]]
 module = ["numpy", "numpy.*"]
 follow_imports = "skip"

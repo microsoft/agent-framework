@@ -2,8 +2,10 @@
 
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Unicode;
 using Microsoft.Agents.AI.Hosting.OpenAI.Conversations.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
@@ -30,6 +32,9 @@ internal static class OpenAIHostingJsonUtilities
         options.TypeInfoResolverChain.Clear();
         options.TypeInfoResolverChain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
         options.TypeInfoResolverChain.Add(OpenAIHostingJsonContext.Default.Options.TypeInfoResolver!);
+
+        // Keep non-ASCII characters as-is while continuing to escape HTML-sensitive characters.
+        options.Encoder = JavaScriptEncoder.Create(UnicodeRanges.All);
 
         options.MakeReadOnly();
         return options;
@@ -72,6 +77,7 @@ internal static class OpenAIHostingJsonUtilities
 [JsonSerializable(typeof(StreamingContentPartDone))]
 [JsonSerializable(typeof(StreamingOutputTextDelta))]
 [JsonSerializable(typeof(StreamingOutputTextDone))]
+[JsonSerializable(typeof(StreamingOutputTextAnnotationAdded))]
 [JsonSerializable(typeof(StreamingFunctionCallArgumentsDelta))]
 [JsonSerializable(typeof(StreamingFunctionCallArgumentsDone))]
 [JsonSerializable(typeof(ReasoningOptions))]

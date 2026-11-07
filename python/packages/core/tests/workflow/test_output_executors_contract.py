@@ -5,10 +5,9 @@
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import Any, Never
 
 import pytest
-from typing_extensions import Never
 
 from agent_framework import (
     Message,

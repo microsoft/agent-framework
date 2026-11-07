@@ -100,11 +100,12 @@ DO's:
 - **DO** follow the standard coding conventions
 
   - [.NET](https://learn.microsoft.com/dotnet/csharp/fundamentals/coding-style/coding-conventions)
-  - [Python](https://pypi.org/project/black/)
+  - [Python](./python/CODING_STANDARD.md)
 
-- **DO** give priority to the current style of the project or file you're changing
-  if it diverges from the general guidelines.
-- **DO** use the pre-commit hooks for python to ensure proper formatting.
+- **DO** follow the repository's language-specific standards when local file style
+  diverges. Do not copy non-conforming legacy patterns.
+- **DO** follow the [Python code-quality guidance](./python/.github/skills/python-code-quality/SKILL.md)
+  for formatting, linting, and repository hooks.
 - **DO** include tests when adding new features. When fixing bugs, start with
   adding a test that highlights how the current behavior is broken.
 - **DO** keep the discussions focused. When a new or related topic comes up
@@ -128,8 +129,9 @@ DON'Ts:
 ### Breaking Changes
 
 Contributions must maintain API signature and behavioral compatibility. Contributions
-that include breaking changes will be rejected. Please file an issue to discuss
-your idea or change if you believe that a breaking change is warranted.
+that include breaking changes require explicit maintainer approval and documentation.
+Please file an issue and agree on the direction before implementing a breaking change.
+A breaking-change label or title declares intent; it does not grant design approval.
 
 #### Python Public API Compatibility
 

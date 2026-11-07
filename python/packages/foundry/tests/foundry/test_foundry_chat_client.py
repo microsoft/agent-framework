@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import warnings
+from collections.abc import Iterator, Mapping
 from functools import wraps
 from importlib import import_module
 from pathlib import Path
@@ -47,6 +48,7 @@ from pytest import param
 
 from agent_framework_foundry import FoundryChatClient, RawFoundryChatClient
 from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
+from agent_framework_foundry._tools import _to_plain_dict
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 
@@ -183,12 +185,7 @@ def _with_foundry_debug() -> Any:
                     f"project_endpoint={os.getenv('FOUNDRY_PROJECT_ENDPOINT', '<unset>')}, "
                     f"model={os.getenv('FOUNDRY_MODEL', '<unset>')}"
                 )
-                if hasattr(exc, "add_note"):
-                    cast(Any, exc).add_note(debug_message)
-                elif exc.args:
-                    exc.args = (f"{exc.args[0]}\n{debug_message}", *exc.args[1:])
-                else:
-                    exc.args = (debug_message,)
+                exc.add_note(debug_message)
                 raise
 
         return wrapper
@@ -1336,6 +1333,157 @@ def test_prepare_tools_for_openai_strips_name_from_non_function_hosted_tool_dict
     assert "description" not in response_tools[1]
 
 
+def test_prepare_tools_for_openai_serializes_bing_custom_search_tool() -> None:
+    """Hosted Bing custom search tool contains nested models that must be JSON serializable."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = FoundryChatClient.get_bing_custom_search_tool(
+        connection_id="/subscriptions/x/connections/bing",
+        instance_name="inst",
+        market="zh-TW",
+    )
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    # Ensure nested Azure SDK models were converted and are JSON serializable
+    dumped = json.dumps(response_tools)
+    assert "bing_custom_search_preview" in dumped
+    assert "project_connection_id" in dumped
+    assert "inst" in dumped
+
+
+def test_prepare_tools_for_openai_serializes_code_interpreter_with_auto_param() -> None:
+    """Hosted code interpreter tool from factory must be JSON serializable."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = FoundryChatClient.get_code_interpreter_tool()
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    dumped = json.dumps(response_tools)
+    assert "code_interpreter" in dumped
+    assert "auto" in dumped
+
+
+def test_to_plain_dict_prefers_mapping_over_incompatible_as_dict() -> None:
+    """Mapping objects with an incompatible as_dict method are converted without calling as_dict."""
+
+    class IncompatibleMapping(Mapping[str, Any]):
+        def __init__(self, data: dict[str, Any]) -> None:
+            self._data = data
+            self.as_dict_called = False
+
+        def __getitem__(self, key: str) -> Any:
+            return self._data[key]
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(self._data)
+
+        def __len__(self) -> int:
+            return len(self._data)
+
+        def as_dict(self, required_arg: Any) -> dict[str, Any]:
+            self.as_dict_called = True
+            raise TypeError("as_dict() missing 1 required positional argument: 'required_arg'")
+
+    class MockAzureSdkModel:
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self._payload = payload
+            self.as_dict_called = False
+
+        def as_dict(self) -> dict[str, Any]:
+            self.as_dict_called = True
+            return self._payload
+
+    nested_mapping = IncompatibleMapping({"inner_key": "inner_value"})
+    sdk_model = MockAzureSdkModel({"sdk_key": "sdk_value"})
+    nested_list_item = IncompatibleMapping({"list_key": 42})
+
+    top_level = IncompatibleMapping({
+        "type": "custom_hosted_tool",
+        "nested": nested_mapping,
+        "sdk": sdk_model,
+        "items": [nested_list_item],
+    })
+
+    result = _to_plain_dict(top_level)
+
+    # Verify that the result and nested containers are regular plain dictionaries
+    assert type(result) is dict
+    assert type(result["nested"]) is dict
+    assert type(result["sdk"]) is dict
+    assert type(result["items"][0]) is dict
+
+    # Verify values are recursively converted
+    assert result == {
+        "type": "custom_hosted_tool",
+        "nested": {"inner_key": "inner_value"},
+        "sdk": {"sdk_key": "sdk_value"},
+        "items": [{"list_key": 42}],
+    }
+
+    # Verify that as_dict was never invoked on mapping instances
+    assert not top_level.as_dict_called
+    assert not nested_mapping.as_dict_called
+    assert not nested_list_item.as_dict_called
+
+    # Verify that non-mapping Azure SDK model as_dict was invoked
+    assert sdk_model.as_dict_called
+
+
+def test_prepare_tools_for_openai_handles_mapping_with_incompatible_as_dict() -> None:
+    """Hosted tool mapping with an incompatible as_dict method is sanitized and JSON serializable."""
+
+    class IncompatibleToolMapping(Mapping[str, Any]):
+        def __init__(self, data: dict[str, Any]) -> None:
+            self._data = data
+            self.as_dict_called = False
+
+        def __getitem__(self, key: str) -> Any:
+            return self._data[key]
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(self._data)
+
+        def __len__(self) -> int:
+            return len(self._data)
+
+        def as_dict(self, required_arg: Any) -> dict[str, Any]:
+            self.as_dict_called = True
+            raise TypeError("as_dict() missing 1 required positional argument: 'required_arg'")
+
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = IncompatibleToolMapping({
+        "type": "code_interpreter",
+        "container": {"type": "auto"},
+        "name": "read_model_name",
+        "description": "read_model_desc",
+    })
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    sanitized = response_tools[0]
+    assert type(sanitized) is dict
+    assert "name" not in sanitized
+    assert "description" not in sanitized
+    assert sanitized["type"] == "code_interpreter"
+    assert sanitized["container"] == {"type": "auto"}
+    assert not tool.as_dict_called
+
+    dumped = json.dumps(response_tools)
+    assert "code_interpreter" in dumped
+    assert "auto" in dumped
+
+
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_foundry_integration_tests_disabled
@@ -2327,3 +2475,76 @@ async def test_shared_chat_client_keeps_concurrent_agent_runs_isolated(
     assert first_session.service_session_id == "response-first"
     assert second_session.service_session_id == "response-second"
     assert transport.max_active_requests == 2
+
+
+async def test_multi_message_response_attaches_reasoning_replay_to_owning_message() -> None:
+    """Reasoning replay data must land on the message that owns the reasoning content.
+
+    #9768 made multi-message responses possible (e.g. preamble + follow-up message).
+    A reasoning item that trails the last message is parsed into that message, but
+    the Foundry replay attachment only searched ``messages[0]``: it appended a
+    duplicate empty reasoning content there while the real reasoning content in the
+    later message kept no replay payload.
+    """
+    from openai.types.responses.response_output_message import ResponseOutputMessage
+    from openai.types.responses.response_output_text import ResponseOutputText
+    from openai.types.responses.response_reasoning_item import ResponseReasoningItem
+
+    def message_item(item_id: str, text: str) -> ResponseOutputMessage:
+        return ResponseOutputMessage.model_construct(
+            type="message",
+            id=item_id,
+            role="assistant",
+            status="completed",
+            content=[ResponseOutputText.model_construct(type="output_text", text=text, annotations=[])],
+        )
+
+    reasoning_item = ResponseReasoningItem.model_construct(
+        type="reasoning",
+        id="rs_trailing",
+        response_id="response_123",
+        summary=[],
+        content=[],
+    )
+
+    mock_response = MagicMock(
+        id="response_123",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[message_item("message_0", "A"), message_item("message_1", "B"), reasoning_item],
+        usage=None,
+        finish_reason=None,
+        conversation=None,
+        status="completed",
+    )
+
+    async def create_response(**kwargs: Any) -> Any:
+        return _as_raw(mock_response)
+
+    mock_openai_client = _make_mock_openai_client()
+    mock_openai_client.responses.with_raw_response.create.side_effect = create_response
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    response = await client.get_response([Message(role="user", contents=["Hello"])])
+
+    assert [message.text for message in response.messages] == ["A", "B"]
+    reasoning_contents = [
+        content for message in response.messages for content in message.contents if content.type == "text_reasoning"
+    ]
+    assert len(reasoning_contents) == 1, [
+        (message.message_id, content.type, content.id) for message in response.messages for content in message.contents
+    ]
+    assert reasoning_contents[0].id == "rs_trailing"
+    assert reasoning_contents[0].additional_properties.get("__foundry_reasoning_replay_item__") is not None
+    # Pin the owning message: a flattened check would also pass if the reasoning
+    # content (with its replay payload) were attached to message_0 instead.
+    owning_message_ids = [
+        message.message_id
+        for message in response.messages
+        if any(content.type == "text_reasoning" for content in message.contents)
+    ]
+    assert owning_message_ids == ["message_1"]

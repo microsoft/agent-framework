@@ -14,12 +14,9 @@ The package uses Psycopg 3 and the official pgvector Python adapter.
 pip install agent-framework-postgres --pre
 ```
 
-Supports Python 3.11–3.15. Python 3.10 installation remains permitted, but
-compatibility is not guaranteed.
-
-Requires PostgreSQL 13+ and pgvector 0.8.0+.
+Supports Python 3.11–3.15. Requires PostgreSQL 13+ and pgvector 0.8.0+.
 Import the connector directly from `agent_framework_postgres`.
-Python 3.10 through 3.14 install Psycopg's binary distribution. Python 3.15+
+Python 3.11 through 3.14 install Psycopg's binary distribution. Python 3.15+
 uses the pure-Python implementation because binary wheels are not yet
 published, so a system `libpq` installation is required.
 
@@ -42,7 +39,7 @@ The `schema` argument defaults to `public`.
 A connector-created pool is closed by `close()` or an async context manager.
 Alternatively, inject an open Psycopg `AsyncConnection` or `AsyncConnectionPool`
 using `client`; it remains caller-owned and bypasses settings loading.
-Injected clients cannot be combined with connection-string or `.env` options.
+Connection-string and `.env` options are ignored when a client is injected.
 Collections created by a store borrow its pool, so keep the store open while
 using them.
 

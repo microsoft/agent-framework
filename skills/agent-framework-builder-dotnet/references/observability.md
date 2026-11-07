@@ -15,6 +15,18 @@ runtime evidence; it does not determine whether output is correct.
   a generic host.
 - Keep sensitive payload capture (`EnableSensitiveData`) disabled unless the application explicitly accepts the
   exposure of prompts, responses, and tool arguments.
+- Workflow spans no longer emit `executor.input`, `executor.output`, or `message.content`. Remove assignments to
+  `WorkflowTelemetryOptions.EnableSensitiveData`: it is obsolete, has no effect, and will be removed in version
+  1.30.0. Agent and chat-client sensitive-data capture settings are unchanged.
+- Name workflows with `WorkflowBuilder.WithName(...)`. Workflow build and invocation activities record this name as
+  `gen_ai.workflow.name` (replacing `workflow.name`); the attribute is omitted when no meaningful name is configured.
+- Workflow invocation activities are named `invoke_workflow {gen_ai.workflow.name}`, or `invoke_workflow` when no
+  meaningful workflow name exists. `gen_ai.operation.name` remains `invoke_workflow` and is available at creation for
+  sampling.
+- To correlate workflow invocations with an existing conversation, supply `gen_ai.conversation.id` through
+  OpenTelemetry baggage or the current `Activity`'s baggage. Non-blank OpenTelemetry baggage takes precedence.
+  Invocation activities record the ID at creation; without supplied context, the attribute is omitted.
+  Workflow execution `session.id` is separate and is not used as a fallback conversation ID.
 - Redaction does not replace sanitization in custom telemetry, exporters, middleware, logs (`UseLogging`), or
   exception messages.
 

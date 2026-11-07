@@ -21,7 +21,7 @@ class _VersionCatalog:
 
 def test_collect_tool_requirement_replacements_preserves_extras_and_markers(tmp_path: Path) -> None:
     requirements_file = tmp_path / "testing.txt"
-    requirements_file.write_text('# Test tools\npytest==9.1.1\npytest-xdist[psutil]==3.8.0; python_version >= "3.10"\n')
+    requirements_file.write_text('# Test tools\npytest==9.1.1\npytest-xdist[psutil]==3.8.0; python_version >= "3.11"\n')
     catalog = _VersionCatalog({
         "pytest": ["9.1.1", "9.2.0"],
         "pytest-xdist": ["3.8.0", "3.9.0"],
@@ -31,8 +31,8 @@ def test_collect_tool_requirement_replacements_preserves_extras_and_markers(tmp_
 
     assert replacements == {
         "pytest==9.1.1": "pytest==9.2.0",
-        'pytest-xdist[psutil]==3.8.0; python_version >= "3.10"': (
-            'pytest-xdist[psutil]==3.9.0; python_version >= "3.10"'
+        'pytest-xdist[psutil]==3.8.0; python_version >= "3.11"': (
+            'pytest-xdist[psutil]==3.9.0; python_version >= "3.11"'
         ),
     }
 
