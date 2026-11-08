@@ -1,0 +1,93 @@
+# Longest matching package path wins. Use the language fallback when uncertain.
+# Topic labels require strong evidence and high confidence.
+routes:
+  - { path: python/packages/a2a/, owner: dargilco, labels: [a2a] }
+  - { path: python/packages/ag-ui/, owner: dargilco, labels: [ag-ui] }
+  - { path: python/packages/anthropic/, owner: eavanvalkenburg, labels: [agents] }
+  - { path: python/packages/azure-ai-search/, owner: eavanvalkenburg, labels: [memory] }
+  - { path: python/packages/azure-contentunderstanding/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/azure-cosmos/, owner: eavanvalkenburg, labels: [memory] }
+  - { path: python/packages/azure-cosmos-memory/, owner: eavanvalkenburg, labels: [memory] }
+  - { path: python/packages/azure-documentdb/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/bedrock/, owner: eavanvalkenburg, labels: [agents] }
+  - { path: python/packages/chatkit/, owner: eavanvalkenburg, labels: [chat-kit] }
+  - { path: python/packages/claude/, owner: eavanvalkenburg, labels: [agents] }
+  - { path: python/packages/copilotstudio/, owner: eavanvalkenburg, labels: [agents] }
+  - { path: python/packages/core/, owner: eavanvalkenburg, labels: [agents], topics: [compaction, foundry, mcp, middleware, observability, skills] }
+  - { path: python/packages/core/agent_framework/_harness/, owner: westey-m, labels: [harness] }
+  - { path: python/packages/core/agent_framework/_workflows/, owner: jpalvarezl, labels: [workflows] }
+  - { path: python/packages/declarative/, owner: jpalvarezl, labels: [declarative] }
+  - { path: python/packages/devui/, owner: eavanvalkenburg, labels: [devui] }
+  - { path: python/packages/duckdb/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/foundry/, owner: eavanvalkenburg, labels: [agents, foundry] }
+  - { path: python/packages/foundry_hosting/, owner: dargilco, labels: [foundry, hosting] }
+  - { path: python/packages/foundry_local/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/gemini/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/github_copilot/, owner: eavanvalkenburg, labels: [agents] }
+  - { path: python/packages/hosting/, owner: dargilco, labels: [] }
+  - { path: python/packages/hosting-a2a/, owner: dargilco, labels: [] }
+  - { path: python/packages/hosting-mcp/, owner: dargilco, labels: [] }
+  - { path: python/packages/hosting-responses/, owner: dargilco, labels: [] }
+  - { path: python/packages/hosting-telegram/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/hyperlight/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/lab/, owner: eavanvalkenburg, labels: [lab] }
+  - { path: python/packages/mem0/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/mistral/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/mongodb/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/monty/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/nvidia/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/ollama/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/openai/, owner: eavanvalkenburg, labels: [agents] }
+  - { path: python/packages/oracle/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/orchestrations/, owner: eavanvalkenburg, labels: [orchestration] }
+  - { path: python/packages/postgres/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/purview/, owner: eavanvalkenburg, labels: [security] }
+  - { path: python/packages/qdrant/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/redis/, owner: eavanvalkenburg, labels: [memory] }
+  - { path: python/packages/sql-server/, owner: eavanvalkenburg, labels: [] }
+  - { path: python/packages/tools/, owner: eavanvalkenburg, labels: [skills] }
+  - { path: python/packages/typesafe/, owner: eavanvalkenburg, labels: [] }
+  - { path: dotnet/src/Aspire.Hosting.AgentFramework.DevUI/, owner: westey-m, labels: [devui, hosting] }
+  - { path: dotnet/src/LegacySupport/, owner: rogerbarreto, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI/, owner: westey-m, labels: [agents] }
+  - { path: dotnet/src/Microsoft.Agents.AI/Skills/, owner: SergeyMenshykh, labels: [skills] }
+  - { path: dotnet/src/Microsoft.Agents.AI/Memory/, owner: westey-m, labels: [memory] }
+  - { path: dotnet/src/Microsoft.Agents.AI/Harness/, owner: westey-m, labels: [harness] }
+  - { path: dotnet/src/Microsoft.Agents.AI/ChatClient/, owner: westey-m, labels: [agents] }
+  - { path: dotnet/src/Microsoft.Agents.AI.A2A/, owner: SergeyMenshykh, labels: [a2a] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Abstractions/, owner: westey-m, labels: [agents] }
+  - { path: dotnet/src/Microsoft.Agents.AI.AgentHooks/, owner: westey-m, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Anthropic/, owner: rogerbarreto, labels: [agents] }
+  - { path: dotnet/src/Microsoft.Agents.AI.AzureAI.Persistent/, owner: rogerbarreto, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.CopilotStudio/, owner: westey-m, labels: [agents] }
+  - { path: dotnet/src/Microsoft.Agents.AI.CosmosNoSql/, owner: westey-m, labels: [memory] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Declarative/, owner: baywet, labels: [declarative] }
+  - { path: dotnet/src/Microsoft.Agents.AI.DevUI/, owner: westey-m, labels: [devui] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Foundry/, owner: rogerbarreto, labels: [agents, foundry] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Foundry.Hosting/, owner: rogerbarreto, labels: [foundry, hosting] }
+  - { path: dotnet/src/Microsoft.Agents.AI.GitHub.Copilot/, owner: rogerbarreto, labels: [agents] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Harness/, owner: westey-m, labels: [harness] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Hosting/, owner: rogerbarreto, labels: [hosting] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Hosting.A2A/, owner: SergeyMenshykh, labels: [a2a, hosting] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Hosting.A2A.AspNetCore/, owner: SergeyMenshykh, labels: [a2a, hosting] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore/, owner: SergeyMenshykh, labels: [ag-ui, hosting] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Hosting.AspNetCore/, owner: rogerbarreto, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Hosting.AzureStorage/, owner: rogerbarreto, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Hosting.OpenAI/, owner: rogerbarreto, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Hyperlight/, owner: eavanvalkenburg, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.LocalCodeAct/, owner: eavanvalkenburg, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Mcp/, owner: SergeyMenshykh, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Mem0/, owner: westey-m, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.OpenAI/, owner: rogerbarreto, labels: [agents] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Purview/, owner: westey-m, labels: [security] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Tools.Shell/, owner: westey-m, labels: [agents] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Valkey/, owner: westey-m, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Workflows/, owner: baywet, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Workflows.Declarative/, owner: baywet, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Workflows.Declarative.Foundry/, owner: baywet, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Workflows.Declarative.Mcp/, owner: baywet, labels: [] }
+  - { path: dotnet/src/Microsoft.Agents.AI.Workflows.Generators/, owner: baywet, labels: [] }
+
+fallbacks:
+  python: eavanvalkenburg
+  dotnet: westey-m

@@ -34,53 +34,23 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
-    public void Constructor_WithAllParameters_InitializesPropertiesCorrectly()
-    {
-        // Arrange
-        const string TestId = "test-id";
-        const string TestName = "test-name";
-        const string TestDescription = "test-description";
-
-        // Act
-        var agent = new A2AAgent(this._a2aClient, TestId, TestName, TestDescription);
-
-        // Assert
-        Assert.Equal(TestId, agent.Id);
-        Assert.Equal(TestName, agent.Name);
-        Assert.Equal(TestDescription, agent.Description);
-    }
-
-    [Fact]
-    public void Constructor_WithNullA2AClient_ThrowsArgumentNullException() =>
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new A2AAgent(null!));
-
-    [Fact]
     public void Constructor_WithIA2AClient_InitializesCorrectly()
     {
         // Arrange
         IA2AClient ia2aClient = this._a2aClient;
 
         // Act
-        var agent = new A2AAgent(ia2aClient, "ia2a-id", "IA2A Agent", "An agent from IA2AClient");
+        var agent = new A2AAgent(ia2aClient, new A2AAgentOptions
+        {
+            Id = "ia2a-id",
+            Name = "IA2A Agent",
+            Description = "An agent from IA2AClient"
+        });
 
         // Assert
         Assert.Equal("ia2a-id", agent.Id);
         Assert.Equal("IA2A Agent", agent.Name);
         Assert.Equal("An agent from IA2AClient", agent.Description);
-    }
-
-    [Fact]
-    public void Constructor_WithDefaultParameters_UsesBaseProperties()
-    {
-        // Act
-        var agent = new A2AAgent(this._a2aClient);
-
-        // Assert
-        Assert.NotNull(agent.Id);
-        Assert.NotEmpty(agent.Id);
-        Assert.Null(agent.Name);
-        Assert.Null(agent.Description);
     }
 
     [Fact]
@@ -126,10 +96,26 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("Original Description", agent.Description);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Constructor_WithoutOptions_UsesBaseProperties(bool explicitNull)
+    {
+        // Act
+        var agent = explicitNull
+            ? new A2AAgent(this._a2aClient, options: null)
+            : new A2AAgent(this._a2aClient);
+
+        // Assert
+        Assert.NotEmpty(agent.Id);
+        Assert.Null(agent.Name);
+        Assert.Null(agent.Description);
+    }
+
     [Fact]
-    public void Constructor_WithNullOptions_ThrowsArgumentNullException() =>
+    public void Constructor_WithoutOptions_NullA2AClient_ThrowsArgumentNullException() =>
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new A2AAgent(this._a2aClient, options: null!));
+        Assert.Throws<ArgumentNullException>(() => new A2AAgent(null!));
 
     [Fact]
     public void Constructor_WithEmptyOptions_UsesBaseProperties()

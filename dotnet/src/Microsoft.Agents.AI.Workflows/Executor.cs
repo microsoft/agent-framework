@@ -262,7 +262,7 @@ public abstract class Executor : IIdentified
 
     internal async ValueTask<object?> ExecuteCoreAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, CancellationToken cancellationToken = default)
     {
-        using var activity = telemetryContext.StartExecutorProcessActivity(this.Id, this.GetType().FullName, messageType.TypeName, message);
+        using var activity = telemetryContext.StartExecutorProcessActivity(this.Id, this.GetType().FullName, messageType.TypeName);
         activity?.CreateSourceLinks(context.TraceContext);
 
         await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message), cancellationToken).ConfigureAwait(false);
@@ -297,11 +297,6 @@ public abstract class Executor : IIdentified
         {
             return null; // Void result.
         }
-
-        // Output is not available if executor does not return anything, in which case
-        // messages sent in the handlers of this executor will be set in the message
-        // send activities.
-        telemetryContext.SetExecutorOutput(activity, result.Result);
 
         // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
         if (result.Result is not null && this.Options.AutoSendMessageHandlerResultObject)

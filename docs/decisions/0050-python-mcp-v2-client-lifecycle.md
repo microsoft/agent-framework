@@ -68,10 +68,12 @@ Agent Framework owns:
 
 - transport and Client construction, Client entry, and resource cleanup for framework-created connections;
 - the lifecycle-owner task, locks, connection publication, reset coordination, and cancellation cleanup;
+- the default request read timeout for framework-created Clients, with an explicit `None` opt-out;
+- configurable page/item bounds for Agent Framework-driven tool and prompt catalog discovery;
 - request-scoped HTTP header identity and reconnects caused by identity changes;
 - tool argument filtering and trusted request metadata merging;
 - result parsing, Agent Framework content conversion, tracing, and error translation;
-- atomic catalog publication and rollback after a failed complete fetch;
+- atomic catalog publication, including retained server annotations, and rollback after a failed complete fetch;
 - the background catalog-subscription task for any high-level Client, including refresh scheduling, retry/backoff,
   cancellation, and recovery after a subscription ends or is lost;
 - security and approval policy.
@@ -80,13 +82,19 @@ For **caller-supplied** connections, the caller owns:
 
 - entering and closing a **supplied** high-level `Client`;
 - constructing and closing a **supplied** low-level `ClientSession`;
-- the transport, authentication, callbacks, and other configuration already captured by either supplied object.
+- the transport, authentication, callbacks, request timeout, and other configuration already captured by either
+  supplied object. Agent Framework does not overwrite that request policy, while its own catalog-materialization
+  page and item bounds still apply.
 
 Transport-specific tool constructors enforce the same ownership boundary. A URL or command selects
 framework-owned Client construction; a supplied high-level `mcp.Client` selects caller-owned construction and
 lifecycle. Constructor combinations that mix those ownership modes or configure a transport the caller already
 owns raise `ValueError` instead of silently ignoring parameters. Temporarily retained legacy constructor and
 `ClientSession` combinations remain compatible and will be removed in vNext.
+
+Catalog page and item limits apply after the MCP SDK parses each response. They do not establish a universal
+transport response-size bound; applications must connect to MCP servers trusted to return reasonably sized responses
+and configure transport-specific limits where the selected transport exposes them.
 
 The SDK `Client` owns:
 
@@ -119,6 +127,33 @@ peers do not provide those hints and remain effectively uncached under the defau
 Caller-supplied `ClientSession` connections always call the server directly. Agent Framework does not expose a
 shared cache store or cache-mode configuration. Reconnect or an effective header-identity change replaces the
 framework-owned Client and its per-client cache.
+
+### Concurrent HTTP operations and identity transitions
+
+Concurrent operations on a framework-owned HTTP connection may share a session only when their complete effective
+header identity matches. Agent Framework copies owner-tagged header snapshots onto individual outgoing requests,
+including redirects, rather than retaining a mutable active-call fallback. The supported MCP SDK propagates the
+sending operation's ContextVars into its HTTP tasks. Transport request entry points must retain the owner tag;
+unsupported untagged sending methods fail explicitly instead of silently dropping dynamic headers.
+
+Admission tracks network attempts, not complete logical calls. Retries release the failed attempt before recovery,
+then reconcile the original identity and rebuild arguments and metadata from the replacement catalog. Identity
+changes, explicit discovery, reset, close, and recovery require exclusive access and wait for active attempts.
+A queued exclusive operation blocks unrelated arrivals, including new calls with the old identity. Same-identity
+callbacks needed by an active attempt may finish first; invocation depth keeps that permission live through nested
+operation scopes. Exclusive operations from active callbacks fail explicitly rather than waiting on their parent.
+Resource reads enter admission before requiring a ready connection, including during replacement initialization.
+
+This request-owned approach is preferred over a lease spanning an entire logical call: it avoids shared mutable
+request headers, permits recovery after releasing the failed attempt, and distinguishes required nested callbacks
+from unrelated arrivals. Its cost is explicit admission and callback-lifetime tracking. It does not create independent
+server-side session state, so applications must still order state-dependent operations.
+
+Catalog cursors and staged pages belong to one connection. Replacement restarts the complete snapshot once from
+its first page; a second replacement fails explicitly. Configured discovery also reloads tools if prompt discovery
+replaces their connection. Caller-owned Clients and ClientSessions remain caller-owned and are never recreated.
+Admission/reconciliation and recovery have separate `request_timeout` budgets, not one end-to-end deadline;
+`None` disables those budgets. Cleanup remains owned by the lifecycle task after waiter cancellation.
 
 ### MRTR
 
@@ -153,6 +188,7 @@ A caller-supplied `Client` is the preferred way to provide an existing connectio
 
 - The Client must already be entered before the MCP tool connects.
 - Agent Framework does not enter, close, replace, or recreate it.
+- Agent Framework does not replace its request timeout or transport-level resource policy.
 - Standard operations continue through the high-level Client and retain SDK MRTR and response-cache behavior.
 - Agent Framework manages its own catalog-subscription task around `Client.listen()` while the wrapper is connected.
 - `MCPTool.session` remains `None`.
@@ -250,6 +286,6 @@ Committed contract tests cover:
 - [MCP MRTR specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr)
 - [MCP subscriptions specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions)
 - [MCP caching specification](https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching)
-- [ADR 0043: MCP runtime context](0043-python-mcp-runtime-context.md)
+- [ADR 0047: MCP runtime context](0047-python-mcp-runtime-context.md)
 
 This ADR was accepted through the repository ADR review process.
