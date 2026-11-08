@@ -27,7 +27,14 @@ from agent_framework_redis._context_provider import (
 def mock_index() -> AsyncMock:
     index = AsyncMock()
     client = MagicMock()
+    pipe = MagicMock()
+    pipe.exists = MagicMock()
+    pipe.execute = AsyncMock(side_effect=lambda: [0] * pipe.exists.call_count)
+    pipe.__aenter__ = AsyncMock(return_value=pipe)
+    pipe.__aexit__ = AsyncMock(return_value=None)
+    client.pipeline = MagicMock(return_value=pipe)
     index.client = client
+    index.key = MagicMock(side_effect=lambda suffix: f"context:{suffix}")
     index.create = AsyncMock()
     index.exists = AsyncMock(return_value=False)
     index.load = AsyncMock()

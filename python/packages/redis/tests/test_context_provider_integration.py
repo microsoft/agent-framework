@@ -239,3 +239,73 @@ async def test_live_legacy_index_fails_closed_until_recreated(
     assert await _provider(url, index_name, prefix, user_id="alice")._redis_search("re-ingested marker") == []
     adjacent_record = await cast(Awaitable[dict[bytes, bytes]], client.hgetall(adjacent_key))
     assert adjacent_record[b"content"] == b"foreign"
+
+
+@pytest.mark.integration
+async def test_live_deduplicates_replayed_conversation_messages(
+    live_redis: tuple[str, Redis, str, str],
+) -> None:
+    """Re-sending the whole conversation does not duplicate documents.
+
+    The AG-UI client sends all earlier messages on every run. Without
+    deduplication, a 15-fact conversation produces 240 documents and search
+    results are dominated by copies of early messages. With the fix, the
+    same conversation produces exactly one document per message and search
+    returns distinct results.
+    """
+    url, client, index_name, prefix = live_redis
+    provider = _provider(url, index_name, prefix, user_id="user-1")
+
+    facts = [
+        "Our release day is Thursday.",
+        "We deploy to westus3.",
+        "Rollbacks need approval from Mira.",
+        "The on-call engineer this week is Priya.",
+        "Our database is Postgres 16.",
+    ]
+
+    session_id = "repro-session"
+    sent_messages: list[dict[str, str]] = []
+    for fact in facts:
+        sent_messages.append({"role": "user", "content": fact})
+        await provider._add(data=list(sent_messages), session_id=session_id)
+
+    encoded_prefix = prefix.encode()
+    keys = [
+        key
+        async for key in client.scan_iter(_type="hash")
+        if (key if isinstance(key, bytes) else str(key).encode()).startswith(encoded_prefix)
+    ]
+    assert len(keys) == 5
+
+    stored_contents = []
+    for key in keys:
+        key_str = key.decode() if isinstance(key, bytes) else str(key)
+        record = await cast(Awaitable[dict[bytes, bytes]], client.hgetall(key_str))
+        stored_contents.append(record[b"content"].decode())
+    assert stored_contents.count("We deploy to westus3.") == 1
+
+    results = await provider._redis_search("deploy", session_id=session_id, num_results=10)
+    assert len(results) >= 1
+    assert results[0]["content"] == "We deploy to westus3."
+
+
+@pytest.mark.integration
+async def test_live_dedup_key_is_stable_across_runs(
+    live_redis: tuple[str, Redis, str, str],
+) -> None:
+    """Storing the same message twice maps to the same Redis key."""
+    url, client, index_name, prefix = live_redis
+    provider = _provider(url, index_name, prefix, user_id="user-1")
+
+    session_id = "stable-key-session"
+    await provider._add(data={"role": "user", "content": "Remember tea"}, session_id=session_id)
+    await provider._add(data={"role": "user", "content": "Remember tea"}, session_id=session_id)
+
+    encoded_prefix = prefix.encode()
+    keys = [
+        key
+        async for key in client.scan_iter(_type="hash")
+        if (key if isinstance(key, bytes) else str(key).encode()).startswith(encoded_prefix)
+    ]
+    assert len(keys) == 1

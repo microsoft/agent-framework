@@ -61,10 +61,14 @@ async def redis_client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[redis.R
     await client.aclose()
 
 
-def _provider(client: redis.Redis, *, borrowed: bool, **kwargs: Any) -> RedisContextProvider:
+def _provider(
+    client: redis.Redis,
+    *,
+    borrowed: bool,
+    **kwargs: Any,
+) -> RedisContextProvider:
     provider = RedisContextProvider(**kwargs)
     if borrowed:
-        # Borrowed indexes use RedisVL's default validate_on_load=False.
         index = AsyncSearchIndex.from_dict(provider.schema_dict, redis_client=client)
         provider = RedisContextProvider(redis_index=index, **kwargs)
     else:
@@ -72,6 +76,7 @@ def _provider(client: redis.Redis, *, borrowed: bool, **kwargs: Any) -> RedisCon
     provider.redis_index.exists = AsyncMock(return_value=False)
     provider.redis_index.create = AsyncMock()
     object.__setattr__(provider, "_validate_schema_compatibility", AsyncMock())
+    object.__setattr__(provider, "_existing_keys", AsyncMock(return_value=set()))
     return provider
 
 
@@ -220,3 +225,175 @@ async def test_borrowed_index_retains_generated_vector_buffer(
     assert write.call_args.args[2]["embedding"] == array_to_buffer([1.0, 0.0], dtype="float32")
     assert len(_TransportConnection.packets) == 1
     assert document == before
+
+
+async def test_after_run_does_not_store_replayed_input_messages(
+    redis_client: redis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Replayed input messages are not stored again."""
+    provider = _provider(redis_client, borrowed=True, user_id="user-1")
+    write = _capture_hash_writes(monkeypatch)
+    session = AgentSession(session_id="session-1")
+
+    first_message = Message(role="user", contents=["First fact"])
+    await provider.after_run(
+        agent=MagicMock(),
+        session=session,
+        context=SessionContext(session_id=session.session_id, input_messages=[first_message]),
+        state={},
+    )
+    assert write.await_count == 1
+
+    first_key = provider._document_redis_key(role="user", content="First fact", session_id=session.session_id)
+    object.__setattr__(provider, "_existing_keys", AsyncMock(return_value={first_key}))
+    second_message = Message(role="user", contents=["Second fact"])
+    await provider.after_run(
+        agent=MagicMock(),
+        session=session,
+        context=SessionContext(
+            session_id=session.session_id,
+            input_messages=[first_message, second_message],
+        ),
+        state={},
+    )
+
+    assert write.await_count == 2
+    written_contents = [call.args[2]["content"] for call in write.call_args_list]
+    assert written_contents.count("First fact") == 1
+    assert written_contents.count("Second fact") == 1
+
+
+async def test_add_skips_embedding_for_already_stored_documents(
+    redis_client: redis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Already-stored documents are skipped before the embedding call."""
+    vectorizer = MagicMock(spec=BaseVectorizer)
+    vectorizer.dims = 2
+    vectorizer.dtype = "float32"
+    vectorizer.aembed_many = AsyncMock(return_value=[[1.0, 0.0]])
+    provider = _provider(
+        redis_client,
+        borrowed=True,
+        user_id="user-1",
+        vector_field_name="embedding",
+        redis_vectorizer=vectorizer,
+    )
+    write = _capture_hash_writes(monkeypatch)
+
+    document = {"role": "user", "content": "Remember tea"}
+    key = provider._document_redis_key(role="user", content="Remember tea", session_id="session-1")
+    object.__setattr__(provider, "_existing_keys", AsyncMock(return_value={key}))
+
+    await provider._add(data=document, session_id="session-1")
+
+    vectorizer.aembed_many.assert_not_awaited()
+    write.assert_not_awaited()
+
+
+async def test_add_deduplicates_within_a_single_batch(
+    redis_client: redis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same (scope, role, content) appearing twice in one batch is stored once."""
+    provider = _provider(redis_client, borrowed=True, user_id="user-1")
+    write = _capture_hash_writes(monkeypatch)
+
+    documents = [
+        {"role": "user", "content": "Duplicate fact"},
+        {"role": "user", "content": "Duplicate fact"},
+    ]
+    await provider._add(data=documents, session_id="session-1")
+
+    write.assert_awaited_once()
+
+
+async def test_add_calls_existing_keys_with_candidate_keys(
+    redis_client: redis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_add checks Redis for existing keys before loading."""
+    provider = _provider(redis_client, borrowed=True, user_id="user-1")
+    existing_keys_mock = AsyncMock(return_value=set())
+    object.__setattr__(provider, "_existing_keys", existing_keys_mock)
+    _capture_hash_writes(monkeypatch)
+
+    document = {"role": "user", "content": "Remember tea"}
+    await provider._add(data=document, session_id="session-1")
+
+    existing_keys_mock.assert_awaited_once()
+    candidate_keys = existing_keys_mock.call_args.args[0]
+    assert len(candidate_keys) == 1
+    expected_key = provider._document_redis_key(role="user", content="Remember tea", session_id="session-1")
+    assert candidate_keys[0] == expected_key
+
+
+async def test_add_collapses_messages_with_same_content_but_different_message_ids(
+    redis_client: redis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Messages with different message_ids but same scope/role/content share a key.
+
+    The assistant reply comes back with a different id than the one stored
+    , so the key must not depend on message_id.
+    """
+    provider = _provider(redis_client, borrowed=True, user_id="user-1")
+    write = _capture_hash_writes(monkeypatch)
+
+    documents = [
+        {"role": "assistant", "content": "We deploy to westus3.", "message_id": "chatcmpl-abc"},
+        {"role": "assistant", "content": "We deploy to westus3.", "message_id": "agui-stream-xyz"},
+    ]
+    await provider._add(data=documents, session_id="session-1")
+
+    write.assert_awaited_once()
+
+
+async def test_document_key_differs_across_scopes_roles_or_content(
+    redis_client: redis.Redis,
+) -> None:
+    """The document key changes when scope, role, or content changes."""
+    provider = _provider(redis_client, borrowed=True, user_id="user-1", application_id="app-1")
+    base = provider._document_redis_key(role="user", content="We deploy to westus3.", session_id="session-1")
+    different_session = provider._document_redis_key(
+        role="user", content="We deploy to westus3.", session_id="session-2"
+    )
+    different_role = provider._document_redis_key(
+        role="assistant", content="We deploy to westus3.", session_id="session-1"
+    )
+    different_content = provider._document_redis_key(
+        role="user", content="We deploy to eastus2.", session_id="session-1"
+    )
+    assert len({base, different_session, different_role, different_content}) == 4
+
+
+async def test_add_skips_whitespace_only_content(redis_client: redis.Redis, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Whitespace-only content is skipped before hashing.
+
+    Tool-call messages often have content == "" — without skipping, all of
+    them with the same role would collapse to one key.
+    """
+    provider = _provider(redis_client, borrowed=True, user_id="user-1")
+    write = _capture_hash_writes(monkeypatch)
+
+    documents = [
+        {"role": "user", "content": "   "},
+        {"role": "assistant", "content": ""},
+    ]
+    await provider._add(data=documents, session_id="session-1")
+
+    write.assert_not_awaited()
+
+
+async def test_add_strips_content_before_keying(redis_client: redis.Redis, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Whitespace differences do not produce a second copy.
+
+    The replayed assistant text from AG-UI may differ slightly in
+    whitespace from the stored model text — .strip() prevents a second copy.
+    """
+    provider = _provider(redis_client, borrowed=True, user_id="user-1")
+    write = _capture_hash_writes(monkeypatch)
+
+    documents = [
+        {"role": "user", "content": "hi"},
+        {"role": "user", "content": "hi "},
+    ]
+    await provider._add(data=documents, session_id="session-1")
+
+    write.assert_awaited_once()

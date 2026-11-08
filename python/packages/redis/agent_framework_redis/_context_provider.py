@@ -39,6 +39,18 @@ if TYPE_CHECKING:
 _SCOPE_SCHEMA_VERSION = 1
 _SCOPE_FIELDS = ("application_id", "agent_id", "user_id", "thread_id", "conversation_id")
 _SCOPE_TAG_SEPARATOR = "\x1f"
+_KEY_HASH_VERSION = 1
+
+
+def _document_key_suffix(*, scope: dict[str, str | None], role: str, content: str) -> str:
+    """Stable hash of (scope, role, content) used as the document key suffix."""
+    payload = json.dumps(
+        [_KEY_HASH_VERSION, [scope.get(name) or "" for name in _SCOPE_FIELDS], role, content],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
 
 _TAG_DEFAULTS = {"separator": ",", "case_sensitive": False, "withsuffixtrie": False}
 _TEXT_DEFAULTS = {"weight": 1.0, "no_stem": False}
@@ -341,6 +353,31 @@ class RedisContextProvider(ContextProvider):
             redis_url=None if existing_client is not None else self.redis_url,
         )
 
+    def _scope_values(self, session_id: str | None) -> dict[str, str | None]:
+        """Scope fields stored on, and used to key and filter, every memory document."""
+        return {
+            "application_id": self.application_id,
+            "agent_id": self.agent_id,
+            "user_id": self.user_id,
+            "thread_id": session_id,
+            "conversation_id": session_id,
+        }
+
+    def _document_redis_key(self, *, role: str, content: str, session_id: str | None) -> str:
+        """Full Redis key for a memory document, built from the real index prefix."""
+        suffix = _document_key_suffix(scope=self._scope_values(session_id), role=role, content=content)
+        return self.redis_index.key(suffix)
+
+    async def _existing_keys(self, keys: list[str]) -> set[str]:
+        """Return the subset of `keys` that already exist in Redis."""
+        if not keys:
+            return set()
+        async with self.redis_index.client.pipeline(transaction=False) as pipe:
+            for key in keys:
+                pipe.exists(key)
+            results = await pipe.execute()
+        return {key for key, count in zip(keys, results, strict=True) if count}
+
     async def _add(
         self,
         *,
@@ -348,7 +385,23 @@ class RedisContextProvider(ContextProvider):
         session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Inserts one or many documents with partition fields populated."""
+        """Inserts one or many documents with partition fields populated.
+
+        Documents are deduplicated by their scope fields, role, and content.
+        When the AG-UI client resends the whole conversation
+        on every run, already-stored messages are detected via a pipelined
+        EXISTS check and skipped, so they are not re-embedded or re-stored.
+
+        Tradeoffs:
+        - The same text from the same role in one conversation is stored
+          once. Legitimate repeats ("yes", "thanks") collapse to one entry.
+        - Documents saved before this fix keep their old random keys, so an
+          existing conversation gets one extra copy of each message on the
+          first post-fix run and then stays stable.
+        - Content is normalized with .strip() before hashing, so whitespace
+          differences between the stored model text and the replayed AG-UI
+          text do not produce a second copy.
+        """
         self._validate_filters()
         await self._ensure_index()
         docs = data if isinstance(data, list) else [data]
@@ -356,14 +409,7 @@ class RedisContextProvider(ContextProvider):
         prepared: list[dict[str, Any]] = []
         for doc in docs:
             d = dict(doc)
-            scope_values = {
-                "application_id": self.application_id,
-                "agent_id": self.agent_id,
-                "user_id": self.user_id,
-                "thread_id": session_id,
-                "conversation_id": session_id,
-            }
-            for name, value in scope_values.items():
+            for name, value in self._scope_values(session_id).items():
                 d[name] = value or None
                 d[_scope_token_field(name)] = _scope_token(name, value) if value else None
             if "content" not in d:
@@ -372,23 +418,36 @@ class RedisContextProvider(ContextProvider):
                 d.setdefault(self.vector_field_name, None)
             prepared.append(d)
 
+        docs_by_key: dict[str, dict[str, Any]] = {}
+        for d in prepared:
+            content = (d.get("content") or "").strip()
+            if not content:
+                continue
+            key = self._document_redis_key(role=d.get("role") or "", content=content, session_id=session_id)
+            docs_by_key.setdefault(key, d)
+
+        existing = await self._existing_keys(list(docs_by_key))
+        new_docs = {k: d for k, d in docs_by_key.items() if k not in existing}
+        if not new_docs:
+            return
+        keys_to_load = list(new_docs)
+        prepared_to_load = list(new_docs.values())
+
         if self.redis_vectorizer and self.vector_field_name:
-            text_list = [d["content"] for d in prepared]
+            text_list = [d["content"] for d in prepared_to_load]
             embeddings = await self.redis_vectorizer.aembed_many(  # pyright: ignore[reportUnknownMemberType]
                 text_list, batch_size=len(text_list)
             )
-            for i, d in enumerate(prepared):
+            for i, d in enumerate(prepared_to_load):
                 # aembed_many returns lists unless as_buffer is enabled.
-                vec = array_to_buffer(
+                d[self.vector_field_name] = array_to_buffer(
                     embeddings[i],  # pyright: ignore[reportArgumentType]
                     dtype=self.redis_vectorizer.dtype,
                 )
-                field_name: str = self.vector_field_name
-                d[field_name] = vec
 
         # Redis hashes cannot encode None, including with non-validating borrowed indexes.
-        prepared = [{key: value for key, value in doc.items() if value is not None} for doc in prepared]
-        await self.redis_index.load(prepared)
+        prepared_to_load = [{k: v for k, v in d.items() if v is not None} for d in prepared_to_load]
+        await self.redis_index.load(prepared_to_load, keys=keys_to_load)
 
     async def _redis_search(
         self,
@@ -410,13 +469,7 @@ class RedisContextProvider(ContextProvider):
             raise IntegrationInvalidRequestException("text_search() requires non-empty text")
         num_results = max(int(num_results or 10), 1)
 
-        combined_filter = self._build_filter_from_dict({
-            "application_id": self.application_id,
-            "agent_id": self.agent_id,
-            "user_id": self.user_id,
-            "thread_id": session_id,
-            "conversation_id": session_id,
-        })
+        combined_filter = self._build_filter_from_dict(self._scope_values(session_id))
         if filter_expression is not None:
             combined_filter = (combined_filter & filter_expression) if combined_filter else filter_expression
 
