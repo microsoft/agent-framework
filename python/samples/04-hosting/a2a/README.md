@@ -32,7 +32,7 @@ in application code. The helper package does not choose a web framework.
 
 ## Quick Start
 
-All commands below should be run from this directory:
+For the server setup, start at the repository root and change to this directory:
 
 ```powershell
 cd python/samples/04-hosting/a2a
@@ -77,7 +77,7 @@ You can run one agent or all three — each listens on its own port.
 
 ### 2. Run a Client
 
-Once a server is running, use any of the client samples in [`samples/02-agents/a2a/`](../../02-agents/a2a/):
+Once a server is running, open a separate terminal at the repository root. Then run a client from [`samples/02-agents/a2a/`](../../02-agents/a2a/):
 
 ```powershell
 cd python/samples/02-agents/a2a
