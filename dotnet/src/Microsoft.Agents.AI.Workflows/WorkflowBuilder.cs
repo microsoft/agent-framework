@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 /// <remarks>Use the WorkflowBuilder to incrementally add executors and edges, including fan-in and fan-out
 /// patterns, before building a strongly-typed workflow instance. Executors must be bound before building the workflow.
-/// All executors must be bound by calling into <see cref="BindExecutor"/> if they were intially specified as
+/// All executors must be bound by calling into <see cref="BindExecutor"/> if they were initially specified as
 /// <see cref="ExecutorBinding.IsPlaceholder"/>.</remarks>
 public class WorkflowBuilder
 {
