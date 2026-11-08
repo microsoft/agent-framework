@@ -23,16 +23,26 @@ from agent_framework_redis._context_provider import (
 )
 
 
-@pytest.fixture
-def mock_index() -> AsyncMock:
-    index = AsyncMock()
-    client = MagicMock()
+def _make_pipeline_mock(**_: Any) -> MagicMock:
+    """Fresh pipeline mock per client.pipeline() call.
+
+    A shared mock accumulates exists.call_count across _add calls, so a
+    second _add with nonempty candidates returns too many EXISTS results
+    and _existing_keys raises at its strict zip.
+    """
     pipe = MagicMock()
     pipe.exists = MagicMock()
     pipe.execute = AsyncMock(side_effect=lambda: [0] * pipe.exists.call_count)
     pipe.__aenter__ = AsyncMock(return_value=pipe)
     pipe.__aexit__ = AsyncMock(return_value=None)
-    client.pipeline = MagicMock(return_value=pipe)
+    return pipe
+
+
+@pytest.fixture
+def mock_index() -> AsyncMock:
+    index = AsyncMock()
+    client = MagicMock()
+    client.pipeline = MagicMock(side_effect=_make_pipeline_mock)
     index.client = client
     index.key = MagicMock(side_effect=lambda suffix: f"context:{suffix}")
     index.create = AsyncMock()

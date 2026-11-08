@@ -388,9 +388,9 @@ class RedisContextProvider(ContextProvider):
         """Inserts one or many documents with partition fields populated.
 
         Documents are deduplicated by their scope fields, role, and content.
-        When the AG-UI client resends the whole conversation
-        on every run, already-stored messages are detected via a pipelined
-        EXISTS check and skipped, so they are not re-embedded or re-stored.
+        When the AG-UI client resends the whole conversation on every run,
+        already-stored messages are detected via a pipelined EXISTS check
+        and skipped, so they are not re-embedded or re-stored.
 
         Tradeoffs:
         - The same text from the same role in one conversation is stored
@@ -401,6 +401,15 @@ class RedisContextProvider(ContextProvider):
         - Content is normalized with .strip() before hashing, so whitespace
           differences between the stored model text and the replayed AG-UI
           text do not produce a second copy.
+
+        Concurrency: the EXISTS check and the subsequent load are not atomic.
+        Two concurrent _add calls for the same message can both observe the
+        key absent, both embed, and both write. Because keys are
+        deterministic, the second write overwrites the first at the same
+        key, so the final state is always one document per (scope, role,
+        content). The cost of the race is at most one redundant embedding
+        call per concurrent duplicate; this is accepted over the complexity
+        of a SET NX reservation with crash recovery.
         """
         self._validate_filters()
         await self._ensure_index()

@@ -33,17 +33,27 @@ async def test_empty_history_save_marks_redis_used(mock_redis_client: MagicMock)
     mark_feature_used.assert_called_once_with(FeatureIndex.REDIS)
 
 
-@pytest.fixture
-def mock_index() -> AsyncMock:
-    idx = AsyncMock()
-    client = MagicMock()
-    client.aclose = AsyncMock()
+def _make_pipeline_mock(**_: Any) -> MagicMock:
+    """Fresh pipeline mock per client.pipeline() call.
+
+    A shared mock accumulates exists.call_count across _add calls, so a
+    second _add with nonempty candidates returns too many EXISTS results
+    and _existing_keys raises at its strict zip.
+    """
     pipe = MagicMock()
     pipe.exists = MagicMock()
     pipe.execute = AsyncMock(side_effect=lambda: [0] * pipe.exists.call_count)
     pipe.__aenter__ = AsyncMock(return_value=pipe)
     pipe.__aexit__ = AsyncMock(return_value=None)
-    client.pipeline = MagicMock(return_value=pipe)
+    return pipe
+
+
+@pytest.fixture
+def mock_index() -> AsyncMock:
+    idx = AsyncMock()
+    client = MagicMock()
+    client.aclose = AsyncMock()
+    client.pipeline = MagicMock(side_effect=_make_pipeline_mock)
     idx.client = client
     idx.key = MagicMock(side_effect=lambda suffix: f"context:{suffix}")
     idx.create = AsyncMock()

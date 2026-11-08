@@ -397,3 +397,52 @@ async def test_add_strips_content_before_keying(redis_client: redis.Redis, monke
     await provider._add(data=documents, session_id="session-1")
 
     write.assert_awaited_once()
+
+
+async def test_add_with_mixed_existing_keys_embeds_only_missing(
+    redis_client: redis.Redis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only documents whose keys are absent get embedded and loaded.
+
+    Exercises the real _existing_keys pipeline with mixed EXISTS results:
+    one key exists, one does not. Only the missing document should reach
+    the vectorizer and the loader.
+    """
+    vectorizer = MagicMock(spec=BaseVectorizer)
+    vectorizer.dims = 2
+    vectorizer.dtype = "float32"
+    vectorizer.aembed_many = AsyncMock(return_value=[[1.0, 0.0]])
+
+    provider = _provider(
+        redis_client,
+        borrowed=True,
+        user_id="user-1",
+        vector_field_name="embedding",
+        redis_vectorizer=vectorizer,
+    )
+    provider.__dict__.pop("_existing_keys", None)
+    provider.redis_index.load = AsyncMock()
+
+    def make_pipeline(**_: Any) -> MagicMock:
+        pipe = MagicMock()
+        pipe.exists = MagicMock()
+        pipe.execute = AsyncMock(side_effect=lambda: [1, 0][: pipe.exists.call_count])
+        pipe.__aenter__ = AsyncMock(return_value=pipe)
+        pipe.__aexit__ = AsyncMock(return_value=None)
+        return pipe
+
+    monkeypatch.setattr(redis_client, "pipeline", MagicMock(side_effect=make_pipeline))
+
+    documents = [
+        {"role": "user", "content": "Already stored"},
+        {"role": "user", "content": "New message"},
+    ]
+    await provider._add(data=documents, session_id="session-1")
+
+    vectorizer.aembed_many.assert_awaited_once_with(["New message"], batch_size=1)
+    provider.redis_index.load.assert_awaited_once()
+    load_args = provider.redis_index.load.await_args
+    assert load_args is not None
+    loaded_docs = load_args.args[0]
+    assert len(loaded_docs) == 1
+    assert loaded_docs[0]["content"] == "New message"
