@@ -547,12 +547,6 @@ class WorkflowState:
             right = self._eval_simple(formula[index + len(op) :])
             return bool(left) and bool(right)
 
-        # Handle negation prefix. It binds tighter than And/Or, so it is applied after they are split.
-        if formula.startswith("!"):
-            inner = formula[1:].strip()
-            result = self._eval_simple(inner)
-            return not bool(result)
-
         # Handle comparison operators
         found = _find_top_level_operator(formula, (" < ", " > ", " <= ", " >= ", " <> ", " = "))
         if found is not None:
@@ -615,6 +609,12 @@ class WorkflowState:
                 return float(left) / right_float
             except (ValueError, TypeError):
                 return formula
+
+        # Handle negation prefix. It binds tighter than comparison and arithmetic operators.
+        if formula.startswith("!"):
+            inner = formula[1:].strip()
+            result = self._eval_simple(inner)
+            return not bool(result)
 
         # Handle a fully parenthesized sub-expression
         if formula.startswith("(") and _matching_paren_index(formula) == len(formula) - 1:

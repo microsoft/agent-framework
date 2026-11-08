@@ -803,3 +803,81 @@ class TestWorkflowStateEvalSimpleOperatorPrecedence:
         assert state.eval('=Local.text = "a And b"') is True
         assert state.eval('="a - b"') == "a - b"
         assert state.eval('="x" = "x Or y"') is False
+
+
+class TestWorkflowStateEvalSimpleNegationPrecedence:
+    """Unary negation must bind tighter than comparison and arithmetic operators."""
+
+    @pytest.fixture
+    def state(self, monkeypatch: pytest.MonkeyPatch) -> WorkflowState:
+        # Force the pure-Python fallback regardless of whether PowerFx is installed.
+        import agent_framework_declarative._workflows._state as state_module
+
+        monkeypatch.setattr(state_module, "_powerfx_engine", None)
+        workflow_state = WorkflowState()
+        for name, value in {"x": 5, "y": 10, "a": True, "b": False}.items():
+            workflow_state.set(f"Local.{name}", value)
+        return workflow_state
+
+    def test_negation_with_comparison(self, state: WorkflowState) -> None:
+        # !Local.x = 1 should evaluate as (!Local.x) = 1, not !(Local.x = 1)
+        # With Local.x = 5: (!5) = 1 = False = 1 = False
+        assert state.eval("=!Local.x = 1") is False
+        # With Local.x = 5: (!5) = 0 = False = 0 = True (False == 0 in Python)
+        assert state.eval("=!Local.x = 0") is True
+
+    def test_negation_with_multiplication(self, state: WorkflowState) -> None:
+        # !Local.x * 2 should evaluate as (!Local.x) * 2
+        # With Local.x = 5: (!5) * 2 = False * 2 = 0
+        assert state.eval("=!Local.x * 2") == 0.0
+
+    def test_negation_with_division(self, state: WorkflowState) -> None:
+        # !Local.x / 2 should evaluate as (!Local.x) / 2
+        # With Local.x = 5: (!5) / 2 = False / 2 = 0
+        assert state.eval("=!Local.x / 2") == 0.0
+
+    def test_negation_with_addition(self, state: WorkflowState) -> None:
+        # !Local.x + 2 should evaluate as (!Local.x) + 2
+        # With Local.x = 5: (!5) + 2 = False + 2 = 2
+        assert state.eval("=!Local.x + 2") == 2.0
+
+    def test_negation_with_subtraction(self, state: WorkflowState) -> None:
+        # !Local.x - 2 should evaluate as (!Local.x) - 2
+        # With Local.x = 5: (!5) - 2 = False - 2 = -2
+        assert state.eval("=!Local.x - 2") == -2.0
+
+    def test_negation_with_logical_and(self, state: WorkflowState) -> None:
+        # !Local.a And Local.b should evaluate as (!Local.a) And Local.b
+        # With Local.a = True, Local.b = False: (!True) And False = False And False = False
+        assert state.eval("=!Local.a And Local.b") is False
+        # With Local.a = False, Local.b = True: (!False) And True = True And True = True
+        assert state.eval("=!Local.b And Local.a") is True
+
+    def test_negation_with_logical_or(self, state: WorkflowState) -> None:
+        # !Local.a Or Local.b should evaluate as (!Local.a) Or Local.b
+        # With Local.a = True, Local.b = False: (!True) Or False = False Or False = False
+        assert state.eval("=!Local.a Or Local.b") is False
+        # With Local.a = False, Local.b = True: (!False) Or True = True Or True = True
+        assert state.eval("=!Local.b Or Local.a") is True
+
+    def test_combined_negation_and_logical(self, state: WorkflowState) -> None:
+        # !Local.a And !Local.b should evaluate as (!Local.a) And (!Local.b)
+        # With Local.a = True, Local.b = False: (!True) And (!False) = False And True = False
+        assert state.eval("=!Local.a And !Local.b") is False
+        # With Local.a = False, Local.b = False: (!False) And (!False) = True And True = True
+        assert state.eval("=!Local.b And !Local.b") is True
+
+    def test_parenthesized_negation_with_comparison(self, state: WorkflowState) -> None:
+        # !(Local.x = 1) should still work correctly
+        # With Local.x = 5: !(5 = 1) = !False = True
+        assert state.eval("=!(Local.x = 1)") is True
+
+    def test_parenthesized_negation_with_arithmetic(self, state: WorkflowState) -> None:
+        # !(Local.x + 2) should still work correctly
+        # With Local.x = 5: !(5 + 2) = !7 = False
+        assert state.eval("=!(Local.x + 2)") is False
+
+    def test_parenthesized_negation_with_logical(self, state: WorkflowState) -> None:
+        # !(Local.a And Local.b) should still work correctly
+        # With Local.a = True, Local.b = False: !(True And False) = !False = True
+        assert state.eval("=!(Local.a And Local.b)") is True
