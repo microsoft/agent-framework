@@ -1693,7 +1693,7 @@ async def test_streaming_harness_tool_call_does_not_duplicate_transcript(chat_cl
     The streaming path rebuilt the response from updates in ``MessageInjectionMiddleware``, losing the
     local-history conversation-id sentinel set by ``PerServiceCallHistoryPersistingMiddleware``. The
     function loop then resent the whole turn on top of the injected history, leaving an assistant
-    function call with no results after it — which strict endpoints reject.
+    function call with no results after it â€” which strict endpoints reject.
     """
     streaming_calls, session = await _run_harness_tool_call_turn(chat_client_base, stream=True)
     non_streaming_calls, _ = await _run_harness_tool_call_turn(chat_client_base, stream=False)
