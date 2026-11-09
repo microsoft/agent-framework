@@ -7902,3 +7902,72 @@ def test_data_uri_readers_agree_on_the_base64_marker():
     payload_marker = f"data:image/png,x;base64,{png_b64}"
     with pytest.raises(ValueError, match="Data URI must use base64 encoding."):
         detect_media_type_from_base64(data_uri=payload_marker)
+
+
+def test_agent_response_value_validates_by_alias_only() -> None:
+    """Structured output is validated with aliases only, matching the schema sent to providers."""
+    from pydantic import VERSION, ConfigDict
+
+    if tuple(int(part) for part in VERSION.split(".")[:2]) < (2, 11):
+        pytest.skip("validate_by_alias/validate_by_name require pydantic 2.11")
+
+    class Aliased(BaseModel):
+        model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
+        item_count: int = Field(alias="itemCount")
+
+    response = AgentResponse(
+        messages=[Message(role="assistant", contents=['{"itemCount": 3}'])],
+        response_format=Aliased,
+    )
+
+    assert response.value is not None
+    assert response.value.item_count == 3
+
+
+def test_agent_response_value_accepts_field_names_when_model_allows_it() -> None:
+    """A model configured to validate by field name keeps accepting name-keyed output."""
+    from pydantic import ConfigDict
+
+    class Named(BaseModel):
+        model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+        item_count: int = Field(alias="itemCount")
+
+    for text in ('{"item_count": 3}', '{"itemCount": 3}'):
+        response = AgentResponse(
+            messages=[Message(role="assistant", contents=[text])],
+            response_format=Named,
+        )
+        assert response.value is not None
+        assert response.value.item_count == 3
+
+
+def test_agent_response_value_raises_original_error_for_invalid_output() -> None:
+    class Strict(BaseModel):
+        count: int
+
+    response = AgentResponse(
+        messages=[Message(role="assistant", contents=['{"count": "x"}'])],
+        response_format=Strict,
+    )
+    with pytest.raises(ValidationError):
+        _ = response.value
+
+
+def test_agent_response_value_keeps_provider_value_for_defaulted_aliased_field() -> None:
+    """A defaulted aliased field must not silently fall back to its default for alias-keyed output."""
+    from pydantic import VERSION, ConfigDict
+
+    if tuple(int(part) for part in VERSION.split(".")[:2]) < (2, 11):
+        pytest.skip("validate_by_alias/validate_by_name require pydantic 2.11")
+
+    class Defaulted(BaseModel):
+        model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
+        item_count: int = Field(default=0, alias="itemCount")
+
+    response = AgentResponse(
+        messages=[Message(role="assistant", contents=['{"itemCount": 3}'])],
+        response_format=Defaulted,
+    )
+
+    assert response.value is not None
+    assert response.value.item_count == 3
