@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -55,6 +56,57 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         // Assert
         WorkflowFormulaState state = GetRootState(workflow);
         Assert.Equal(clear ? null : "updated", state.Get("TestValue").ToObject());
+    }
+
+    [Theory]
+    [InlineData("de-DE")]
+    [InlineData("fr-FR")]
+    public async Task DeclarativeWorkflowExecution_UsesInvariantCulture_ForFormulasAndNumberParsingAsync(string cultureName)
+    {
+        CultureInfo originalCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo(cultureName);
+
+            const string Yaml = """
+                kind: Workflow
+                trigger:
+                  kind: OnConversationStart
+                  id: repro
+                  actions:
+                    - kind: ParseValue
+                      id: parse_price
+                      variable: Local.Price
+                      value: ="3.14"
+                      valueType: Number
+                    - kind: SetVariable
+                      id: set_max
+                      variable: Local.Max
+                      value: =Max(1, 2)
+                    - kind: SendActivity
+                      id: send_max
+                      activity: "Max is {Local.Max}"
+                """;
+
+            using StringReader yamlReader = new(Yaml);
+            DeclarativeWorkflowOptions options = new(new MockAgentProvider().Object);
+            Workflow workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, options);
+
+            await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, "start");
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+                Assert.False(evt is ExecutorFailedEvent, (evt as ExecutorFailedEvent)?.Data?.ToString());
+            }
+
+            WorkflowFormulaState state = GetRootState(workflow);
+            Assert.Equal(3.14D, Convert.ToDouble(state.Get("Price").ToObject(), CultureInfo.InvariantCulture));
+            Assert.Equal(2.0D, Convert.ToDouble(state.Get("Max").ToObject(), CultureInfo.InvariantCulture));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = originalCulture;
+        }
     }
 
     [Theory]

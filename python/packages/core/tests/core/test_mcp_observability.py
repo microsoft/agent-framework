@@ -333,7 +333,8 @@ async def test_mcp_tools_call_second_connection_loss_log_respects_sensitive_data
             MCPError(-32000, f"session terminated: {private_error_detail}"),
         ]
     )
-    tool.connect = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    tool._reconnect_without_loading = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    tool._tools_loaded = tool._prompts_loaded = True
 
     span_exporter.clear()
     with (

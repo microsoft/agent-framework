@@ -358,8 +358,17 @@ public static class FoundryHostingExtensions
     /// <c>{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{toolboxName}/mcp?api-version=v1</c>
     /// </para>
     /// <para>
-    /// When <c>FOUNDRY_PROJECT_ENDPOINT</c> is absent, startup succeeds without error and
-    /// no tools are loaded (the container remains healthy per spec §2).
+    /// The endpoint can also come from a configured override or the
+    /// <c>AZURE_AI_PROJECT_ENDPOINT</c> local-development fallback. If no endpoint is resolved,
+    /// startup completes with toolbox support disabled and the toolbox health check reports <c>Healthy</c>.
+    /// </para>
+    /// <para>
+    /// The <c>foundry-toolbox</c> health check reports its registration's failure status
+    /// (<c>Unhealthy</c> by default) while startup is pending, and <c>Healthy</c> after normal startup,
+    /// including when toolboxes need user OAuth consent
+    /// or discovery failures are deferred to per-request resolution. This does not guarantee that
+    /// every toolbox is available or that other readiness checks pass. Startup cancellation
+    /// propagates to the host instead of being deferred.
     /// </para>
     /// <para>
     /// Example:
@@ -381,11 +390,16 @@ public static class FoundryHostingExtensions
     /// <summary>
     /// Registers the Foundry Toolbox service with additional options configuration.
     /// </summary>
+    /// <remarks>
+    /// Toolbox readiness follows the same startup and per-request resolution behavior as
+    /// <see cref="AddFoundryToolboxes(IServiceCollection, TokenCredential, string[])"/>.
+    /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
     /// <param name="configureOptions">
     /// Callback to configure <see cref="FoundryToolboxOptions"/>, such as
-    /// <see cref="FoundryToolboxOptions.StrictMode"/> or
+    /// <see cref="FoundryToolboxOptions.StrictMode"/>,
+    /// <see cref="FoundryToolboxOptions.TokenScope"/>, or
     /// <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>.
     /// </param>
     /// <param name="toolboxNames">Names of the Foundry toolboxes to pre-register at startup.</param>

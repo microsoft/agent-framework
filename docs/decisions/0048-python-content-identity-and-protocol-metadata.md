@@ -33,9 +33,9 @@ while every adapter decides placement independently.
 
 [Spec 004](../specs/004-python-function-calling-loop.md) already defines function-call identity:
 `function_call.Content.id` identifies one locally actionable Agent Framework occurrence, while `call_id` is the
-provider's call/result correlation. [ADR 0039](0039-python-refusal-content.md) defines the flat
+provider's call/result correlation. [ADR 0042](0042-python-refusal-content.md) defines the flat
 `model_output_kind="refusal"` marker. This decision keeps spec 004's identity semantics and the meaning of ADR
-0039's marker unchanged, but moves that marker into the `core` namespace described below. It also changes which
+0042's marker unchanged, but moves that marker into the `core` namespace described below. It also changes which
 field marks the hosted server boundary in spec 004's approval scenarios; the implementing change updates spec 004's
 hosted-server-boundary scenario row and its authoritative test mapping.
 
@@ -202,7 +202,7 @@ content.additional_properties == {
    data under `foundry`. Each owner documents its keys in its package README and may publish a `TypedDict` for its
    namespace and small accessor functions.
 3. **Provider-neutral data lives in `core`.** `additional_properties["core"]` holds semantics documented by
-   core that any package may read or write: `model_output_kind` from ADR 0039 and the caller-facing
+   core that any package may read or write: `model_output_kind` from ADR 0042 and the caller-facing
    `prompt_cache_breakpoint`. Only core adds keys to `core`. File names use the first-class `Content.name` field.
 4. **Namespaces are exactly one level deep.** A namespace maps flat key names to plain JSON values (mappings, lists,
    strings, numbers, booleans, and `None`), never dataclass or Pydantic instances, because `Content.from_dict()` does
@@ -260,7 +260,7 @@ reserved names.
   content that a newer provider package produced.
 - `model_output_kind` and `prompt_cache_breakpoint` move into `core`; their meaning is unchanged. Readers accept the
   flat keys indefinitely, writers write both until their next major version, and applications that set the flat keys
-  keep working. ADR 0039 remains the record of the refusal decision.
+  keep working. ADR 0042 remains the record of the refusal decision.
 - A package that writes namespaces requires, as its minimum core version, the core release that merges them. On an
   older core, streamed fragments would lose namespace fields during aggregation.
 - Keys used only for display, diagnostics, or a single request switch directly.
@@ -286,7 +286,7 @@ nevertheless use the same namespaces; response aggregation uses the namespace-aw
 - Bad, because writers must replace namespaces rather than mutate them; a writer that mutates in place corrupts
   metadata shared with copies. The core helpers make the safe path easy but cannot enforce it.
 - Bad, because core gains public helper functions, and writer packages must raise their minimum core version.
-- Bad, because ADR 0039's marker and the caller-facing `prompt_cache_breakpoint` move, so samples and documentation
+- Bad, because ADR 0042's marker and the caller-facing `prompt_cache_breakpoint` move, so samples and documentation
   change, although the flat keys remain readable.
 - Bad, because `core` and every namespace name become reserved top-level keys. No collisions exist in this
   repository, but applications outside it could already use those names.
@@ -373,7 +373,7 @@ forms are removed during implementation rather than documented as compatibility 
 
 - [Spec 004: Python function-calling loop](../specs/004-python-function-calling-loop.md)
 - [Spec 005: Python content identity and protocol metadata](../specs/005-python-content-identity-and-protocol-metadata.md)
-- [ADR 0039: Preserve model refusals with marked Python text content](0039-python-refusal-content.md)
-- [ADR 0043: Preserve host runtime context through MCP invocation and approval](0043-python-mcp-runtime-context.md)
+- [ADR 0042: Preserve model refusals with marked Python text content](0042-python-refusal-content.md)
+- [ADR 0047: Preserve host runtime context through MCP invocation and approval](0047-python-mcp-runtime-context.md)
 - [Issue 8910: Explicit append/replace semantics for streamed content merging](https://github.com/microsoft/agent-framework/issues/8910)
 - [Issue 8903: Streamed code-interpreter code can be corrupted by prefix inference](https://github.com/microsoft/agent-framework/issues/8903)

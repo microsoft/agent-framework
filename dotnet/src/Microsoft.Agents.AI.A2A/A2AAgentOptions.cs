@@ -7,8 +7,7 @@ namespace Microsoft.Agents.AI.A2A;
 /// </summary>
 /// <remarks>
 /// This class is used to encapsulate information about an A2A agent, such as its unique
-/// identifier, display name, and a descriptive summary. It provides an alternative to passing
-/// these values as individual constructor parameters.
+/// identifier, display name, and a descriptive summary.
 /// </remarks>
 public sealed class A2AAgentOptions
 {

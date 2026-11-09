@@ -117,6 +117,14 @@ internal sealed class Mem0Client
     /// </summary>
     public async Task ClearMemoryAsync(string? applicationId, string? agentId, string? threadId, string? userId, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(applicationId)
+            && string.IsNullOrWhiteSpace(agentId)
+            && string.IsNullOrWhiteSpace(threadId)
+            && string.IsNullOrWhiteSpace(userId))
+        {
+            throw new ArgumentException("At least one of applicationId, agentId, threadId, or userId must be provided.");
+        }
+
         string[] paramNames = ["app_id", "agent_id", "run_id", "user_id"];
 
         var querystringParams = new string?[4] { applicationId, agentId, threadId, userId }

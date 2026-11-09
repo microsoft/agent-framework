@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import inspect
 import json
 import logging
@@ -1814,6 +1815,25 @@ async def test_chat_agent_as_tool_basic(client: SupportsChatGetResponse) -> None
     assert tool.approval_mode == "never_require"
     assert hasattr(tool, "func")
     assert tool.input_model is None
+
+
+async def test_chat_agent_as_tool_records_the_agent_it_delegates_to(client: SupportsChatGetResponse) -> None:
+    """Hosts that refuse some delegates read a private link, and serialization leaves it out."""
+    agent = Agent(client=client, name="TestAgent", description="Test agent for as_tool")
+
+    tool = agent.as_tool()
+
+    assert getattr(tool, "_wrapped_agent", None) is agent
+    assert "_wrapped_agent" not in tool.to_dict()
+
+
+async def test_chat_agent_as_tool_copies_keep_pointing_at_the_wrapped_agent(client: SupportsChatGetResponse) -> None:
+    """A copy of the tool must not copy the agent it delegates to, just as the tool function does not."""
+    agent = Agent(client=client, name="TestAgent", description="Test agent for as_tool")
+    tool = agent.as_tool()
+
+    assert getattr(copy.copy(tool), "_wrapped_agent", None) is agent
+    assert getattr(copy.deepcopy(tool), "_wrapped_agent", None) is agent
 
 
 async def test_chat_agent_as_tool_custom_parameters(
@@ -5197,3 +5217,81 @@ async def test_psc_flag_on_storing_without_conversation_id_warns_every_call(
     # Two service calls -> the warning is emitted twice (one per call, not deduped).
     missing_id_warnings = [r for r in caplog.records if "returned no conversation_id" in r.message]
     assert len(missing_id_warnings) == 2
+
+
+@pytest.mark.parametrize("base_client", [False, True], ids=["non_base_client", "base_client"])
+@pytest.mark.parametrize("custom_agent", [False, True], ids=["default_agent", "custom_agent"])
+async def test_stream_finalization_preserves_client_and_agent_extension_points(
+    client: Any, base_client: bool, custom_agent: bool
+) -> None:
+    """Client delegation preserves the protocol fallback and an agent's existing override."""
+    from pydantic import BaseModel
+
+    from agent_framework import ContinuationToken, UsageDetails
+
+    class CursorToken(ContinuationToken):
+        cursor: str
+
+    class Answer(BaseModel):
+        reply: str
+
+    calls: list[str] = []
+
+    class TrackingClient(MockBaseChatClient):
+        def _finalize_agent_response_updates(
+            self, updates: Sequence[AgentResponseUpdate], *, response_format: Any | None = None
+        ) -> AgentResponse[Any]:
+            calls.append("client")
+            return super()._finalize_agent_response_updates(updates, response_format=response_format)
+
+    class TrackingAgent(Agent):
+        def _finalize_response_updates(
+            self, updates: Sequence[AgentResponseUpdate], *, response_format: Any | None = None
+        ) -> AgentResponse[Any]:
+            calls.append("agent")
+            return AgentResponse.from_updates(updates, output_format_type=response_format)
+
+    chat_client = TrackingClient() if base_client else client
+    token = CursorToken(cursor="next")
+    chat_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                message_id="m1",
+                contents=[Content.from_text("First"), Content.from_usage(UsageDetails(input_token_count=3))],
+            ),
+            ChatResponseUpdate(
+                role="assistant",
+                message_id="m2",
+                response_id="response-2",
+                finish_reason="stop",
+                contents=[
+                    Content.from_text('{"reply":"Second"}'),
+                    Content.from_usage(UsageDetails(output_token_count=2)),
+                ],
+                continuation_token=token,
+                additional_properties={"custom": "kept"},
+            ),
+        ]
+    ]
+    agent = (TrackingAgent if custom_agent else Agent)(client=chat_client, name="example-agent")
+    options: ChatOptions[Any] = ChatOptions()
+    options["response_format"] = Answer
+    response_stream = agent.run("Question", stream=True, options=options)
+    updates = [update async for update in response_stream]
+    response = await response_stream.get_final_response()
+
+    assert calls == (["agent"] if custom_agent else ["client"] if base_client else [])
+    assert len([update for update in updates if update.contents]) == 2
+    assert [(message.message_id, message.text) for message in response.messages] == [
+        ("m1", "First"),
+        ("m2", '{"reply":"Second"}'),
+    ]
+    assert all(message.author_name == "example-agent" for message in response.messages)
+    assert response.response_id == "response-2"
+    assert response.finish_reason == "stop"
+    assert response.continuation_token == token
+    assert response.usage_details == {"input_token_count": 3, "output_token_count": 2}
+    assert response.additional_properties["custom"] == "kept"
+    assert isinstance(response.value, Answer)
+    assert response.value.reply == "Second"
