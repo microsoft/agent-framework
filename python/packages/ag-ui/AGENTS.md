@@ -26,12 +26,15 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 
 ## Protocol Notes
 
-- Outbound custom events are emitted as AG-UI `CUSTOM`.
+- Outbound custom events are emitted as AG-UI `CUSTOM`. Content-free `AgentResponseUpdate` metadata does not
+  produce a workflow-output event.
 - Usage metadata from `Content(type="usage")` is surfaced as `CUSTOM` events with `name="usage"`.
 - Text annotations are surfaced as `CUSTOM` events with `name="annotations"` and
   `value={"messageId": ..., "annotations": [...]}`. Annotation-only updates announce a text message if needed
   without emitting empty text deltas. Provider `raw_representation` is omitted; `AGUIChatClient` restores the
-  annotations on text content. These live custom events are not replayed by `MESSAGES_SNAPSHOT`.
+  annotations on text content. Content-coordinate regions on text deltas are rebased to accumulated-message
+  offsets; source-coordinate regions are preserved unchanged. These live custom events are not replayed by
+  `MESSAGES_SNAPSHOT`.
 - Inbound custom event aliases are accepted: `CUSTOM`, `CUSTOM_EVENT`, and `custom_event`.
 - Multimodal user inputs support both legacy (`text`, `binary`) and draft-style (`image`, `audio`, `video`, `document`) shapes.
 - Interrupted runs complete with `RUN_FINISHED.outcome.type == "interrupt"` and canonical `outcome.interrupts`; do not document or add new flows that depend on the legacy top-level `RUN_FINISHED.interrupt` field.
@@ -128,6 +131,47 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   `single_user=True` assigns one opaque authorization scope for the lifetime of that endpoint registration and must not
   be used for callers with distinct authorization. Use an explicit resolver when snapshots, checkpoints, or provider
   state must retain the same scope across process restarts.
+- An `AgentExecutor` keeps one `AgentSession` (history, pending approvals, standing approval rules) between runs, and
+  that session is not tied to a caller. `_session_ownership.claim_agent_executors` binds every `AgentExecutor` of a
+  workflow, and the `AgentSession` each one holds when the run starts, to the first Snapshot Scope that runs it. It
+  looks into nested `WorkflowExecutor` workflows and into the workflow behind a `WorkflowAgent` that an
+  `AgentExecutor` wraps. A run without a scope is an owner of its own, so a workflow that ran without a scope refuses
+  a later scope and the reverse. The registry (`IdentityOwners`) keys objects by `id()` with a weak reference and
+  never calls their `__hash__` or `__eq__`, so unhashable subclasses work and equal objects stay apart. The claim is
+  one process-wide locked check-and-bind. `AgentFrameworkWorkflow.run` and the `WorkflowAgent` branch of
+  `run_agent_stream` (through `claim_workflow_agent`, which also looks through A2UI runners) call it after a snapshot
+  replay has returned and before any workflow runs, so a replay never takes ownership. Another scope receives
+  `RUN_STARTED` and `RUN_ERROR` with `WORKFLOW_SCOPE_CONFLICT` and never reaches the model. It covers a shared
+  `Workflow` or `WorkflowAgent`, and a `workflow_factory` that returns shared workflows, executors, or an injected
+  `AgentSession`. It follows live objects only and does not cover:
+  - state that a factory loads from storage into a new object (`AgentSession.from_dict()`, `SessionStore.get()`, a
+    history provider that keys data by `session_id`);
+  - sessions that alias state outside the session object (a shared `state` mapping or `service_session_id`);
+  - executors that are not `AgentExecutor` but keep a session or cache (custom executors, the group chat
+    orchestrator);
+  - workflows without an `AgentExecutor`;
+  - a session that an executor creates during a checkpoint restore (it stays reachable only through the bound
+    executor, and the next run of the same scope binds it).
+
+  The rule does not partition the threads of one scope: `single_user=True` or a constant resolver shares one
+  conversation state across the threads of a shared workflow. Never reset sessions or clone executors to resolve a
+  conflict; the factory builds new executors and sessions. The factory receives only the thread id, so it must not
+  restore session state that is keyed by the thread id alone; use `checkpoint_storage`, which AG-UI loads only for the
+  scope and thread that saved it.
+- AG-UI does not support a `WorkflowAgent` that an agent exposes as a tool (`WorkflowAgent.as_tool()`): every caller
+  of the agent would reach one workflow and its executor sessions, and the ownership claim cannot see that path.
+  `BaseAgent.as_tool()` keeps the agent it wraps in the private `_wrapped_agent` attribute of the tool, and
+  `_session_ownership.workflow_agent_tools` follows those links through the tools of an agent, the sub-agents they
+  delegate to, and the agents of every `AgentExecutor`, also through A2UI runners and nested workflows, with a cycle
+  guard. `add_agent_framework_fastapi_endpoint` raises `ValueError` (`_reject_workflow_agent_tools`) for what it can
+  see at registration. `AgentFrameworkWorkflow.run` and `run_agent_stream` end the run with `RUN_ERROR`
+  `WORKFLOW_AGENT_TOOL_UNSUPPORTED` before the ownership claim, which covers workflow factories and tools added after
+  registration. The rejection applies with `single_user=True` as well. A tool function that calls a workflow from
+  custom code, and a tool that a context provider adds while a run is prepared, are not detected. They are unsupported
+  all the same: exposing a `WorkflowAgent` as a tool is not supported in any form, and AG-UI gives no isolation to its
+  callers. The search needs a core whose `as_tool()` records `_wrapped_agent`; with an older core it finds nothing, so
+  raise this package's `agent-framework-core` floor to the first release that has it when you prepare a release.
+  Remove this check together with `WorkflowAgent.as_tool()`.
 - Request `state` is client-owned Shared State and is merged into `AgentSession.state`, minus a protected set:
   tool-approval state, history/context-provider namespaces, message-injection state, standalone FIDES security
   state, and provider-owned keys.

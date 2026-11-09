@@ -158,12 +158,45 @@ def test_missing_selected_file_is_not_ignored(constructor, tmp_path):
         constructor(dsn="explicit", user="explicit", password="explicit", env_file_path=str(tmp_path / "missing.env"))
 
 
-@pytest.mark.parametrize("option", ["dsn", "user", "password", "pool_parameters", "env_file_path", "env_file_encoding"])
-def test_borrowed_client_rejects_connection_options(constructor, option):
-    client = MagicMock(spec=oracledb.AsyncConnection)
-    value = {"min": 1} if option == "pool_parameters" else "not-read"
-    with pytest.raises(ValueError, match="cannot be combined"):
-        constructor(client=client, **{option: value})
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"dsn": ""},
+        {"user": ""},
+        {"password": ""},
+        {"pool_parameters": {"min": "invalid", "unsupported_option": True}},
+        {"pool_parameters": {}},
+        {"env_file_path": "missing.env"},
+        {"env_file_encoding": "invalid-encoding"},
+        {
+            "dsn": "ignored",
+            "user": "ignored",
+            "password": SecretString("ignored"),
+            "pool_parameters": {"max": "invalid"},
+            "env_file_path": "missing.env",
+            "env_file_encoding": "invalid-encoding",
+        },
+    ],
+)
+@pytest.mark.parametrize("client_type", [oracledb.AsyncConnection, oracledb.AsyncConnectionPool])
+async def test_borrowed_client_ignores_connection_options(constructor, monkeypatch, options, client_type):
+    monkeypatch.setenv("ORACLE_MAX", "not-an-integer")
+    client = MagicMock(spec=client_type)
+    client.close = AsyncMock()
+    with (
+        patch.object(module, "load_settings", side_effect=AssertionError("Unexpected settings read")),
+        patch.object(module.oracledb, "create_pool_async") as create,
+    ):
+        instance = constructor(client=client, **options)
+        assert await instance._client._get_client() is client
+        assert not instance.managed_client
+        await instance.close()
+        await instance.close()
+    create.assert_not_called()
+    client.close.assert_not_awaited()
+    if client_type is oracledb.AsyncConnection:
+        client.commit.assert_not_called()
+        client.rollback.assert_not_called()
 
 
 @pytest.mark.parametrize("client_type", [oracledb.AsyncConnection, oracledb.AsyncConnectionPool])
@@ -178,9 +211,10 @@ async def test_borrowed_client_bypasses_settings_and_remains_open(constructor, c
     client.close.assert_not_awaited()
 
 
-def test_invalid_client_type_is_rejected(constructor):
+@pytest.mark.parametrize("options", [{}, {"dsn": "", "pool_parameters": {"min": "invalid"}}])
+def test_invalid_client_type_is_rejected(constructor, options):
     with pytest.raises(TypeError, match="client"):
-        constructor(client=object())
+        constructor(client=object(), **options)
 
 
 async def test_store_shares_client_without_rereading_settings(monkeypatch, definition_factory):

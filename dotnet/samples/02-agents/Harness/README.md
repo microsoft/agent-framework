@@ -11,6 +11,19 @@ Samples demonstrating the [Harness AIContextProviders](../../../src/Microsoft.Ag
 | [Harness_Step03_DataProcessing](./Harness_Step03_DataProcessing/README.md) | Using FileAccessProvider to give an agent access to CSV data files for reading, analysis, and output generation |
 | [Harness_Step05_Loop](./Harness_Step05_Loop/README.md) | Wrapping a HarnessAgent with the LoopAgent decorator to re-invoke it until a configured LoopEvaluator (completion marker, predicate, AI judge, or approval-aware loop) decides to stop |
 
+## Choosing a chat client
+
+A harness agent is built on top of an `IChatClient` of your choice: `AsHarnessAgent` uses
+whatever client you call it on. Pick a service, and a matching `IChatClient`, that supports
+the features your agent needs. Model providers differ in which features they support, such
+as tool calling or reasoning. See
+[Model providers](https://learn.microsoft.com/agent-framework/integrations/by-component/model-providers)
+for the available providers and how they compare.
+
+These samples use the Responses API on a Microsoft Foundry project
+(`FOUNDRY_PROJECT_ENDPOINT`), creating their client with
+`projectClient.GetProjectOpenAIClient().GetResponsesClient().AsIChatClient(deploymentName)`.
+
 ## Build your own claw blog series
 
 Samples accompanying the [*Build your own agent harness or claw with Microsoft Agent Framework*](https://devblogs.microsoft.com/agent-framework/build-your-own-claw-and-agent-harness-with-microsoft-agent-framework) blog series, which builds a personal finance assistant step by step.
@@ -21,6 +34,14 @@ Samples accompanying the [*Build your own agent harness or claw with Microsoft A
 | [Claw_Step02_WorkingWithData](./BuildYourOwnClaw/Claw_Step02_WorkingWithData/README.md) | Post 2 — file access, approvals, and durable memory (file memory plus optional Foundry memory) |
 | [Claw_Step03_ScalingCapabilities](./BuildYourOwnClaw/Claw_Step03_ScalingCapabilities/README.md) | Post 3 — scaling the claw with skills (plus optional Foundry skills), a confined shell, CodeAct, and background agents |
 | [Claw_Step04_ProductionReady](./BuildYourOwnClaw/Claw_Step04_ProductionReady/README.md) | Post 4 — production-ready shared claw library with observability, opt-in Purview governance, Foundry hosted deployment, and evals |
+
+## Foundry hosted Harness sample
+
+The Research sample hosts a `HarnessAgent` as a Foundry hosted agent using source ZIP deployment with the default `AllowStoredOutputEnabled = false`, so the model service never stores the conversation.
+
+| Sample | Description |
+| --- | --- |
+| [Hosted-Harness-Research](../../04-hosting/FoundryHostedAgents/responses/Hosted-Harness-Research/README.md) | Hosts the research harness with web search, a browsing tool, planning, a todo loop, and session-scoped file memory |
 
 ## Security Considerations
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import time
 from typing import Annotated, Any
 from unittest.mock import MagicMock
@@ -136,6 +137,62 @@ async def test_async_host_tool_is_awaited() -> None:
 
     texts = _text_outputs(result)
     assert any("ping" in text for text in texts)
+
+
+@pytest.mark.parametrize("failing_host_tool", [False, True], indirect=True)
+@pytest.mark.parametrize("call", ["await failing_host_tool()", "await call_tool('failing_host_tool')"])
+@pytest.mark.parametrize("handling", ["print", "value", "uncaught"])
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_host_error_details_require_trusted_opt_in(
+    failing_host_tool: FunctionTool,
+    host_error_detail: str,
+    call: str,
+    handling: str,
+    include_detailed_errors: bool,
+) -> None:
+    if handling == "print":
+        code = f"try:\n    {call}\nexcept Exception as exc:\n    print(str(exc))"
+    elif handling == "value":
+        code = f"message = ''\ntry:\n    {call}\nexcept Exception as exc:\n    message = str(exc)\nmessage"
+    else:
+        code = call
+    execute_code = MontyExecuteCodeTool(tools=[failing_host_tool], include_detailed_errors=include_detailed_errors)
+
+    contents = await execute_code._run_code(code=code)
+
+    serialized = json.dumps([content.to_dict() for content in contents])
+    assert (host_error_detail in serialized) is include_detailed_errors
+    if handling == "uncaught":
+        assert contents[0].type == "error"
+    elif not include_detailed_errors:
+        assert "Host tool execution failed." in serialized
+
+
+@pytest.mark.parametrize("failing_host_tool", [True], indirect=True)
+async def test_concurrent_executions_keep_error_policies_separate(
+    failing_host_tool: FunctionTool, host_error_detail: str
+) -> None:
+    redacted = MontyExecuteCodeTool(tools=[failing_host_tool])
+    detailed = MontyExecuteCodeTool(tools=[failing_host_tool], include_detailed_errors=True)
+    code = "try:\n    await failing_host_tool()\nexcept Exception as exc:\n    print(str(exc))"
+
+    redacted_result, detailed_result = await asyncio.gather(
+        redacted._run_code(code=code), detailed._run_code(code=code)
+    )
+
+    assert host_error_detail not in "\n".join(_text_outputs(redacted_result))
+    assert host_error_detail in "\n".join(_text_outputs(detailed_result))
+    assert failing_host_tool.invocation_count == 2
+
+
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_error_policy_preserves_host_cancellation(
+    cancelled_host_tool: FunctionTool, include_detailed_errors: bool
+) -> None:
+    execute_code = MontyExecuteCodeTool(tools=[cancelled_host_tool], include_detailed_errors=include_detailed_errors)
+
+    with pytest.raises(asyncio.CancelledError):
+        await execute_code._run_code(code="await cancelled_host_tool()")
 
 
 @pytest.mark.parametrize("is_async", [False, True])

@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure;
 using Azure.AI.AgentServer.Core.Storage;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.Logging;
@@ -240,8 +241,18 @@ public sealed class FoundryAgentSessionStoreTests
         // Assert
         var entry = Assert.Single(logs.Entries);
         Assert.Equal(LogLevel.Debug, entry.Level);
-        Assert.Contains("conv-1", entry.Message, StringComparison.Ordinal);
+        Assert.Equal(0, entry.EventId.Id);
+        Assert.Equal("LogSessionNotFound", entry.EventId.Name);
+        Assert.Equal(
+            "Session 'conv-1' was not found in the Foundry state store 'agent-framework/sessions'. Nothing to delete.",
+            entry.Message);
         Assert.IsType<FoundryStorageNotFoundException>(entry.Exception);
+        AssertProperty(entry.Properties, "SessionId", "conv-1");
+        AssertProperty(entry.Properties, "StoreName", FoundryAgentSessionStore.DefaultStoreName);
+        AssertProperty(
+            entry.Properties,
+            "{OriginalFormat}",
+            "Session '{SessionId}' was not found in the Foundry state store '{StoreName}'. Nothing to delete.");
     }
 
     [Fact]
@@ -468,6 +479,15 @@ public sealed class FoundryAgentSessionStoreTests
     private static FoundryAgentSessionStore NewStore(FakeStateStore backing, ILoggerFactory? loggerFactory = null)
         => new(_ => Task.FromResult<FoundryStateStore>(backing), loggerFactory: loggerFactory);
 
+    private static void AssertProperty(
+        IReadOnlyList<KeyValuePair<string, object?>> properties,
+        string name,
+        object expectedValue)
+    {
+        var property = Assert.Single(properties, property => property.Key == name);
+        Assert.Equal(expectedValue, property.Value);
+    }
+
     private static AgentSessionStoreKey Key(
         string sessionId,
         string? partitionName = null,
@@ -492,20 +512,20 @@ public sealed class FoundryAgentSessionStoreTests
             string key,
             IDictionary<string, BinaryData> value,
             IReadOnlyDictionary<string, string>? tags = null,
-            string? ifMatch = null,
+            ETag ifMatch = default,
             bool requireExists = false,
             CancellationToken cancellationToken = default)
         {
             this._items[key] = value;
-            return Task.FromResult(AzureAIAgentServerCoreStorageModelFactory.StateStoreItemRef(id: key, key: key, etag: "etag"));
+            return Task.FromResult(AzureAIAgentServerCoreStorageModelFactory.StateStoreItemRef(id: key, key: key, etag: new ETag("etag")));
         }
 
         public override Task<StateStoreItem?> GetItemAsync(string key, CancellationToken cancellationToken = default)
             => Task.FromResult(this._items.TryGetValue(key, out var value)
-                ? AzureAIAgentServerCoreStorageModelFactory.StateStoreItem(id: key, key: key, value: value, etag: "etag")
+                ? AzureAIAgentServerCoreStorageModelFactory.StateStoreItem(id: key, key: key, value: value, etag: new ETag("etag"))
                 : null);
 
-        public override Task<DeletedStateStoreItem> DeleteItemAsync(string key, string? ifMatch = null, CancellationToken cancellationToken = default)
+        public override Task<DeletedStateStoreItem> DeleteItemAsync(string key, ETag ifMatch = default, CancellationToken cancellationToken = default)
         {
             if (!this._items.TryRemove(key, out _))
             {

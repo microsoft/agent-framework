@@ -2,6 +2,15 @@
 
 Instructions for AI coding agents working in the .NET codebase.
 
+## Public Consumer Skills
+
+The installable skills under `/skills/` guide high-level application-development choices. They are not documentation
+or a checklist of framework behavior. Follow the
+[consumer skill maintenance contract](../skills/README.md#repository-maintenance-contract). Do not update them merely
+because a public API, package, sample, or implementation changed.
+
+This restriction concerns public consumer skills, not repository task skills under `.github/skills/`.
+
 ## Build, Test, and Lint Commands
 
 See `./.github/skills/build-and-test/SKILL.md` for detailed instructions on building, testing, and linting projects.

@@ -7,7 +7,9 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Unicode;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
@@ -15,6 +17,8 @@ using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
+using OpenAIComputerCallOutputResponseItem = OpenAI.Responses.ComputerCallOutputResponseItem;
+using OpenAIComputerCallResponseItem = OpenAI.Responses.ComputerCallResponseItem;
 using OpenAIContainerFileCitationMessageAnnotation = OpenAI.Responses.ContainerFileCitationMessageAnnotation;
 using OpenAIFileCitationMessageAnnotation = OpenAI.Responses.FileCitationMessageAnnotation;
 using OpenAIFilePathMessageAnnotation = OpenAI.Responses.FilePathMessageAnnotation;
@@ -23,6 +27,7 @@ using OpenAIStreamingResponseOutputItemAddedUpdate = OpenAI.Responses.StreamingR
 using OpenAIStreamingResponseOutputItemDoneUpdate = OpenAI.Responses.StreamingResponseOutputItemDoneUpdate;
 using OpenAIStreamingResponseOutputTextAnnotationAddedUpdate = OpenAI.Responses.StreamingResponseOutputTextAnnotationAddedUpdate;
 using OpenAIStreamingResponseOutputTextDeltaUpdate = OpenAI.Responses.StreamingResponseOutputTextDeltaUpdate;
+using OpenAIStreamingResponseUpdate = OpenAI.Responses.StreamingResponseUpdate;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -43,6 +48,9 @@ internal abstract record OutputConverterItem
 /// </summary>
 internal static class OutputConverter
 {
+    // Keep non-ASCII characters as-is while continuing to escape HTML-sensitive characters.
+    private static readonly JsonSerializerOptions s_jsonOptions = new() { Encoder = JavaScriptEncoder.Create(UnicodeRanges.All) };
+
     /// <summary>
     /// Converts a stream of <see cref="AgentResponseUpdate"/> into a stream of
     /// <see cref="ResponseStreamEvent"/> using the SDK builder pattern.
@@ -138,6 +146,10 @@ internal static class OutputConverter
             }
 
             string? currentMessageId = ResolveMessageId(update);
+            // Completed messages retain independent text parts in one update. Provider streaming
+            // spans already address the generated text, including when a chunk has multiple parts.
+            bool isStreamingUpdate = update.RawRepresentation is ChatResponseUpdate or OpenAIStreamingResponseUpdate;
+            int textPartOffset = 0;
             foreach (var content in update.Contents)
             {
                 switch (content)
@@ -164,6 +176,7 @@ internal static class OutputConverter
 
                         if (currentMessageBuilder is null)
                         {
+                            textPartOffset = 0;
                             currentMessageBuilder = stream.AddOutputItemMessage();
                             yield return currentMessageBuilder.EmitAdded();
 
@@ -201,7 +214,7 @@ internal static class OutputConverter
                         previousMessageId = null;
 
                         var arguments = functionCall.Arguments is not null
-                            ? JsonSerializer.Serialize(functionCall.Arguments)
+                            ? JsonSerializer.Serialize(functionCall.Arguments, s_jsonOptions)
                             : "{}";
 
                         var fcBuilder = stream.AddOutputItemFunctionCall(functionCall.Name, functionCall.CallId);
@@ -209,6 +222,63 @@ internal static class OutputConverter
                         yield return fcBuilder.EmitArgumentsDelta(arguments);
                         yield return fcBuilder.EmitArgumentsDone(arguments);
                         yield return fcBuilder.EmitDone();
+                        break;
+                    }
+
+                    // The MEAI OpenAI Responses client has no dedicated content type for computer calls: it yields a
+                    // base ToolCallContent carrying the OpenAI item. Without this case the caller would never see the
+                    // call it is expected to execute.
+                    case ToolCallContent { RawRepresentation: OpenAIComputerCallResponseItem computerCall } computerCallContent:
+                    {
+                        if (computerCallContent.CallId is not { Length: > 0 })
+                        {
+                            break;
+                        }
+
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
+                        {
+                            yield return evt;
+                        }
+
+                        currentTextBuilder = null;
+                        currentMessageBuilder = null;
+                        accumulatedText = null;
+                        accumulatedAnnotations = null;
+                        previousMessageId = null;
+
+                        // Emit a fully populated item through the generic builder. The SDK's OutputItemComputerCall
+                        // convenience method takes a single action and cannot carry the GA actions batch.
+                        var computerCallBuilder = stream.AddOutputItemComputerCall();
+                        var computerCallItem = ComputerToolItemConverter.ToOutputItem(computerCall, computerCallBuilder.ItemId);
+                        yield return computerCallBuilder.EmitAdded(computerCallItem);
+                        yield return computerCallBuilder.EmitDone(computerCallItem);
+                        break;
+                    }
+
+                    // Only an agent that runs the actions itself produces this; the usual caller-executed loop receives
+                    // the output as request input instead. Emitting it keeps the AgentServer history complete.
+                    case ToolResultContent { RawRepresentation: OpenAIComputerCallOutputResponseItem computerCallOutput } computerCallOutputContent:
+                    {
+                        if (computerCallOutputContent.CallId is not { Length: > 0 })
+                        {
+                            break;
+                        }
+
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
+                        {
+                            yield return evt;
+                        }
+
+                        currentTextBuilder = null;
+                        currentMessageBuilder = null;
+                        accumulatedText = null;
+                        accumulatedAnnotations = null;
+                        previousMessageId = null;
+
+                        var computerCallOutputBuilder = stream.AddOutputItemComputerCallOutput();
+                        var computerCallOutputItem = ComputerToolItemConverter.ToOutputItem(computerCallOutput, computerCallOutputBuilder.ItemId);
+                        yield return computerCallOutputBuilder.EmitAdded(computerCallOutputItem);
+                        yield return computerCallOutputBuilder.EmitDone(computerCallOutputItem);
                         break;
                     }
 
@@ -263,7 +333,7 @@ internal static class OutputConverter
                         var wireId = ToolApprovalIdMap.ComputeWireId(approvalRequest.RequestId);
 
                         var approvalArguments = approvalFunctionCall.Arguments is not null
-                            ? JsonSerializer.Serialize(approvalFunctionCall.Arguments)
+                            ? JsonSerializer.Serialize(approvalFunctionCall.Arguments, s_jsonOptions)
                             : "{}";
 
                         ToolApprovalIdMap.Record(
@@ -382,13 +452,18 @@ internal static class OutputConverter
                     && content.Annotations is { Count: > 0 }
                     && currentMessageBuilder is not null)
                 {
-                    foreach (var sdkAnnotation in ConvertToSdkAnnotations(content.Annotations))
+                    foreach (var sdkAnnotation in ConvertToSdkAnnotations(content.Annotations, isTextContent ? textPartOffset : 0))
                     {
                         if (accumulatedAnnotations?.Any(existing => AreEquivalentAnnotations(existing, sdkAnnotation)) is not true)
                         {
                             (accumulatedAnnotations ??= []).Add(sdkAnnotation);
                         }
                     }
+                }
+
+                if (!isStreamingUpdate && content is MeaiTextContent textPart)
+                {
+                    textPartOffset += textPart.Text.Length;
                 }
             }
         }
@@ -493,7 +568,7 @@ internal static class OutputConverter
     /// Converts MEAI <see cref="AIAnnotation"/> instances to Responses SDK <see cref="Annotation"/> objects.
     /// Only supported <see cref="CitationAnnotation"/> shapes are converted; all others are skipped.
     /// </summary>
-    private static IEnumerable<Annotation> ConvertToSdkAnnotations(IList<AIAnnotation> annotations)
+    private static IEnumerable<Annotation> ConvertToSdkAnnotations(IList<AIAnnotation> annotations, int textPartOffset)
     {
         foreach (var ann in annotations)
         {
@@ -544,8 +619,8 @@ internal static class OutputConverter
             {
                 yield return new UrlCitationBody(
                     citation.Url,
-                    region.StartIndex!.Value,
-                    region.EndIndex!.Value,
+                    region.StartIndex!.Value + textPartOffset,
+                    region.EndIndex!.Value + textPartOffset,
                     citation.Title ?? string.Empty);
             }
         }
@@ -685,7 +760,7 @@ internal static class OutputConverter
     /// </remarks>
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing function call result payload.")]
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing function call result payload.")]
-    private static string EncodeFunctionResultAsJsonStringPayload(object? result)
+    internal static string EncodeFunctionResultAsJsonStringPayload(object? result)
     {
         string innerText = result switch
         {
@@ -693,13 +768,13 @@ internal static class OutputConverter
             string s => s,
             JsonElement je => je.ValueKind == JsonValueKind.String
                 ? (je.GetString() ?? string.Empty)
-                : je.GetRawText(),
+                : JsonSerializer.Serialize(je, s_jsonOptions),
             JsonDocument jd => jd.RootElement.ValueKind == JsonValueKind.String
                 ? (jd.RootElement.GetString() ?? string.Empty)
-                : jd.RootElement.GetRawText(),
-            _ => JsonSerializer.Serialize(result),
+                : JsonSerializer.Serialize(jd.RootElement, s_jsonOptions),
+            _ => JsonSerializer.Serialize(result, s_jsonOptions),
         };
 
-        return JsonSerializer.Serialize(innerText);
+        return JsonSerializer.Serialize(innerText, s_jsonOptions);
     }
 }

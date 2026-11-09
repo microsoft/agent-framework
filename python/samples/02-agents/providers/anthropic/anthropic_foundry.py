@@ -2,6 +2,7 @@
 import asyncio
 
 from agent_framework import Agent
+from agent_framework.anthropic import AnthropicChatOptions
 from agent_framework.foundry import AnthropicFoundryClient
 from dotenv import load_dotenv
 
@@ -44,7 +45,7 @@ async def main() -> None:
     # Create web search tool configuration using instance method
     web_search_tool = client.get_web_search_tool()
 
-    agent = Agent(
+    agent = Agent[AnthropicChatOptions](
         client=client,
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",

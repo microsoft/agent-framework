@@ -11,27 +11,6 @@ namespace Microsoft.Agents.AI.A2A.UnitTests;
 public sealed class A2AClientExtensionsTests
 {
     [Fact]
-    public void AsAIAgent_WithAllParameters_ReturnsA2AAgentWithSpecifiedProperties()
-    {
-        // Arrange
-        var a2aClient = new A2AClient(new Uri("http://test-endpoint"));
-
-        const string TestId = "test-agent-id";
-        const string TestName = "Test Agent";
-        const string TestDescription = "This is a test agent description";
-
-        // Act
-        var agent = a2aClient.AsAIAgent(TestId, TestName, TestDescription);
-
-        // Assert
-        Assert.NotNull(agent);
-        Assert.IsType<A2AAgent>(agent);
-        Assert.Equal(TestId, agent.Id);
-        Assert.Equal(TestName, agent.Name);
-        Assert.Equal(TestDescription, agent.Description);
-    }
-
-    [Fact]
     public void AsAIAgent_WithIA2AClient_ReturnsA2AAgentWithSpecifiedProperties()
     {
         // Arrange - use IA2AClient reference type to verify the extension method works with the interface
@@ -42,7 +21,12 @@ public sealed class A2AClientExtensionsTests
         const string TestDescription = "Agent created from IA2AClient";
 
         // Act
-        var agent = a2aClient.AsAIAgent(TestId, TestName, TestDescription);
+        var agent = a2aClient.AsAIAgent(new A2AAgentOptions
+        {
+            Id = TestId,
+            Name = TestName,
+            Description = TestDescription
+        });
 
         // Assert
         Assert.NotNull(agent);
@@ -106,5 +90,36 @@ public sealed class A2AClientExtensionsTests
         Assert.NotEmpty(agent.Id);
         Assert.Null(agent.Name);
         Assert.Null(agent.Description);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AsAIAgent_WithoutOptions_ReturnsA2AAgentWithDefaultProperties(bool explicitNull)
+    {
+        // Arrange
+        IA2AClient a2aClient = new A2AClient(new Uri("http://test-endpoint"));
+
+        // Act
+        var agent = explicitNull ? a2aClient.AsAIAgent(options: null) : a2aClient.AsAIAgent();
+
+        // Assert
+        Assert.IsType<A2AAgent>(agent);
+        Assert.NotEmpty(agent.Id);
+        Assert.Null(agent.Name);
+        Assert.Null(agent.Description);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AsAIAgent_WithNullClient_ThrowsArgumentNullException(bool withOptions)
+    {
+        // Arrange
+        IA2AClient client = null!;
+        A2AAgentOptions? options = withOptions ? new A2AAgentOptions() : null;
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => client.AsAIAgent(options));
     }
 }

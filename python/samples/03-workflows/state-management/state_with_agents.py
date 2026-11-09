@@ -4,7 +4,7 @@ import asyncio
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Never
 from uuid import uuid4
 
 from agent_framework import (
@@ -21,7 +21,6 @@ from agent_framework.openai import OpenAIChatOptions
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from typing_extensions import Never
 
 # Load environment variables from .env file
 load_dotenv()
