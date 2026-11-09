@@ -2039,6 +2039,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
                 try:
                     execution.result()
                 except asyncio.CancelledError:
+                    # Expected during cancellation cleanup; the outer cancellation is re-raised below.
                     pass
                 except Exception:
                     logger.warning(
