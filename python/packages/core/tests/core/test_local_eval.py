@@ -1250,6 +1250,15 @@ class TestRubricAssertions:
             results.assert_dimension_score_at_least("clarity", 3)
         assert "No scores found for dimension 'clarity'. Available dimension(s): none" in str(exc.value)
 
+    def test_empty_results_raise_even_with_require_applicable(self) -> None:
+        # Zero items vacuously passed even the stricter flag (Copilot review):
+        # with no items, missing_items stays empty and nothing was checked.
+        results = EvalResults(provider="test")
+        with pytest.raises(EvalNotPassedError, match="No scores found for dimension"):
+            results.assert_dimension_score_at_least("clarity", 3, require_applicable=True)
+        with pytest.raises(EvalNotPassedError, match="No scores found for evaluator 'policy'"):
+            results.assert_dimension_score_at_least("clarity", 3, evaluator="policy", require_applicable=True)
+
 
 def _score_results(
     *scores_per_item: list[EvalScoreResult],

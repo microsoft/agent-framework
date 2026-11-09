@@ -625,12 +625,13 @@ class EvalResults:
                 _check(sub)
 
         _check(self)
-        # With the default flags, a filter that matches nothing must fail the
-        # assertion instead of vacuously passing (same fix as
-        # assert_score_at_least for evaluator filters). With
-        # require_applicable=True the not-applicable report below already
-        # fails the call, and its wording is pinned by existing tests.
-        if not require_applicable:
+        # A filter that matches nothing must fail the assertion instead of
+        # vacuously passing (same fix as assert_score_at_least). The checks
+        # run under the default flags, and also when require_applicable=True
+        # has no items to report as not-applicable — an empty evaluation must
+        # not pass the stricter option either. When items are missing, the
+        # not-applicable report below carries them (wording pinned by tests).
+        if not require_applicable or not missing_items:
             if evaluator is not None and matching_scores_count == 0:
                 available = f": {', '.join(sorted(seen_evaluators))}" if seen_evaluators else ": none"
                 raise EvalNotPassedError(
