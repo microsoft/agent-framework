@@ -100,13 +100,22 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
     if hasattr(entity_object, "client"):
         metadata["chat_client_type"] = entity_object.client.__class__.__name__
 
-    # Try to get context providers
-    if (
-        hasattr(entity_object, "context_provider")
-        and entity_object.context_provider
-        and hasattr(entity_object.context_provider, "__class__")
-    ):
-        metadata["context_provider"] = [entity_object.context_provider.__class__.__name__]  # type: ignore
+    # Try to get context providers.
+    # ``Agent`` exposes a ``context_providers`` list; the singular
+    # ``context_provider`` attribute only exists on older/custom agent
+    # objects, so fall back to it when the list is absent.
+    context_provider_names: list[str] = []
+    providers = getattr(entity_object, "context_providers", None)
+    if providers:
+        for provider in providers:
+            if provider is not None and hasattr(provider, "__class__"):
+                context_provider_names.append(type(provider).__name__)
+    if not context_provider_names:
+        single_provider = getattr(entity_object, "context_provider", None)
+        if single_provider is not None and hasattr(single_provider, "__class__"):
+            context_provider_names = [type(single_provider).__name__]
+    if context_provider_names:
+        metadata["context_provider"] = context_provider_names  # type: ignore
 
     # Try to get middleware
     if hasattr(entity_object, "middleware") and entity_object.middleware:
