@@ -28,6 +28,8 @@ namespace Microsoft.Agents.AI;
 /// Resource and script files are discovered by scanning the skill
 /// directory for files with matching extensions. Invalid resources are skipped with logged warnings.
 /// Skills whose resource names or script names differ only by case are skipped.
+/// Names are compared using <see cref="StringComparer.OrdinalIgnoreCase"/>; Unicode equivalence
+/// follows the target runtime.
 /// Resource and script paths are checked against path traversal and symlink escape attacks.
 /// Discovered files are revalidated against their trusted skill directory immediately before use.
 /// </remarks>
@@ -238,6 +240,9 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             scripts: scripts);
     }
 
+    /// <summary>
+    /// Checks names using <see cref="StringComparer.OrdinalIgnoreCase"/>.
+    /// </summary>
     private bool HasCaseVariantNames(string skillName, string kind, IEnumerable<string> names)
     {
         var seen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

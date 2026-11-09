@@ -1854,6 +1854,7 @@ class FileSkill(Skill):
     Resource and script lookup is case-insensitive, so two resources or two
     scripts whose names differ only by case (e.g. ``readme.md`` and
     ``README.md``) are ambiguous and rejected with :class:`ValueError`.
+    Comparison uses :meth:`str.lower`, not :meth:`str.casefold`.
 
     Attributes:
         path: Absolute path to the directory containing this skill.
@@ -1949,7 +1950,7 @@ class FileSkill(Skill):
 
     @staticmethod
     def _reject_case_variant_names(skill_name: str, kind: str, entries: Sequence[SkillResource | SkillScript]) -> None:
-        """Reject names that case-insensitive lookup could not tell apart.
+        """Reject names with equal ``str.lower()`` keys, matching resource and script lookup.
 
         Raises:
             ValueError: If two names differ only by case.

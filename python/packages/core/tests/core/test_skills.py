@@ -2615,6 +2615,22 @@ class TestFileSkillNameCollisions:
         assert await skill.get_resource("RUN.PY") is resource
         assert await skill.get_script("run.py") is script
 
+    @pytest.mark.parametrize("names", [("\u03a3.md", "\u03c2.md"), ("stra\u00dfe.md", "strasse.md")])
+    async def test_unicode_names_with_distinct_lowercase_keys_remain_distinct(self, names: tuple[str, str]) -> None:
+        resources = [InlineSkillResource(name=name, content=name) for name in names]
+        scripts = [FileSkillScript(name=name, full_path=f"{_ABS}\\{name}") for name in names]
+        skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="example", description="Example."),
+            content="Instructions.",
+            path=_ABS,
+            resources=resources,
+            scripts=scripts,
+        )
+
+        for resource, script in zip(resources, scripts):
+            assert await skill.get_resource(resource.name.lower()) is resource
+            assert await skill.get_script(script.name.lower()) is script
+
     async def test_distinct_names_allow_case_insensitive_lookup(self) -> None:
         names = ["readme.md", "refs/one.md", "REFS/two.md"]
         resources = [InlineSkillResource(name=name, content=name) for name in names]

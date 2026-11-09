@@ -2155,6 +2155,12 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     [InlineData("test.md", "TEST.md")]
     [InlineData("refs/test.md", "REFS/test.md")]
     [InlineData("scripts/run.py", "scripts/RUN.py")]
+    [InlineData("\u00e9.md", "\u00c9.md")]
+    [InlineData("scripts/\u00e9.py", "scripts/\u00c9.py")]
+#if NET10_0_OR_GREATER
+    [InlineData("\u03a3.md", "\u03c2.md")]
+    [InlineData("scripts/\u03a3.py", "scripts/\u03c2.py")]
+#endif
     public async Task GetSkillsAsync_NamesDifferOnlyByCase_SkipsSkillAsync(string firstName, string secondName)
     {
         // Arrange
