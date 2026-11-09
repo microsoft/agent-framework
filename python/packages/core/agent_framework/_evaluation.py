@@ -59,6 +59,7 @@ from ._tools import FunctionTool, normalize_tools
 from ._types import (
     _EVALUATION_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentResponse,
+    Content,
     Message,
 )
 
@@ -127,6 +128,11 @@ class ConversationSplit(str, Enum):
       the query; the entire remainder of the conversation is the response.
       Evaluates whether the *whole conversation trajectory* served the
       original request.
+
+    The split also applies to the local tool checks (``tool_called_check``,
+    ``tool_calls_present`` and ``tool_call_args_match``): they only count tool
+    calls on the response side.  To check tool calls across a whole multi-turn
+    conversation, use ``FULL``.
 
     For custom splits, pass any callable with the ``ConversationSplitter``
     signature.
@@ -199,7 +205,8 @@ class EvalItem:
         expected_tool_calls: Expected tool calls for tool-correctness
             evaluation.  See :class:`ExpectedToolCall`.
         split_strategy: Split strategy controlling how ``query`` and
-            ``response`` are derived from the conversation. Defaults to
+            ``response`` are derived from the conversation, and which tool
+            calls the local tool checks count. Defaults to
             ``ConversationSplit.LAST_TURN``.
     """
 
@@ -1127,23 +1134,21 @@ def tool_called_check(*tool_names: str, mode: Literal["all", "any"] = "all") -> 
     def _check(item: EvalItem) -> CheckResult:
         expected = set(tool_names)
         called: set[str] = set()
-        _, response_msgs = item.split_messages()
-        for msg in response_msgs:
-            for c in msg.contents or []:
-                if c.type == "function_call" and c.name:
-                    called.add(c.name)
-                    if mode == "all" and expected.issubset(called):
-                        return CheckResult(
-                            passed=True,
-                            reason=f"All expected tools called: {sorted(called)}",
-                            check_name="tool_called",
-                        )
-                    if mode == "any" and expected & called:
-                        return CheckResult(
-                            passed=True,
-                            reason=f"Expected tool found: {sorted(expected & called)}",
-                            check_name="tool_called",
-                        )
+        for c in _response_function_calls(item):
+            if c.name:
+                called.add(c.name)
+                if mode == "all" and expected.issubset(called):
+                    return CheckResult(
+                        passed=True,
+                        reason=f"All expected tools called: {sorted(called)}",
+                        check_name="tool_called",
+                    )
+                if mode == "any" and expected & called:
+                    return CheckResult(
+                        passed=True,
+                        reason=f"Expected tool found: {sorted(expected & called)}",
+                        check_name="tool_called",
+                    )
         if mode == "all":
             missing = [t for t in tool_names if t not in called]
             if missing:
@@ -1166,30 +1171,39 @@ def tool_called_check(*tool_names: str, mode: Literal["all", "any"] = "all") -> 
     return _check
 
 
+def _response_function_calls(item: EvalItem) -> list[Content]:
+    """Return the function calls on the response side of the item's conversation split.
+
+    The local tool checks use this so that they look at the same messages as
+    ``item.response``: calls on the query side, such as calls from earlier
+    turns of a per-turn item, are not counted.
+    """
+    _, response_msgs = item.split_messages()
+    return [c for msg in response_msgs for c in msg.contents or [] if c.type == "function_call"]
+
+
 def _extract_tool_calls(item: EvalItem) -> list[tuple[str, dict[str, Any] | None]]:
     """Extract (name, arguments) pairs from function calls on the response side of the split."""
     calls: list[tuple[str, dict[str, Any] | None]] = []
-    _, response_msgs = item.split_messages()
-    for msg in response_msgs:
-        for c in msg.contents or []:
-            if c.type == "function_call" and c.name:
-                args: dict[str, Any] | None = None
-                if c.arguments is None:
+    for c in _response_function_calls(item):
+        if c.name:
+            args: dict[str, Any] | None = None
+            if c.arguments is None:
+                args = {}
+            elif isinstance(c.arguments, Mapping):
+                args = dict(c.arguments)
+            elif isinstance(c.arguments, str):
+                stripped = c.arguments.strip()
+                if not stripped:
                     args = {}
-                elif isinstance(c.arguments, Mapping):
-                    args = dict(c.arguments)
-                elif isinstance(c.arguments, str):
-                    stripped = c.arguments.strip()
-                    if not stripped:
-                        args = {}
-                    else:
-                        try:
-                            parsed = json.loads(stripped)
-                            if isinstance(parsed, dict):
-                                args = cast(dict[str, Any], parsed)
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                calls.append((c.name, args))
+                else:
+                    try:
+                        parsed = json.loads(stripped)
+                        if isinstance(parsed, dict):
+                            args = cast(dict[str, Any], parsed)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            calls.append((c.name, args))
     return calls
 
 

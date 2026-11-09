@@ -1015,6 +1015,78 @@ class TestToolChecksUseConversationSplit:
         assert tool_calls_present(item).passed is True
         assert tool_call_args_match(item).passed is True
 
+    def test_single_turn_last_turn_unchanged(self):
+        item = EvalItem(
+            conversation=self._two_turn_conversation()[:4],
+            expected_tool_calls=[ExpectedToolCall("get_weather", {"location": "NYC"})],
+        )
+
+        assert tool_called_check("get_weather")(item).passed is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert tool_calls_present(item).passed is True
+        assert tool_call_args_match(item).passed is True
+
+    def test_conversation_without_user_message_counts_all_calls(self):
+        # LAST_TURN treats the whole conversation as the response when there is no user message.
+        item = EvalItem(
+            conversation=self._two_turn_conversation()[1:4],
+            expected_tool_calls=[ExpectedToolCall("get_weather", {"location": "NYC"})],
+        )
+
+        assert tool_called_check("get_weather")(item).passed is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert tool_calls_present(item).passed is True
+        assert tool_call_args_match(item).passed is True
+
+    def test_custom_split_decides_which_calls_count(self):
+        conversation = self._two_turn_conversation()
+        expected = [ExpectedToolCall("get_weather", {"location": "NYC"})]
+
+        def call_on_response_side(conv: list[Message]) -> tuple[list[Message], list[Message]]:
+            return conv[:1], conv[1:]
+
+        def call_on_query_side(conv: list[Message]) -> tuple[list[Message], list[Message]]:
+            return conv[:4], conv[4:]
+
+        on_response = EvalItem(
+            conversation=conversation, expected_tool_calls=expected, split_strategy=call_on_response_side
+        )
+        assert tool_called_check("get_weather")(on_response).passed is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert tool_calls_present(on_response).passed is True
+        assert tool_call_args_match(on_response).passed is True
+
+        on_query = EvalItem(conversation=conversation, expected_tool_calls=expected, split_strategy=call_on_query_side)
+        assert tool_called_check("get_weather")(on_query).passed is False  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert tool_calls_present(on_query).passed is False
+        assert tool_call_args_match(on_query).passed is False
+
+    def test_calls_in_the_current_turn_count_and_match_arguments(self):
+        conversation = [
+            *self._two_turn_conversation()[:4],
+            Message("user", ["Compare Paris and Rome."]),
+            Message(
+                "assistant",
+                [
+                    Content.from_function_call("c2", "get_weather", arguments={"location": "Paris"}),
+                    Content.from_function_call("c3", "get_weather", arguments='{"location": "Rome"}'),
+                ],
+            ),
+            Message("tool", [Content.from_function_result("c2", result="Rain")]),
+            Message("tool", [Content.from_function_result("c3", result="Sunny")]),
+            Message("assistant", ["Rain in Paris, sun in Rome."]),
+        ]
+        _, second = EvalItem.per_turn_items(conversation)
+
+        second.expected_tool_calls = [
+            ExpectedToolCall("get_weather", {"location": "Paris"}),
+            ExpectedToolCall("get_weather", {"location": "Rome"}),
+        ]
+        assert tool_called_check("get_weather")(second).passed is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert tool_calls_present(second).passed is True
+        assert tool_call_args_match(second).passed is True
+
+        # NYC was only requested in the first turn.
+        second.expected_tool_calls = [ExpectedToolCall("get_weather", {"location": "NYC"})]
+        assert tool_call_args_match(second).passed is False
+
 
 class TestCoerceResultScoreError:
     """Tests for _coerce_result handling non-numeric score."""
