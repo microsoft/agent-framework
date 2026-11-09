@@ -912,6 +912,21 @@ async def test_full_batch_item_size_and_json_preflight() -> None:
         (Filter("count", "eq", True), "false", []),
         (Filter("count", "ne", True), 'IS_DEFINED(c["count"])', []),
         (
+            Filter("count", "eq", 2.0),
+            '(IS_DEFINED(c["count"]) AND NOT IS_NULL(c["count"]) AND c["count"] = @filter_0)',
+            [2.0],
+        ),
+        (
+            Filter("count", "ne", 2.0),
+            '(IS_DEFINED(c["count"]) AND (IS_NULL(c["count"]) OR c["count"] != @filter_0))',
+            [2.0],
+        ),
+        (
+            Filter("count", "gt", 1.5),
+            '(IS_DEFINED(c["count"]) AND NOT IS_NULL(c["count"]) AND c["count"] > @filter_0)',
+            [1.5],
+        ),
+        (
             Filter("count", "gt", 1),
             '(IS_DEFINED(c["count"]) AND NOT IS_NULL(c["count"]) AND c["count"] > @filter_0)',
             [1],
