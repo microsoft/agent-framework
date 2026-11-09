@@ -60,12 +60,10 @@ initialization and host tool callbacks cannot be interrupted. Host tools must
 enforce their own cancellation and time limits. Completed results and unrelated
 execution failures are not replaced with a timeout that arrives late.
 
-This behavior requires an SDK with the cross-thread `Sandbox.interrupt_handle()`
-API from [hyperlight-dev/hyperlight-sandbox#275](https://github.com/hyperlight-dev/hyperlight-sandbox/pull/275).
-The currently declared released dependency does not yet include this API;
-a compatible SDK release and dependency-floor update are required before shipping.
+This behavior uses the cross-thread `Sandbox.interrupt_handle()` API included
+in the required Hyperlight SDK 0.9.0 or later.
 
-To run the native regressions on a KVM host with the linked SDK and both
+To run the native regressions on a KVM host with the required SDK and both
 backends installed:
 
 ```bash
