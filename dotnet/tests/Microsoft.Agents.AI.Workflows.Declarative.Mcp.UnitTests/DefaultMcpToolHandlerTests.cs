@@ -110,7 +110,7 @@ public sealed class DefaultMcpToolHandlerTests
     public async Task InvokeToolAsync_WithEmptyAllowedHosts_ShouldRejectBeforeClientCreationAsync(string toolName)
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
         DefaultMcpToolHandler handler = new([], factory.Object, "workflow-mcp");
 
         // Act
@@ -118,7 +118,7 @@ public sealed class DefaultMcpToolHandlerTests
             "https://example.com/mcp", null, toolName, null, null, null));
 
         // Assert
-        factory.Verify(f => f.CreateClient(It.IsAny<string>()), Times.Never);
+        factory.Verify(f => f.CreateHandler(It.IsAny<string>()), Times.Never);
     }
 
     [Theory]
@@ -131,7 +131,7 @@ public sealed class DefaultMcpToolHandlerTests
     public async Task InvokeToolAsync_WithUnlistedDestination_ShouldRejectBeforeClientCreationAsync(string serverUrl)
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
         DefaultMcpToolHandler handler = new(["example.com"], factory.Object, "workflow-mcp");
 
         // Act
@@ -140,7 +140,7 @@ public sealed class DefaultMcpToolHandlerTests
 
         // Assert
         Assert.Contains("allowed hosts", exception.Message);
-        factory.Verify(f => f.CreateClient(It.IsAny<string>()), Times.Never);
+        factory.Verify(f => f.CreateHandler(It.IsAny<string>()), Times.Never);
     }
 
     [Theory]
@@ -149,7 +149,7 @@ public sealed class DefaultMcpToolHandlerTests
     public async Task InvokeToolAsync_WithHostHeader_ShouldRejectBeforeClientCreationAsync(string headerName)
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
         DefaultMcpToolHandler handler = new(["example.com"], factory.Object, "workflow-mcp");
         Dictionary<string, string> headers = new() { [headerName] = "other.example" };
 
@@ -159,14 +159,14 @@ public sealed class DefaultMcpToolHandlerTests
 
         // Assert
         Assert.Contains("Host header", exception.Message);
-        factory.Verify(f => f.CreateClient(It.IsAny<string>()), Times.Never);
+        factory.Verify(f => f.CreateHandler(It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
     public void Constructor_WithNullAllowedHosts_ShouldThrow()
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new();
+        Mock<IHttpMessageHandlerFactory> factory = new();
 
         // Act
         ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
@@ -189,7 +189,7 @@ public sealed class DefaultMcpToolHandlerTests
     public void Constructor_WithInvalidAllowedHost_ShouldThrow(string? allowedHost)
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new();
+        Mock<IHttpMessageHandlerFactory> factory = new();
 
         // Act
         ArgumentException exception = Assert.Throws<ArgumentException>(() =>

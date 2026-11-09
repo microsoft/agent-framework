@@ -36,9 +36,17 @@ same shared normalization as HTTP: case-insensitive IDN names, trailing DNS dots
 effective ports, without wildcards or implicit subdomains. Workflow-supplied Host headers are rejected.
 
 Both HTTP and HTTPS remain supported. Applications requiring HTTPS must enforce that additional policy.
-DNS, proxy configuration, and routing remain transport responsibilities. The application-owned factory
-must disable cookies and automatic redirects, and any delegating handlers must preserve the validated
-destination and bind credentials to the intended origin.
+DNS, proxy configuration, and routing remain transport responsibilities. The application supplies an
+`IHttpMessageHandlerFactory`; before sending, the handler validates that each pipeline terminates in an
+`HttpClientHandler`, or on .NET a `SocketsHttpHandler`, with cookies and automatic redirects disabled.
+Unknown primary transports and incomplete pipelines are rejected. Redirect responses are not followed.
+Application-owned delegating handlers must preserve the validated destination and bind credentials to
+the intended origin.
+
+The handler creates and disposes an HTTP client per invocation without disposing the factory-owned
+pipeline. Client configuration callbacks registered through `IHttpClientFactory` do not apply; configure
+headers and origin-bound authentication in delegating handlers. This matches the HTTP handler's ownership
+and transport-validation contract while keeping MCP protocol sessions separate per invocation.
 
 This changes behavior without removing the existing constructor. Callers must supply their intended
 destinations through the new overload; applications with different policies can provide an `IMcpToolHandler`.

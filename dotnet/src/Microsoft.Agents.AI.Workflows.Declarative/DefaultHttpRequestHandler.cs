@@ -135,7 +135,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
             }
 
             HttpMessageHandler messageHandler = this._httpMessageHandlerFactory.CreateHandler(this._httpClientName);
-            ValidateTransport(messageHandler);
+            HttpTransportValidation.Validate(messageHandler);
             using HttpClient client = new(messageHandler, disposeHandler: false);
             if (timeoutCts is not null)
             {
@@ -176,39 +176,6 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
         }
 
         throw new HttpRequestException($"The maximum number of HTTP redirects ({MaxAutomaticRedirections}) was exceeded.");
-    }
-
-    private static void ValidateTransport(HttpMessageHandler handler)
-    {
-        while (handler is DelegatingHandler delegatingHandler)
-        {
-            handler = delegatingHandler.InnerHandler
-                ?? throw new InvalidOperationException("The HTTP handler pipeline must have a primary handler.");
-        }
-
-        bool allowAutoRedirect;
-        bool useCookies;
-        if (handler is HttpClientHandler httpClientHandler)
-        {
-            allowAutoRedirect = httpClientHandler.AllowAutoRedirect;
-            useCookies = httpClientHandler.UseCookies;
-        }
-#if NET
-        else if (handler is SocketsHttpHandler socketsHttpHandler)
-        {
-            allowAutoRedirect = socketsHttpHandler.AllowAutoRedirect;
-            useCookies = socketsHttpHandler.UseCookies;
-        }
-#endif
-        else
-        {
-            throw new InvalidOperationException("The HTTP handler pipeline must use a supported primary HTTP handler.");
-        }
-
-        if (allowAutoRedirect || useCookies)
-        {
-            throw new InvalidOperationException("The primary HTTP handler must disable automatic redirects and cookies.");
-        }
     }
 
     private static async Task<string> ReadResponseBodyAsStringAsync(HttpContent content, CancellationToken cancellationToken)

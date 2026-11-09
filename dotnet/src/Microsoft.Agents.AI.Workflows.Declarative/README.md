@@ -69,9 +69,10 @@ Standalone GET/SSE streams for unsolicited server messages are disabled because
 this handler performs request-scoped tool operations, not background subscriptions.
 SSE responses to individual tool requests remain supported.
 
-Each factory-created HTTP client is disposed with its invocation. Construct the
-handler with an application-owned `IHttpClientFactory` through
-`DefaultMcpToolHandler(IEnumerable<string>, IHttpClientFactory, string)`. Supply
+Each per-invocation HTTP client is disposed with its invocation without disposing
+the pooled handler pipeline. Construct the handler with an application-owned
+`IHttpMessageHandlerFactory` through
+`DefaultMcpToolHandler(IEnumerable<string>, IHttpMessageHandlerFactory, string)`. Supply
 allowed hosts from application configuration, not workflow content. An empty
 list, including the existing two-argument constructor, denies all destinations.
 Hosts are exact DNS names or IP literals with optional ports; omitted ports
@@ -82,7 +83,7 @@ discovery. Workflow-supplied `Host` headers are rejected.
 Both HTTP and HTTPS are supported; enforce HTTPS separately if required.
 Allowing a name trusts the application's DNS and network routing.
 The third argument is a stable named-client configuration, or `string.Empty` for the
-default configuration. Factory-created wrappers are owned by the invocation;
+default configuration. HTTP client wrappers are owned by the invocation;
 the factory and its pooled handlers remain application-owned. There is no
 parameterless constructor or internally created HTTP pipeline. Configure handler
 reuse in the factory to avoid connection churn and port exhaustion.
@@ -101,10 +102,18 @@ services.AddHttpClient("workflow-mcp")
     .SetHandlerLifetime(TimeSpan.FromMinutes(2));
 
 services.AddSingleton<IMcpToolHandler>(serviceProvider => new DefaultMcpToolHandler(
-    ["mcp.example.com"], serviceProvider.GetRequiredService<IHttpClientFactory>(), "workflow-mcp"));
+    ["mcp.example.com"], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>(), "workflow-mcp"));
 ```
 
-Factory clients use the application's transport-policy configuration.
+The pipeline must terminate in an `HttpClientHandler`, or on .NET a
+`SocketsHttpHandler`, with automatic redirects and cookies disabled. The handler
+rejects unknown transports, incomplete pipelines, or either setting enabled
+before sending. Redirect responses are not followed.
+Application-owned delegating handlers must preserve the validated destination
+and must not follow redirects themselves. Client configuration callbacks
+registered through `IHttpClientFactory`, including default headers, timeout,
+and base address, do not apply. Configure headers and authentication in
+delegating handlers instead.
 Restrict credential-injecting handlers to the configured server origin.
 Do not store per-workflow credentials, cookies, or
 mutable origin policy in pooled handlers. Use a bounded set of configuration
@@ -117,7 +126,7 @@ discovery and legacy fallback. If the server's supported protocol is known, set
 the init-only property when constructing the handler:
 
 ```csharp
-DefaultMcpToolHandler handler = new(["mcp.example.com"], httpClientFactory, "workflow-mcp")
+DefaultMcpToolHandler handler = new(["mcp.example.com"], httpMessageHandlerFactory, "workflow-mcp")
 {
     ProtocolVersion = "2025-11-25"
 };
@@ -141,9 +150,9 @@ original error.
 
 Parameterless construction, the callback-based constructor, and handler-level
 `DisposeAsync`/`IAsyncDisposable` are not supported. Migrate default construction
-and callback authentication to application-owned named factory
-clients and origin-bound delegating handlers; every factory call must return a
-fresh HTTP client wrapper owned by the invocation, not a borrowed shared client.
+and callback authentication to an application-owned named message-handler factory
+and origin-bound delegating handlers. The default handler creates a fresh HTTP
+client wrapper per invocation while the factory owns the pooled pipeline.
 Remove handler `await using`/disposal calls and await active invocations in the host.
 
 This also changes the previous default behavior, which retained initialized MCP

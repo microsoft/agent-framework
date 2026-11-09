@@ -68,9 +68,8 @@ commitments.
   known, an explicit legacy version skips the discovery probe but still creates a fresh session per invocation.
   Selection restricts negotiation and incompatible versions fail. Configure separate handlers for differing server
   policies; explicit newer revisions still perform discovery and do not downgrade to legacy-only servers.
-- Configure factory clients with cookies and redirects disabled, certificate revocation checking enabled, and
-  origin-bound credential injection. Do not retain per-workflow credentials or mutable origin state in pooled
-  handlers, and do not derive client names from workflow IDs, credentials, or arbitrary URLs.
+- Keep HTTP pipeline configuration and origin-bound credential injection application-owned. Avoid retaining
+  per-workflow credentials or mutable origin state in pooled handlers.
 - Bound concurrent MCP work and supply invocation deadlines/cancellation from the host. The handler owns no shared
   disposable resources; cancel and await calls before disposing the application's HTTP factory infrastructure.
 - Keep configuration exposure restricted to intentional values.

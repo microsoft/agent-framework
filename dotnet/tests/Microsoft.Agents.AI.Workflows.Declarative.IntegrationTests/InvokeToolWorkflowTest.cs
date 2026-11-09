@@ -197,7 +197,7 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
                 CheckCertificateRevocationList = true
             });
         using ServiceProvider serviceProvider = services.BuildServiceProvider();
-        DefaultMcpToolHandler mcpToolProvider = new(["learn.microsoft.com"], serviceProvider.GetRequiredService<IHttpClientFactory>(), "workflow-mcp");
+        DefaultMcpToolHandler mcpToolProvider = new(["learn.microsoft.com"], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>(), "workflow-mcp");
         DeclarativeWorkflowOptions workflowOptions = await this.CreateOptionsAsync(
             externalConversation: false,
             mcpToolProvider: mcpToolProvider);

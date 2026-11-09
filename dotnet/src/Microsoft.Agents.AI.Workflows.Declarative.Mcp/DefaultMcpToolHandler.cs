@@ -23,7 +23,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// </summary>
 /// <remarks>
 /// Every invocation creates and disposes a separate MCP client, including <c>tools/list</c>.
-/// Factory-created HTTP clients reuse factory-managed handlers without sharing MCP session state.
+/// Per-invocation HTTP clients reuse factory-managed handlers without sharing MCP session state.
 /// Standalone GET streams for unsolicited server messages are disabled; request-scoped SSE responses remain supported.
 /// The handler owns no shared disposable resources. The host must await its invocations before disposing
 /// the application-owned factory infrastructure.
@@ -42,7 +42,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
 
     private static readonly JsonWriterOptions s_toolListJsonWriterOptions = new() { Indented = true };
 
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IHttpMessageHandlerFactory? _httpMessageHandlerFactory;
     private readonly string _httpClientName;
     private readonly AllowedHttpHosts _allowedHosts;
 
@@ -64,8 +64,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
     /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class using an application-provided HTTP client factory.
     /// </summary>
     /// <param name="httpClientFactory">
-    /// The factory that creates a separate <see cref="HttpClient"/> for every invocation.
-    /// Factory-created clients are disposed after MCP cleanup; the factory and its pooled handlers remain application-owned.
+    /// The application-owned factory. This parameter is retained for compatibility; this overload allows no destinations.
     /// </param>
     /// <param name="httpClientName">
     /// The stable named-client configuration to use, or an empty string for the default configuration.
@@ -80,13 +79,15 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
     /// </remarks>
     /// <exception cref="ArgumentNullException">A required argument is <see langword="null"/>.</exception>
     public DefaultMcpToolHandler(IHttpClientFactory httpClientFactory, string httpClientName)
-        : this([], httpClientFactory, httpClientName)
     {
+        Throw.IfNull(httpClientFactory);
+        this._httpClientName = Throw.IfNull(httpClientName);
+        this._allowedHosts = new([]);
     }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class with allowed hosts
-    /// and an application-provided HTTP client factory.
+    /// and an application-provided HTTP message handler factory.
     /// </summary>
     /// <param name="allowedHosts">
     /// The exact DNS names or IP literals, optionally including a port, the application permits.
@@ -97,17 +98,20 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
     /// Both HTTP and HTTPS are supported; authorization matches the host and effective port, not the scheme.
     /// DNS resolution and routing remain the responsibility of the HTTP transport.
     /// </param>
-    /// <param name="httpClientFactory">
-    /// The application-owned factory that creates a separate HTTP client for every invocation.
-    /// Configure cookies and automatic redirects off, certificate revocation checking on, and origin-bound
-    /// credential injection. Delegating handlers must preserve the validated destination.
+    /// <param name="httpMessageHandlerFactory">
+    /// The application-owned factory supplying pooled HTTP handler pipelines. The primary handler must be
+    /// an <see cref="HttpClientHandler"/> or, on .NET, a <c>SocketsHttpHandler</c>, with cookies and automatic
+    /// redirects disabled. Enable certificate revocation checking and bind credentials to the intended origin
+    /// in delegating handlers. Delegating handlers must preserve the validated destination.
+    /// Per-invocation HTTP clients do not dispose factory-owned pipelines. Client configuration registered
+    /// through <see cref="IHttpClientFactory"/> does not apply; configure headers in delegating handlers.
     /// </param>
     /// <param name="httpClientName">The stable named-client configuration, or an empty string for the default configuration.</param>
     /// <exception cref="ArgumentNullException">A required argument is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">An allowed host is invalid.</exception>
-    public DefaultMcpToolHandler(IEnumerable<string> allowedHosts, IHttpClientFactory httpClientFactory, string httpClientName)
+    public DefaultMcpToolHandler(IEnumerable<string> allowedHosts, IHttpMessageHandlerFactory httpMessageHandlerFactory, string httpClientName)
     {
-        this._httpClientFactory = Throw.IfNull(httpClientFactory);
+        this._httpMessageHandlerFactory = Throw.IfNull(httpMessageHandlerFactory);
         this._httpClientName = Throw.IfNull(httpClientName);
         this._allowedHosts = new(allowedHosts);
     }
@@ -227,7 +231,11 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
             throw new HttpRequestException("The request host and port are not in the allowed hosts list.");
         }
 
-        HttpClient httpClient = this._httpClientFactory.CreateClient(this._httpClientName);
+        IHttpMessageHandlerFactory factory = this._httpMessageHandlerFactory
+            ?? throw new InvalidOperationException("MCP invocations require an HTTP message handler factory.");
+        HttpMessageHandler messageHandler = factory.CreateHandler(this._httpClientName);
+        HttpTransportValidation.Validate(messageHandler);
+        HttpClient httpClient = new(messageHandler, disposeHandler: false);
         HttpClientTransport? transport = null;
         try
         {

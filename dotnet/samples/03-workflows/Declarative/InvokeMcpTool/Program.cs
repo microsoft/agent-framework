@@ -74,7 +74,7 @@ internal sealed class Program
         await using ServiceProvider serviceProvider = services.BuildServiceProvider();
         DefaultMcpToolHandler mcpToolHandler = new(
             ["learn.microsoft.com", "mcp.ai.azure.com"],
-            serviceProvider.GetRequiredService<IHttpClientFactory>(), McpHttpClientName);
+            serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>(), McpHttpClientName);
 
         // Create the workflow factory with MCP tool provider
         WorkflowFactory workflowFactory = new("InvokeMcpTool.yaml", foundryEndpoint)
