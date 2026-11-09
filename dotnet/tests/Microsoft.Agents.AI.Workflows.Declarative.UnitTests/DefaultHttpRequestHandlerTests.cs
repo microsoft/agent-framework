@@ -262,6 +262,39 @@ public sealed class DefaultHttpRequestHandlerTests
         Assert.Contains("must have a primary handler", exception.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SendAsyncRejectsCyclicPipelineBeforeTransportAsync(bool multipleHandlers)
+    {
+        // Arrange
+        using HttpMessageHandler primary = Mock.Of<HttpMessageHandler>();
+        using DelegatingHandler first = new Mock<DelegatingHandler> { CallBase = true }.Object;
+        using DelegatingHandler second = new Mock<DelegatingHandler> { CallBase = true }.Object;
+        first.InnerHandler = multipleHandlers ? second : first;
+        second.InnerHandler = first;
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(first).Object);
+
+        // Act
+        Task<Exception?> invocation = Task.Run(async () => await Record.ExceptionAsync(() =>
+            handler.SendAsync(new HttpRequestInfo { Url = TestUrl }, TestContext.Current.CancellationToken)));
+        try
+        {
+            // Assert
+            Task completed = await Task.WhenAny(invocation, Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+            Assert.True(ReferenceEquals(invocation, completed), "Cyclic pipeline validation did not complete.");
+            InvalidOperationException exception = Assert.IsType<InvalidOperationException>(await invocation);
+            Assert.Contains("cycle", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            // Break the cycle before disposing the handlers.
+            first.InnerHandler = primary;
+            second.InnerHandler = primary;
+            await invocation;
+        }
+    }
+
     [Fact]
     public async Task SendAsyncWithNullRequestThrowsAsync()
     {

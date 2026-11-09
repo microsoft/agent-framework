@@ -169,6 +169,42 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Factory_CyclicPipeline_RejectsBeforeSendingAsync(bool multipleHandlers)
+    {
+        // Arrange
+        using HttpMessageHandler primary = Mock.Of<HttpMessageHandler>();
+        using DelegatingHandler first = new Mock<DelegatingHandler> { CallBase = true }.Object;
+        using DelegatingHandler second = new Mock<DelegatingHandler> { CallBase = true }.Object;
+        first.InnerHandler = multipleHandlers ? second : first;
+        second.InnerHandler = first;
+        Mock<IHttpMessageHandlerFactory> factory = new();
+        factory.Setup(f => f.CreateHandler("workflow-mcp")).Returns(first);
+        DefaultMcpToolHandler handler = new(["mcp.example"], factory.Object, "workflow-mcp");
+
+        // Act
+        Task<Exception?> invocation = Task.Run(async () => await Record.ExceptionAsync(() => handler.InvokeToolAsync(
+            "https://mcp.example/api", null, "ping", null, null, null, TestContext.Current.CancellationToken)));
+        try
+        {
+            // Assert
+            Task completed = await Task.WhenAny(invocation, Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+            Assert.True(ReferenceEquals(invocation, completed), "Cyclic pipeline validation did not complete.");
+            InvalidOperationException exception = Assert.IsType<InvalidOperationException>(await invocation);
+            Assert.Contains("cycle", exception.Message, StringComparison.Ordinal);
+            factory.Verify(f => f.CreateHandler("workflow-mcp"), Times.Once);
+        }
+        finally
+        {
+            // Break the cycle before disposing the handlers.
+            first.InnerHandler = primary;
+            second.InnerHandler = primary;
+            await invocation;
+        }
+    }
+
+    [Theory]
     [InlineData(null, 2)]
     [InlineData("2025-11-25", 0)]
     public async Task ProtocolSelection_PreservesPerInvocationInitializationAsync(string? protocolVersion, int expectedDiscoveries)
