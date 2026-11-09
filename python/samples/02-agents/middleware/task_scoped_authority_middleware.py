@@ -91,16 +91,17 @@ BILLING_KEY = SigningKey.generate()
 TRUSTED_ROOTS: list[PublicKey] = [ROOT_KEY.public_key]
 
 # The coordinator may read any invoice, refund up to $500 on any invoice, and delegate billing
-# work with a ceiling of up to $500.
+# work with a ceiling of up to $500. Amounts have a lower bound too: a range with only a maximum
+# would also allow zero and negative refunds.
 COORDINATOR_WARRANT: Warrant = (
     Warrant
     .mint_builder()
     .capability(
         "ask_billing_agent",
-        {"invoice_id": Wildcard(), "max_refund_cents": Range(max=50_000), "request": Wildcard()},
+        {"invoice_id": Wildcard(), "max_refund_cents": Range(min=1, max=50_000), "request": Wildcard()},
     )
     .capability("read_invoice", {"invoice_id": Wildcard()})
-    .capability("issue_refund", {"invoice_id": Wildcard(), "amount_cents": Range(max=50_000)})
+    .capability("issue_refund", {"invoice_id": Wildcard(), "amount_cents": Range(min=1, max=50_000)})
     .holder(COORDINATOR_KEY.public_key)
     .ttl(600)
     .mint(ROOT_KEY)
@@ -120,7 +121,7 @@ def delegate_billing_warrant(invoice_id: str, max_refund_cents: int) -> Warrant:
         .capability("read_invoice", {"invoice_id": Exact(invoice_id)})
         .capability(
             "issue_refund",
-            {"invoice_id": Exact(invoice_id), "amount_cents": Range(max=max_refund_cents)},
+            {"invoice_id": Exact(invoice_id), "amount_cents": Range(min=1, max=max_refund_cents)},
         )
         .holder(BILLING_KEY.public_key)
         .ttl(300)
@@ -237,9 +238,8 @@ async def main() -> None:
     """Run a support ticket through a coordinator that delegates to a task-scoped billing agent."""
     print("=== Task-Scoped Authority Middleware Example ===")
 
-    async with AzureCliCredential() as credential:
-        client = FoundryChatClient(credential=credential)
-
+    # The client owns its connections, so close it along with the credential.
+    async with AzureCliCredential() as credential, FoundryChatClient(credential=credential) as client:
         # 5. The coordinator is checked by the same middleware, against its own wider warrant.
         coordinator = Agent(
             client=client,
