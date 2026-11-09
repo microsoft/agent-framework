@@ -5350,8 +5350,10 @@ class TestSecureAgentSessionIsolation:
                 session.session_id,
                 state=cast(dict[str, Any], session.state[history.source_id]),
             )
+            stored_messages = cast(list[Message], session.state[history.source_id]["messages"])
             coverage = json.loads(session.state[config.source_id]["history_reconstruction_coverage"])
-            assert coverage[history.source_id]["count"] == len(loaded_messages)
+            assert len(loaded_messages) < len(stored_messages)
+            assert coverage[history.source_id]["count"] == len(stored_messages)
 
         if stream:
             await agent.run("Run the protected action.", session=session, stream=True).get_final_response()

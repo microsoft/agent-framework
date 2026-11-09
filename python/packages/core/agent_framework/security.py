@@ -49,12 +49,10 @@ from ._middleware import (
 from ._serialization import SerializationMixin
 from ._sessions import (
     _PERSISTED_HISTORY_MESSAGES_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
-    _TRUSTED_HISTORY_PROJECTIONS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentSession,
     ContextProvider,
     HistoryProvider,
     SessionContext,
-    _TrustedHistoryProjection,  # pyright: ignore[reportPrivateUsage]
 )
 from ._tools import (
     _APPROVAL_REQUEST_ID_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -1643,22 +1641,6 @@ def _covered_history_prefix(record: Any, digests: Sequence[str]) -> int:
     return count if expected["digest"] == digest else 0
 
 
-def _trusted_history_projection(
-    context: SessionContext,
-    source_id: str,
-    *,
-    phase: str,
-) -> _TrustedHistoryProjection | None:
-    """Return one framework-owned compaction projection for a history source."""
-    raw_projections = context.metadata.get(_TRUSTED_HISTORY_PROJECTIONS_METADATA_KEY)
-    if not isinstance(raw_projections, Mapping):
-        return None
-    projection = cast(Mapping[str, Any], raw_projections).get(source_id)
-    if not isinstance(projection, _TrustedHistoryProjection) or projection.phase != phase:
-        return None
-    return projection
-
-
 def _history_record_covers_all(record: Any, messages: Sequence[Message]) -> bool:
     """Return whether one coverage record authenticates the complete message projection."""
     projection = _control_free_replay_projection(messages, include_security_labels=True)
@@ -1668,70 +1650,56 @@ def _history_record_covers_all(record: Any, messages: Sequence[Message]) -> bool
     return _covered_history_prefix(record, digests) == len(digests)
 
 
-def _trusted_projection_covered_indices(
+def _covered_history_subsequence_indices(
     messages: Sequence[Message],
-    projection: _TrustedHistoryProjection,
+    authoritative_messages: Sequence[Message],
     *,
     persisted_record: Any,
     run_record: Any,
-) -> set[int] | None:
-    """Return retained indices whose unchanged pre-compaction messages were fully covered."""
-    if (
-        len(messages) != len(projection.projected_messages)
-        or len(messages) != len(projection.retained_original_indices)
-        or tuple(sorted(set(projection.retained_original_indices))) != projection.retained_original_indices
-        or any(
-            index < 0 or index >= len(projection.original_messages) for index in projection.retained_original_indices
-        )
-    ):
-        return None
+) -> set[int]:
+    """Return unchanged messages retained from a fully covered session-state transcript."""
     if not (
-        _history_record_covers_all(persisted_record, projection.original_messages)
-        or _history_record_covers_all(run_record, projection.original_messages)
+        _history_record_covers_all(persisted_record, authoritative_messages)
+        or _history_record_covers_all(run_record, authoritative_messages)
     ):
-        return None
-
-    original_projection = _control_free_replay_projection(
-        projection.original_messages,
+        return set()
+    authoritative_projection = _control_free_replay_projection(
+        authoritative_messages,
         include_security_labels=True,
     )
-    if original_projection is None:
-        return None
-    original_indices, original_digests = original_projection
-    original_digest_by_index = dict(zip(original_indices, original_digests, strict=True))
+    current_projection = _control_free_replay_projection(messages, include_security_labels=True)
+    if authoritative_projection is None or current_projection is None:
+        return set()
+    _, authoritative_digests = authoritative_projection
+    current_indices, current_digests = current_projection
 
     covered_indices: set[int] = set()
-    for current_index, (message, projected_message, original_index) in enumerate(
-        zip(
-            messages,
-            projection.projected_messages,
-            projection.retained_original_indices,
-            strict=True,
-        )
-    ):
-        original_digest = original_digest_by_index.get(original_index)
-        if original_digest is None:
+    authoritative_index = 0
+    for current_index, current_digest in zip(current_indices, current_digests, strict=True):
+        while (
+            authoritative_index < len(authoritative_digests)
+            and authoritative_digests[authoritative_index] != current_digest
+        ):
+            authoritative_index += 1
+        if authoritative_index == len(authoritative_digests):
             continue
-        message_digest = _message_coverage_digest(
-            message,
-            exclude_approval_controls=True,
-            include_security_labels=True,
-        )
-        projected_digest = _message_coverage_digest(
-            projected_message,
-            exclude_approval_controls=True,
-            include_security_labels=True,
-        )
-        if message_digest == projected_digest == original_digest:
-            covered_indices.add(current_index)
+        covered_indices.add(current_index)
+        authoritative_index += 1
     return covered_indices
 
 
-def _messages_match_coverage_identity(left: Message, right: Message) -> bool:
-    """Return whether two messages have the same security-relevant replay identity."""
-    left_digest = _message_coverage_digest(left, include_security_labels=True)
-    right_digest = _message_coverage_digest(right, include_security_labels=True)
-    return left_digest is not None and left_digest == right_digest
+def _session_history_messages(session: AgentSession, source_id: str) -> Sequence[Message] | None:
+    """Return the full in-session transcript behind a projected history view."""
+    raw_source_state = session.state.get(source_id)
+    if not isinstance(raw_source_state, Mapping):
+        return None
+    raw_messages = cast(Mapping[str, Any], raw_source_state).get("messages")
+    if not isinstance(raw_messages, list):
+        return None
+    raw_message_items = cast(list[Any], raw_messages)
+    if any(not isinstance(message, Message) for message in raw_message_items):
+        return None
+    return cast(list[Message], raw_message_items)
 
 
 def _decoded_history_coverage(state: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1744,55 +1712,6 @@ def _decoded_history_coverage(state: Mapping[str, Any]) -> Mapping[str, Any]:
     except ValueError:
         return {}
     return cast(Mapping[str, Any], decoded_coverage) if isinstance(decoded_coverage, Mapping) else {}
-
-
-def _project_persisted_history_after_compaction(
-    context: SessionContext,
-    *,
-    source_id: str,
-    persisted_messages: Sequence[Message] | None,
-    persisted_record: Any,
-    run_record: Any,
-) -> list[Message] | None:
-    """Project exact persisted history through one authenticated removal-only compaction."""
-    projection = _trusted_history_projection(context, source_id, phase="after_run")
-    if projection is None:
-        return None
-    projected_covered_indices = _trusted_projection_covered_indices(
-        projection.projected_messages,
-        projection,
-        persisted_record=persisted_record,
-        run_record=run_record,
-    )
-    projected_control_free = _control_free_replay_projection(
-        projection.projected_messages,
-        include_security_labels=True,
-    )
-    if (
-        projected_covered_indices is None
-        or projected_control_free is None
-        or not set(projected_control_free[0]).issubset(projected_covered_indices)
-    ):
-        return None
-
-    projected_messages = list(projection.projected_messages)
-    if persisted_messages is None:
-        return projected_messages
-    if len(persisted_messages) < len(projection.original_messages):
-        return None
-    if any(
-        not _messages_match_coverage_identity(original, persisted)
-        for original, persisted in zip(
-            projection.original_messages,
-            persisted_messages[: len(projection.original_messages)],
-            strict=True,
-        )
-    ):
-        return None
-    return [
-        *projected_messages,
-        *persisted_messages[len(projection.original_messages) :],
-    ]
 
 
 class _ReplaySecurityChatMiddleware(ChatMiddleware):
@@ -4896,7 +4815,6 @@ class SecureAgentConfig(ContextProvider):
         history_fold_guard: dict[str, Any],
         use_persisted_coverage: bool,
         commit_coverage: bool,
-        trusted_projections: Mapping[str, _TrustedHistoryProjection] | None = None,
     ) -> None:
         """Fold uncovered history messages and optionally commit authenticated coverage."""
         persisted_coverage: Mapping[str, Any] = _decoded_history_coverage(state) if use_persisted_coverage else {}
@@ -4922,16 +4840,16 @@ class SecureAgentConfig(ContextProvider):
                     _covered_history_prefix(history_fold_guard.get(source_id), digests),
                 )
                 covered_indices = set(indices[:covered_prefix])
-                trusted_projection = trusted_projections.get(source_id) if trusted_projections is not None else None
-                if trusted_projection is not None and trusted_projection.phase == "before_run":
-                    projected_covered_indices = _trusted_projection_covered_indices(
-                        messages,
-                        trusted_projection,
-                        persisted_record=persisted_coverage.get(source_id),
-                        run_record=history_fold_guard.get(source_id),
+                authoritative_messages = _session_history_messages(session, source_id)
+                if authoritative_messages is not None:
+                    covered_indices.update(
+                        _covered_history_subsequence_indices(
+                            messages,
+                            authoritative_messages,
+                            persisted_record=persisted_coverage.get(source_id),
+                            run_record=history_fold_guard.get(source_id),
+                        )
                     )
-                    if projected_covered_indices is not None:
-                        covered_indices.update(projected_covered_indices)
                 current_record = _history_coverage_record(digests)
                 history_fold_guard[source_id] = current_record
             else:
@@ -4975,12 +4893,6 @@ class SecureAgentConfig(ContextProvider):
         commit_coverage: bool,
     ) -> None:
         """Fold loaded history-provider messages into one FIDES scope."""
-        raw_projections = context.metadata.get(_TRUSTED_HISTORY_PROJECTIONS_METADATA_KEY)
-        trusted_projections = (
-            cast(Mapping[str, _TrustedHistoryProjection], raw_projections)
-            if isinstance(raw_projections, Mapping)
-            else None
-        )
         SecureAgentConfig._fold_history_message_map(
             scope,
             context.context_messages,
@@ -4991,7 +4903,6 @@ class SecureAgentConfig(ContextProvider):
             history_fold_guard=SecureAgentConfig._history_fold_guard(context),
             use_persisted_coverage=use_persisted_coverage,
             commit_coverage=commit_coverage,
-            trusted_projections=trusted_projections,
         )
 
     async def after_run(
@@ -5022,39 +4933,14 @@ class SecureAgentConfig(ContextProvider):
     ) -> None:
         """Authenticate exact framework-owned history persisted for the completed run."""
         history_source_ids = self._history_source_ids(agent)
-        skip_excluded_source_ids = {
-            provider.source_id
-            for provider in getattr(agent, "context_providers", ())
-            if (
-                isinstance(provider, HistoryProvider)
-                and provider.load_messages
-                and getattr(provider, "skip_excluded", False) is True
-            )
-        }
         del session
         raw_persisted = context.metadata.get(_PERSISTED_HISTORY_MESSAGES_METADATA_KEY)
-        persisted: dict[str, Sequence[Message]] = (
-            dict(cast(Mapping[str, Sequence[Message]], raw_persisted)) if isinstance(raw_persisted, Mapping) else {}
-        )
-        persisted_coverage = _decoded_history_coverage(state)
-        history_fold_guard = self._history_fold_guard(context)
-        for source_id in history_source_ids.intersection(skip_excluded_source_ids):
-            projected_history = _project_persisted_history_after_compaction(
-                context,
-                source_id=source_id,
-                persisted_messages=persisted.get(source_id),
-                persisted_record=persisted_coverage.get(source_id),
-                run_record=history_fold_guard.get(source_id),
-            )
-            if projected_history is not None:
-                persisted[source_id] = projected_history
-
-        covered_source_ids = history_source_ids.intersection(persisted)
-        if covered_source_ids:
+        if isinstance(raw_persisted, Mapping):
+            persisted = cast(Mapping[str, Sequence[Message]], raw_persisted)
             self._store_history_coverage(
                 state,
                 persisted,
-                covered_source_ids,
+                history_source_ids.intersection(persisted),
             )
         elif not history_source_ids:
             self._store_history_coverage(state, {}, set())
