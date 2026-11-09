@@ -51,7 +51,7 @@ or `"inference_service"`. Background execution uses `background_source="host_man
 agent's developer-owned HistoryProvider or downstream service storage choices. Configure the outer
 storage backend with `response_store=`, not the removed constructor `store=` alias. The caller's
 wire-level `store` flag is unchanged. See the
-[constructor migration guide](../../../python/packages/foundry_hosting/README.md#migrate-historybackground-names-and-the-response-store-argument)
+[constructor migration guide](https://github.com/microsoft/agent-framework/blob/main/python/packages/foundry_hosting/README.md#migrate-historybackground-names-and-the-response-store-argument)
 for renamed literals; do not copy old names into new applications.
 
 ## Deployment readiness
