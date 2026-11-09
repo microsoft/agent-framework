@@ -91,15 +91,21 @@ class _GuestExecutionTimeout(TimeoutError):
 
 class _ExecutionControl:
     def __init__(self, timeout_seconds: float) -> None:
-        self._timeout_seconds = timeout_seconds
+        self._remaining_seconds = timeout_seconds
         self._deadline: float | None = None
         self._cancelled = _execution_cancellation.get() or threading.Event()
 
     def start(self) -> float:
         if self._deadline is None:
-            self._deadline = time.monotonic() + self._timeout_seconds
+            self._deadline = time.monotonic() + self._remaining_seconds
         self.check()
         return self._deadline
+
+    def pause(self) -> None:
+        self.check()
+        if self._deadline is not None:
+            self._remaining_seconds = self._deadline - time.monotonic()
+            self._deadline = None
 
     def check(self) -> None:
         if self._cancelled.is_set():
@@ -1620,6 +1626,9 @@ class _SandboxRegistry(SandboxRuntime):
                 control.run(sandbox, "None")
 
             snapshot = sandbox.snapshot()
+            # Initialization and execution are separate worker submissions; do not
+            # charge the invocation for queue time between them.
+            control.pause()
             return sandbox, snapshot
 
         worker = _SandboxWorker()

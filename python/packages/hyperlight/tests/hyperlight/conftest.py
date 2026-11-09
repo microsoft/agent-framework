@@ -16,6 +16,181 @@ from agent_framework_hyperlight import _execute_code_tool as execute_code_module
 
 
 @pytest.fixture
+def execution_clock(monkeypatch: pytest.MonkeyPatch):
+    clock = SimpleNamespace(now=100.0)
+    monkeypatch.setattr(execute_code_module, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    return clock
+
+
+@pytest.fixture
+def interrupted_initialization(monkeypatch: pytest.MonkeyPatch, execution_clock, request: pytest.FixtureRequest):
+    stage = request.param
+    entered = threading.Event()
+    release = threading.Event()
+    interrupted = threading.Event()
+    cancelled = threading.Event()
+    events: list[tuple[int, str, int]] = []
+    workers: list[Any] = []
+    builds = 0
+
+    original_init = execute_code_module._SandboxWorker.__init__
+
+    def initialize_worker(self, **kwargs: Any) -> None:
+        original_init(self, **kwargs)
+        workers.append(self)
+
+    class Snapshot:
+        def __init__(self, generation: int) -> None:
+            self.generation = generation
+
+        def __del__(self) -> None:
+            events.append((self.generation, "drop_snapshot", threading.get_ident()))
+
+    class Sandbox:
+        def __init__(self, **kwargs: Any) -> None:
+            nonlocal builds, cancelled
+            builds += 1
+            self.generation = builds
+            events.append((self.generation, "build", threading.get_ident()))
+            if self.generation == 1:
+                cancellation = execute_code_module._execution_cancellation.get()
+                assert cancellation is not None
+                cancelled = cancellation
+            if self.generation == 1 and stage == "build":
+                entered.set()
+                if not release.wait(5):
+                    raise RuntimeError("Sandbox construction was not released.")
+
+        def interrupt_handle(self) -> SimpleNamespace:
+            def kill() -> bool:
+                interrupted.set()
+                return True
+
+            return SimpleNamespace(kill=kill)
+
+        def run(self, code: str) -> SimpleNamespace:
+            events.append((self.generation, "warmup" if code == "None" else "run", threading.get_ident()))
+            if self.generation == 1 and stage == "warmup":
+                entered.set()
+                if not interrupted.wait(5):
+                    raise RuntimeError("Warm-up was not interrupted.")
+                raise InterruptedError("Warm-up interrupted.")
+            return SimpleNamespace(success=True, stdout="ok\n", stderr="")
+
+        def snapshot(self) -> Snapshot:
+            snapshot = Snapshot(self.generation)
+            if self.generation == 1 and stage == "snapshot":
+                entered.set()
+                if not release.wait(5):
+                    raise RuntimeError("Snapshot creation was not released.")
+            return snapshot
+
+        def restore(self, snapshot: Snapshot) -> None:
+            events.append((self.generation, "restore", threading.get_ident()))
+
+        def __del__(self) -> None:
+            events.append((self.generation, "drop", threading.get_ident()))
+
+    monkeypatch.setattr(execute_code_module._SandboxWorker, "__init__", initialize_worker)
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: Sandbox)
+    execute_code = HyperlightExecuteCodeTool(execution_timeout_seconds=10)
+    yield SimpleNamespace(
+        tool=execute_code,
+        clock=execution_clock,
+        entered=entered,
+        release=release,
+        interrupted=interrupted,
+        cancellation=lambda: cancelled,
+        events=events,
+        workers=workers,
+        stage=stage,
+    )
+    release.set()
+    interrupted.set()
+    cast(Any, execute_code._registry).close()
+
+
+@pytest.fixture
+def concurrent_cold_execution(monkeypatch: pytest.MonkeyPatch, execution_clock, request: pytest.FixtureRequest):
+    initialized = threading.Event()
+    intervening_entered = threading.Event()
+    cold_queued = threading.Event()
+    interrupted = threading.Event()
+    executed: list[str] = []
+
+    class Sandbox:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def interrupt_handle(self) -> SimpleNamespace:
+            def kill() -> bool:
+                interrupted.set()
+                return True
+
+            return SimpleNamespace(kill=kill)
+
+        def run(self, code: str) -> SimpleNamespace:
+            executed.append(code)
+            if code == "None":
+                execution_clock.now += 3
+            elif code == "intervening":
+                intervening_entered.set()
+                if not cold_queued.wait(5):
+                    raise RuntimeError("Cold invocation was not queued.")
+                execution_clock.now += 20
+            else:
+                execution_clock.now += request.param
+                if request.param > 7:
+                    if not interrupted.wait(5):
+                        raise RuntimeError("Cold invocation was not interrupted.")
+                    raise InterruptedError("Cold invocation interrupted.")
+            return SimpleNamespace(success=True, stdout="ok\n", stderr="")
+
+        def snapshot(self) -> object:
+            return object()
+
+        def restore(self, snapshot: object) -> None:
+            pass
+
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: Sandbox)
+    execute_code = HyperlightExecuteCodeTool(execution_timeout_seconds=10)
+    registry = cast(Any, execute_code._registry)
+    get_entry = registry._get_or_create_entry
+
+    def get_entry_before_first_submission(config, *, control=None):
+        entry = get_entry(config, control=control)
+        if not initialized.is_set():
+            cancellation = execute_code_module._execution_cancellation.get()
+            submit = entry.worker._executor.submit
+
+            def submit_and_signal(fn, *args, **kwargs):
+                future = submit(fn, *args, **kwargs)
+                if execute_code_module._execution_cancellation.get() is cancellation:
+                    cold_queued.set()
+                return future
+
+            monkeypatch.setattr(entry.worker._executor, "submit", submit_and_signal)
+            initialized.set()
+            if not intervening_entered.wait(5):
+                raise RuntimeError("Intervening invocation did not start.")
+        return entry
+
+    monkeypatch.setattr(registry, "_get_or_create_entry", get_entry_before_first_submission)
+    yield SimpleNamespace(
+        tool=execute_code,
+        initialized=initialized,
+        intervening_entered=intervening_entered,
+        cold_queued=cold_queued,
+        executed=executed,
+        duration=request.param,
+    )
+    intervening_entered.set()
+    cold_queued.set()
+    interrupted.set()
+    registry.close()
+
+
+@pytest.fixture
 def interruptible_execution(monkeypatch: pytest.MonkeyPatch):
     entered = threading.Event()
     release = threading.Event()
