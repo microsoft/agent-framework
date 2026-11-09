@@ -1641,79 +1641,6 @@ def _covered_history_prefix(record: Any, digests: Sequence[str]) -> int:
     return count if expected["digest"] == digest else 0
 
 
-def _history_record_covers_all(record: Any, messages: Sequence[Message]) -> bool:
-    """Return whether one coverage record authenticates the complete message projection."""
-    projection = _control_free_replay_projection(messages, include_security_labels=True)
-    if projection is None:
-        return False
-    _, digests = projection
-    return _covered_history_prefix(record, digests) == len(digests)
-
-
-def _covered_history_subsequence_indices(
-    messages: Sequence[Message],
-    authoritative_messages: Sequence[Message],
-    *,
-    persisted_record: Any,
-    run_record: Any,
-) -> set[int]:
-    """Return unchanged messages retained from a fully covered session-state transcript."""
-    if not (
-        _history_record_covers_all(persisted_record, authoritative_messages)
-        or _history_record_covers_all(run_record, authoritative_messages)
-    ):
-        return set()
-    authoritative_projection = _control_free_replay_projection(
-        authoritative_messages,
-        include_security_labels=True,
-    )
-    current_projection = _control_free_replay_projection(messages, include_security_labels=True)
-    if authoritative_projection is None or current_projection is None:
-        return set()
-    _, authoritative_digests = authoritative_projection
-    current_indices, current_digests = current_projection
-
-    covered_indices: set[int] = set()
-    authoritative_index = 0
-    for current_index, current_digest in zip(current_indices, current_digests, strict=True):
-        while (
-            authoritative_index < len(authoritative_digests)
-            and authoritative_digests[authoritative_index] != current_digest
-        ):
-            authoritative_index += 1
-        if authoritative_index == len(authoritative_digests):
-            continue
-        covered_indices.add(current_index)
-        authoritative_index += 1
-    return covered_indices
-
-
-def _session_history_messages(session: AgentSession, source_id: str) -> Sequence[Message] | None:
-    """Return the full in-session transcript behind a projected history view."""
-    raw_source_state = session.state.get(source_id)
-    if not isinstance(raw_source_state, Mapping):
-        return None
-    raw_messages = cast(Mapping[str, Any], raw_source_state).get("messages")
-    if not isinstance(raw_messages, list):
-        return None
-    raw_message_items = cast(list[Any], raw_messages)
-    if any(not isinstance(message, Message) for message in raw_message_items):
-        return None
-    return cast(list[Message], raw_message_items)
-
-
-def _decoded_history_coverage(state: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Return decoded durable history coverage, or an empty mapping when invalid."""
-    raw_coverage = state.get(_STATE_HISTORY_RECONSTRUCTION_COVERAGE)
-    if raw_coverage is None:
-        return {}
-    try:
-        decoded_coverage = _decode_durable_state(raw_coverage, path="history reconstruction coverage")
-    except ValueError:
-        return {}
-    return cast(Mapping[str, Any], decoded_coverage) if isinstance(decoded_coverage, Mapping) else {}
-
-
 class _ReplaySecurityChatMiddleware(ChatMiddleware):
     """Raise the session label from replayed history-provider messages."""
 
@@ -4817,7 +4744,15 @@ class SecureAgentConfig(ContextProvider):
         commit_coverage: bool,
     ) -> None:
         """Fold uncovered history messages and optionally commit authenticated coverage."""
-        persisted_coverage: Mapping[str, Any] = _decoded_history_coverage(state) if use_persisted_coverage else {}
+        raw_coverage = state.get(_STATE_HISTORY_RECONSTRUCTION_COVERAGE)
+        persisted_coverage: Mapping[str, Any] = {}
+        if use_persisted_coverage and raw_coverage is not None:
+            try:
+                decoded_coverage = _decode_durable_state(raw_coverage, path="history reconstruction coverage")
+            except ValueError:
+                decoded_coverage = None
+            if isinstance(decoded_coverage, Mapping):
+                persisted_coverage = cast(Mapping[str, Any], decoded_coverage)
         history_labels: list[ContentLabel] = []
         for source_id in sorted(history_source_ids):
             messages = history_messages.get(source_id, ())
@@ -4840,16 +4775,6 @@ class SecureAgentConfig(ContextProvider):
                     _covered_history_prefix(history_fold_guard.get(source_id), digests),
                 )
                 covered_indices = set(indices[:covered_prefix])
-                authoritative_messages = _session_history_messages(session, source_id)
-                if authoritative_messages is not None:
-                    covered_indices.update(
-                        _covered_history_subsequence_indices(
-                            messages,
-                            authoritative_messages,
-                            persisted_record=persisted_coverage.get(source_id),
-                            run_record=history_fold_guard.get(source_id),
-                        )
-                    )
                 current_record = _history_coverage_record(digests)
                 history_fold_guard[source_id] = current_record
             else:

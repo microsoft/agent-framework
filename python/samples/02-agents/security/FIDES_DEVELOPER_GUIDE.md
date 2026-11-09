@@ -21,13 +21,13 @@
 
 ## Context Provider Pattern with SecureAgentConfig!
 
-**`SecureAgentConfig` is now a `ContextProvider`** — add it to any agent with a single `context_providers=[config]` line. It automatically injects security tools, instructions, and middleware via the `before_run()` hook. No security knowledge required from developers.
+**`SecureAgentConfig` is now a `ContextProvider`** — add it to any agent with a single `context_providers=[config]` line. It automatically injects security tools, instructions, and middleware via the `before_run()` hook. Applications remain responsible for classifying data injected by their own history and context providers.
 
 **Key Features:**
 - **Context Provider Pattern** - `SecureAgentConfig` extends `ContextProvider`, injecting everything automatically
 - **Automatic Variable Hiding** - UNTRUSTED content is automatically stored and replaced with references
 - **Per-Item Embedded Labels** - Tools return `list[Content]` with `Content.from_text()` for proper label propagation
-- **Zero-Config Security** - `context_providers=[config]` replaces manual `middleware=`, `tools=`, and `instructions=` wiring
+- **Minimal Security Wiring** - `context_providers=[config]` replaces manual `middleware=`, `tools=`, and `instructions=` wiring
 - **Variable ID Support** - `quarantined_llm` now accepts `variable_ids` to directly reference hidden content
 - **Security Instructions** - Built-in `SECURITY_TOOL_INSTRUCTIONS` automatically injected into agent context
 
@@ -237,10 +237,33 @@ When declared, `source_integrity` establishes the local integrity fallback. Embe
   **UNTRUSTED + PRIVATE**. Explicit replay labels may still add restrictions.
 - Policy enforcement uses the context label for validation
 
-`ContextProvider` implementations are trusted plugins and can already read the full conversation and session state.
-Messages from non-history context providers are not automatically classified by FIDES. Providers that inject retrieved
-or remembered external data must continue to apply their own trust boundary, use FIDES-labeled tools, or explicitly
-hide/label the data before adding it to the model context.
+### History and Context Provider Trust Boundary
+
+`HistoryProvider` and `ContextProvider` implementations are trusted application
+plugins. FIDES cannot infer provenance from arbitrary provider behavior.
+
+- Unstamped history is classified conservatively when FIDES first sees it.
+- Exact ordered history already represented by durable FIDES state is not
+  re-tainted.
+- Rewriting, deduplicating, compacting, merging, or externally truncating a
+  transcript can invalidate that coverage. The retained messages are then
+  reconstructed conservatively and may become **UNTRUSTED + PRIVATE**.
+- Do not combine session-managed history with caller-supplied full-transcript
+  replay unless the history provider explicitly preserves FIDES provenance.
+- Messages from non-history context providers are not automatically folded into
+  the FIDES context label. A provider that injects retrieved or remembered
+  external data must label or hide it before it reaches the model.
+
+This fail-closed behavior can block protected tools after an unsupported
+provider transformation. That is preferable to inferring trust from message
+shape or role.
+
+For simple providers, wrap loaded messages and stamp an application-owned
+`security_label`. See
+[`provider_labeling_example.py`](provider_labeling_example.py). Providers that
+use extra lifecycle hooks, service-side continuation, cross-session merges, or
+custom transcript rewriting should implement labeling inside the provider
+itself rather than relying on the sample wrappers.
 
 **Automatic Hiding:**
 - UNTRUSTED results/items are automatically hidden in variable store

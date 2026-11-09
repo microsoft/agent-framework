@@ -13,6 +13,7 @@ security model, middleware behavior, and API reference.
 | `repo_confidentiality_example.py` | Data exfiltration prevention | Confidentiality labels, Foundry-backed repository access, `max_allowed_confidentiality`, and approval before leaking private data |
 | `user_identity_security_example.py` | Principal-bound identity data | Canonical tenant/user principals, identity-scoped sources and destinations, and allowed versus blocked flows |
 | `github_mcp_example.py` | Remote MCP URL with local FIDES enforcement | `SecureMCPToolProxy(url=...)`, direct GitHub MCP access, tool auto-labeling, and post-tool-call policy enforcement |
+| `provider_labeling_example.py` | Provider trust boundaries | Simple wrappers that attach application-owned FIDES labels to ordinary history and context provider messages |
 
 ## Prerequisites
 
@@ -130,6 +131,26 @@ What to look for:
 - Untrusted tool output is tracked by FIDES label middleware
 - Attack-mode write attempts can trigger policy enforcement or approval
 
+### `provider_labeling_example.py`
+
+This sample wraps a read-only imported history provider and a simple external
+context provider. Both sources are labeled **UNTRUSTED + PRIVATE** before
+`SecureAgentConfig` processes them.
+
+Run it with:
+
+```bash
+uv run samples/02-agents/security/provider_labeling_example.py
+```
+
+What to look for:
+
+- The wrappers copy messages instead of mutating provider-owned objects
+- The application, not message role or shape, chooses the FIDES label
+- The context adapter participates in FIDES replay classification
+- Providers with custom lifecycle or transcript-rewriting behavior must label
+  data inside their own implementation
+
 ## Where to find the details
 
 For the full FIDES design and API details, see
@@ -140,3 +161,4 @@ For the full FIDES design and API details, see
 - policy enforcement middleware
 - security tools such as `quarantined_llm` and `inspect_variable`
 - `SecureAgentConfig` and manual integration patterns
+- history and context provider trust boundaries

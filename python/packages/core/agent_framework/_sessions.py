@@ -1167,10 +1167,9 @@ class HistoryProvider(ContextProvider):
             if not isinstance(raw_persisted, dict):
                 raise ValueError("Persisted history metadata must be a dictionary.")
             persisted = cast(dict[str, list[Message]], raw_persisted)
-            loaded_messages = list(context.context_messages.get(self.source_id, ()))
             persisted[self.source_id] = [
-                *loaded_messages,
-                *filter_new_messages(loaded_messages, messages_to_store),
+                *context.context_messages.get(self.source_id, ()),
+                *messages_to_store,
             ]
 
 

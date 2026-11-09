@@ -359,7 +359,7 @@ cd python/packages/core && ../../.venv/bin/pytest tests/test_security.py -v
 
 **FIDES** provides a comprehensive, deterministic defense against prompt injection attacks with:
 
-- **Zero-effort protection**: Automatic variable hiding for developers
+- **Automatic result protection**: FIDES-labeled untrusted tool output is hidden automatically
 - **Context provider pattern**: `SecureAgentConfig` extends `ContextProvider` for automatic setup
 - **Granular control**: Per-item embedded labels via `Content.from_text()` for mixed-trust data
 - **Easy configuration**: `SecureAgentConfig` for one-line setup
@@ -370,5 +370,6 @@ cd python/packages/core && ../../.venv/bin/pytest tests/test_security.py -v
 The system hides FIDES-labeled untrusted tool output from the LLM context and policy-checks tool calls against the
 cumulative security state before execution. Newly supplied assistant/tool messages are conservatively labeled even
 when state was restored. Bounded authenticated snapshots keep exact provider-history and completed-transcript prefixes
-covered, while appended or replaced unstamped content is reconstructed conservatively. Trusted non-history context
-providers remain responsible for the data they inject.
+covered, while appended, replaced, compacted, deduplicated, or otherwise transformed unstamped content is reconstructed
+conservatively when the transformation does not preserve FIDES provenance. Trusted non-history context providers remain
+responsible for labeling or hiding the data they inject.
