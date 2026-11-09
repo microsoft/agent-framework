@@ -1535,7 +1535,8 @@ class TestGitHubCopilotAgentStructuredOutput:
     ) -> None:
         """An aborted idle is an error, not a successful structured result."""
         aborted_idle = create_session_event(SessionEventType.SESSION_IDLE)
-        aborted_idle.data.aborted = True  # type: ignore[attr-defined]
+        aborted_data: Any = aborted_idle.data
+        aborted_data.aborted = True
         self._replay(
             mock_session,
             [
@@ -1557,7 +1558,8 @@ class TestGitHubCopilotAgentStructuredOutput:
     ) -> None:
         """An autopilot idle does not end the stream; the later final root response is used."""
         autopilot_idle = create_session_event(SessionEventType.SESSION_IDLE)
-        autopilot_idle.data.mode = "autopilot"  # type: ignore[attr-defined]
+        autopilot_data: Any = autopilot_idle.data
+        autopilot_data.mode = "autopilot"
         self._replay(
             mock_session,
             [
