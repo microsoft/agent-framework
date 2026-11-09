@@ -163,12 +163,15 @@ while (true)
                 bool approved = Console.ReadLine()?.Trim().Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false;
                 // Hosted MCP approval IDs use the mcpr_ wire prefix. They need the native OpenAI
                 // response item; CreateResponse produces the Agent Framework function-tool shape.
+                // When rejecting a function tool, tell the model not to retry the call.
                 AIContent decision = approval.RequestId.StartsWith("mcpr_", StringComparison.Ordinal)
                     ? new AIContent
                     {
                         RawRepresentation = new McpToolCallApprovalResponseItem(approval.RequestId, approved),
                     }
-                    : approval.CreateResponse(approved);
+                    : approved
+                        ? approval.CreateResponse(approved: true)
+                        : approval.CreateResponse(approved: false, reason: "The user rejected this tool call. Do not retry it.");
                 return new ChatMessage(ChatRole.User, [decision]);
             });
 

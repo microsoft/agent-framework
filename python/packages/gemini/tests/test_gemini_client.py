@@ -7,7 +7,7 @@ import datetime
 import json
 import logging
 import os
-from typing import Any, cast
+from typing import Any, NotRequired, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,7 +22,7 @@ from agent_framework.exceptions import (
 from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from agent_framework_gemini import (
     GeminiChatClient,
@@ -74,6 +74,37 @@ def test_enterprise_integration_gate_accepts_either_mode(monkeypatch: pytest.Mon
     monkeypatch.setenv(mode, "true")
 
     assert _has_gemini_integration_credentials()
+
+
+@pytest.mark.parametrize("client_type", [RawGeminiChatClient, GeminiChatClient])
+@pytest.mark.parametrize("injected", [False, True])
+@pytest.mark.parametrize("fail_async_close", [False, True])
+async def test_gemini_client_context_ownership(client_type, injected: bool, fail_async_close: bool) -> None:
+    sdk_client = MagicMock()
+    sdk_client.aio.aclose = AsyncMock(side_effect=RuntimeError("close failed") if fail_async_close else None)
+    credential = MagicMock()
+    with patch("agent_framework_gemini._sdk_client.genai.Client", return_value=sdk_client):
+        client = client_type(
+            model="test-model",
+            enterprise=True,
+            project="test-project",
+            location="us-central1",
+            credentials=credential,
+            client=sdk_client if injected else None,
+        )
+    if fail_async_close and not injected:
+        with pytest.raises(RuntimeError, match="close failed"):
+            async with client:
+                pass
+        sdk_client.aio.aclose.assert_awaited_once()
+        sdk_client.close.assert_called_once()
+    else:
+        async with client as entered:
+            assert entered is client
+        await client.close()
+        assert sdk_client.aio.aclose.await_count == (0 if injected else 1)
+        assert sdk_client.close.call_count == (0 if injected else 1)
+    credential.close.assert_not_called()
 
 
 @pytest.mark.integration
@@ -546,6 +577,38 @@ async def test_get_response_model_from_response() -> None:
     response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
 
     assert response.model == "gemini-2.5-pro-002"
+
+
+async def test_get_response_model_falls_back_to_configured_model() -> None:
+    """Falls back to the configured model when the response carries no model_version."""
+    client, mock = _make_gemini_client()
+    raw = _make_response([_make_part(text="Hi")])
+    raw.model_version = None
+    mock.aio.models.generate_content = AsyncMock(return_value=raw)
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+    assert response.model == "gemini-2.5-flash"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_get_response_reports_requested_model_on_both_paths(stream: bool) -> None:
+    """Without a model_version, both paths report the model requested in options, not the client default."""
+    client, mock = _make_gemini_client(model="gemini-2.5-flash")
+    raw = _make_response([_make_part(text="Hi")])
+    raw.model_version = None
+    mock.aio.models.generate_content = AsyncMock(return_value=raw)
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([raw]))
+    messages = [Message(role="user", contents=[Content.from_text("Hi")])]
+
+    if stream:
+        response = await client.get_response(
+            messages=messages, options={"model": "gemini-2.5-pro"}, stream=True
+        ).get_final_response()
+    else:
+        response = await client.get_response(messages=messages, options={"model": "gemini-2.5-pro"})
+
+    assert response.model == "gemini-2.5-pro"
 
 
 async def test_get_response_streaming_model_from_chunk() -> None:
@@ -2573,8 +2636,8 @@ def test_get_web_search_tool_returns_google_search_tool() -> None:
 def test_get_web_search_tool_with_params() -> None:
     """Parameters are forwarded to types.GoogleSearch."""
     time_range = types.Interval(
-        start_time=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
-        end_time=datetime.datetime(2024, 12, 31, tzinfo=datetime.timezone.utc),
+        start_time=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
+        end_time=datetime.datetime(2024, 12, 31, tzinfo=datetime.UTC),
     )
     tool = GeminiChatClient.get_web_search_tool(
         search_types=types.SearchTypes(web_search=types.WebSearch()),
@@ -2934,6 +2997,66 @@ def test_injected_sdk_routing_is_shared_with_embeddings() -> None:
     assert chat._genai_client is embeddings._genai_client is sdk
     assert chat._vertexai is embeddings._vertexai is True
     assert chat.service_url() == embeddings.service_url() == "https://custom.example.test"
+
+
+@pytest.mark.parametrize("client_type", [RawGeminiChatClient, GeminiChatClient])
+@pytest.mark.parametrize("env_var", ["GOOGLE_GENAI_USE_ENTERPRISE", "GOOGLE_GENAI_USE_VERTEXAI"])
+def test_injected_sdk_client_ignores_invalid_connection_settings(
+    client_type: type[RawGeminiChatClient],
+    env_var: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An injected SDK client is used as-is, so connection settings it does not need are never parsed."""
+    monkeypatch.setenv(env_var, "not-a-bool")
+    monkeypatch.setenv("GOOGLE_MODEL", "env-model")
+    sdk = MagicMock()
+    sdk._api_client.vertexai = False
+    sdk._api_client._http_options.base_url = "https://generativelanguage.googleapis.com/"
+
+    client = client_type(client=sdk)
+
+    assert client._genai_client is sdk
+    assert client._vertexai is False
+    assert client.service_url() == "https://generativelanguage.googleapis.com"
+    assert client.model == "env-model"
+
+
+@pytest.mark.parametrize("client_type", [RawGeminiChatClient, GeminiChatClient])
+@pytest.mark.parametrize("mode_arg", ["enterprise", "vertexai"])
+def test_injected_sdk_client_without_mode_uses_explicit_mode(
+    client_type: type[RawGeminiChatClient],
+    mode_arg: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit mode stays the fallback when the injected SDK client does not expose its mode."""
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "not-a-bool")
+    sdk = MagicMock()
+    sdk._api_client.vertexai = None
+    sdk._api_client._http_options.base_url = None
+
+    client = client_type(client=sdk, model="gemini-2.5-flash", **cast(dict[str, Any], {mode_arg: True}))
+
+    assert client._genai_client is sdk
+    assert client._vertexai is True
+    assert client.service_url() == "https://aiplatform.googleapis.com"
+
+
+@pytest.mark.parametrize("mode_arg", ["enterprise", "vertexai"])
+def test_injected_sdk_client_rejects_non_bool_explicit_mode(mode_arg: str) -> None:
+    """Explicit mode arguments are type-checked for an injected client, like for an owned one."""
+    sdk = MagicMock()
+    sdk._api_client.vertexai = None
+
+    with pytest.raises(ValueError, match=f"genai_use_{mode_arg}"):
+        RawGeminiChatClient(client=sdk, model="gemini-2.5-flash", **cast(dict[str, Any], {mode_arg: "false"}))
+
+
+def test_owned_client_still_validates_connection_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without an injected SDK client, invalid connection settings still fail construction."""
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "not-a-bool")
+
+    with pytest.raises(ValueError, match="GOOGLE_GENAI_USE_ENTERPRISE"):
+        GeminiChatClient(api_key="test-key", model="gemini-2.5-flash")
 
 
 # integration tests

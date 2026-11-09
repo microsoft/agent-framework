@@ -6,9 +6,9 @@ The first executor transforms the input and sends it to the terminal executor.
 """
 
 import asyncio
+from typing import Never
 
 from agent_framework import WorkflowBuilder, WorkflowContext, executor
-from typing_extensions import Never
 
 
 @executor(id="upper_case")

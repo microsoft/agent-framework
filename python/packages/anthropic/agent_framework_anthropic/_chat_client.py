@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Final, Generic, Literal, TypedDict, cast
+from typing import Any, ClassVar, Final, Generic, Literal, TypeAlias, TypedDict, cast
+from uuid import uuid4
 
 from agent_framework import (
     Annotation,
@@ -28,7 +30,9 @@ from agent_framework import (
     TextSpanRegion,
     UsageDetails,
     add_usage_details,
+    get_namespaced_value,
     tool,
+    with_namespaced_value,
 )
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
@@ -39,6 +43,7 @@ from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidAuthException,
     ChatClientInvalidRequestException,
+    ContentError,
     ResponseInvalidatedException,
 )
 from agent_framework.observability import ChatTelemetryLayer
@@ -71,10 +76,6 @@ from pydantic import BaseModel
 
 from ._feature_usage import FeatureIndex
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
@@ -97,6 +98,27 @@ logger = logging.getLogger("agent_framework.anthropic")
 ANTHROPIC_DEFAULT_MAX_TOKENS: Final[int] = 1024
 BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04"]
 UNSUPPORTED_SAMPLING_OPTIONS: Final[tuple[str, ...]] = ("temperature", "top_p", "top_k")
+_ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE: Final[str] = "anthropic"
+_SERVER_TOOL_BLOCK_KEY: Final[str] = "server_tool_block"
+_MCP_TOOL_RESULT_IS_ERROR_KEY: Final[str] = "mcp_tool_result_is_error"
+_SERVER_TOOL_USE_ID_PREFIX: Final[str] = "srvtoolu_"
+_SERVER_TOOL_RESULT_TYPES: Final[frozenset[str]] = frozenset({
+    "web_fetch_tool_result",
+    "web_search_tool_result",
+})
+_MAX_PAUSE_TURN_CONTINUATIONS: Final[int] = 10
+# Marks text_reasoning content parsed from a native Anthropic reasoning block; the value is the
+# Anthropic block type. Distinguishes native reasoning items from provider reasoning summaries
+# that carry a Content.id without a protected payload.
+_REASONING_BLOCK_KEY: Final[str] = "reasoning_block"
+_REASONING_BLOCK_THINKING: Final[str] = "thinking"
+_REASONING_BLOCK_REDACTED_THINKING: Final[str] = "redacted_thinking"
+_PAUSE_TURN_REPLAYABLE_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
+    "text",
+    "text_reasoning",
+})
+
+McpToolResultOutput: TypeAlias = str | Mapping[str, Any] | Sequence[Content | Mapping[str, Any]] | None
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
@@ -117,6 +139,30 @@ def _wrap_anthropic_error(ex: Exception) -> ChatClientException:
         if isinstance(ex, AnthropicBadRequestError) or (isinstance(status, int) and 400 <= status < 500):
             return ChatClientInvalidRequestException(f"Invalid Anthropic request: {ex}", inner_exception=ex)
     return ChatClientException(f"Anthropic chat request failed: {ex}", inner_exception=ex)
+
+
+def _serialize_anthropic_payload(value: Any) -> Any:
+    """Convert Anthropic SDK payloads into plain persisted data."""
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json", exclude_none=True)
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[Any, Any], value)
+        return {str(key): _serialize_anthropic_payload(item) for key, item in mapping.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        sequence = cast(Sequence[Any], value)
+        return [_serialize_anthropic_payload(item) for item in sequence]
+    return value
+
+
+def _server_tool_block_metadata(content_block: Any, *, include_content: bool = False) -> dict[str, Any]:
+    """Build persisted metadata needed to reconstruct an Anthropic server-tool block."""
+    block: dict[str, Any] = {"type": content_block.type}
+    if include_content:
+        block["content"] = _serialize_anthropic_payload(content_block.content)
+    caller = getattr(content_block, "caller", None)
+    if isinstance(caller, (BaseModel, Mapping)):
+        block["caller"] = _serialize_anthropic_payload(caller)
+    return {_ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE: {_SERVER_TOOL_BLOCK_KEY: block}}
 
 
 # region Anthropic Chat Options TypedDict
@@ -262,7 +308,6 @@ FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "tool_use": "tool_calls",
     "end_turn": "stop",
     "refusal": "content_filter",
-    "pause_turn": "stop",
 }
 
 
@@ -284,6 +329,9 @@ class _AnthropicRequestState:
 
     active_call_id: str | None = None
     active_call_content_type: str | None = None
+    active_call_is_function_call: bool = False
+    dropped_content_types: set[str] = field(default_factory=set[str])
+    stream_stop_reason: str | None = None
     tool_name_aliases: dict[str, str] = field(default_factory=dict[str, str])
 
 
@@ -418,6 +466,7 @@ class RawAnthropicClient(
         model_setting = anthropic_settings.get("chat_model")
         base_url_setting = anthropic_settings.get("base_url")
 
+        owns_client = anthropic_client is None
         if anthropic_client is None:
             if api_key_secret is None:
                 raise ValueError(
@@ -438,8 +487,17 @@ class RawAnthropicClient(
 
         # Initialize instance variables
         self.anthropic_client = anthropic_client
+        self._owns_client = owns_client
+        self._client_closed = False
         self.additional_beta_flags = additional_beta_flags or []
         self.model = model_setting
+
+    @override
+    async def close(self) -> None:
+        """Close the internally created SDK client, leaving supplied credentials open."""
+        if self._owns_client and not self._client_closed:
+            await self.anthropic_client.close()
+            self._client_closed = True
 
     # region Static factory methods for hosted tools
 
@@ -616,19 +674,28 @@ class RawAnthropicClient(
 
         if stream:
             # Streaming mode
-            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+
+            async def _stream_turn(
+                turn_request_state: _AnthropicRequestState,
+            ) -> AsyncIterable[ChatResponseUpdate]:
                 # Anthropic streams cumulative usage snapshots (message_start seeds it,
                 # each message_delta carries the running total), so thread a per-stream
                 # accumulator to _process_stream_event to emit increments instead.
+                # raw_usage_carry keeps last-seen input/cache components when a later
+                # snapshot omits them (cache_* often only appear on message_start).
                 emitted_usage: dict[str, int] = {}
+                raw_usage_carry: dict[str, int] = {}
                 local_function_call_started = False
                 open_local_function_call_blocks: set[int] = set()
-                latest_stop_reason: str | None = None
                 message_stop_received = False
-                mark_feature_used(FeatureIndex.ANTHROPIC)
                 try:
                     async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
-                        parsed_chunk = self._process_stream_event(chunk, emitted_usage, request_state=request_state)
+                        parsed_chunk = self._process_stream_event(
+                            chunk,
+                            emitted_usage,
+                            request_state=turn_request_state,
+                            raw_usage_carry=raw_usage_carry,
+                        )
                         if chunk.type == "content_block_start" and parsed_chunk is not None:
                             if any(
                                 content.type == "function_call" and not content.informational_only
@@ -639,11 +706,11 @@ class RawAnthropicClient(
                         elif chunk.type == "content_block_stop":
                             open_local_function_call_blocks.discard(chunk.index)
                         elif chunk.type == "message_delta" and chunk.delta.stop_reason is not None:
-                            latest_stop_reason = chunk.delta.stop_reason
+                            turn_request_state.stream_stop_reason = chunk.delta.stop_reason
                         elif chunk.type == "message_stop":
                             message_stop_received = True
                             if local_function_call_started and (
-                                open_local_function_call_blocks or latest_stop_reason != "tool_use"
+                                open_local_function_call_blocks or turn_request_state.stream_stop_reason != "tool_use"
                             ):
                                 raise ResponseInvalidatedException(
                                     "Anthropic invalidated partial response output; "
@@ -671,22 +738,126 @@ class RawAnthropicClient(
                         raise
                     raise _wrap_anthropic_error(ex) from ex
 
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                mark_feature_used(FeatureIndex.ANTHROPIC)
+                for continuation_index in range(_MAX_PAUSE_TURN_CONTINUATIONS + 1):
+                    turn_request_state = (
+                        request_state
+                        if continuation_index == 0
+                        else _AnthropicRequestState(tool_name_aliases=dict(request_state.tool_name_aliases))
+                    )
+                    turn_updates: list[ChatResponseUpdate] = []
+                    async for update in _stream_turn(turn_request_state):
+                        turn_updates.append(update)
+                        yield update
+                    turn_response = self._finalize_response_updates(
+                        turn_updates,
+                        response_format=options.get("response_format"),
+                    )
+                    if (
+                        turn_response.finish_reason != "pause_turn"
+                        or continuation_index == _MAX_PAUSE_TURN_CONTINUATIONS
+                    ):
+                        return
+                    if not self._append_pause_turn_messages_for_anthropic(
+                        run_options,
+                        turn_response.messages,
+                        turn_request_state,
+                    ):
+                        return
+
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
             mark_feature_used(FeatureIndex.ANTHROPIC)
-            try:
-                message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
-            except AgentFrameworkException:
-                raise
-            except Exception as ex:
-                raise _wrap_anthropic_error(ex) from ex
-            return self._process_message(message, options, request_state=request_state)
+            accumulated_messages: list[Message] = []
+            aggregated_usage: UsageDetails | None = None
+            raw_messages: list[BetaMessage] = []
+            for continuation_index in range(_MAX_PAUSE_TURN_CONTINUATIONS + 1):
+                turn_request_state = (
+                    request_state
+                    if continuation_index == 0
+                    else _AnthropicRequestState(tool_name_aliases=dict(request_state.tool_name_aliases))
+                )
+                try:
+                    message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
+                except AgentFrameworkException:
+                    raise
+                except Exception as ex:
+                    raise _wrap_anthropic_error(ex) from ex
+                response = self._process_message(message, options, request_state=turn_request_state)
+                accumulated_messages.extend(response.messages)
+                aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
+                raw_messages.append(message)
+                should_continue = (
+                    message.stop_reason == "pause_turn"
+                    and continuation_index < _MAX_PAUSE_TURN_CONTINUATIONS
+                    and self._append_pause_turn_messages_for_anthropic(
+                        run_options,
+                        response.messages,
+                        turn_request_state,
+                    )
+                )
+                if should_continue:
+                    continue
+                response.messages = accumulated_messages
+                response.usage_details = aggregated_usage
+                response.raw_representation = raw_messages if len(raw_messages) > 1 else message
+                return response
+            raise RuntimeError("Anthropic pause-turn continuation loop exited unexpectedly.")
 
         return _get_response()
 
     # region Prep methods
+
+    def _append_pause_turn_messages_for_anthropic(
+        self,
+        run_options: dict[str, Any],
+        messages: Sequence[Message],
+        request_state: _AnthropicRequestState,
+    ) -> bool:
+        """Append faithfully replayable paused assistant content without a synthetic user turn."""
+        unsupported_types = set(request_state.dropped_content_types)
+        unsupported_types.update(
+            content.type
+            for message in messages
+            for content in message.contents
+            if not self._is_pause_turn_content_replayable(content)
+        )
+        if unsupported_types:
+            # Sorting is only for deterministic diagnostics; replay behavior does not depend on type order.
+            sorted_unsupported_types = sorted(unsupported_types)
+            logger.warning(
+                "Anthropic pause_turn content cannot be replayed faithfully; returning the paused response. "
+                "Unsupported content types: %s",
+                ", ".join(sorted_unsupported_types),
+            )
+            return False
+
+        prepared_messages = cast(list[dict[str, Any]], run_options["messages"])
+        for message in messages:
+            prepared_messages.extend(self._prepare_message_groups_for_anthropic(message))
+        return True
+
+    def _is_pause_turn_content_replayable(self, content: Content) -> bool:
+        """Return whether the Anthropic serializer preserves this paused content item."""
+        if content.type == "text_reasoning" and self._is_redacted_thinking_content(content):
+            return bool(content.protected_data)
+        if content.type in _PAUSE_TURN_REPLAYABLE_CONTENT_TYPES:
+            return True
+        if content.type == "function_call":
+            try:
+                return self._prepare_server_tool_call_for_anthropic(content) is not None
+            except ContentError:
+                return False
+        if content.type == "function_result":
+            try:
+                block = self._server_tool_block(content)
+            except ContentError:
+                return False
+            return bool(block is not None and block.get("type") in _SERVER_TOOL_RESULT_TYPES and "content" in block)
+        return False
 
     def _prepare_options(
         self,
@@ -941,7 +1112,11 @@ class RawAnthropicClient(
     def _role_for_anthropic_content_block(self, content_block: Mapping[str, Any], default_role: str) -> str:
         """Return the Anthropic message role required for a content block."""
         match content_block:
-            case {"type": "tool_use" | "mcp_tool_use" | "server_tool_use"}:
+            case {
+                "type": (
+                    "tool_use" | "mcp_tool_use" | "server_tool_use" | "web_fetch_tool_result" | "web_search_tool_result"
+                )
+            }:
                 return "assistant"
             case {"type": "tool_result" | "mcp_tool_result"}:
                 return "user"
@@ -963,6 +1138,156 @@ class RawAnthropicClient(
                     pass
 
         return False
+
+    @staticmethod
+    def _generate_reasoning_id() -> str:
+        """Return a fresh identity for one reasoning item.
+
+        Anthropic reasoning blocks have no provider identity of their own, and response
+        aggregation folds adjacent reasoning chunks without ids into one item. Giving each
+        parsed reasoning block its own id keeps consecutive ``thinking`` and
+        ``redacted_thinking`` blocks distinct when a streamed response is finalized.
+        """
+        return f"reasoning-{uuid4().hex}"
+
+    @staticmethod
+    def _native_reasoning_block_type(content: Content) -> Any:
+        """Return the Anthropic native block type recorded on a reasoning item, if any."""
+        return get_namespaced_value(
+            content.additional_properties,
+            _ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE,
+            _REASONING_BLOCK_KEY,
+        )
+
+    @classmethod
+    def _is_redacted_thinking_content(cls, content: Content) -> bool:
+        """Return whether this reasoning item carries an Anthropic redacted-thinking payload."""
+        return cls._native_reasoning_block_type(content) == _REASONING_BLOCK_REDACTED_THINKING
+
+    @classmethod
+    def _is_thinking_content(cls, content: Content) -> bool:
+        """Return whether this reasoning item was parsed from an Anthropic ``thinking`` block."""
+        return cls._native_reasoning_block_type(content) == _REASONING_BLOCK_THINKING
+
+    @staticmethod
+    def _server_tool_block(content: Content) -> Mapping[str, Any] | None:
+        """Return validated persisted Anthropic server-tool metadata."""
+        block = get_namespaced_value(
+            content.additional_properties,
+            _ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE,
+            _SERVER_TOOL_BLOCK_KEY,
+        )
+        if block is None:
+            return None
+        if not isinstance(block, Mapping):
+            raise ContentError("Anthropic server-tool replay metadata must be a mapping.")
+        return cast(Mapping[str, Any], block)
+
+    def _prepare_server_tool_call_for_anthropic(self, content: Content) -> dict[str, Any] | None:
+        """Reconstruct an Anthropic server_tool_use block when this is a hosted call."""
+        block = self._server_tool_block(content)
+        is_server_tool = bool(content.call_id and content.call_id.startswith(_SERVER_TOOL_USE_ID_PREFIX))
+        if block is not None:
+            block_type = block.get("type")
+            if block_type != "server_tool_use":
+                raise ContentError(f"Unsupported Anthropic server-tool call metadata type: {block_type!r}.")
+            is_server_tool = True
+        if not is_server_tool:
+            return None
+
+        result: dict[str, Any] = {
+            "type": "server_tool_use",
+            "id": content.call_id,
+            "name": content.name,
+            "input": content.parse_arguments(),
+        }
+        if block is not None and (caller := block.get("caller")) is not None:
+            if not isinstance(caller, Mapping):
+                raise ContentError("Anthropic server-tool caller metadata must be a mapping.")
+            result["caller"] = dict(cast(Mapping[str, Any], caller))
+        return result
+
+    def _prepare_server_tool_result_for_anthropic(self, content: Content) -> dict[str, Any] | None:
+        """Reconstruct an Anthropic server-tool result block from persisted metadata."""
+        block = self._server_tool_block(content)
+        if block is None:
+            if content.call_id and content.call_id.startswith(_SERVER_TOOL_USE_ID_PREFIX):
+                raise ContentError(
+                    f"Anthropic server-tool result {content.call_id!r} cannot be replayed because its provider "
+                    "metadata is missing."
+                )
+            return None
+
+        block_type = block.get("type")
+        if block_type not in _SERVER_TOOL_RESULT_TYPES:
+            raise ContentError(f"Unsupported Anthropic server-tool result metadata type: {block_type!r}.")
+        if "content" not in block:
+            raise ContentError("Anthropic server-tool result metadata is missing content.")
+
+        result: dict[str, Any] = {
+            "type": block_type,
+            "tool_use_id": content.call_id,
+            "content": block["content"],
+        }
+        if (caller := block.get("caller")) is not None:
+            if not isinstance(caller, Mapping):
+                raise ContentError("Anthropic server-tool caller metadata must be a mapping.")
+            result["caller"] = dict(cast(Mapping[str, Any], caller))
+        return result
+
+    @staticmethod
+    def _prepare_mcp_tool_result_content(
+        output: McpToolResultOutput,
+    ) -> str | list[dict[str, Any]]:
+        """Render MCP tool result output as Anthropic ``mcp_tool_result`` content.
+
+        Anthropic accepts either a string or a list of text blocks here. Parsed MCP
+        results are stored as ``list[Content]``, so replaying them directly would put
+        non-serializable ``Content`` objects into the request body. A top-level text
+        block mapping is normalized to a one-item list; other mappings are JSON-encoded.
+        """
+        if output is None:
+            return ""
+        if isinstance(output, str):
+            return output
+        if isinstance(output, Mapping):
+            mapping_output = output
+            if mapping_output.get("type") == "text" and isinstance(mapping_output.get("text"), str):
+                return [{"type": "text", "text": mapping_output["text"]}]
+            try:
+                return json.dumps(dict(mapping_output))
+            except (TypeError, ValueError) as exc:
+                raise ContentError("MCP tool result mapping is not JSON serializable.") from exc
+        if isinstance(output, Sequence) and not isinstance(output, (bytes, bytearray)):
+            text_blocks: list[dict[str, Any]] = []
+            for item in output:
+                if isinstance(item, Content):
+                    if item.type == "text":
+                        text_blocks.append({"type": "text", "text": item.text or ""})
+                    else:
+                        logger.debug(
+                            "Ignoring unsupported MCP tool result content type for Anthropic replay: %s",
+                            item.type,
+                        )
+                    continue
+                if isinstance(item, Mapping):
+                    mapping_item = item
+                    text = mapping_item.get("text")
+                    if mapping_item.get("type") == "text" and isinstance(text, str):
+                        text_blocks.append({"type": "text", "text": text})
+                    else:
+                        logger.debug(
+                            "Ignoring unsupported MCP tool result content type for Anthropic replay: %s",
+                            mapping_item.get("type", type(mapping_item).__name__),
+                        )
+                    continue
+                logger.debug(
+                    "Ignoring unsupported MCP tool result content type for Anthropic replay: %s",
+                    type(item).__name__,
+                )
+            return text_blocks or ""
+
+        raise ContentError(f"Unsupported MCP tool result output type for Anthropic replay: {type(output).__name__}")
 
     def _prepare_message_for_anthropic(self, message: Message) -> dict[str, Any]:
         """Prepare a Message for the Anthropic client.
@@ -1001,14 +1326,19 @@ class RawAnthropicClient(
                     else:
                         logger.debug(f"Ignoring unsupported data content media type: {content.media_type} for now")
                 case "function_call":
-                    a_content.append({
-                        "type": "tool_use",
-                        "id": content.call_id,
-                        "name": content.name,
-                        "input": content.parse_arguments(),
-                    })
+                    if server_tool_call := self._prepare_server_tool_call_for_anthropic(content):
+                        a_content.append(server_tool_call)
+                    else:
+                        a_content.append({
+                            "type": "tool_use",
+                            "id": content.call_id,
+                            "name": content.name,
+                            "input": content.parse_arguments(),
+                        })
                 case "function_result":
-                    if content.items:
+                    if server_tool_result := self._prepare_server_tool_result_for_anthropic(content):
+                        a_content.append(server_tool_result)
+                    elif content.items:
                         tool_content: list[dict[str, Any]] = []
                         for item in content.items:
                             if item.type == "text":
@@ -1061,10 +1391,22 @@ class RawAnthropicClient(
                     mcp_result: dict[str, Any] = {
                         "type": "mcp_tool_result",
                         "tool_use_id": content.call_id,
-                        "content": content.output if content.output is not None else "",
+                        "content": self._prepare_mcp_tool_result_content(content.output),
                     }
+                    is_error = get_namespaced_value(
+                        content.additional_properties,
+                        _ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE,
+                        _MCP_TOOL_RESULT_IS_ERROR_KEY,
+                    )
+                    if isinstance(is_error, bool):
+                        mcp_result["is_error"] = is_error
                     a_content.append(mcp_result)
                 case "text_reasoning":
+                    if self._is_redacted_thinking_content(content):
+                        if not content.protected_data:
+                            raise ContentError("Anthropic redacted thinking content is missing its opaque payload.")
+                        a_content.append({"type": "redacted_thinking", "data": content.protected_data})
+                        continue
                     if content.text is None:
                         if (
                             content.protected_data
@@ -1074,7 +1416,7 @@ class RawAnthropicClient(
                         ):
                             a_content[-1]["signature"] = content.protected_data
                         continue
-                    if content.id and not content.protected_data:
+                    if content.id and not content.protected_data and not self._is_thinking_content(content):
                         a_content.append({"type": "text", "text": content.text})
                         continue
                     thinking_block: dict[str, Any] = {"type": "thinking", "thinking": content.text}
@@ -1239,6 +1581,7 @@ class RawAnthropicClient(
                 Message(
                     role="assistant",
                     contents=contents,
+                    message_id=message.id,
                     raw_representation=message,
                 )
             ],
@@ -1254,6 +1597,7 @@ class RawAnthropicClient(
         event: BetaRawMessageStreamEvent,
         emitted_usage: dict[str, int] | None = None,
         request_state: _AnthropicRequestState | None = None,
+        raw_usage_carry: dict[str, int] | None = None,
     ) -> ChatResponseUpdate | None:
         """Process a streaming event from the Anthropic client.
 
@@ -1264,6 +1608,10 @@ class RawAnthropicClient(
                 increments (see ``_incremental_usage``). Pass ``None`` for a one-off
                 event to keep the snapshot unchanged.
             request_state: State used to parse this stream.
+            raw_usage_carry: Per-stream last-seen Anthropic input/cache token
+                components. Streaming deltas often omit ``cache_*`` fields that were
+                only present on ``message_start``; carrying them forward keeps
+                ``input_token_count`` inclusive of cache tokens across the stream.
 
         Returns:
             A ChatResponseUpdate object containing the processed update.
@@ -1271,7 +1619,9 @@ class RawAnthropicClient(
         match event.type:
             case "message_start":
                 usage_details: list[Content] = []
-                if event.message.usage and (details := self._parse_usage_from_anthropic(event.message.usage)):
+                if event.message.usage and (
+                    details := self._parse_usage_from_anthropic(event.message.usage, raw_usage_carry=raw_usage_carry)
+                ):
                     usage_details.append(
                         Content.from_usage(
                             usage_details=self._incremental_usage(details, emitted_usage),
@@ -1282,6 +1632,7 @@ class RawAnthropicClient(
                 return ChatResponseUpdate(
                     role="assistant",
                     response_id=event.message.id,
+                    message_id=event.message.id,
                     contents=[
                         *self._parse_contents_from_anthropic(
                             event.message.content,
@@ -1295,7 +1646,7 @@ class RawAnthropicClient(
                     raw_representation=event,
                 )
             case "message_delta":
-                usage = self._parse_usage_from_anthropic(event.usage)
+                usage = self._parse_usage_from_anthropic(event.usage, raw_usage_carry=raw_usage_carry)
                 return ChatResponseUpdate(
                     contents=[
                         Content.from_usage(
@@ -1337,19 +1688,60 @@ class RawAnthropicClient(
                 logger.debug(f"Ignoring unsupported event type: {event.type}")
         return None
 
-    def _parse_usage_from_anthropic(self, usage: BetaUsage | BetaMessageDeltaUsage | None) -> UsageDetails | None:
-        """Parse usage details from the Anthropic message usage."""
+    def _parse_usage_from_anthropic(
+        self,
+        usage: BetaUsage | BetaMessageDeltaUsage | None,
+        *,
+        raw_usage_carry: dict[str, int] | None = None,
+    ) -> UsageDetails | None:
+        """Parse usage details from the Anthropic message usage.
+
+        When ``raw_usage_carry`` is provided (streaming), last-seen ``input_tokens`` /
+        ``cache_*`` components are reused if the current snapshot omits them. Anthropic
+        often reports cache tokens only on ``message_start``; without the carry,
+        a later ``message_delta`` with a higher ``input_tokens`` and omitted cache
+        fields would under-count ``input_token_count`` after incremental conversion.
+        """
         if not usage:
             return None
         usage_details = UsageDetails(output_token_count=usage.output_tokens)
-        if usage.input_tokens is not None:
-            usage_details["input_token_count"] = usage.input_tokens
-        if usage.cache_creation_input_tokens is not None:
-            usage_details["anthropic.cache_creation_input_tokens"] = usage.cache_creation_input_tokens
-            usage_details["cache_creation_input_token_count"] = usage.cache_creation_input_tokens
-        if usage.cache_read_input_tokens is not None:
-            usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens
-            usage_details["cache_read_input_token_count"] = usage.cache_read_input_tokens
+        # Anthropic's input_tokens excludes cache_creation and cache_read; total
+        # input (and gen_ai.usage.input_tokens) must include them, matching other
+        # connectors and the GenAI semconv.
+        input_tokens = usage.input_tokens
+        cache_creation = usage.cache_creation_input_tokens
+        cache_read = usage.cache_read_input_tokens
+        if raw_usage_carry is not None:
+            if input_tokens is not None:
+                raw_usage_carry["input_tokens"] = input_tokens
+            else:
+                input_tokens = raw_usage_carry.get("input_tokens")
+            if cache_creation is not None:
+                raw_usage_carry["cache_creation_input_tokens"] = cache_creation
+            else:
+                cache_creation = raw_usage_carry.get("cache_creation_input_tokens")
+            if cache_read is not None:
+                raw_usage_carry["cache_read_input_tokens"] = cache_read
+            else:
+                cache_read = raw_usage_carry.get("cache_read_input_tokens")
+
+        input_total = input_tokens if input_tokens is not None else None
+        if cache_creation is not None:
+            usage_details["anthropic.cache_creation_input_tokens"] = cache_creation
+            usage_details["cache_creation_input_token_count"] = cache_creation
+            if input_total is not None:
+                input_total += cache_creation
+            else:
+                input_total = cache_creation
+        if cache_read is not None:
+            usage_details["anthropic.cache_read_input_tokens"] = cache_read
+            usage_details["cache_read_input_token_count"] = cache_read
+            if input_total is not None:
+                input_total += cache_read
+            else:
+                input_total = cache_read
+        if input_total is not None:
+            usage_details["input_token_count"] = input_total
         return usage_details
 
     @staticmethod
@@ -1412,9 +1804,21 @@ class RawAnthropicClient(
                             annotations=self._parse_citations_from_anthropic(content_block),
                         )
                     )
+                case "citations_delta":
+                    # Streaming delivers each citation as its own delta on the open text block;
+                    # surface it as an empty appended text so the annotation merges into that text.
+                    contents.append(
+                        Content.from_text(
+                            text="",
+                            merge_mode="append" if streaming else None,
+                            raw_representation=content_block,
+                            annotations=self._parse_citations_from_anthropic(content_block),
+                        )
+                    )
                 case "tool_use" | "mcp_tool_use" | "server_tool_use":
                     request_state.active_call_id = content_block.id
                     request_state.active_call_content_type = content_block.type
+                    request_state.active_call_is_function_call = False
                     if content_block.type == "mcp_tool_use":
                         contents.append(
                             Content.from_mcp_server_tool_call(
@@ -1440,6 +1844,7 @@ class RawAnthropicClient(
                             )
                         )
                     else:
+                        request_state.active_call_is_function_call = True
                         resolved_tool_name = request_state.tool_name_aliases.get(content_block.name, content_block.name)
                         contents.append(
                             Content.from_function_call(
@@ -1449,6 +1854,11 @@ class RawAnthropicClient(
                                 informational_only=content_block.type == "server_tool_use",
                                 hosted=content_block.type == "server_tool_use",
                                 merge_mode="append" if streaming else None,
+                                additional_properties=(
+                                    _server_tool_block_metadata(content_block)
+                                    if content_block.type == "server_tool_use"
+                                    else None
+                                ),
                                 raw_representation=content_block,
                             )
                         )
@@ -1474,10 +1884,22 @@ class RawAnthropicClient(
                                 request_state,
                                 streaming=streaming,
                             )
+                    is_error = getattr(content_block, "is_error", None)
+                    additional_properties = (
+                        with_namespaced_value(
+                            None,
+                            _ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE,
+                            _MCP_TOOL_RESULT_IS_ERROR_KEY,
+                            is_error,
+                        )
+                        if isinstance(is_error, bool)
+                        else None
+                    )
                     contents.append(
                         Content.from_mcp_server_tool_result(
                             call_id=content_block.tool_use_id,
                             output=parsed_output,
+                            additional_properties=additional_properties,
                             raw_representation=content_block,
                         )
                     )
@@ -1486,6 +1908,7 @@ class RawAnthropicClient(
                         Content.from_function_result(
                             call_id=content_block.tool_use_id,
                             result=content_block.content,
+                            additional_properties=_server_tool_block_metadata(content_block, include_content=True),
                             raw_representation=content_block,
                         )
                     )
@@ -1686,25 +2109,53 @@ class RawAnthropicClient(
                         )
                     )
                 case "input_json_delta":
-                    # Skip argument deltas for MCP and server tools — execution is handled server-side.
-                    if request_state.active_call_content_type in ("mcp_tool_use", "server_tool_use"):
+                    if not request_state.active_call_is_function_call:
                         pass
                     else:
                         call_id = request_state.active_call_id or ""
+                        hosted = request_state.active_call_content_type == "server_tool_use"
                         contents.append(
                             Content.from_function_call(
                                 call_id=call_id,
                                 name="",
                                 arguments=content_block.partial_json,
+                                informational_only=hosted,
+                                hosted=hosted,
                                 merge_mode="append" if streaming else None,
                                 raw_representation=content_block,
                             )
                         )
+                case "redacted_thinking":
+                    # Redacted reasoning is opaque provider state. Anthropic requires it to be replayed
+                    # unchanged while tool use continues, so keep it as its own reasoning item.
+                    contents.append(
+                        Content.from_text_reasoning(
+                            id=self._generate_reasoning_id(),
+                            protected_data=content_block.data,
+                            additional_properties={
+                                _ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE: {
+                                    _REASONING_BLOCK_KEY: _REASONING_BLOCK_REDACTED_THINKING
+                                }
+                            },
+                            merge_mode="replace" if streaming else None,
+                            raw_representation=content_block,
+                        )
+                    )
                 case "thinking" | "thinking_delta":
                     contents.append(
                         Content.from_text_reasoning(
+                            id=self._generate_reasoning_id() if content_block.type == "thinking" else None,
                             text=content_block.thinking,
                             protected_data=getattr(content_block, "signature", None),
+                            additional_properties=(
+                                {
+                                    _ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE: {
+                                        _REASONING_BLOCK_KEY: _REASONING_BLOCK_THINKING
+                                    }
+                                }
+                                if content_block.type == "thinking"
+                                else None
+                            ),
                             merge_mode="append" if streaming else None,
                             raw_representation=content_block,
                         )
@@ -1719,13 +2170,23 @@ class RawAnthropicClient(
                         )
                     )
                 case _:
+                    request_state.dropped_content_types.add(content_block.type)
                     logger.debug(f"Ignoring unsupported content type: {content_block.type} for now")
         return contents
 
     def _parse_citations_from_anthropic(
         self, content_block: BetaContentBlock | BetaRawContentBlockDelta | BetaTextBlock
     ) -> list[Annotation] | None:
-        content_blocks = getattr(content_block, "citations", None)
+        """Parse Anthropic citations into annotations.
+
+        Note:
+            Document and search-result citations retain their source coordinates in ``annotated_regions``.
+            Their ``annotated_regions_coordinate_space`` is ``"source"`` to distinguish these locations from
+            generated-content character offsets. Protocol adapters do not emit these regions as output-text spans.
+        """
+        content_blocks: Any = getattr(content_block, "citations", None)
+        if content_block.type == "citations_delta":
+            content_blocks = [content_block.citation]
         if not content_blocks:
             return None
         annotations: list[Annotation] = []
@@ -1733,7 +2194,7 @@ class RawAnthropicClient(
             cit = Annotation(type="citation", raw_representation=citation)
             match citation.type:
                 case "char_location":
-                    cit["title"] = citation.title
+                    cit["title"] = citation.document_title
                     cit["snippet"] = citation.cited_text
                     if citation.file_id:
                         cit["file_id"] = citation.file_id
@@ -1789,6 +2250,8 @@ class RawAnthropicClient(
                     )
                 case _:
                     logger.debug(f"Unknown citation type encountered: {citation.type}")
+            if cit.get("annotated_regions"):
+                cit["annotated_regions_coordinate_space"] = "source"
             annotations.append(cit)
         return annotations or None
 

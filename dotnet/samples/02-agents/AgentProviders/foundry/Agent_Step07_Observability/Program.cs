@@ -7,6 +7,7 @@ using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI;
 using OpenTelemetry;
+using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 string? applicationInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING");
@@ -16,6 +17,7 @@ string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "
 // Create TracerProvider with console exporter.
 string sourceName = Guid.NewGuid().ToString("N");
 TracerProviderBuilder tracerProviderBuilder = Sdk.CreateTracerProviderBuilder()
+    .ConfigureResource(resource => resource.AddAttributes([new("microsoft.agent-framework", "True")]))
     .AddSource(sourceName)
     .AddConsoleExporter();
 if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))

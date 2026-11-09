@@ -53,8 +53,10 @@ from ._request import (
 from ._responses import (
     _HOSTED_PROVIDER_USAGE_KEY,  # pyright: ignore[reportPrivateUsage]
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
+    _hosted_internal_metadata,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
+    _request_without_reserved_metadata,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
 )
 from ._scope import FoundryRequestScope
@@ -246,6 +248,7 @@ async def _project(
     approvals: _CheckpointApprovals,
 ) -> list[ResponseStreamEvent]:
     updates: list[AgentResponseUpdate] = []
+    complete_message = False
     if event.type == "request_info":
         wire_id = IdGenerator.new_id("call", str(stream.response["id"]))
         if isinstance(event.data, Content) and event.data.type == "function_approval_request":
@@ -267,6 +270,7 @@ async def _project(
     elif event.type in ("output", "intermediate", "data"):
         data = event.data
         if isinstance(data, (AgentResponse, ChatResponse)):
+            complete_message = True
             updates = _agent_response_updates(
                 AgentResponse(
                     messages=data.messages,
@@ -285,8 +289,10 @@ async def _project(
                 )
             ]
         elif isinstance(data, Message):
+            complete_message = True
             updates = _agent_response_updates(AgentResponse(messages=[data]), str(stream.response["id"]))
         elif isinstance(data, list) and data and all(isinstance(item, Message) for item in cast(list[Any], data)):
+            complete_message = True
             updates = _agent_response_updates(
                 AgentResponse(messages=cast(list[Message], data)), str(stream.response["id"])
             )
@@ -302,7 +308,14 @@ async def _project(
             return events
     events: list[ResponseStreamEvent] = []
     for update in updates:
-        events.extend([item async for item in tracker.handle_update(update, approval_storage=approvals)])
+        events.extend([
+            item
+            async for item in tracker.handle_update(
+                update,
+                approval_storage=approvals,
+                complete_message=complete_message,
+            )
+        ])
     return events
 
 
@@ -381,7 +394,10 @@ class NativeResponsesWorkflow:
         cancellation_signal: asyncio.Event,
     ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Validate, run, pair, close owned resources, and only then publish terminal success."""
-        stream = ResponseEventStream(response_id=context.response_id, request=request)
+        stream = ResponseEventStream(
+            response_id=context.response_id,
+            request=_request_without_reserved_metadata(request),
+        )
         run: HostedWorkflowRun | None = None
         phase = "preparation"
         completed = False
@@ -504,7 +520,7 @@ class NativeResponsesWorkflow:
                 for event in buffered:
                     events.extend(await _project(event, draft, next_tracker, approval_projection))
                 events.extend(next_tracker.close())
-                draft.internal_metadata[_HOSTED_PROVIDER_USAGE_KEY] = next_tracker.usage_details
+                _hosted_internal_metadata(draft)[_HOSTED_PROVIDER_USAGE_KEY] = next_tracker.usage_details
                 await run.stage(_snapshot(draft), approvals=next_aliases, checkpoint_id=checkpoint_id)
                 stream, tracker, aliases = draft, next_tracker, next_aliases
                 buffered.clear()

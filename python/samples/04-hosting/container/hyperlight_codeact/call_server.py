@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = [
 #     "openai>=1.50,<4",
 #     "azure-identity>=1.19,<2",

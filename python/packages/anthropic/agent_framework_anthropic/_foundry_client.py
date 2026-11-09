@@ -79,6 +79,7 @@ class RawAnthropicFoundryClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
         base_url_setting = settings.get("anthropic_foundry_base_url")
         api_key_value = api_key_secret.get_secret_value() if api_key_secret is not None else None
 
+        owns_client = anthropic_client is None
         if anthropic_client is None:
             if base_url_setting is None and resource_setting is None:
                 message = (
@@ -107,6 +108,7 @@ class RawAnthropicFoundryClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
             additional_beta_flags=additional_beta_flags,
             additional_properties=additional_properties,
         )
+        self._owns_client = owns_client
 
 
 class AnthropicFoundryClient(

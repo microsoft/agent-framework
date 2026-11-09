@@ -6,6 +6,8 @@ using System.Linq;
 using System.Text.Json;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Tests;
+using Microsoft.Extensions.AI;
+using ResponsesAgentResponseExtensions = Microsoft.Agents.AI.Hosting.OpenAI.Responses.AgentResponseExtensions;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
@@ -762,6 +764,36 @@ public sealed class OpenAIResponsesSerializationTests : ConformanceTestBase
         Assert.Equal(response.CreatedAt, roundtripped.CreatedAt);
         Assert.Equal(response.Status, roundtripped.Status);
         Assert.Equal(response.Model, roundtripped.Model);
+    }
+
+    #endregion
+
+    #region Function Call Conversion Tests
+
+    [Fact]
+    public void ToFunctionToolCallItemResource_NonAsciiArguments_PreservesCharacters()
+    {
+        // Arrange
+        var functionCall = new FunctionCallContent("call_1", "get_weather", new Dictionary<string, object?> { ["location"] = "Ереван" });
+
+        // Act
+        FunctionToolCallItemResource resource = ResponsesAgentResponseExtensions.ToFunctionToolCallItemResource(functionCall, "fc_1", OpenAIHostingJsonUtilities.DefaultOptions);
+
+        // Assert
+        Assert.Equal("""{"location":"Ереван"}""", resource.Arguments);
+    }
+
+    [Fact]
+    public void ToFunctionToolCallItemResource_HtmlSensitiveArguments_EscapesCharacters()
+    {
+        // Arrange
+        var functionCall = new FunctionCallContent("call_1", "search", new Dictionary<string, object?> { ["query"] = "<tag>&" });
+
+        // Act
+        FunctionToolCallItemResource resource = ResponsesAgentResponseExtensions.ToFunctionToolCallItemResource(functionCall, "fc_1", OpenAIHostingJsonUtilities.DefaultOptions);
+
+        // Assert
+        Assert.Equal("""{"query":"\u003Ctag\u003E\u0026"}""", resource.Arguments);
     }
 
     #endregion

@@ -7,6 +7,7 @@ import contextlib
 import inspect
 import json
 import logging
+import re
 import sys
 import warnings
 import weakref
@@ -21,8 +22,7 @@ from collections.abc import (
     Sequence,
 )
 from pathlib import Path
-from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
-from urllib.parse import urlparse
+from typing import Any, ClassVar, Generic, Literal, Self, TypedDict, cast, overload
 
 from agent_framework import (
     AgentMiddlewareLayer,
@@ -43,6 +43,7 @@ from agent_framework import (
     normalize_messages,
 )
 from agent_framework._mcp import MCPTool
+from agent_framework._middleware import categorize_middleware
 from agent_framework._settings import load_settings
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import FunctionTool, ToolTypes
@@ -51,15 +52,11 @@ from agent_framework._types import (
     _get_data_bytes_as_str,  # pyright: ignore[reportPrivateUsage]
     normalize_tools,
 )
-from agent_framework.exceptions import AgentException, ContentError
+from agent_framework.exceptions import AgentException, ContentError, MiddlewareException
 from agent_framework.observability import AgentTelemetryLayer
 
 from ._feature_usage import FeatureIndex
 
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
@@ -192,6 +189,36 @@ async def _resolve_function_approval(
 
 logger = logging.getLogger("agent_framework.github_copilot")
 
+# Minimum supported Copilot CLI runtime version.
+_MIN_COPILOT_CLI_VERSION = (1, 0, 85)
+_VERSION_PREFIX = re.compile(r"^\s*v?(\d+)\.(\d+)\.(\d+)")
+
+
+def _parse_cli_version(version: object) -> tuple[int, int, int] | None:
+    """Parse the leading ``major.minor.patch`` of a CLI version, ignoring any suffix."""
+    if not isinstance(version, str):
+        return None
+    match = _VERSION_PREFIX.match(version)
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+async def _ensure_supported_cli_version(client: CopilotClient) -> None:
+    """Raise ``AgentException`` unless the connected Copilot CLI meets the minimum version."""
+    minimum = ".".join(str(part) for part in _MIN_COPILOT_CLI_VERSION)
+    try:
+        version: object = (await client.get_status()).version
+    except Exception as ex:
+        raise AgentException(
+            f"GitHub Copilot CLI version {minimum} or higher is required, but the version could not be determined."
+        ) from ex
+    parsed = _parse_cli_version(version)
+    if parsed is None or parsed < _MIN_COPILOT_CLI_VERSION:
+        raise AgentException(
+            f"GitHub Copilot CLI version {minimum} or higher is required, but version '{version}' was detected."
+        )
+
 
 def _provider_service_session_state_keys(agent: object, client: object | None) -> frozenset[str]:
     """Return provider-owned session-state keys declared by the Copilot agent or client."""
@@ -271,41 +298,6 @@ def _derive_session_approval(request: PermissionRequest) -> PermissionDecisionAp
     return None
 
 
-# Characters the WHATWG URL parser (used by the Copilot CLI) treats specially for
-# special-scheme URLs in ways that can move the authority boundary: backslashes are
-# normalized to forward slashes, and tabs/newlines/carriage returns are stripped before
-# parsing. Python's ``urlparse`` does none of this, so a URL containing any of them may
-# resolve to a different host than the CLI actually contacts.
-_WHATWG_AMBIGUOUS_URL_CHARS = ("\\", "\t", "\n", "\r")
-
-
-def _derive_url_session_domain(url: str) -> str | None:
-    """Return the domain to persist for a URL prompt, or ``None`` when it is unsafe to.
-
-    The persisted domain must match the host the Copilot CLI actually contacts, but the CLI
-    parses URLs with WHATWG semantics while this runs on Python's ``urlparse``. The two
-    disagree on crafted authorities -- a backslash before the ``@`` in
-    ``https://example.com<backslash>@evil.com`` resolves to ``example.com`` under the CLI
-    but ``evil.com`` under ``urlparse`` -- so trusting ``urlparse`` here could persist a
-    session-wide approval for an unrelated, attacker-chosen domain.
-
-    To keep the "narrow, never widen" guarantee, the domain is only returned when the URL
-    contains none of the characters the two parsers handle differently; any ambiguity (or a
-    URL with no derivable host) yields ``None`` so the caller can approve the single request
-    without persisting a domain.
-
-    Args:
-        url: The URL from the permission request.
-
-    Returns:
-        The lower-cased host to approve for the session, or ``None`` when the URL is
-        parser-ambiguous or has no host.
-    """
-    if any(char in url for char in _WHATWG_AMBIGUOUS_URL_CHARS):
-        return None
-    return urlparse(url).hostname or None
-
-
 def _normalize_permission_decision(
     decision: PermissionRequestResult,
     request: PermissionRequest,
@@ -317,11 +309,12 @@ def _normalize_permission_decision(
     is constructible with neither. That serializes to ``{"kind": "approve-for-session"}``,
     which the Copilot CLI cannot interpret -- it crashes with ``Cannot read properties of
     undefined (reading 'commandIdentifiers')``, taking the whole run down with it. This
-    reconstructs the intended scope from ``request``.
+    reconstructs structured tool scopes from ``request`` and narrows to a single request
+    when an exact session scope cannot be safely inferred.
 
-    The decision is only ever narrowed, never widened: when the prompt does not offer
-    session-scoped approval, or the request kind has no session approval representation,
-    the decision is downgraded to a single-use approval.
+    The decision is only ever narrowed, never widened: URL prompts, prompts that do not
+    offer session-scoped approval, and request kinds with no session approval representation
+    are downgraded to a single-use approval.
 
     Args:
         decision: The decision returned by the caller's permission handler.
@@ -339,14 +332,11 @@ def _normalize_permission_decision(
 
     try:
         if isinstance(request, PermissionRequestUrl):
-            domain = _derive_url_session_domain(request.url)
-            if domain:
-                return PermissionDecisionApproveForSession(domain=domain)
             logger.warning(
                 "Permission handler returned an unscoped 'approve-for-session' decision for a URL prompt, "
-                "but no unambiguous domain could be derived from '%s'. Approving this request only. Return "
+                "but Agent Framework cannot safely derive the Copilot CLI's exact URL permission scope. "
+                "Approving this request only. Return "
                 "PermissionDecisionApproveForSession(domain=...) to approve a domain for the session.",
-                request.url,
             )
             return PermissionDecisionApproveOnce()
 
@@ -754,6 +744,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # are forwarded verbatim to the Copilot SDK by _build_session_kwargs.
         self._default_options = opts
         self._started = False
+        self._start_lock = asyncio.Lock()
         self._file_hooks_warning_emitted = False
 
     async def __aenter__(self) -> Self:
@@ -773,35 +764,51 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         agent as an async context manager.
 
         Raises:
-            AgentException: If the client fails to start.
+            AgentException: If the client fails to start or the Copilot CLI is older than the
+                minimum supported version.
         """
         if self._started:
             return
 
-        if self._client is None:
-            cli_path = self._settings.get("cli_path") or None
-            log_level = self._settings.get("log_level") or None
-            base_directory = self._settings.get("base_directory") or None
-            telemetry = self._settings.get("telemetry") or None
-            if isinstance(telemetry, str):
-                telemetry = _parse_telemetry_config(telemetry)
+        # Only one start may run at a time, so a failed check can't stop a client that another
+        # concurrent start has already accepted.
+        async with self._start_lock:
+            if self._started:
+                return
 
-            client_kwargs: dict[str, Any] = {}
-            if cli_path:
-                client_kwargs["connection"] = RuntimeConnection.for_stdio(path=cli_path)
-            if log_level:
-                client_kwargs["log_level"] = log_level
-            if base_directory:
-                client_kwargs["base_directory"] = base_directory
-            if telemetry:
-                client_kwargs["telemetry"] = telemetry
-            self._client = CopilotClient(**client_kwargs)
+            if self._client is None:
+                cli_path = self._settings.get("cli_path") or None
+                log_level = self._settings.get("log_level") or None
+                base_directory = self._settings.get("base_directory") or None
+                telemetry = self._settings.get("telemetry") or None
+                if isinstance(telemetry, str):
+                    telemetry = _parse_telemetry_config(telemetry)
 
-        try:
-            await self._client.start()
+                client_kwargs: dict[str, Any] = {}
+                if cli_path:
+                    client_kwargs["connection"] = RuntimeConnection.for_stdio(path=cli_path)
+                if log_level:
+                    client_kwargs["log_level"] = log_level
+                if base_directory:
+                    client_kwargs["base_directory"] = base_directory
+                if telemetry:
+                    client_kwargs["telemetry"] = telemetry
+                self._client = CopilotClient(**client_kwargs)
+
+            try:
+                await self._client.start()
+            except Exception as ex:
+                raise AgentException(f"Failed to start GitHub Copilot client: {ex}") from ex
+
+            try:
+                await _ensure_supported_cli_version(self._client)
+            except BaseException:
+                if self._owns_client:
+                    with contextlib.suppress(Exception):
+                        await self._client.stop()
+                raise
+
             self._started = True
-        except Exception as ex:
-            raise AgentException(f"Failed to start GitHub Copilot client: {ex}") from ex
 
     async def stop(self) -> None:
         """Stop the Copilot client and clean up resources.
@@ -895,6 +902,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         Raises:
             AgentException: If the request fails.
+            MiddlewareException: If a context provider contributes unsupported function middleware.
         """
         if middleware:
             logger.warning(
@@ -1102,6 +1110,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         Raises:
             AgentException: If the request fails.
+            MiddlewareException: If a context provider contributes unsupported function middleware.
         """
         if not self._started:
             await self.start()
@@ -1168,7 +1177,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                         contents=[
                             Content.from_usage(
                                 usage_details,
-                                merge_mode="replace",
+                                merge_mode="append",
                                 raw_representation=event.data,
                             )
                         ]
@@ -1268,6 +1277,10 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         Returns:
             The SessionContext with provider context populated.
+
+        Raises:
+            MiddlewareException: If a context provider contributes function middleware,
+                which cannot be applied to the SDK-owned tool loop.
         """
         session_context = SessionContext(
             session_id=session.session_id,
@@ -1284,6 +1297,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 session=session,
                 context=session_context,
                 state=session.state.setdefault(provider.source_id, {}),
+            )
+
+        if categorize_middleware(session_context.get_middleware())["function"]:
+            raise MiddlewareException(
+                "GitHubCopilotAgent does not support function middleware contributed by context providers. "
+                "Use Agent with a chat client when function middleware is required."
             )
 
         return session_context
@@ -1735,6 +1754,11 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         merged with the agent's tools and converted to SDK tools, and approval callbacks
         are turned into ``hooks``.
 
+        Forwarding options alone is not an authorization or revocation guarantee for
+        capabilities already resident in a resumed SDK/CLI service session. Enforce
+        authorization at the MCP service/tool boundary and use a fresh service session
+        when narrowing configured capabilities.
+
         Args:
             streaming: Whether to enable streaming for the session.
             runtime_options: Runtime options that take precedence over default_options.
@@ -1873,10 +1897,10 @@ class GitHubCopilotAgent(  # type: ignore[misc]
     RawGitHubCopilotAgent[OptionsT],
     Generic[OptionsT],
 ):
-    """A GitHub Copilot Agent with full middleware and telemetry support.
+    """A GitHub Copilot Agent with agent middleware and telemetry support.
 
     This is the recommended agent class for most use cases. It includes
-    middleware support and OpenTelemetry-based telemetry for observability,
+    agent middleware and OpenTelemetry-based telemetry for observability,
     with middleware running outside the telemetry span so middleware execution
     time is not captured in traces. For a minimal implementation without these
     layers, use :class:`RawGitHubCopilotAgent`.
@@ -1926,7 +1950,7 @@ class GitHubCopilotAgent(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize a GitHub Copilot Agent with full middleware and telemetry.
+        """Initialize a GitHub Copilot Agent with agent middleware and telemetry.
 
         Args:
             instructions: System message for the agent.

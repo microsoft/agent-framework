@@ -44,7 +44,7 @@ def expand_file_patterns(patterns: list[str], skip_glob: bool = False) -> list[s
             # When skip_glob is True, treat patterns as literal file paths
             # Only include if it's a markdown file
             if pattern.endswith(".md"):
-                matches = glob.glob(pattern, recursive=False)
+                matches = glob.glob(glob.escape(pattern), recursive=False)
                 all_files.extend(matches)
         else:
             # Handle both relative and absolute paths with glob expansion

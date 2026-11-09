@@ -2,11 +2,15 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -29,6 +33,168 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     private List<WorkflowEvent> WorkflowEvents { get; } = [];
 
     private Dictionary<Type, int> WorkflowEventCounts { get; set; } = [];
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ResumeAsync_LegacyCheckpointPreservesNextAssignmentAsync(bool offThread, bool clear)
+    {
+        // Arrange
+        (Workflow workflow, CheckpointManager checkpoints, CheckpointInfo checkpoint) =
+            await CreateLegacyCheckpointAsync(offThread, clear, completed: false);
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+
+        // Act
+        await using StreamingRun resumed = await environment.ResumeStreamingAsync(workflow, checkpoint);
+        await foreach (WorkflowEvent evt in resumed.WatchStreamAsync())
+        {
+            Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+        }
+
+        // Assert
+        WorkflowFormulaState state = GetRootState(workflow);
+        Assert.Equal(clear ? null : "updated", state.Get("TestValue").ToObject());
+    }
+
+    [Theory]
+    [InlineData("de-DE")]
+    [InlineData("fr-FR")]
+    public async Task DeclarativeWorkflowExecution_UsesInvariantCulture_ForFormulasAndNumberParsingAsync(string cultureName)
+    {
+        CultureInfo originalCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo(cultureName);
+
+            const string Yaml = """
+                kind: Workflow
+                trigger:
+                  kind: OnConversationStart
+                  id: repro
+                  actions:
+                    - kind: ParseValue
+                      id: parse_price
+                      variable: Local.Price
+                      value: ="3.14"
+                      valueType: Number
+                    - kind: SetVariable
+                      id: set_max
+                      variable: Local.Max
+                      value: =Max(1, 2)
+                    - kind: SendActivity
+                      id: send_max
+                      activity: "Max is {Local.Max}"
+                """;
+
+            using StringReader yamlReader = new(Yaml);
+            DeclarativeWorkflowOptions options = new(new MockAgentProvider().Object);
+            Workflow workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, options);
+
+            await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, "start");
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+                Assert.False(evt is ExecutorFailedEvent, (evt as ExecutorFailedEvent)?.Data?.ToString());
+            }
+
+            WorkflowFormulaState state = GetRootState(workflow);
+            Assert.Equal(3.14D, Convert.ToDouble(state.Get("Price").ToObject(), CultureInfo.InvariantCulture));
+            Assert.Equal(2.0D, Convert.ToDouble(state.Get("Max").ToObject(), CultureInfo.InvariantCulture));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = originalCulture;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResumeAsync_LegacyCheckpointSupportsImmediateRestoresAsync(bool offThread)
+    {
+        // Arrange
+        (Workflow workflow, CheckpointManager checkpoints, CheckpointInfo checkpoint) =
+            await CreateLegacyCheckpointAsync(offThread, clear: false, completed: true);
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+
+        // Act
+        await using StreamingRun resumed = await environment.ResumeStreamingAsync(workflow, checkpoint);
+        await resumed.RestoreCheckpointAsync(checkpoint);
+        await resumed.RestoreCheckpointAsync(checkpoint);
+
+        // Assert
+        Assert.Equal("updated", GetRootState(workflow).Get("TestValue").ToObject());
+    }
+
+    private static async Task<(Workflow Workflow, CheckpointManager Checkpoints, CheckpointInfo Checkpoint)> CreateLegacyCheckpointAsync(
+        bool offThread, bool clear, bool completed)
+    {
+        Dictionary<CheckpointInfo, JsonElement> stored = [];
+        Mock<ICheckpointStore<JsonElement>> store = new();
+        store.Setup(s => s.CreateCheckpointAsync(It.IsAny<string>(), It.IsAny<JsonElement>(), It.IsAny<CheckpointInfo?>()))
+            .ReturnsAsync((string sessionId, JsonElement value, CheckpointInfo? _) =>
+            {
+                CheckpointInfo info = new(sessionId, Guid.NewGuid().ToString("N"));
+                stored.Add(info, value);
+                return info;
+            });
+        store.Setup(s => s.RetrieveCheckpointAsync(It.IsAny<string>(), It.IsAny<CheckpointInfo>()))
+            .ReturnsAsync((string _, CheckpointInfo info) => stored[info]);
+        store.Setup(s => s.RetrieveIndexAsync(It.IsAny<string>(), It.IsAny<CheckpointInfo?>()))
+            .ReturnsAsync((string sessionId, CheckpointInfo? _) =>
+                stored.Keys.Where(info => string.Equals(info.SessionId, sessionId, StringComparison.Ordinal)).ToArray().AsEnumerable());
+        CheckpointManager checkpoints = CheckpointManager.CreateJson(store.Object, DeclarativeWorkflowJsonOptions.Default);
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+        List<CheckpointInfo> saved = [];
+        await using (StreamingRun run = await environment.RunStreamingAsync(BuildWorkflow(), "start"))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } checkpoint })
+                {
+                    saved.Add(checkpoint);
+                }
+            }
+        }
+        Assert.True(saved.Count >= 3);
+        CheckpointInfo legacy = completed ? saved[^1] : saved.First(info =>
+            stored[info].GetProperty("stateData").EnumerateObject().Any(entry =>
+                entry.Name.EndsWith("|@Local|TestValue", StringComparison.Ordinal)));
+        JsonNode? node = JsonNode.Parse(stored[legacy].GetRawText());
+        Assert.NotNull(node);
+        JsonObject stateData = Assert.IsType<JsonObject>(node["stateData"]);
+        string localKey = Assert.Single(stateData.Select(entry => entry.Key),
+            key => key.EndsWith("|@Local|TestValue", StringComparison.Ordinal));
+        JsonNode? value = stateData[localKey];
+        Assert.True(stateData.Remove(localKey));
+        stateData.Add(localKey.Replace("|@Local|", "|@Topic|"), value);
+        Assert.True(stateData.Remove(localKey.Replace("|@Local|", $"|@{WorkflowFormulaState.LocalOwnershipScopeName}|")));
+        stored[legacy] = JsonSerializer.SerializeToElement(node);
+        return (BuildWorkflow(), checkpoints, legacy);
+
+        Workflow BuildWorkflow()
+        {
+            using StringReader reader = new($$"""
+                kind: Workflow
+                trigger:
+                  kind: OnConversationStart
+                  id: legacy_restore
+                  actions:
+                    - kind: SetVariable
+                      id: seed_value
+                      variable: Local.TestValue
+                      value: legacy
+                    - kind: SetVariable
+                      id: update_value
+                      variable: Topic.TestValue
+                      value: {{(clear ? "=Blank()" : "updated")}}
+                """);
+            return DeclarativeWorkflowBuilder.Build<string>(reader, new(new MockAgentProvider().Object));
+        }
+    }
 
     [Theory]
     [InlineData("BadEmpty.yaml")]

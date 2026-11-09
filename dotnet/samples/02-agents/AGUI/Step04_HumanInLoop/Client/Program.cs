@@ -60,7 +60,10 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
                         string? userInput = Console.ReadLine();
                         bool approved = userInput?.ToUpperInvariant() is "YES" or "Y";
 
-                        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved);
+                        // When rejecting, tell the model not to retry the call.
+                        ToolApprovalResponseContent approvalResponse = approved
+                            ? approvalRequest.CreateResponse(approved: true)
+                            : approvalRequest.CreateResponse(approved: false, reason: "The user rejected this tool call. Do not retry it.");
 
                         approvalResponses.Add(approvalResponse);
                         break;

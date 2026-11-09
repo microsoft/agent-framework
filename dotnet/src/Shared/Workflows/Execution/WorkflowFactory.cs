@@ -37,7 +37,7 @@ internal sealed class WorkflowFactory(string workflowFile, Uri foundryEndpoint)
     public Workflow CreateWorkflow()
     {
         // Create the agent provider that will service agent requests within the workflow.
-        AzureAgentProvider agentProvider = new(foundryEndpoint, new AzureCliCredential())
+        FoundryAgentProvider agentProvider = new(foundryEndpoint, new AzureCliCredential())
         {
             // Functions included here will be auto-executed by the framework.
             Functions = this.Functions
