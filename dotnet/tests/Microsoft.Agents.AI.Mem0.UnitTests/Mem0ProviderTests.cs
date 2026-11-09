@@ -504,6 +504,82 @@ public sealed class Mem0ProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task StateInitializer_Throws_WhenScopesAreEmptyAsync()
+    {
+        // Arrange
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(new Mem0ProviderScope()));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ClearStoredMemoriesAsync(new TestAgentSession()));
+        Assert.Empty(this._handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task StateInitializer_Throws_WhenScopeIdsAreBlankAsync(string blankId)
+    {
+        // Arrange
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = blankId }));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ClearStoredMemoriesAsync(new TestAgentSession()));
+        Assert.Empty(this._handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task ClearStoredMemoriesAsync_Throws_WhenRestoredStateHasBlankScopeIdsAsync(string blankId)
+    {
+        // Arrange
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = "tid" }));
+        var restoredSession = CreateRestoredSession(new Mem0Provider.State(new Mem0ProviderScope { ThreadId = blankId }));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ClearStoredMemoriesAsync(restoredSession));
+        Assert.Empty(this._handler.Requests);
+    }
+
+    [Fact]
+    public async Task ClearStoredMemoriesAsync_Throws_WhenRestoredStateHasEmptyScopesAsync()
+    {
+        // Arrange
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = "tid" }));
+        var restoredSession = CreateRestoredSession(new Mem0Provider.State(new Mem0ProviderScope()));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sut.ClearStoredMemoriesAsync(restoredSession));
+        Assert.Empty(this._handler.Requests);
+    }
+
+    [Fact]
+    public async Task InvokingAsync_Throws_WhenRestoredStateHasEmptySearchScopeAsync()
+    {
+        // Arrange
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = "tid" }));
+        var restoredSession = CreateRestoredSession(new Mem0Provider.State(new Mem0ProviderScope { ThreadId = "tid" }, new Mem0ProviderScope()));
+        var invokingContext = new AIContextProvider.InvokingContext(s_mockAgent, restoredSession, new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "Q?") } });
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sut.InvokingAsync(invokingContext).AsTask());
+        Assert.Empty(this._handler.Requests);
+    }
+
+    [Fact]
+    public async Task InvokedAsync_Throws_WhenRestoredStateHasEmptyStorageScopeAsync()
+    {
+        // Arrange
+        var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(new Mem0ProviderScope { ThreadId = "tid" }));
+        var restoredSession = CreateRestoredSession(new Mem0Provider.State(new Mem0ProviderScope(), new Mem0ProviderScope { ThreadId = "tid" }));
+        var invokedContext = new AIContextProvider.InvokedContext(s_mockAgent, restoredSession, [new(ChatRole.User, "Hello")], [new(ChatRole.Assistant, "Hi")]);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sut.InvokedAsync(invokedContext).AsTask());
+        Assert.Empty(this._handler.Requests);
+    }
+
+    [Fact]
     public async Task StateKeys_CanBeConfiguredViaOptionsAsync()
     {
         // Arrange
@@ -713,6 +789,17 @@ public sealed class Mem0ProviderTests : IDisposable
 
     #endregion
 
+    /// <summary>
+    /// Creates a session restored from a serialized StateBag that already holds <paramref name="state"/>, so the
+    /// provider's state initializer never runs for it.
+    /// </summary>
+    private static TestAgentSession CreateRestoredSession(Mem0Provider.State state)
+    {
+        var stateBag = new AgentSessionStateBag();
+        stateBag.SetValue(nameof(Mem0Provider), state, Mem0JsonUtilities.DefaultOptions);
+        return new TestAgentSession(AgentSessionStateBag.Deserialize(stateBag.Serialize()));
+    }
+
     private static bool ContainsOrdinal(string source, string value) => source.IndexOf(value, StringComparison.Ordinal) >= 0;
 
     public void Dispose()
@@ -765,6 +852,10 @@ public sealed class Mem0ProviderTests : IDisposable
         public TestAgentSession()
         {
             this.StateBag = new AgentSessionStateBag();
+        }
+
+        public TestAgentSession(AgentSessionStateBag stateBag) : base(stateBag)
+        {
         }
     }
 }

@@ -2,6 +2,29 @@
 
 This package provides the integration of Agent Framework agents and workflows with the Foundry Agent Server, which can be hosted on Foundry infrastructure.
 
+## Toolbox tool approvals
+
+`FoundryToolbox` uses each discovered tool's `_meta.tool_configuration.require_approval` when
+`approval_mode` is omitted or `None`. See the
+[Foundry approval configuration](https://learn.microsoft.com/python/api/azure-ai-projects/azure.ai.projects.models.mcptoolrequireapproval)
+for supported metadata shapes.
+
+Unlike regular MCP tools, Toolbox `approval_mode=None` does not mean no approval.
+Use `"never_require"` to disable local approval or `"always_require"` to require it for every function.
+Any explicit non-`None` policy, including a dictionary or callable, replaces metadata handling entirely.
+Missing metadata defaults to no approval; malformed metadata raises `ToolExecutionException`.
+
+Metadata filters use remote/original tool names, not local prefixes. Filter criteria must all match;
+`always` wins overlaps and unmatched filter-policy tools require approval. Discovery refreshes and reconnects
+reapply the policy; failed refreshes preserve the previous complete snapshot and approval modes.
+
+**Trust boundary:** This Foundry-specific integration trusts the supplied `annotations.readOnlyHint`
+when evaluating `read_only` filters, including rules that skip approval. It does not independently
+verify that classification or enforce read-only behavior. Applications must trust the classifications
+supplied through their configured Toolbox. The private metadata parser is intended only for Foundry
+Toolbox; reusing it elsewhere provides no security or compatibility guarantees. It is not a
+general-purpose MCP approval policy.
+
 ## Agent instances and factories
 
 `ResponsesHostServer` and `InvocationsHostServer` accept an agent instance or a zero-argument callable through the

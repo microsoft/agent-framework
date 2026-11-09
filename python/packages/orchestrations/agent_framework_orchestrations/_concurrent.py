@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import logging
 from collections.abc import Callable, Sequence
-from typing import Any, Literal, cast
+from typing import Any, Literal, Never, cast
 
 from agent_framework import AgentResponse, Message, SupportsAgentRun
 from agent_framework._telemetry import mark_feature_used
@@ -15,7 +15,6 @@ from agent_framework._workflows._executor import Executor, handler
 from agent_framework._workflows._message_utils import normalize_messages_input
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
-from typing_extensions import Never
 
 from ._feature_usage import FeatureIndex
 from ._orchestration_request_info import AgentApprovalExecutor, validate_request_info_filter

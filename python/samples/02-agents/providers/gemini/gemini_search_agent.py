@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = ["agent-framework-gemini"]
 # ///
 

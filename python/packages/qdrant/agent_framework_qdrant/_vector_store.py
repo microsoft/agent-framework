@@ -74,6 +74,34 @@ def _create_client(
     )
 
 
+def _resolve_client(
+    async_client: AsyncQdrantClient | None,
+    *,
+    url: str | None,
+    api_key: str | SecretString | None,
+    managed_client: bool | None,
+    env_file_path: str | None,
+    env_file_encoding: str | None,
+) -> tuple[AsyncQdrantClient, bool]:
+    """Return the client and whether this connector closes it.
+
+    An injected client is returned unchanged. URL, API key, and ``.env`` options
+    are not read, and the caller keeps ownership even when ``managed_client`` is set.
+    Connector-created clients are owned unless ``managed_client`` is false.
+    """
+    if async_client is not None:
+        return async_client, False
+    return (
+        _create_client(
+            url=url,
+            api_key=api_key,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        ),
+        True if managed_client is None else managed_client,
+    )
+
+
 _DISTANCES = {
     "DEFAULT": models.Distance.COSINE,
     "cosine_similarity": models.Distance.COSINE,
@@ -327,7 +355,7 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
 
     All dense fields are named vectors. The default metric is cosine similarity
     (larger is better), not cosine distance. Scores and thresholds retain native
-    Qdrant units. Supplied clients remain caller-owned unless explicitly managed.
+    Qdrant units. Supplied clients remain caller-owned.
 
     Portable filters require a server: Qdrant's local emulator has different
     null/missing and numeric matching behavior across supported SDK versions.
@@ -359,34 +387,33 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
             definition: Explicit dictionary schema.
             collection_name: Collection name, overriding the model name.
             embedding_generator: Default local embedding client.
-            async_client: Existing async client, borrowed by default. Use this for local mode or advanced configuration.
-            url: Server URL override; otherwise loaded from QdrantSettings, then the SDK defaults to localhost.
-            api_key: API key override as a string or SecretString; otherwise loaded from QdrantSettings.
-            managed_client: Whether to close the client. Defaults to True only for connector-created clients.
+            async_client: Existing async client for local mode or advanced configuration. When supplied, URL,
+                API-key, and .env options are ignored and the client remains caller-owned.
+            url: Server URL override used when creating a client; otherwise loaded from QdrantSettings, then the SDK
+                defaults to localhost.
+            api_key: API key override as a string or SecretString, used when creating a client; otherwise loaded from
+                QdrantSettings.
+            managed_client: Whether to close a connector-created client. Defaults to True. Ignored for an injected
+                client, which always remains caller-owned.
             env_file_path: Optional .env file to load before process environment variables.
             env_file_encoding: Encoding for the .env file; defaults to UTF-8.
         """
-        if async_client is not None and any(
-            value is not None for value in (url, api_key, env_file_path, env_file_encoding)
-        ):
-            raise ValueError("Pass async_client or connection settings, not both.")
         super().__init__(
             record_type,
             definition=definition,
             collection_name=collection_name,
             embedding_generator=embedding_generator,
-            managed_client=async_client is None if managed_client is None else managed_client,
         )
-        self.async_client = (
-            async_client
-            if async_client is not None
-            else _create_client(
-                url=url,
-                api_key=api_key,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
+        resolved_client, owns_client = _resolve_client(
+            async_client,
+            url=url,
+            api_key=api_key,
+            managed_client=managed_client,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
         )
+        self.async_client = resolved_client
+        self.managed_client = owns_client
         self._closed = False
 
     @property
@@ -817,32 +844,31 @@ class QdrantStore(BaseVectorStore):
         """Initialize a store.
 
         Args:
-            async_client: Existing async client; borrowed unless managed_client=True.
-            url: Server URL override; otherwise loaded from QdrantSettings, then the SDK defaults to localhost.
-            api_key: API key override as a string or SecretString; otherwise loaded from QdrantSettings.
+            async_client: Existing async client. When supplied, URL, API-key, and .env options are ignored and the
+                client remains caller-owned.
+            url: Server URL override used when creating a client; otherwise loaded from QdrantSettings, then the SDK
+                defaults to localhost.
+            api_key: API key override as a string or SecretString, used when creating a client; otherwise loaded from
+                QdrantSettings.
             embedding_generator: Default embedding client inherited by collections.
-            managed_client: Whether to close the client. Defaults to True for connector-created clients.
+            managed_client: Whether to close a connector-created client. Defaults to True. Ignored for an injected
+                client, which always remains caller-owned.
             env_file_path: Optional .env file to load before process environment variables.
             env_file_encoding: Encoding for the .env file; defaults to UTF-8.
         """
-        if async_client is not None and any(
-            value is not None for value in (url, api_key, env_file_path, env_file_encoding)
-        ):
-            raise ValueError("Pass async_client or connection settings, not both.")
+        resolved_client, owns_client = _resolve_client(
+            async_client,
+            url=url,
+            api_key=api_key,
+            managed_client=managed_client,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
         super().__init__(
             embedding_generator=embedding_generator,
-            managed_client=async_client is None if managed_client is None else managed_client,
+            managed_client=owns_client,
         )
-        self.async_client = (
-            async_client
-            if async_client is not None
-            else _create_client(
-                url=url,
-                api_key=api_key,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-        )
+        self.async_client = resolved_client
         self._closed = False
 
     def get_collection(

@@ -103,11 +103,7 @@ public sealed class Mem0Provider : MessageAIContextProvider
         {
             var state = stateInitializer(session);
 
-            if (state is null
-                || state.StorageScope is null
-                || (state.StorageScope.AgentId is null && state.StorageScope.ThreadId is null && state.StorageScope.UserId is null && state.StorageScope.ApplicationId is null)
-                || state.SearchScope is null
-                || (state.SearchScope.AgentId is null && state.SearchScope.ThreadId is null && state.SearchScope.UserId is null && state.SearchScope.ApplicationId is null))
+            if (!HasValidScopes(state))
             {
                 throw new InvalidOperationException("State initializer must return a non-null state with valid storage and search scopes, where at least one scoping parameter is set for each.");
             }
@@ -115,12 +111,36 @@ public sealed class Mem0Provider : MessageAIContextProvider
             return state;
         };
 
+    private static bool HasValidScopes(State? state) =>
+        state is not null && IsScoped(state.StorageScope) && IsScoped(state.SearchScope);
+
+    // Blank IDs count as unset, matching Mem0Client, which drops them from requests.
+    private static bool IsScoped(Mem0ProviderScope? scope) =>
+        scope is not null
+        && (!string.IsNullOrWhiteSpace(scope.AgentId)
+            || !string.IsNullOrWhiteSpace(scope.ThreadId)
+            || !string.IsNullOrWhiteSpace(scope.UserId)
+            || !string.IsNullOrWhiteSpace(scope.ApplicationId));
+
+    private State GetState(AgentSession? session)
+    {
+        var state = this._sessionState.GetOrInitializeState(session);
+
+        // State restored from a serialized session is returned without running the initializer, so validate it here too.
+        if (!HasValidScopes(state))
+        {
+            throw new InvalidOperationException("The session state must have valid storage and search scopes, where at least one scoping parameter is set for each.");
+        }
+
+        return state;
+    }
+
     /// <inheritdoc />
     protected override async ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(context);
 
-        var state = this._sessionState.GetOrInitializeState(context.Session);
+        var state = this.GetState(context.Session);
         var searchScope = state.SearchScope;
 
         string queryText = string.Join(
@@ -194,7 +214,7 @@ public sealed class Mem0Provider : MessageAIContextProvider
     /// <inheritdoc />
     protected override async ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        var state = this._sessionState.GetOrInitializeState(context.Session);
+        var state = this.GetState(context.Session);
         var storageScope = state.StorageScope;
 
         try
@@ -229,7 +249,7 @@ public sealed class Mem0Provider : MessageAIContextProvider
     public Task ClearStoredMemoriesAsync(AgentSession session, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(session);
-        var state = this._sessionState.GetOrInitializeState(session);
+        var state = this.GetState(session);
         var storageScope = state.StorageScope;
 
         return this._client.ClearMemoryAsync(

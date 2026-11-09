@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.ObjectModel;
@@ -24,7 +25,11 @@ internal sealed class WorkflowExpressionEngine
     public WorkflowExpressionEngine(WorkflowFormulaState state)
     {
         this._state = state;
-        this._parserOptions = state.AllowsSideEffects ? new ParserOptions { AllowsSideEffects = true } : null;
+        this._parserOptions = new ParserOptions
+        {
+            Culture = CultureInfo.InvariantCulture,
+            AllowsSideEffects = state.AllowsSideEffects,
+        };
     }
 
     public EvaluationResult<bool> GetValue(BoolExpression boolean) => this.Evaluate(boolean);

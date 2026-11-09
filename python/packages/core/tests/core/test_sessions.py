@@ -9,12 +9,11 @@ import tracemalloc
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 from unittest.mock import patch
 
 import msgspec
 import pytest
-from typing_extensions import Self
 
 from agent_framework import (
     AgentContext,
@@ -838,6 +837,13 @@ register_state_type(_RegisteredSessionState)
 
 
 class TestStateTypeRegistry:
+    @pytest.fixture(autouse=True)
+    def isolate_state_registry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_framework import _sessions
+
+        monkeypatch.setattr(_sessions, "_STATE_TYPE_REGISTRY", _sessions._STATE_TYPE_REGISTRY.copy())
+        monkeypatch.setattr(_sessions, "_STATE_CLASS_REGISTRY", _sessions._STATE_CLASS_REGISTRY.copy())
+
     def test_same_registration_is_idempotent(self) -> None:
         register_state_type(_RegisteredSessionState)
 

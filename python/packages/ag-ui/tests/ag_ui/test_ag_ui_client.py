@@ -4,7 +4,7 @@
 
 import asyncio
 import json
-from collections.abc import AsyncGenerator, Awaitable, Mapping, MutableSequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, MutableSequence
 from contextlib import AbstractContextManager, nullcontext
 from typing import Any, cast
 
@@ -14,6 +14,8 @@ from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import (
     Agent,
     AgentResponseUpdate,
+    ChatContext,
+    ChatMiddleware,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
@@ -164,6 +166,20 @@ class _FailingAGUIEventStream:
         self.aclose_completed += 1
         if self.aclose_calls == 1:
             raise self._close_error
+
+
+class _OmitRunMetadata(ChatMiddleware):
+    """Omit optional run markers without changing streamed content."""
+
+    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
+
+        def omit(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            if not update.contents and "run_id" in (update.additional_properties or {}):
+                return ChatResponseUpdate()
+            return update
+
+        context.stream_update_transforms.append(omit)
 
 
 class TestAGUIChatClient:
@@ -877,7 +893,7 @@ class TestAGUIChatClient:
 
             try:
                 if close_mode == "explicit_close":
-                    # Keep pull and close in one task; wait_for creates a child task on Python 3.10/3.11.
+                    # Keep pull and close in one task; wait_for creates a child task on Python 3.11.
                     first = await anext(stream)
                     assert isinstance(first, (ChatResponseUpdate, AgentResponseUpdate))
                     assert first.text == "first"
@@ -1197,6 +1213,430 @@ class TestAGUIChatClient:
         assert response is not None
         assert len(response.messages) > 0
         assert "Complete response" in response.text
+
+    @pytest.mark.parametrize(
+        "stream,invocation_enabled,consume_stream,strip_run_metadata",
+        [
+            (True, True, True, False),
+            (True, True, False, False),
+            (False, True, False, False),
+            (True, False, True, False),
+            (True, False, False, False),
+            (True, True, True, True),
+            (True, False, False, True),
+        ],
+        ids=[
+            "loop_iterated",
+            "loop_final_only",
+            "nonstream",
+            "direct_iterated",
+            "direct_final_only",
+            "filtered_loop",
+            "filtered_direct",
+        ],
+    )
+    @pytest.mark.parametrize("late_annotations", [False, True], ids=["before_later_message", "after_later_message"])
+    @pytest.mark.parametrize("as_agent", [False, True], ids=["client", "agent"])
+    async def test_public_response_attaches_annotations_to_the_referenced_message(
+        self,
+        stream: bool,
+        invocation_enabled: bool,
+        consume_stream: bool,
+        strip_run_metadata: bool,
+        late_annotations: bool,
+        as_agent: bool,
+    ) -> None:
+        """Public finalization must attach annotations by message ID after later text arrives."""
+        annotations = [
+            {
+                "type": "citation",
+                "url": "https://example.test/source",
+                "annotated_regions": [{"type": "text_span", "start_index": 0, "end_index": 5}],
+            }
+        ]
+        annotation_event = {
+            "type": "CUSTOM",
+            "name": "annotations",
+            "value": {"messageId": "m1", "annotations": annotations},
+        }
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(await request.aread())
+            events: list[dict[str, Any]] = [
+                {"type": "RUN_STARTED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+                {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
+                {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "First"},
+                {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
+            ]
+            if not late_annotations:
+                events.append(annotation_event)
+            events.extend(
+                [
+                    {"type": "TEXT_MESSAGE_START", "messageId": "m2", "role": "assistant"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "Second"},
+                    {"type": "TEXT_MESSAGE_END", "messageId": "m2"},
+                ]
+            )
+            if late_annotations:
+                events.append(annotation_event)
+            events.append({"type": "RUN_FINISHED", "threadId": payload["thread_id"], "runId": payload["run_id"]})
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content="".join(f"data: {json.dumps(event)}\n\n" for event in events).encode(),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            async with AGUIChatClient(
+                endpoint="https://agui.example.test/",
+                http_client=http_client,
+                function_invocation_configuration={"enabled": invocation_enabled},
+                middleware=[_OmitRunMetadata()] if strip_run_metadata else [],
+            ) as client:
+                get_response = Agent(client=client).run if as_agent else client.get_response
+                messages = [Message(role="user", contents=["Question"])]
+                if stream:
+                    response_stream = get_response(messages, stream=True)
+                    updates = [update async for update in response_stream] if consume_stream else []
+                    response = await response_stream.get_final_response()
+                    annotation_updates = [
+                        update
+                        for update in updates
+                        if (update.additional_properties or {}).get("ag_ui_custom_event", {}).get("name")
+                        == "annotations"
+                    ]
+                    if consume_stream:
+                        assert len(annotation_updates) == 1
+                        assert "".join(update.text for update in updates) == "FirstSecond"
+                else:
+                    response = await get_response(messages)
+
+        assert [(message.message_id, message.text) for message in response.messages] == [
+            ("m1", "First"),
+            ("m2", "Second"),
+        ]
+        assert response.messages[0].contents[0].annotations == annotations
+        assert response.messages[1].contents[0].annotations is None
+        assert response.additional_properties["ag_ui_custom_event"]["value"] == annotation_event["value"]
+
+    @pytest.mark.parametrize("reuse_message_id", [False, True], ids=["distinct_ids", "reused_id"])
+    @pytest.mark.parametrize(
+        "stream,strip_run_metadata",
+        [(False, False), (True, False), (True, True)],
+        ids=["nonstream", "stream", "filtered_stream"],
+    )
+    @pytest.mark.parametrize("as_agent", [False, True], ids=["client", "agent"])
+    async def test_public_annotations_preserve_a_completed_client_tool_round(
+        self, stream: bool, as_agent: bool, reuse_message_id: bool, strip_run_metadata: bool
+    ) -> None:
+        """Late annotations must retain one executed call/result pair and the next request's history."""
+        executed: list[str] = []
+        requests: list[dict[str, Any]] = []
+        annotations = [{"type": "citation", "url": "https://example.test/source"}]
+        earlier_annotations = [{"type": "citation", "url": "https://example.test/earlier-source"}]
+        planning_id = "m1" if reuse_message_id else "planning"
+
+        @tool(approval_mode="never_require")
+        def echo(value: str) -> str:
+            """Return the requested value."""
+            executed.append(value)
+            return value
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(await request.aread())
+            requests.append(payload)
+            events: list[dict[str, Any]] = [
+                {"type": "RUN_STARTED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+            ]
+            if len(requests) == 1:
+                events.extend(
+                    [
+                        {"type": "TEXT_MESSAGE_START", "messageId": planning_id, "role": "assistant"},
+                        {"type": "TEXT_MESSAGE_CONTENT", "messageId": planning_id, "delta": "Checking"},
+                        {"type": "TEXT_MESSAGE_END", "messageId": planning_id},
+                        {"type": "TOOL_CALL_START", "toolCallId": "call-echo", "toolName": "echo"},
+                        {"type": "TOOL_CALL_ARGS", "toolCallId": "call-echo", "delta": '{"value":"done"}'},
+                        {"type": "TOOL_CALL_END", "toolCallId": "call-echo"},
+                    ]
+                )
+                if reuse_message_id:
+                    events.append(
+                        {
+                            "type": "CUSTOM",
+                            "name": "annotations",
+                            "value": {"messageId": "m1", "annotations": earlier_annotations},
+                        }
+                    )
+            else:
+                annotated_events: list[dict[str, Any]] = [
+                    {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "First"},
+                    {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
+                    {"type": "TEXT_MESSAGE_START", "messageId": "m2", "role": "assistant"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "Second"},
+                    {"type": "TEXT_MESSAGE_END", "messageId": "m2"},
+                    {
+                        "type": "CUSTOM",
+                        "name": "annotations",
+                        "value": {"messageId": "m1", "annotations": annotations},
+                    },
+                ]
+                events.extend(annotated_events)
+            events.append({"type": "RUN_FINISHED", "threadId": payload["thread_id"], "runId": payload["run_id"]})
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content="".join(f"data: {json.dumps(event)}\n\n" for event in events).encode(),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            async with AGUIChatClient(
+                endpoint="https://agui.example.test/",
+                http_client=http_client,
+                middleware=[_OmitRunMetadata()] if strip_run_metadata else [],
+            ) as client:
+                get_response = Agent(client=client).run if as_agent else client.get_response
+                messages = [Message(role="user", contents=["Question"])]
+                options: ChatOptions[None] = ChatOptions(tools=[echo], metadata={"thread_id": "thread-1"})
+                if stream:
+                    response_stream = get_response(messages, stream=True, options=options)
+                    updates = [update async for update in response_stream]
+                    response = await response_stream.get_final_response()
+                    assert (
+                        sum(content.type == "function_result" for update in updates for content in update.contents) == 1
+                    )
+                else:
+                    response = await get_response(messages, options=options)
+
+        assert len(requests) == 2
+        assert [request["thread_id"] for request in requests] == ["thread-1", "thread-1"]
+        assert executed == ["done"]
+        assert len(messages) == 1
+        call_contents = [
+            content for message in response.messages for content in message.contents if content.type == "function_call"
+        ]
+        result_contents = [
+            content
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_result"
+        ]
+        assert len(call_contents) == len(result_contents) == 1
+        assert call_contents[0].call_id == result_contents[0].call_id == "call-echo"
+        text_messages = [(message.message_id, message.text) for message in response.messages if message.text]
+        assert text_messages == [(planning_id, "Checking"), ("m1", "First"), ("m2", "Second")]
+        first = next(message for message in response.messages if message.message_id == "m1" and message.text == "First")
+        assert first.contents[0].annotations == annotations
+        assert sum(message.message_id == "m1" for message in response.messages) == (2 if reuse_message_id else 1)
+        if reuse_message_id:
+            earlier = next(message for message in response.messages if message.text == "Checking")
+            assert earlier.contents[0].annotations == earlier_annotations
+        history = requests[1]["messages"]
+        results = [message for message in history if message.get("role") == "tool"]
+        assert len(results) == 1
+        assert results[0]["toolCallId"] == "call-echo"
+        assert results[0]["content"] == "done"
+
+    @pytest.mark.parametrize("as_agent", [False, True], ids=["client", "agent"])
+    async def test_public_annotation_stream_preserves_structured_output(
+        self, monkeypatch: MonkeyPatch, as_agent: bool
+    ) -> None:
+        """The AG-UI whole-loop finalizer retains the requested structured response type."""
+        from pydantic import BaseModel
+
+        class Answer(BaseModel):
+            reply: str
+
+        annotations = [{"type": "citation", "url": "https://example.test/source"}]
+        events: list[dict[str, Any]] = [
+            {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": '{"reply":"First"}'},
+            {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
+            {"type": "TEXT_MESSAGE_START", "messageId": "m2", "role": "assistant"},
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": '{"reply":"Second"}'},
+            {"type": "TEXT_MESSAGE_END", "messageId": "m2"},
+            {"type": "CUSTOM", "name": "annotations", "value": {"messageId": "m1", "annotations": annotations}},
+        ]
+
+        async def post_run(**kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            for event in events:
+                yield event
+
+        async with StubAGUIChatClient(endpoint="https://agui.example.test/") as client:
+            get_response = Agent(client=client).run if as_agent else client.get_response
+            monkeypatch.setattr(client.http_service, "post_run", post_run)
+            messages: list[Message] = [Message(role="user", contents=["Question"])]
+            options: ChatOptions[Any] = ChatOptions()
+            options["response_format"] = Answer
+            response_stream = get_response(messages, stream=True, options=options)
+            async for _ in response_stream:
+                pass
+            response = await response_stream.get_final_response()
+
+        assert [message.message_id for message in response.messages] == ["m1", "m2"]
+        assert response.messages[0].contents[0].annotations == annotations
+        assert isinstance(response.value, Answer)
+        assert response.value.reply == "Second"
+
+    @pytest.mark.parametrize("as_agent", [False, True], ids=["client", "agent"])
+    @pytest.mark.parametrize("consume_stream", [False, True], ids=["final_only", "iterated"])
+    @pytest.mark.parametrize("replacement", [False, True], ids=["default_merge", "replace"])
+    async def test_buffered_final_message_redaction_preserves_previous_text_and_citations(
+        self, as_agent: bool, consume_stream: bool, replacement: bool
+    ) -> None:
+        """An authoritative empty final message must not replace an earlier message."""
+
+        class RedactFinalMessage(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                context.stream_buffer_updates = True
+
+                def to_updates(response: ChatResponse[Any]) -> list[ChatResponseUpdate]:
+                    updates = response.to_updates()
+                    if replacement:
+                        for update in updates:
+                            update.merge_mode = "replace"
+                    return updates
+
+                context.stream_result_to_updates = to_updates
+
+                def redact(response: ChatResponse[Any]) -> ChatResponse[Any]:
+                    for message in response.messages:
+                        if message.message_id == "m2":
+                            for content in message.contents:
+                                if content.type == "text":
+                                    content.text = ""
+                    return response
+
+                context.stream_result_transforms.append(redact)
+
+        annotations = [{"type": "citation", "url": "https://example.test/final-source"}]
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(await request.aread())
+            events: list[dict[str, Any]] = [
+                {"type": "RUN_STARTED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+                {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
+                {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "First"},
+                {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
+                {"type": "TEXT_MESSAGE_START", "messageId": "m2", "role": "assistant"},
+                {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "Second"},
+                {"type": "TEXT_MESSAGE_END", "messageId": "m2"},
+                {"type": "CUSTOM", "name": "annotations", "value": {"messageId": "m2", "annotations": annotations}},
+                {"type": "RUN_FINISHED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+            ]
+            wire = "".join("data: " + json.dumps(event) + "\n\n" for event in events).encode()
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=wire)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            async with AGUIChatClient(
+                endpoint="https://agui.example.test/", http_client=http_client, middleware=[RedactFinalMessage()]
+            ) as client:
+                run = Agent(client=client).run if as_agent else client.get_response
+                messages: list[Message] = [Message(role="user", contents=["Question"])]
+                stream = run(messages, stream=True)
+                updates = [update async for update in stream] if consume_stream else []
+                response = await stream.get_final_response()
+
+        actual = [(message.message_id, message.text) for message in response.messages]
+        assert actual == [("m1", "First"), ("m2", "")], actual
+        assert response.messages[0].contents[0].annotations is None
+        assert response.messages[1].contents[0].annotations == annotations
+        assert response.additional_properties["ag_ui_custom_event"]["value"] == {
+            "messageId": "m2",
+            "annotations": annotations,
+        }
+        if consume_stream:
+            assert "".join(update.text for update in updates) == "First"
+
+    @pytest.mark.parametrize("transform_mode", ["uppercase", "redacted", "replacement"])
+    @pytest.mark.parametrize("message_count", [1, 2], ids=["same_message", "later_message"])
+    @pytest.mark.parametrize("batch_count", [1, 2], ids=["one_batch", "two_batches"])
+    @pytest.mark.parametrize("as_agent", [False, True], ids=["client", "agent"])
+    async def test_buffered_middleware_preserves_rebuilt_text_and_annotations(
+        self, monkeypatch: MonkeyPatch, as_agent: bool, message_count: int, batch_count: int, transform_mode: str
+    ) -> None:
+        """Response-level annotation metadata must not hide text rebuilt by middleware."""
+        from collections.abc import Callable
+
+        from agent_framework import ChatContext, ChatMiddleware
+
+        redact_text = transform_mode != "uppercase"
+
+        class TransformMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                context.stream_buffer_updates = True
+
+                def to_updates(response: ChatResponse[Any]) -> list[ChatResponseUpdate]:
+                    updates = response.to_updates()
+                    if transform_mode == "replacement":
+                        for update in updates:
+                            update.merge_mode = "replace"
+                    return updates
+
+                context.stream_result_to_updates = to_updates
+
+                def transform_text(response: ChatResponse[Any]) -> ChatResponse[Any]:
+                    for message in response.messages:
+                        for content in message.contents:
+                            if content.type == "text" and content.text is not None:
+                                content.text = "" if redact_text else content.text.upper()
+                            if transform_mode == "redacted":
+                                content.additional_properties["redacted"] = True
+                    return response
+
+                context.stream_result_transforms.append(transform_text)
+
+        annotations = [
+            {"type": "citation", "url": f"https://example.test/source-{index}"} for index in range(batch_count)
+        ]
+        events: list[dict[str, Any]] = [
+            {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "First"},
+            {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
+        ]
+        if message_count == 2:
+            events.extend(
+                [
+                    {"type": "TEXT_MESSAGE_START", "messageId": "m2", "role": "assistant"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "Second"},
+                    {"type": "TEXT_MESSAGE_END", "messageId": "m2"},
+                ]
+            )
+        events.extend(
+            {"type": "CUSTOM", "name": "annotations", "value": {"messageId": "m1", "annotations": [annotation]}}
+            for annotation in annotations
+        )
+
+        async def post_run(**kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            for event in events:
+                yield event
+
+        async with StubAGUIChatClient(
+            endpoint="https://agui.example.test/", middleware=[TransformMiddleware()]
+        ) as client:
+            get_response = Agent(client=client).run if as_agent else client.get_response
+            monkeypatch.setattr(client.http_service, "post_run", post_run)
+            messages: list[Message] = [Message(role="user", contents=["Question"])]
+            response_stream = get_response(messages, stream=True)
+            updates = [update async for update in response_stream]
+            response = await response_stream.get_final_response()
+
+        expected = [("m1", "" if redact_text else "FIRST")] + (
+            [("m2", "" if redact_text else "SECOND")] if message_count == 2 else []
+        )
+        assert [(message.message_id, message.text) for message in response.messages] == expected
+        assert "".join(update.text for update in updates) == "".join(text for _, text in expected)
+        assert response.messages[0].contents[0].annotations == annotations
+        if transform_mode == "redacted":
+            assert all(
+                content.additional_properties["redacted"]
+                for message in response.messages
+                for content in message.contents
+                if content.type == "text"
+            )
+        assert response.additional_properties["ag_ui_custom_event"]["value"]["messageId"] == "m1"
 
     async def test_tool_handling(self, monkeypatch: MonkeyPatch) -> None:
         """Test that client tool metadata is sent to server.

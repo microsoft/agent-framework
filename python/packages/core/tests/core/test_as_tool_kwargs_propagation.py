@@ -213,7 +213,7 @@ class TestAsToolKwargsPropagation:
 
         assert captured_kwargs == {}
         assert captured_function_invocation_kwargs["api_key"] == "streaming-key-999"
-        assert len(captured_updates) == 1
+        assert len([update for update in captured_updates if update.contents]) == 1
 
     async def test_as_tool_empty_kwargs_still_works(self, client: MockChatClient) -> None:
         """Test that as_tool works correctly when no extra kwargs are provided."""
