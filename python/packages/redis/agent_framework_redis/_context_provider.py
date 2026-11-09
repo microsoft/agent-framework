@@ -25,7 +25,6 @@ from redisvl.index import AsyncSearchIndex
 from redisvl.query import AggregateHybridQuery, FilterQuery, TextQuery
 from redisvl.query.filter import FilterExpression
 from redisvl.redis.utils import array_to_buffer
-from redisvl.utils.token_escaper import TokenEscaper
 from redisvl.utils.vectorize import BaseVectorizer
 
 from ._feature_usage import FeatureIndex
@@ -44,14 +43,6 @@ _SCOPE_TAG_SEPARATOR = "\x1f"
 
 _TAG_DEFAULTS = {"separator": ",", "case_sensitive": False, "withsuffixtrie": False}
 _TEXT_DEFAULTS = {"weight": 1.0, "no_stem": False}
-
-# RediSearch reads several punctuation marks as query syntax — `|` unions terms, `?` is a fuzzy
-# marker, backticks quote exact phrases — so a user message like "ps aux | grep python" or
-# "Why ?" reaches the engine as a malformed query and raises a syntax error that fails the whole
-# agent run. The search text is plain prose, not a query: escape the syntax characters before it
-# reaches TextQuery / AggregateHybridQuery. Unlike the default TokenEscaper set (built for tag
-# filter values), spaces stay unescaped so the terms keep tokenizing normally.
-_SEARCH_TEXT_ESCAPER = TokenEscaper(re.compile(r"[,.<>{}\[\]\\\"':;!@#$%^&*()\-+=~/|?`]"))
 
 
 def _scope_token_field(name: str) -> str:
@@ -415,9 +406,13 @@ class RedisContextProvider(ContextProvider):
         await self._ensure_index()
         self._validate_filters()
 
-        q = _SEARCH_TEXT_ESCAPER.escape((text or "").strip())
-        if not q:
+        if not (text or "").strip():
             raise IntegrationInvalidRequestException("text_search() requires non-empty text")
+        # TextQuery escapes each term itself, so a backslash added here gets escaped again
+        # and the char stays bare. Drop the syntax chars its escaper misses instead.
+        q = " ".join(re.sub(r"[|?`]", " ", text).split())
+        if not q:
+            return []
         num_results = max(int(num_results or 10), 1)
 
         combined_filter = self._build_filter_from_dict({

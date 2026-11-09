@@ -354,27 +354,28 @@ async def test_redis_search_combines_explicit_filter_expression(
 
 
 @pytest.mark.parametrize(
-    ("message", "broken_shape", "escaped"),
+    ("message", "terms"),
     [
-        ("Why ?", "| ?)", r"\?"),
-        ("ps aux | grep python", "| |)", r"\|"),
-        ("Is it A | B?", "| |)", r"\|"),
-        ("Run ` ls ` please", "| ` |", r"\`"),
-        ("| name | age |", "| |)", r"\|"),
+        ("Why ?", "(why)"),
+        ("ps aux | grep python", "(ps | aux | grep | python)"),
+        ("Is it A | B?", "(is | it | a | b)"),
+        ("Run ` ls ` please", "(run | ls | please)"),
+        ("| name | age |", "(name | age)"),
+        ("see e.g. v1.2", r"(see | e\.g\. | v1\.2)"),
     ],
 )
-async def test_redis_search_escapes_query_syntax_in_user_text(
+async def test_redis_search_drops_query_syntax_in_user_text(
     message: str,
-    broken_shape: str,
-    escaped: str,
+    terms: str,
     mock_index: AsyncMock,
     patch_index: MagicMock,  # noqa: ARG001
 ) -> None:
-    """User prose reaches RediSearch as escaped terms, not as query syntax (#10002).
+    """User prose reaches RediSearch as plain terms, not as query syntax (#10002).
 
     A bare `|`, `?` or backtick in a message previously turned the generated query
     string into malformed grammar (`@content:(ps | aux | | | grep | python)`), and
-    the syntax error failed the whole agent run.
+    the syntax error failed the whole agent run. redisvl escapes every term itself,
+    so nothing here may add a backslash of its own (it would be escaped again).
     """
     provider = RedisContextProvider(source_id="ctx", user_id="user-1")
 
@@ -383,15 +384,28 @@ async def test_redis_search_escapes_query_syntax_in_user_text(
 
     query = mock_index.query.await_args.args[0]
     query_string = query.query_string()
-    assert broken_shape not in query_string
-    assert escaped in query_string
+    assert f"@content:{terms}" in query_string
+    assert "\\\\" not in query_string
 
 
-async def test_redis_search_escapes_text_for_hybrid_query(
+async def test_redis_search_only_syntax_chars_returns_no_results(
     mock_index: AsyncMock,
     patch_index: MagicMock,  # noqa: ARG001
 ) -> None:
-    """The hybrid vector path gets the same escaped text."""
+    """A message made only of query syntax has no terms to search for."""
+    provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+
+    with patch.object(provider, "_ensure_index", AsyncMock()):
+        assert await provider._redis_search(text=" ? | ` ") == []
+
+    mock_index.query.assert_not_awaited()
+
+
+async def test_redis_search_drops_syntax_for_hybrid_query(
+    mock_index: AsyncMock,
+    patch_index: MagicMock,  # noqa: ARG001
+) -> None:
+    """The hybrid vector path gets the same cleaned text."""
     mock_vectorizer = MagicMock(spec=BaseVectorizer)
     mock_vectorizer.dims = 128
     mock_vectorizer.dtype = "float32"
@@ -411,7 +425,7 @@ async def test_redis_search_escapes_text_for_hybrid_query(
         hybrid_query.return_value = MagicMock()
         await provider._redis_search(text="ps aux | grep python")
 
-    assert hybrid_query.call_args.kwargs["text"] == r"ps aux \| grep python"
+    assert hybrid_query.call_args.kwargs["text"] == "ps aux grep python"
     mock_index.query.assert_awaited_once()
 
 
