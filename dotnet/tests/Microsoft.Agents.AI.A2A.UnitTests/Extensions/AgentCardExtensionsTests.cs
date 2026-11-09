@@ -14,13 +14,13 @@ using A2A;
 namespace Microsoft.Agents.AI.A2A.UnitTests;
 
 /// <summary>
-/// Unit tests for the <see cref="A2AAgentCardExtensions"/> class.
+/// Unit tests for the <see cref="AgentCardExtensions"/> class.
 /// </summary>
-public sealed class A2AAgentCardExtensionsTests
+public sealed class AgentCardExtensionsTests
 {
     private readonly AgentCard _agentCard;
 
-    public A2AAgentCardExtensionsTests()
+    public AgentCardExtensionsTests()
     {
         this._agentCard = new AgentCard
         {
@@ -31,10 +31,10 @@ public sealed class A2AAgentCardExtensionsTests
     }
 
     [Fact]
-    public void AsAIAgent_ReturnsAIAgent()
+    public void AsAIAgent_ReturnsA2AAgent()
     {
         // Act
-        var agent = this._agentCard.AsAIAgent();
+        A2AAgent agent = this._agentCard.AsAIAgent();
 
         // Assert
         Assert.NotNull(agent);
@@ -184,7 +184,7 @@ public sealed class A2AAgentCardExtensionsTests
         };
 
         // Act
-        var agent = card.AsAIAgent(agentOptions);
+        A2AAgent agent = card.AsAIAgent(agentOptions);
 
         // Assert
         Assert.NotNull(agent);
