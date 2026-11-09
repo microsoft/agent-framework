@@ -219,19 +219,76 @@ public sealed class GitHubCopilotAgentTests
     }
 
     [Fact]
-    public void ToResumeSessionConfig_WithFileHooksDisabled_PreservesDisabledValue()
+    public void CopySessionConfig_WithNullSource_DefaultsFileHooksToDisabled()
+    {
+        // Act
+        SessionConfig result = GitHubCopilotAgent.CopySessionConfig(null);
+
+        // Assert
+        Assert.False(result.EnableFileHooks);
+        Assert.True(result.Streaming);
+    }
+
+    [Fact]
+    public void CopySessionConfig_WithFileHooksUnset_DefaultsToDisabled()
+    {
+        // Arrange
+        var source = new SessionConfig();
+
+        // Act
+        SessionConfig result = GitHubCopilotAgent.CopySessionConfig(source);
+
+        // Assert
+        Assert.False(result.EnableFileHooks);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CopySessionConfig_WithFileHooksConfigured_PreservesValue(bool enabled)
     {
         // Arrange
         var source = new SessionConfig
         {
-            EnableFileHooks = false,
+            EnableFileHooks = enabled,
         };
+
+        // Act
+        SessionConfig result = GitHubCopilotAgent.CopySessionConfig(source);
+
+        // Assert
+        Assert.Equal(enabled, result.EnableFileHooks);
+    }
+
+    [Fact]
+    public void ToResumeSessionConfig_WithFileHooksUnset_DefaultsToDisabled()
+    {
+        // Arrange
+        var source = new SessionConfig();
 
         // Act
         ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
 
         // Assert
         Assert.False(result.EnableFileHooks);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ToResumeSessionConfig_WithFileHooksConfigured_PreservesValue(bool enabled)
+    {
+        // Arrange
+        var source = new SessionConfig
+        {
+            EnableFileHooks = enabled,
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.ToResumeSessionConfig(source);
+
+        // Assert
+        Assert.Equal(enabled, result.EnableFileHooks);
     }
 
     [Fact]
@@ -299,6 +356,7 @@ public sealed class GitHubCopilotAgentTests
         Assert.Null(result.Hooks);
         Assert.Null(result.WorkingDirectory);
         Assert.Null(result.ConfigDirectory);
+        Assert.False(result.EnableFileHooks);
         Assert.True(result.Streaming);
         Assert.False(result.SuppressResumeEvent);
         Assert.Null(result.ContinuePendingWork);

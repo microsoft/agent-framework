@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-ag-ui"
-version = "1.7.1"
+version = "1.8.0"
 description = "AG-UI protocol integration for Agent Framework"
 readme = "README.md"
 license-files = ["LICENSE"]
@@ -23,7 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.22.0,<2",
+    "agent-framework-core>=1.25.0,<2",
     "ag-ui-protocol>=0.1.19,<0.2",
     "fastapi>=0.121.0,<0.163.0",
     "httpx>=0.28.1,<1",
@@ -33,7 +33,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest==9.1.1",
+    "pytest==9.2.0",
 ]
 # A2UI (agent-generated UI) support. Optional: the agent_framework_ag_ui._a2ui
 # modules import this lazily, so the base package works without it.

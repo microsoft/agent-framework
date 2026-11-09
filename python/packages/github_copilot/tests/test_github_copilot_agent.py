@@ -775,6 +775,44 @@ class TestGitHubCopilotAgentRunStreaming:
         }
         assert response.additional_properties["model"] == "gpt-5.1-mini"
 
+    async def test_run_streaming_sums_usage_across_multiple_model_calls(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test streaming sums per-call usage events instead of keeping only the last one."""
+        usage_events = [
+            SessionEvent(
+                data=AssistantUsageData(model="gpt-5.1-mini", input_tokens=n * 100, output_tokens=n * 10),
+                id=uuid4(),
+                timestamp=datetime.now(timezone.utc),
+                type=SessionEventType.ASSISTANT_USAGE,
+            )
+            for n in (1, 2, 3)
+        ]
+        events = [assistant_delta_event, *usage_events, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        stream = agent.run("Hello", stream=True)
+        async for _ in stream:
+            pass
+        response = await stream.get_final_response()
+
+        assert response.usage_details == {
+            "input_token_count": 600,
+            "output_token_count": 60,
+            "total_token_count": 660,
+        }
+
     async def test_run_streaming_with_session(
         self,
         mock_client: MagicMock,
@@ -3450,20 +3488,32 @@ class TestNormalizeApproveForSession:
         assert result.approval.extension_name == "my-ext"
         assert result.to_dict()["approval"] == {"kind": "extension-permission-access", "extensionName": "my-ext"}
 
-    async def test_url_request_derives_domain_instead_of_approval(self) -> None:
-        """A URL prompt is scoped by ``domain``; URL prompts have no ``approval``."""
-        from copilot.generated.rpc import PermissionDecisionApproveForSession
+    @pytest.mark.parametrize(
+        "url",
+        [
+            pytest.param("http://example.com/a", id="http"),
+            pytest.param("https://example.com/a", id="https"),
+            pytest.param("http://example.com:80/a", id="http-default-port"),
+            pytest.param("https://example.com:443/a", id="https-default-port"),
+            pytest.param("https://example.com:8443/a", id="https-non-default-port"),
+            pytest.param("http://127.0.0.1/a", id="ipv4"),
+            pytest.param("http://[::1]/a", id="ipv6"),
+            pytest.param("https://xn--bcher-kva.example/a", id="idna"),
+            pytest.param("https://example.com./a", id="trailing-dot"),
+        ],
+    )
+    async def test_url_request_without_explicit_domain_narrows_to_approve_once(self, url: str) -> None:
+        """A URL prompt without an explicit scope must not fabricate a session approval."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
         from copilot.session_events import PermissionRequestUrl
 
-        request = PermissionRequestUrl(intention="fetch", url="https://example.com/some/path?q=1")
+        request = PermissionRequestUrl(intention="fetch", url=url)
         result = await self.normalize(request, PermissionDecisionApproveForSession())
 
-        assert isinstance(result, PermissionDecisionApproveForSession)
-        assert result.domain == "example.com"
-        assert result.approval is None
+        assert isinstance(result, PermissionDecisionApproveOnce)
 
-    async def test_url_request_without_derivable_domain_falls_back_to_approve_once(self) -> None:
-        """A URL with no host cannot be scoped, so the decision narrows to a single approval."""
+    async def test_malformed_url_falls_back_to_approve_once(self) -> None:
+        """A malformed URL must not receive a framework-derived session scope."""
         from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
         from copilot.session_events import PermissionRequestUrl
 
@@ -3482,12 +3532,7 @@ class TestNormalizeApproveForSession:
         ],
     )
     async def test_parser_ambiguous_url_falls_back_to_approve_once(self, url: str) -> None:
-        """A URL whose host Python and the CLI parse differently must not persist a domain.
-
-        The CLI (WHATWG) contacts ``example.com`` for these URLs while ``urlparse`` derives
-        ``evil.com``. Persisting ``evil.com`` would widen approval to an unrelated,
-        attacker-chosen domain, so the decision must narrow to a single-use approval.
-        """
+        """A parser-ambiguous URL must not persist a framework-derived session scope."""
         from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
         from copilot.session_events import PermissionRequestUrl
 
@@ -3496,16 +3541,15 @@ class TestNormalizeApproveForSession:
 
         assert isinstance(result, PermissionDecisionApproveOnce)
 
-    async def test_unambiguous_url_with_userinfo_derives_real_host(self) -> None:
-        """Userinfo without ambiguous characters is safe; the real host is persisted."""
-        from copilot.generated.rpc import PermissionDecisionApproveForSession
+    async def test_url_with_userinfo_falls_back_to_approve_once(self) -> None:
+        """Userinfo must not be discarded while deriving a session scope."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
         from copilot.session_events import PermissionRequestUrl
 
         request = PermissionRequestUrl(intention="fetch", url="https://user:pass@example.com/a")
         result = await self.normalize(request, PermissionDecisionApproveForSession())
 
-        assert isinstance(result, PermissionDecisionApproveForSession)
-        assert result.domain == "example.com"
+        assert isinstance(result, PermissionDecisionApproveOnce)
 
     async def test_shell_request_that_cannot_offer_session_approval_narrows_to_approve_once(self) -> None:
         """Never fabricate a session approval the prompt said it could not offer."""
@@ -3547,17 +3591,18 @@ class TestNormalizeApproveForSession:
 
         assert result is decision
 
-    async def test_explicit_domain_is_passed_through_untouched(self) -> None:
+    @pytest.mark.parametrize("domain", ["contoso.com", "http://example.com", "https://example.com:8443"])
+    async def test_explicit_domain_is_passed_through_untouched(self, domain: str) -> None:
         """A decision scoped by ``domain`` must not be rewritten either."""
         from copilot.generated.rpc import PermissionDecisionApproveForSession
         from copilot.session_events import PermissionRequestUrl
 
-        decision = PermissionDecisionApproveForSession(domain="contoso.com")
+        decision = PermissionDecisionApproveForSession(domain=domain)
         request = PermissionRequestUrl(intention="fetch", url="https://example.com/a")
         result = await self.normalize(request, decision)
 
         assert result is decision
-        assert result.domain == "contoso.com"
+        assert result.domain == domain
 
     @pytest.mark.parametrize("decision_name", ["PermissionDecisionApproveOnce", "PermissionDecisionUserNotAvailable"])
     async def test_other_decision_kinds_are_passed_through_untouched(self, decision_name: str) -> None:

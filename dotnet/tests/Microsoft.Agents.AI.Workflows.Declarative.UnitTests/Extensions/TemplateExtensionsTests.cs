@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Globalization;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx;
@@ -137,5 +138,27 @@ public sealed class TemplateExtensionsTests
 
         // Assert
         Assert.Equal("Hello World", result);
+    }
+
+    [Theory]
+    [InlineData("de-DE")]
+    [InlineData("fr-FR")]
+    public void FormatExpressionSegmentWithFormulaUsesInvariantCulture(string cultureName)
+    {
+        CultureInfo originalCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo(cultureName);
+            RecalcEngine engine = new();
+            ExpressionSegment segment = new(ValueExpression.Expression("Max(1, 2)"));
+
+            string result = engine.Format(segment);
+
+            Assert.Equal("2", result);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = originalCulture;
+        }
     }
 }
