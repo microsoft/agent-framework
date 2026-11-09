@@ -44,6 +44,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly string _httpClientName;
+    private readonly AllowedHttpHosts _allowedHosts;
 
     /// <summary>
     /// Gets or initializes the protocol version requested for every invocation.
@@ -71,6 +72,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
     /// Do not derive names from workflow identifiers, credentials, or arbitrary server URLs.
     /// </param>
     /// <remarks>
+    /// This overload allows no destinations. Use the overload accepting allowed hosts to enable invocations.
     /// The application is responsible for the HTTP pipeline's transport policy.
     /// Disable cookies and automatic redirects, enable certificate revocation checking, and restrict credential injection
     /// to the configured server origin. Pooled handlers must not retain per-invocation credentials or mutable origin state.
@@ -78,9 +80,36 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
     /// </remarks>
     /// <exception cref="ArgumentNullException">A required argument is <see langword="null"/>.</exception>
     public DefaultMcpToolHandler(IHttpClientFactory httpClientFactory, string httpClientName)
+        : this([], httpClientFactory, httpClientName)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class with allowed hosts
+    /// and an application-provided HTTP client factory.
+    /// </summary>
+    /// <param name="allowedHosts">
+    /// The exact DNS names or IP literals, optionally including a port, the application permits.
+    /// Omitted ports default to 443. Use brackets around IPv6 literals when specifying a port.
+    /// Schemes, paths, and wildcards are not supported. An empty collection rejects all invocations.
+    /// The collection is copied and checked before creating an HTTP client, including for tool discovery.
+    /// Matching is case-insensitive, with internationalized names and trailing DNS dots normalized.
+    /// Both HTTP and HTTPS are supported; authorization matches the host and effective port, not the scheme.
+    /// DNS resolution and routing remain the responsibility of the HTTP transport.
+    /// </param>
+    /// <param name="httpClientFactory">
+    /// The application-owned factory that creates a separate HTTP client for every invocation.
+    /// Configure cookies and automatic redirects off, certificate revocation checking on, and origin-bound
+    /// credential injection. Delegating handlers must preserve the validated destination.
+    /// </param>
+    /// <param name="httpClientName">The stable named-client configuration, or an empty string for the default configuration.</param>
+    /// <exception cref="ArgumentNullException">A required argument is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">An allowed host is invalid.</exception>
+    public DefaultMcpToolHandler(IEnumerable<string> allowedHosts, IHttpClientFactory httpClientFactory, string httpClientName)
     {
         this._httpClientFactory = Throw.IfNull(httpClientFactory);
         this._httpClientName = Throw.IfNull(httpClientName);
+        this._allowedHosts = new(allowedHosts);
     }
 
     /// <inheritdoc/>
@@ -110,6 +139,10 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
                     header.Value,
                     nameof(headers),
                     "HTTP header value contains invalid characters.");
+                if (string.Equals(header.Key, "Host", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new HttpRequestException("Request headers must not override the Host header.");
+                }
             }
         }
 
@@ -188,6 +221,11 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
             TransportMode = HttpTransportMode.StreamableHttp,
             EnableStandaloneGetStream = false
         };
+
+        if (!this._allowedHosts.Contains(endpoint))
+        {
+            throw new HttpRequestException("The request host and port are not in the allowed hosts list.");
+        }
 
         HttpClient httpClient = this._httpClientFactory.CreateClient(this._httpClientName);
         HttpClientTransport? transport = null;

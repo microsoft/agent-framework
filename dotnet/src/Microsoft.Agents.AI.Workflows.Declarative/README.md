@@ -71,8 +71,17 @@ SSE responses to individual tool requests remain supported.
 
 Each factory-created HTTP client is disposed with its invocation. Construct the
 handler with an application-owned `IHttpClientFactory` through
-`DefaultMcpToolHandler(IHttpClientFactory, string)`. The second
-argument is a stable named-client configuration, or `string.Empty` for the
+`DefaultMcpToolHandler(IEnumerable<string>, IHttpClientFactory, string)`. Supply
+allowed hosts from application configuration, not workflow content. An empty
+list, including the existing two-argument constructor, denies all destinations.
+Hosts are exact DNS names or IP literals with optional ports; omitted ports
+default to 443. Matching is case-insensitive and normalizes internationalized
+names and trailing DNS dots, without wildcards or implicit subdomains.
+The list is copied and checked before client creation for both tool calls and
+discovery. Workflow-supplied `Host` headers are rejected.
+Both HTTP and HTTPS are supported; enforce HTTPS separately if required.
+Allowing a name trusts the application's DNS and network routing.
+The third argument is a stable named-client configuration, or `string.Empty` for the
 default configuration. Factory-created wrappers are owned by the invocation;
 the factory and its pooled handlers remain application-owned. There is no
 parameterless constructor or internally created HTTP pipeline. Configure handler
@@ -92,7 +101,7 @@ services.AddHttpClient("workflow-mcp")
     .SetHandlerLifetime(TimeSpan.FromMinutes(2));
 
 services.AddSingleton<IMcpToolHandler>(serviceProvider => new DefaultMcpToolHandler(
-    serviceProvider.GetRequiredService<IHttpClientFactory>(), "workflow-mcp"));
+    ["mcp.example.com"], serviceProvider.GetRequiredService<IHttpClientFactory>(), "workflow-mcp"));
 ```
 
 Factory clients use the application's transport-policy configuration.
@@ -108,7 +117,7 @@ discovery and legacy fallback. If the server's supported protocol is known, set
 the init-only property when constructing the handler:
 
 ```csharp
-DefaultMcpToolHandler handler = new(httpClientFactory, "workflow-mcp")
+DefaultMcpToolHandler handler = new(["mcp.example.com"], httpClientFactory, "workflow-mcp")
 {
     ProtocolVersion = "2025-11-25"
 };

@@ -73,6 +73,7 @@ internal sealed class Program
             .SetHandlerLifetime(TimeSpan.FromMinutes(2));
         await using ServiceProvider serviceProvider = services.BuildServiceProvider();
         DefaultMcpToolHandler mcpToolHandler = new(
+            ["learn.microsoft.com", "mcp.ai.azure.com"],
             serviceProvider.GetRequiredService<IHttpClientFactory>(), McpHttpClientName);
 
         // Create the workflow factory with MCP tool provider

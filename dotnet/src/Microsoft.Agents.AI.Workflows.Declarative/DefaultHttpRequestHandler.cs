@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -53,7 +52,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
 {
     private const int MaxAutomaticRedirections = 50;
 
-    private readonly HashSet<string> _allowedHosts;
+    private readonly AllowedHttpHosts _allowedHosts;
     private readonly IHttpMessageHandlerFactory _httpMessageHandlerFactory;
     private readonly string _httpClientName;
 
@@ -83,32 +82,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
     {
         Throw.IfNull(allowedHosts);
         Throw.IfNull(httpMessageHandlerFactory);
-        this._allowedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (string host in allowedHosts)
-        {
-            string hostName = host;
-            int port = 443;
-            if (!string.IsNullOrWhiteSpace(host) && Uri.CheckHostName(host) == UriHostNameType.Unknown)
-            {
-                int separator = host.LastIndexOf(':');
-                if (separator > 0 && (host.StartsWith("[", StringComparison.Ordinal) || host.IndexOf(':') == separator))
-                {
-                    hostName = host.Substring(0, separator);
-                    if (!int.TryParse(host.Substring(separator + 1), NumberStyles.None, CultureInfo.InvariantCulture, out port))
-                    {
-                        port = -1;
-                    }
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(hostName) || Uri.CheckHostName(hostName) == UriHostNameType.Unknown ||
-                port is < 1 or > 65535)
-            {
-                throw new ArgumentException("Allowed hosts must be DNS names or IP literals with an optional port from 1 to 65535, without schemes, paths, or wildcards. IPv6 literals with a port must be bracketed.", nameof(allowedHosts));
-            }
-
-            this._allowedHosts.Add(NormalizeDestination(new UriBuilder(Uri.UriSchemeHttps, hostName, port).Uri));
-        }
+        this._allowedHosts = new(allowedHosts);
 
         this._httpMessageHandlerFactory = httpMessageHandlerFactory;
         this._httpClientName = httpClientName ?? string.Empty;
@@ -155,7 +129,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
 
         for (int redirectCount = 0; redirectCount <= MaxAutomaticRedirections; redirectCount++)
         {
-            if (!this._allowedHosts.Contains(NormalizeDestination(currentUri)))
+            if (!this._allowedHosts.Contains(currentUri))
             {
                 throw new HttpRequestException("The request host and port are not in the allowed hosts list.");
             }
@@ -327,9 +301,6 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
             nameof(value),
             $"HTTP header '{name}' contains invalid characters.");
     }
-
-    private static string NormalizeDestination(Uri uri) =>
-        $"{uri.IdnHost.TrimEnd('.')}:{uri.Port.ToString(CultureInfo.InvariantCulture)}";
 
     private static Uri CreateAbsoluteUri(string requestUri)
     {

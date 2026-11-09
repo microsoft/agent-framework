@@ -48,7 +48,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                 };
             });
         using ServiceProvider serviceProvider = services.BuildServiceProvider();
-        DefaultMcpToolHandler handler = new(serviceProvider.GetRequiredService<IHttpClientFactory>(), "workflow-mcp")
+        DefaultMcpToolHandler handler = new([new Uri(server.Endpoint).Authority], serviceProvider.GetRequiredService<IHttpClientFactory>(), "workflow-mcp")
         {
             ProtocolVersion = protocolVersion
         };
@@ -264,7 +264,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     {
         // Arrange
         ProtocolStub stub = new();
-        DefaultMcpToolHandler handler = CreateHandler(stub);
+        DefaultMcpToolHandler handler = CreateHandler(stub, allowedHosts: ["first.example", "second.example"]);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
 
         // Act
@@ -313,7 +313,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             clients.Add(client);
             return client;
         });
-        DefaultMcpToolHandler handler = new(factory.Object, ClientName);
+        DefaultMcpToolHandler handler = new(["mcp.example"], factory.Object, ClientName);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
 
         // Act
@@ -374,7 +374,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             };
         }
 
-        DefaultMcpToolHandler handler = new(factory.Object, "workflow-mcp");
+        DefaultMcpToolHandler handler = new(["mcp.example"], factory.Object, "workflow-mcp");
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
         using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
 
@@ -418,7 +418,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         factory.SetupSequence(f => f.CreateClient("workflow-mcp"))
             .Throws(new InvalidOperationException("Factory unavailable."))
             .Returns(() => new HttpClient(stub.CreateMessageHandler()));
-        DefaultMcpToolHandler handler = new(factory.Object, "workflow-mcp");
+        DefaultMcpToolHandler handler = new(["mcp.example"], factory.Object, "workflow-mcp");
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
 
         // Act
@@ -453,7 +453,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             await finish.WaitAsync(token);
         };
         DefaultMcpToolHandler handler = serviceProvider is not null
-            ? new(serviceProvider.GetRequiredService<IHttpClientFactory>(), "workflow-mcp")
+            ? new(["mcp.example"], serviceProvider.GetRequiredService<IHttpClientFactory>(), "workflow-mcp")
             : CreateHandler(stub);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
 
@@ -615,11 +615,63 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         }
     }
 
-    private static DefaultMcpToolHandler CreateHandler(ProtocolStub stub, string? protocolVersion = null)
+    [Theory]
+    [InlineData("mcp.example", "https://mcp.example/api")]
+    [InlineData("MCP.EXAMPLE.", "https://mcp.example/api")]
+    [InlineData("mcp.example", " https://MCP.EXAMPLE./api ")]
+    [InlineData("mcp.example:8443", "https://mcp.example:8443/api")]
+    [InlineData("mcp.example:80", "http://mcp.example/api")]
+    [InlineData("mcp.example", "http://mcp.example:443/api")]
+    [InlineData("127.0.0.1:8080", "http://127.0.0.1:8080/api")]
+    [InlineData("[::1]:8080", "http://[::1]:8080/api")]
+    [InlineData("xn--bcher-kva.example", "https://b\u00fccher.example/api")]
+    [InlineData("b\u00fccher.example", "https://xn--bcher-kva.example/api")]
+    public async Task AllowedDestination_PreservesToolInvocationAsync(string allowedHost, string serverUrl)
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        DefaultMcpToolHandler handler = CreateHandler(stub, allowedHosts: [allowedHost]);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        McpServerToolResultContent result = await handler.InvokeToolAsync(
+            serverUrl, null, "ping", null, null, null, timeout.Token);
+
+        // Assert
+        Assert.NotNull(result.Outputs);
+        Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
+        Assert.Equal(1, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+    }
+
+    [Fact]
+    public async Task AllowedHosts_AreCopiedAtConstructionAsync()
+    {
+        // Arrange
+        ProtocolStub stub = new();
+        List<string> allowedHosts = ["mcp.example"];
+        DefaultMcpToolHandler handler = CreateHandler(stub, allowedHosts: allowedHosts);
+        allowedHosts.Clear();
+        allowedHosts.Add("other.example");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        McpServerToolResultContent result = await InvokeAsync(handler, "ping", timeout.Token);
+        await Assert.ThrowsAsync<HttpRequestException>(() => handler.InvokeToolAsync(
+            "https://other.example/api", null, "ping", null, null, null, timeout.Token));
+
+        // Assert
+        Assert.NotNull(result.Outputs);
+        Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
+        Assert.Single(stub.Handlers);
+    }
+
+    private static DefaultMcpToolHandler CreateHandler(
+        ProtocolStub stub, string? protocolVersion = null, IEnumerable<string>? allowedHosts = null)
     {
         Mock<IHttpClientFactory> factory = new();
         factory.Setup(f => f.CreateClient("workflow-mcp")).Returns(() => new HttpClient(stub.CreateMessageHandler()));
-        return new(factory.Object, "workflow-mcp") { ProtocolVersion = protocolVersion };
+        return new(allowedHosts ?? ["mcp.example"], factory.Object, "workflow-mcp") { ProtocolVersion = protocolVersion };
     }
 
     private static Task<McpServerToolResultContent> InvokeAsync(
