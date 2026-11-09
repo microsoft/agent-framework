@@ -5482,6 +5482,55 @@ class TestStreaming:
         }
         assert "Content type 'usage' is not supported yet" not in caplog.text
 
+    @pytest.mark.parametrize(
+        ("merge_modes", "expected"),
+        [
+            pytest.param(
+                ("replace", "replace"),
+                {"input_tokens": 250, "output_tokens": 25, "total_tokens": 275},
+                id="replace-snapshots",
+            ),
+            pytest.param(
+                ("append", "append"),
+                {"input_tokens": 350, "output_tokens": 35, "total_tokens": 385},
+                id="append-increments",
+            ),
+            pytest.param(
+                ("append", "replace"),
+                {"input_tokens": 250, "output_tokens": 25, "total_tokens": 275},
+                id="replace-after-append",
+            ),
+        ],
+    )
+    async def test_usage_honors_merge_mode(self, merge_modes: tuple[str, str], expected: dict[str, int]) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[Content.from_text("Hello")], role="assistant"),
+                *(
+                    AgentResponseUpdate(
+                        contents=[
+                            Content.from_usage(
+                                {
+                                    "input_token_count": input_tokens,
+                                    "output_token_count": input_tokens // 10,
+                                    "total_token_count": input_tokens + input_tokens // 10,
+                                },
+                                merge_mode=merge_mode,
+                            )
+                        ],
+                        role="assistant",
+                    )
+                    for input_tokens, merge_mode in zip((100, 250), merge_modes, strict=True)
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        assert resp.status_code == 200
+        completed = _parse_sse_events(resp.text)[-1]["data"]["response"]
+        assert {key: completed["usage"][key] for key in expected} == expected
+
     async def test_function_call_streaming(self) -> None:
         agent = _make_agent(
             stream_updates=[

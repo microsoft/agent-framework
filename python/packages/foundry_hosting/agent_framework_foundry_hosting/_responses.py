@@ -22,7 +22,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
-from copy import copy
+from copy import copy, deepcopy
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
@@ -3052,7 +3052,11 @@ class _OutputItemTracker:
             yield builder.emit_done(oauth_item)
 
         elif content.type == "usage":
-            self._usage_details = add_usage_details(self._usage_details, content.usage_details)
+            # A "replace" update is a cumulative snapshot, so it supersedes earlier usage instead of adding to it.
+            if content.merge_mode == "replace":
+                self._usage_details = deepcopy(content.usage_details)
+            else:
+                self._usage_details = add_usage_details(self._usage_details, content.usage_details)
 
         else:
             for event in self._close():
