@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -191,7 +192,43 @@ def concurrent_cold_execution(monkeypatch: pytest.MonkeyPatch, execution_clock, 
 
 
 @pytest.fixture
+async def occupied_default_executor(monkeypatch: pytest.MonkeyPatch):
+    loop = asyncio.get_running_loop()
+    entered = asyncio.Event()
+    queued = asyncio.Event()
+    release = threading.Event()
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hl-test-default")
+    loop.set_default_executor(executor)
+
+    def occupy_executor() -> None:
+        loop.call_soon_threadsafe(entered.set)
+        if not release.wait(5):
+            raise RuntimeError("Default executor was not released.")
+
+    blocker = loop.run_in_executor(None, occupy_executor)
+    original_run_in_executor = loop.run_in_executor
+
+    def run_in_executor(executor, func, *args):
+        future = original_run_in_executor(executor, func, *args)
+        if executor is None:
+            queued.set()
+        return future
+
+    monkeypatch.setattr(loop, "run_in_executor", run_in_executor)
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        yield SimpleNamespace(queued=queued, release=release, blocker=blocker)
+    finally:
+        release.set()
+        try:
+            await asyncio.wait_for(blocker, 2)
+        finally:
+            executor.shutdown(wait=True)
+
+
+@pytest.fixture
 def interruptible_execution(monkeypatch: pytest.MonkeyPatch):
+    started = threading.Event()
     entered = threading.Event()
     release = threading.Event()
     interrupted = threading.Event()
@@ -200,6 +237,7 @@ def interruptible_execution(monkeypatch: pytest.MonkeyPatch):
 
     class Sandbox:
         def __init__(self, **kwargs: Any) -> None:
+            started.set()
             self._host_callback = False
 
         def interrupt_handle(self) -> SimpleNamespace:
@@ -211,8 +249,8 @@ def interruptible_execution(monkeypatch: pytest.MonkeyPatch):
             return SimpleNamespace(kill=kill)
 
         def run(self, code: str) -> SimpleNamespace:
-            if code in {"guest", "host"}:
-                self._host_callback = code == "host"
+            if code in {"guest", "host", "final_host"}:
+                self._host_callback = code in {"host", "final_host"}
                 entered.set()
                 try:
                     if self._host_callback:
@@ -220,7 +258,7 @@ def interruptible_execution(monkeypatch: pytest.MonkeyPatch):
                             raise RuntimeError("Host callback was not released.")
                     elif not interrupted.wait(5):
                         raise RuntimeError("Guest was not interrupted.")
-                    if interrupted.is_set():
+                    if interrupted.is_set() and code != "final_host":
                         raise InterruptedError("Guest execution interrupted.")
                 finally:
                     completed.set()
@@ -237,6 +275,7 @@ def interruptible_execution(monkeypatch: pytest.MonkeyPatch):
     execute_code = HyperlightExecuteCodeTool(execution_timeout_seconds=0.1)
     yield SimpleNamespace(
         tool=execute_code,
+        started=started,
         entered=entered,
         release=release,
         kill_attempted=kill_attempted,

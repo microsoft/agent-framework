@@ -150,6 +150,7 @@ class _ExecutionControl:
             interruption.join()
         if interruption_errors:
             raise RuntimeError("Could not interrupt Hyperlight guest execution.")
+        self.check()
         return result
 
 
@@ -2029,13 +2030,26 @@ class HyperlightExecuteCodeTool(FunctionTool):
                 current_context = contextvars.copy_context()
             finally:
                 _execution_cancellation.reset(token)
-            execution = asyncio.get_running_loop().run_in_executor(
-                None, lambda: current_context.run(self._registry.execute, config=config, code=code)
-            )
+            execution_started = False
+            start_lock = threading.Lock()
+
+            def _execute() -> list[Content]:
+                nonlocal execution_started
+                with start_lock:
+                    if cancelled.is_set():
+                        raise asyncio.CancelledError
+                    execution_started = True
+                return current_context.run(self._registry.execute, config=config, code=code)
+
+            execution = asyncio.get_running_loop().run_in_executor(None, _execute)
             try:
                 return await asyncio.shield(execution)
             except asyncio.CancelledError:
-                cancelled.set()
+                with start_lock:
+                    cancelled.set()
+                    if not execution_started:
+                        execution.cancel()
+                        raise
                 # Shield the owning worker until native execution and its interruption
                 # thread have finished, including when the caller cancels again.
                 while not execution.done():

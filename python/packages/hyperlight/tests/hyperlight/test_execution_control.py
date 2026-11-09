@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from unittest.mock import Mock
 
 import pytest
 
@@ -87,6 +88,59 @@ async def test_timeout_returns_error_and_allows_reuse(interruptible_execution) -
     assert len(result) == 1
     assert result[0].type == "error"
     assert result[0].error_details == "Code execution exceeded its time limit."
+    recovered = await native.tool.invoke(arguments={"code": "None"})
+    assert recovered[0].text == "ok\n"
+
+
+async def test_timeout_after_final_host_callback_returns_error_and_allows_reuse(
+    interruptible_execution, execution_clock
+) -> None:
+    native = interruptible_execution
+    execution = asyncio.create_task(native.tool.invoke(arguments={"code": "final_host"}))
+    try:
+        assert await asyncio.to_thread(native.entered.wait, 2)
+        execution_clock.now += 1
+        assert await asyncio.to_thread(native.kill_attempted.wait, 2)
+        assert not execution.done()
+        native.release.set()
+        result = await asyncio.wait_for(execution, 2)
+        assert native.completed.is_set()
+        assert len(result) == 1
+        assert result[0].type == "error"
+        assert result[0].error_details == "Code execution exceeded its time limit."
+        recovered = await native.tool.invoke(arguments={"code": "None"})
+        assert recovered[0].text == "ok\n"
+    finally:
+        native.release.set()
+        await asyncio.gather(execution, return_exceptions=True)
+
+
+async def test_cancellation_before_default_executor_start_does_not_wait_or_create_sandbox(
+    interruptible_execution, occupied_default_executor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native = interruptible_execution
+    pool = occupied_default_executor
+    execute = Mock(wraps=native.tool._registry.execute)
+    monkeypatch.setattr(native.tool._registry, "execute", execute)
+    execution = asyncio.create_task(native.tool.invoke(arguments={"code": "None"}))
+    try:
+        await asyncio.wait_for(pool.queued.wait(), 2)
+        assert not native.started.is_set()
+        execution.cancel()
+        done, _ = await asyncio.wait({execution}, timeout=0.5)
+        assert done, "Queued cancellation waited for unrelated default-executor work."
+        with pytest.raises(asyncio.CancelledError):
+            await execution
+        assert not pool.blocker.done()
+        assert not native.started.is_set()
+        assert not native.kill_attempted.is_set()
+    finally:
+        pool.release.set()
+        await asyncio.gather(execution, return_exceptions=True)
+        await asyncio.wait_for(pool.blocker, 2)
+        await asyncio.get_running_loop().run_in_executor(None, lambda: None)
+    assert not native.started.is_set()
+    execute.assert_not_called()
     recovered = await native.tool.invoke(arguments={"code": "None"})
     assert recovered[0].text == "ok\n"
 
