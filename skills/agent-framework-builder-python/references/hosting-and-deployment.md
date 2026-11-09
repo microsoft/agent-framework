@@ -45,6 +45,15 @@ choose patterns with predictable matching time for untrusted values and property
 Read the selected host's public docstrings and maintained sample for constructor options, parsers, history modes,
 storage providers, and protocol details.
 
+For Foundry `ResponsesHostServer`, use `history_source="host_managed"` (default), `"agent_managed"`,
+or `"inference_service"`. Background execution uses `background_source="host_managed"` (default) or
+`"inference_service"`; the latter requires inference-service history. `agent_managed` preserves the
+agent's developer-owned HistoryProvider or downstream service storage choices. Configure the outer
+storage backend with `response_store=`, not the removed constructor `store=` alias. The caller's
+wire-level `store` flag is unchanged. See the
+[constructor migration guide](../../../python/packages/foundry_hosting/README.md#migrate-historybackground-names-and-the-response-store-argument)
+for renamed literals; do not copy old names into new applications.
+
 ## Deployment readiness
 
 Verify the entry point imports, required packages and external files are included, configuration fails clearly, history

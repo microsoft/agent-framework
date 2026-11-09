@@ -232,7 +232,7 @@ async def main() -> None:
     _configure_logging()
     load_dotenv()
     _log_environment()
-    server = ResponsesHostServer(agent=create_agent, history_source="agent_server")
+    server = ResponsesHostServer(agent=create_agent, history_source="host_managed")
     await server.run_async()
 
 

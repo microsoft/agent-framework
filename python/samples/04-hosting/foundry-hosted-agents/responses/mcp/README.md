@@ -13,7 +13,7 @@ See [main.py](main.py) for the full implementation.
 `agent=create_agent` creates fresh client and hosted-MCP tool configuration for
 each request and closes the request's own SDK transports and credential.
 Local model authentication uses `AzureCliCredential`; deployed calls use managed
-identity. `history_source="agent_server"` supplies the outer transcript and
+identity. `history_source="host_managed"` supplies the outer transcript and
 disables inner model storage.
 
 **Configure `GITHUB_PAT` separately.** A missing/empty PAT fails explicitly;

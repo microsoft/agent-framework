@@ -249,7 +249,7 @@ def validate_default_transport_options(defaults: Mapping[str, Any], *, allow_age
     if reserved:
         raise ValueError(
             "Agent default extra_body cannot set host-controlled fields: "
-            f"{', '.join(sorted(reserved))}. Use explicit agent defaults or history_source='service'."
+            f"{', '.join(sorted(reserved))}. Use explicit agent defaults or history_source='inference_service'."
         )
 
 

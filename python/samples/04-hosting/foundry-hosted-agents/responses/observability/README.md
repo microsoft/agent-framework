@@ -28,7 +28,7 @@ OpenTelemetry context propagation links spans to the incoming request rather
 than a preceding caller. The context-managed sample client closes its own SDK
 transports and credential after the request. Local authentication uses
 `AzureCliCredential`; hosted authentication uses managed identity.
-`history_source="agent_server"` owns the outer transcript and disables inner
+`history_source="host_managed"` owns the outer transcript and disables inner
 model storage.
 
 Foundry Hosted Agent has built-in observability, so the hosted runtime manages

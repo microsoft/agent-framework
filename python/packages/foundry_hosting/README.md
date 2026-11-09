@@ -175,21 +175,21 @@ MAF session and approval state is saved. The host's `history_source` independent
 
 | `history_source` | What the model receives | Inner storage on caller `store=True` |
 | --- | --- | --- |
-| `"agent_server"` (default) | Prior outer Responses transcript plus new input | Disabled. Storing clients run with `store=False`; non-storing clients receive no storage option. |
-| `"service"` | New input only | Enabled. The service-issued `AgentSession.service_session_id` is saved privately under the outer response ID or conversation. |
-| `"agent"` | New input only; the agent chooses how to load history | Developer-owned: `HistoryProvider` with `default_options={"store": False}` loads from host-persisted `AgentSession.state`, **or** a storing client with `default_options={"store": True}` uses downstream service history. The existing behavior is unchanged. |
+| `"host_managed"` (default) | Prior outer Responses transcript plus new input | Disabled. Storing clients run with `store=False`; non-storing clients receive no storage option. |
+| `"inference_service"` | New input only | Enabled. The service-issued `AgentSession.service_session_id` is saved privately under the outer response ID or conversation. |
+| `"agent_managed"` | New input only; the agent chooses how to load history | Developer-owned: `HistoryProvider` with `default_options={"store": False}` loads from host-persisted `AgentSession.state`, **or** a storing client with `default_options={"store": True}` uses downstream service history. The existing behavior is unchanged. |
 
 For example, suppose the first stored response answers **"My name is Ada"**, then the caller sends
 **"What is my name?"** with `previous_response_id` set to that response's **outer** `response.id`:
 
-- **`"agent_server"`:** The model receives the first user input, the first assistant output, and the new
+- **`"host_managed"`:** The model receives the first user input, the first assistant output, and the new
   question. The host reconstructs that transcript from the Responses store; the inner service
   does not retain it.
-- **`"service"`:** The model receives only the new question as *request input*, along with the
+- **`"inference_service"`:** The model receives only the new question as *request input*, along with the
   private `AgentSession.service_session_id` from the first turn. The downstream service retrieves
   its own transcript. A second branch from the first response cannot safely reuse that service
   thread and is rejected.
-- **`"agent"`:** The model receives the new question. With `InMemoryHistoryProvider` and agent
+- **`"agent_managed"`:** The model receives the new question. With `InMemoryHistoryProvider` and agent
   default `store=False`, the provider adds earlier messages from the saved MAF session; with agent
   default `store=True`, the downstream service owns the prior transcript instead.
 
@@ -202,37 +202,94 @@ Choose **one** mode when constructing each host; do not reuse the same `Agent` i
 For example, to use downstream service history:
 
 ```python
-server = ResponsesHostServer(agent=agent, history_source="service")
+server = ResponsesHostServer(agent=agent, history_source="inference_service")
 ```
 
-Omitting `history_source` selects `"agent_server"`. To use a provider in `"agent"` mode,
+Omitting `history_source` selects `"host_managed"`. To use a provider in `"agent_managed"` mode,
 configure that agent with `store=False` as shown in
 [agent_history.py](../../samples/04-hosting/foundry-hosted-agents/responses/basic/agent_history.py).
 
-`"agent_server"` and `"service"` reject a load-enabled `HistoryProvider` alongside their own history source;
-`"agent_server"` also rejects default downstream continuation IDs. Those modes require a `RawAgent` with a client declaring
-`STORES_BY_DEFAULT`; `"service"` requires a storing client that returns a private continuation ID. Hosting may
+`"host_managed"` and `"inference_service"` reject a load-enabled `HistoryProvider` alongside their own history source;
+`"host_managed"` also rejects default downstream continuation IDs. Those modes require a `RawAgent` with a client declaring
+`STORES_BY_DEFAULT`; `"inference_service"` requires a storing client that returns a private continuation ID. Hosting may
 add a transient in-memory provider to support function-call loops, but **never edits `agent.default_options`**.
 The host owns the provided agent instance and any providers it adds; do not reuse it with another host. A factory
 creates an independent agent for each request.
 
-The existing `history_source="agent"` still preserves the agent's own provider **or** service storage defaults
+The existing `history_source="agent_managed"` still preserves the agent's own provider **or** service storage defaults
 on stored requests, including `default_options={"store": True}`. Custom `SupportsAgentRun`
 implementations can continue using that mode for stored requests; it is not a forced-provider mode.
-The outer storage-backend constructor argument is now `response_store=`. The old `store=` backend
-argument remains an alias with its own once-per-host deprecation warning; supplying both is an error.
-Neither constructor argument sets the caller's per-request `store` flag.
+The outer storage-backend constructor argument is `response_store=`. It does not set the caller's
+per-request `store` flag. The deprecated constructor `store=` alias has been removed.
+
+### Migrate history/background names and the response-store argument
+
+These are breaking constructor changes. Update explicit settings as follows:
+
+| Setting | Previous value | New value |
+| --- | --- | --- |
+| `history_source` | `"agent_server"` | `"host_managed"` |
+| `history_source` | `"agent"` | `"agent_managed"` |
+| `history_source` | `"service"` | `"inference_service"` |
+| `background_source` | `"agent_server"` | `"host_managed"` |
+| `background_source` | `"provider"` | `"inference_service"` |
+| Response-store backend argument | `store=backend` | `response_store=backend` |
+
+The old literals and constructor alias are rejected, not translated. Both source defaults remain
+host-managed. History ownership, downstream storage, background execution, and persisted state are
+unchanged. `agent_managed` still permits either a HistoryProvider or developer-owned downstream
+service storage. Native workflows keep checkpoint history and host-managed background execution;
+these literal renames do not add agent history modes to native workflows.
+
+Before:
+
+```python
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient
+from agent_framework_foundry_hosting import ResponsesHostServer
+from azure.ai.agentserver.responses import InMemoryResponseProvider
+
+agent = Agent(client=OpenAIChatClient())
+server = ResponsesHostServer(
+    agent=agent,
+    history_source="service",
+    background_source="provider",
+    store=InMemoryResponseProvider(),
+)
+```
+
+After:
+
+```python
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient
+from agent_framework_foundry_hosting import ResponsesHostServer
+from azure.ai.agentserver.responses import InMemoryResponseProvider
+
+agent = Agent(client=OpenAIChatClient())
+server = ResponsesHostServer(
+    agent=agent,
+    history_source="inference_service",
+    background_source="inference_service",
+    response_store=InMemoryResponseProvider(),
+)
+```
+
+Do not rename the wire-level `POST /responses` `store` flag or the agent's
+`default_options={"store": ...}`: their meaning and spelling are unchanged.
+
+### Request persistence and background execution
 
 `store=False` returns a one-shot response without **writing** host-managed session, conversation, or approval state;
 it also disables downstream service storage regardless of the developer's defaults. Unsafe custom agents, external
 history providers that store messages, and fixed downstream continuation defaults fail with an actionable error
 instead of silently persisting. An unstored service-mode request cannot resume a private service thread.
-`history_source="agent"` also rejects an unstored continuation if its restored session uses downstream storage. Application-owned
+`history_source="agent_managed"` also rejects an unstored continuation if its restored session uses downstream storage. Application-owned
 tools and external services may still have their own side effects. `background=True` requires outer `store=True`.
 
 Outer background work always uses the caller-visible `response.id` for polling; it does not enable provider-native
-background automatically. `background_source="agent_server"` (default) uses only the outer background worker.
-`background_source="provider"` is a separate opt-in for `history_source="service"` with a storing
+background automatically. `background_source="host_managed"` (default) uses only the outer background worker.
+`background_source="inference_service"` is a separate opt-in for `history_source="inference_service"` with a storing
 Responses client. Its private continuation token is saved under the outer ID and never returned to the caller.
 Use `ResponsesServerOptions(resilient_background=True)` to permit recovery from a **saved** token; a crash before
 the token is saved cannot safely restart the inner job. Completed polling output, including local function calls,
@@ -390,7 +447,7 @@ Invocations sessions use the separate `invocation_sessions` store.
 Each stored agent turn saves a snapshot under its **own** outer `response.id`. For a named `conversation`, a
 separate mutable conversation-head key is also updated. Loaded MAF sessions use PR1's ETag condition for that key:
 a competing turn that advanced the head causes a visible conflict rather than a stale overwrite. A superseded
-steered turn saves its response snapshot but skips the head update. In `"service"` or `"agent"` history mode, a
+steered turn saves its response snapshot but skips the head update. In `"inference_service"` or `"agent_managed"` history mode, a
 stored named-conversation turn first claims that head with a conditional write *before* calling the inner agent.
 Another request that read the old head loses the CAS; one that reads the claim fails before touching the provider.
 The claim is cleared when the winning turn successfully commits the new head. If a dispatched turn fails or is

@@ -1594,17 +1594,22 @@ class TestResponsesHostServerInit:
             ResponsesHostServer(agent)
 
     async def test_zero_argument_agent_class_is_resolved_as_factory(self) -> None:
-        server = _make_server(cast(Any, _StrictCustomAgent), history_source="agent")
+        server = _make_server(cast(Any, _StrictCustomAgent), history_source="agent_managed")
 
         response = await _post(server)
 
         assert response.json()["status"] == "completed"
 
-    def test_init_basic(self) -> None:
+    @pytest.mark.parametrize("explicit_sources", [False, True])
+    def test_init_basic(self, explicit_sources: bool) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
-        server = _make_server(agent)
+        server = (
+            _make_server(agent, history_source="host_managed", background_source="host_managed")
+            if explicit_sources
+            else _make_server(agent)
+        )
         assert server is not None
         assert len(agent.context_providers) == 1
         history_sentinel = agent.context_providers[0]
@@ -1666,7 +1671,7 @@ class TestResponsesHostServerInit:
         )
         agent.context_providers = [hp]
 
-        ResponsesHostServer(agent, history_source="agent")
+        ResponsesHostServer(agent, history_source="agent_managed")
 
         assert agent.context_providers == [hp]
 
@@ -1694,10 +1699,10 @@ class TestResponsesHostServerInit:
             default_options={"conversation_id": "service-thread"},
         )
 
-        ResponsesHostServer(agent, history_source="agent")
+        ResponsesHostServer(agent, history_source="agent_managed")
 
     def test_init_rejects_custom_agent_for_agent_server_history(self) -> None:
-        with pytest.raises(RuntimeError, match="history_source='agent'"):
+        with pytest.raises(RuntimeError, match="history_source='agent_managed'"):
             ResponsesHostServer(cast(Any, _StrictCustomAgent()))
 
     def test_init_requires_storage_capability_for_agent_server_history(self) -> None:
@@ -1729,7 +1734,7 @@ class TestResponsesHostServerInit:
         with pytest.raises(RuntimeError, match="resilient_background"):
             ResponsesHostServer(
                 agent,
-                store=FileResponseStore(storage_dir=tmp_path),
+                response_store=FileResponseStore(storage_dir=tmp_path),
                 options=ResponsesServerOptions(resilient_background=True),
             )
 
@@ -1738,7 +1743,7 @@ class TestResponsesHostServerInit:
         with pytest.raises(RuntimeError, match="steerable_conversations=True is temporarily unavailable"):
             ResponsesHostServer(
                 cast(SupportsAgentRun, workflow_agent),
-                store=InMemoryResponseProvider(),
+                response_store=InMemoryResponseProvider(),
                 options=ResponsesServerOptions(steerable_conversations=True),
             )
 
@@ -1789,29 +1794,52 @@ class TestResponsesHostServerInit:
 
     def test_provider_background_rejects_steering_and_wrong_history_source(self) -> None:
         agent = Agent(client=_ServiceStorageRecordingClient())
-        with pytest.raises(ValueError, match="history_source='service'"):
-            _make_server(agent, background_source="provider")
+        with pytest.raises(ValueError, match="history_source='inference_service'"):
+            _make_server(agent, background_source="inference_service")
         with pytest.raises(RuntimeError, match="temporarily unavailable"):
             _make_server(
                 agent,
-                history_source="service",
-                background_source="provider",
+                history_source="inference_service",
+                background_source="inference_service",
                 options=ResponsesServerOptions(steerable_conversations=True),
             )
 
-    def test_store_alias_warns_once_without_deprecating_history_source(self) -> None:
+    @pytest.mark.parametrize("legacy_store", [None, InMemoryResponseProvider()])
+    @pytest.mark.parametrize("response_store", [None, InMemoryResponseProvider()])
+    def test_removed_store_alias_rejected_before_host_construction(self, legacy_store, response_store) -> None:
+        agent = _make_agent()
+        with (
+            patch("agent_framework_foundry_hosting._responses.ResponsesAgentServerHost.__init__") as base_init,
+            pytest.raises(TypeError, match="no longer accepts store=; use response_store="),
+        ):
+            ResponsesHostServer(agent, response_store=response_store, **{"store": legacy_store})
+
+        base_init.assert_not_called()
+        assert agent.context_providers == []
+
+    def test_response_store_and_agent_managed_history_are_not_deprecated(self) -> None:
         agent = Agent(client=_ServiceStorageRecordingClient(), default_options=OpenAIChatOptions(store=True))
-        with pytest.warns(DeprecationWarning) as recorded:
-            warnings.warn("unrelated SDK deprecation", DeprecationWarning, stacklevel=2)
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always", DeprecationWarning)
             server = ResponsesHostServer(
                 agent,
-                history_source="agent",
-                store=InMemoryResponseProvider(),
+                history_source="agent_managed",
+                response_store=InMemoryResponseProvider(),
             )
         assert server is not None
-        messages = [str(warning.message) for warning in recorded]
-        assert not any(message.startswith("history_source is deprecated;") for message in messages)
-        assert sum(message.startswith("store= is deprecated;") for message in messages) == 1
+        assert not [warning for warning in recorded if issubclass(warning.category, DeprecationWarning)]
+
+    @pytest.mark.parametrize("history_source", ["agent_server", "agent", "service"])
+    def test_history_source_rejects_removed_literals(self, history_source: str) -> None:
+        with pytest.raises(
+            ValueError, match="history_source must be 'host_managed', 'agent_managed', or 'inference_service'"
+        ):
+            _make_server(_make_agent(), history_source=history_source)
+
+    @pytest.mark.parametrize("background_source", ["agent_server", "provider"])
+    def test_background_source_rejects_removed_literals(self, background_source: str) -> None:
+        with pytest.raises(ValueError, match="background_source must be 'host_managed' or 'inference_service'"):
+            _make_server(_make_agent(), background_source=background_source)
 
     def test_history_and_background_sources_reject_invalid_values(self) -> None:
         agent = _make_agent()
@@ -1825,7 +1853,7 @@ class TestResponsesHostServerInit:
     @pytest.mark.parametrize(
         "identity_field", ["session_id", "agent_session_id", "user_id", "call_id", "service_session_id"]
     )
-    @pytest.mark.parametrize("history_source", ["agent_server", "agent", "service"])
+    @pytest.mark.parametrize("history_source", ["host_managed", "agent_managed", "inference_service"])
     def test_agent_defaults_cannot_supply_platform_identity(self, identity_field: str, history_source: str) -> None:
         agent = Agent(
             client=_ServiceStorageRecordingClient(),
@@ -2027,7 +2055,7 @@ class TestAgentSessionPersistence:
 
     async def test_agent_history_does_not_forward_runtime_options_to_custom_agent(self) -> None:
         agent = _StrictCustomAgent()
-        server = _make_server(agent, session_store=SessionStore(), history_source="agent")
+        server = _make_server(agent, session_store=SessionStore(), history_source="agent_managed")
 
         response = await _post(server, input_text="first", temperature=0.5)
 
@@ -2066,7 +2094,7 @@ class TestAgentSessionPersistence:
             default_options=OpenAIChatOptions(store=True) if explicit_store else None,
         )
         store = SessionStore()
-        server = _make_server(agent, session_store=store, history_source="agent")
+        server = _make_server(agent, session_store=store, history_source="agent_managed")
 
         first = await _post(server, input_text="first")
         second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
@@ -2086,7 +2114,7 @@ class TestAgentSessionPersistence:
         client = _ServiceStorageRecordingClient()
         agent = Agent(client=client, default_options=OpenAIChatOptions(store=False))
         store = SessionStore()
-        server = _make_server(agent, session_store=store, history_source="service")
+        server = _make_server(agent, session_store=store, history_source="inference_service")
 
         first = await _post(server, input_text="first")
         second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
@@ -2109,7 +2137,7 @@ class TestAgentSessionPersistence:
             return Agent(client=client, default_options=OpenAIChatOptions(store=True))
 
         store = SessionStore()
-        server = _make_server(create_agent, session_store=store, history_source="service")
+        server = _make_server(create_agent, session_store=store, history_source="inference_service")
         first = await _post(server, input_text="first")
         second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
 
@@ -2122,7 +2150,7 @@ class TestAgentSessionPersistence:
 
     async def test_service_history_rejects_second_child_of_provider_response(self) -> None:
         client = _ServiceStorageRecordingClient()
-        server = _make_server(Agent(client=client), session_store=SessionStore(), history_source="service")
+        server = _make_server(Agent(client=client), session_store=SessionStore(), history_source="inference_service")
         first = await _post(server, input_text="first")
         second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
         branch = await _post(server, input_text="fork", previous_response_id=first.json()["id"])
@@ -2135,7 +2163,7 @@ class TestAgentSessionPersistence:
     async def test_invalid_approval_does_not_consume_service_parent(self) -> None:
         client = _ServiceStorageRecordingClient()
         store = SessionStore()
-        server = _make_server(Agent(client=client), session_store=store, history_source="service")
+        server = _make_server(Agent(client=client), session_store=store, history_source="inference_service")
         first = await _post(server, input_text="first")
         parent_id = first.json()["id"]
 
@@ -2170,7 +2198,7 @@ class TestAgentSessionPersistence:
         history = InMemoryHistoryProvider()
         agent = Agent(client=client, context_providers=[history], default_options=OpenAIChatOptions(store=False))
         store = SessionStore()
-        server = _make_server(agent, session_store=store, history_source="agent")
+        server = _make_server(agent, session_store=store, history_source="agent_managed")
 
         first = await _post(server, input_text="first")
         second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
@@ -2186,7 +2214,7 @@ class TestAgentSessionPersistence:
         assert saved is not None and history.source_id in saved.state
         assert saved.service_session_id is None
 
-    @pytest.mark.parametrize("mode", ["agent_server", "service", "agent"])
+    @pytest.mark.parametrize("mode", ["host_managed", "inference_service", "agent_managed"])
     async def test_store_false_neither_saves_session_nor_stores_inner_response(self, mode: str) -> None:
         client = _ServiceStorageRecordingClient()
         agent = Agent(client=client, default_options=OpenAIChatOptions(store=True))
@@ -2209,13 +2237,13 @@ class TestAgentSessionPersistence:
     async def test_store_false_rejects_external_history_and_custom_agent(self) -> None:
         history = _PerServiceCallHistoryProvider()
         agent = Agent(client=_RecordingHistoryClient(), context_providers=[history])
-        server = _make_server(agent, history_source="agent")
+        server = _make_server(agent, history_source="agent_managed")
         response = await _post_json(server, {"input": "one shot", "store": False})
         assert response.json()["status"] == "failed"
         assert "external HistoryProvider" in response.json()["error"]["message"]
 
         custom = _StrictCustomAgent()
-        server = _make_server(custom, history_source="agent")
+        server = _make_server(custom, history_source="agent_managed")
         response = await _post_json(server, {"input": "one shot", "store": False})
         assert response.json()["status"] == "failed"
         assert "custom agent" in response.json()["error"]["message"]
@@ -2226,7 +2254,7 @@ class TestAgentSessionPersistence:
         server = _make_server(
             Agent(client=client, default_options=OpenAIChatOptions(store=True)),
             session_store=SessionStore(),
-            history_source="agent",
+            history_source="agent_managed",
         )
         first = await _post(server)
         request = CreateResponse(input="cannot resume", store=False, previous_response_id=first.json()["id"])
@@ -2343,7 +2371,7 @@ class TestAgentSessionPersistence:
                 client=OpenAIChatClient(model="test-model", async_client=openai),
                 default_options=cast(Any, {"extra_body": {"store": True}}),
             )
-            legacy_server = _make_server(legacy_default, history_source="agent")
+            legacy_server = _make_server(legacy_default, history_source="agent_managed")
             rejected_default = await _post_json(legacy_server, {"input": "unsafe", "store": False})
             assert rejected_default.json()["status"] == "failed"
             assert "default extra_body" in rejected_default.json()["error"]["message"]
@@ -2362,7 +2390,7 @@ class TestAgentSessionPersistence:
 
     async def test_unsupported_options_policy_rejects_custom_agent(self) -> None:
         agent = _StrictCustomAgent()
-        server = _make_server(agent, history_source="agent", unsupported_options="error")
+        server = _make_server(agent, history_source="agent_managed", unsupported_options="error")
         response = await _post_json(server, {"input": "hello", "temperature": 0.8})
 
         assert response.json()["status"] == "failed"
@@ -2374,7 +2402,7 @@ class TestAgentSessionPersistence:
         self, policy: str, warn: bool, caplog: pytest.LogCaptureFixture
     ) -> None:
         agent = _StrictCustomAgent()
-        server = _make_server(agent, history_source="agent", unsupported_options=policy)
+        server = _make_server(agent, history_source="agent_managed", unsupported_options=policy)
 
         with caplog.at_level(logging.WARNING):
             response = await _post(server, temperature=0.5)
@@ -2484,8 +2512,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=SessionStore(),
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -2544,8 +2572,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=store,
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -2574,7 +2602,7 @@ class TestAgentSessionPersistence:
             stream_updates=[AgentResponseUpdate(contents=[Content.from_text("next")], role="assistant")]
         )
         next_agent.client.STORES_BY_DEFAULT = True
-        next_server = _make_server(next_agent, session_store=store, history_source="service")
+        next_server = _make_server(next_agent, session_store=store, history_source="inference_service")
         next_context = ResponseContext(response_id="outer-next", mode_flags=MagicMock())
         with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
             next_events = [
@@ -2618,8 +2646,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=store,
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -2654,8 +2682,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=SessionStore(),
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -2697,8 +2725,8 @@ class TestAgentSessionPersistence:
         first_server = _make_server(
             first_agent,
             session_store=store,
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -2729,8 +2757,8 @@ class TestAgentSessionPersistence:
         resumed_server = _make_server(
             resumed_agent,
             session_store=store,
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -2779,8 +2807,8 @@ class TestAgentSessionPersistence:
             monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
             return _make_server(
                 agent,
-                history_source="service",
-                background_source="provider",
+                history_source="inference_service",
+                background_source="inference_service",
                 options=ResponsesServerOptions(resilient_background=True),
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
@@ -2865,8 +2893,8 @@ class TestAgentSessionPersistence:
             monkeypatch.setattr(agent, "run", MagicMock(side_effect=provider_run))
             return _make_server(
                 agent,
-                history_source="service",
-                background_source="provider",
+                history_source="inference_service",
+                background_source="inference_service",
                 options=ResponsesServerOptions(resilient_background=True),
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
@@ -3055,8 +3083,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=store,
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -3198,8 +3226,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=store,
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -3314,8 +3342,8 @@ class TestAgentSessionPersistence:
             monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
             return _make_server(
                 agent,
-                history_source="service",
-                background_source="provider",
+                history_source="inference_service",
+                background_source="inference_service",
                 options=ResponsesServerOptions(resilient_background=True),
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
@@ -3423,8 +3451,8 @@ class TestAgentSessionPersistence:
             return _make_server(
                 agent,
                 session_store=store,
-                history_source="service",
-                background_source="provider",
+                history_source="inference_service",
+                background_source="inference_service",
                 options=ResponsesServerOptions(resilient_background=True),
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
@@ -3500,8 +3528,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=FailingTokenStore() if phase == "save" else SessionStore(),
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -3618,7 +3646,7 @@ class TestAgentSessionPersistence:
             return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
         agent.run = MagicMock(side_effect=run)
-        server = _make_server(agent, history_source="service")
+        server = _make_server(agent, history_source="inference_service")
         if existing_head:
             seed_store = server._session_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
                 config=server.config, platform_context=get_request_context()
@@ -3681,7 +3709,7 @@ class TestAgentSessionPersistence:
                 _raising_updates("provider timed out"), finalizer=AgentResponse.from_updates
             )
         )
-        server = _make_server(agent, session_store=store, history_source="service")
+        server = _make_server(agent, session_store=store, history_source="inference_service")
         conversation_id = "failed-service-conversation"
 
         async def collect(response_id: str) -> list[Any]:
@@ -3719,7 +3747,7 @@ class TestAgentSessionPersistence:
             yield AgentResponseUpdate(contents=[Content.from_text("too late")], role="assistant")
 
         agent.run = MagicMock(side_effect=lambda **kwargs: ResponseStream(blocked()))
-        server = _make_server(agent, session_store=store, history_source="service")
+        server = _make_server(agent, session_store=store, history_source="inference_service")
         conversation_id = "cancelled-service-conversation"
         context = ResponseContext(
             response_id="cancelled-dispatch", conversation_id=conversation_id, mode_flags=MagicMock()
@@ -3791,7 +3819,7 @@ class TestAgentSessionPersistence:
     async def test_http_outer_storage_is_independent_of_inner_service_history(self) -> None:
         client = _ServiceStorageRecordingClient()
         store = SessionStore()
-        server = _make_server(Agent(client=client), history_source="service", session_store=store)
+        server = _make_server(Agent(client=client), history_source="inference_service", session_store=store)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as http:
             stored = await http.post("/responses", json={"input": "remember me", "store": True})
             stored_id = stored.json()["id"]
@@ -3808,11 +3836,11 @@ class TestAgentSessionPersistence:
         assert saved is not None and saved.service_session_id == "service-thread-1"
         assert await store.get(unstored.json()["id"]) is None
 
-    @pytest.mark.parametrize("mode", ["service", "agent"])
+    @pytest.mark.parametrize("mode", ["inference_service", "agent_managed"])
     async def test_http_outer_background_polling_is_independent_of_history_source(self, mode: str) -> None:
         client = _ServiceStorageRecordingClient()
-        history = [InMemoryHistoryProvider()] if mode == "agent" else []
-        default_options = OpenAIChatOptions(store=False) if mode == "agent" else None
+        history = [InMemoryHistoryProvider()] if mode == "agent_managed" else []
+        default_options = OpenAIChatOptions(store=False) if mode == "agent_managed" else None
         server = _make_server(
             Agent(client=client, context_providers=history, default_options=default_options),
             session_store=SessionStore(),
@@ -3833,7 +3861,7 @@ class TestAgentSessionPersistence:
 
         assert final.json()["id"] == response_id
         assert "service-thread-1" not in str(final.json())
-        assert client.store_options == ([True] if mode == "service" else [False])
+        assert client.store_options == ([True] if mode == "inference_service" else [False])
         assert rejected.status_code == 400
 
     async def test_http_background_polling_and_unstored_stream_use_outer_response_id(self) -> None:
@@ -3890,7 +3918,7 @@ class TestAgentSessionPersistence:
             default_options={"store": False},
         )
         store = SessionStore()
-        server = _make_server(agent, session_store=store, history_source="agent")
+        server = _make_server(agent, session_store=store, history_source="agent_managed")
 
         first = await _post(server, input_text="first")
         second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
@@ -8368,7 +8396,7 @@ class TestCheckpointContextValidation:
         agent.workflow = MagicMock()
         agent.workflow.name = "workflow"
         agent.workflow._runner_context.has_checkpointing.return_value = False
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server = ResponsesHostServer(agent, response_store=InMemoryResponseProvider())
 
         context_kwargs: dict[str, Any] = {"response_id": "response-current", "mode_flags": MagicMock()}
         request = CreateResponse(model="m", input="hi")

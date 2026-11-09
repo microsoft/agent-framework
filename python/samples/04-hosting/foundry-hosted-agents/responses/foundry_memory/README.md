@@ -38,7 +38,7 @@ name is deliberately not part of the hash. Configure separate Memory Stores
 when agents must not share a user's long-term memories; do not assume sandbox
 or agent names provide that boundary.
 
-`history_source="agent_server"` supplies conversation history from the outer
+`history_source="host_managed"` supplies conversation history from the outer
 Responses service and disables inner model storage. This is separate from
 application-owned long-term Memory: outer `store=false` disables host-managed
 state, **not** the Memory provider's deliberate read/write side effects. Apply

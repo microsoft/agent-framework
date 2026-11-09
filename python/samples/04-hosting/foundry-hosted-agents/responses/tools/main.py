@@ -103,7 +103,7 @@ def create_agent() -> Agent:
 
 def main() -> None:
     load_dotenv()
-    server = ResponsesHostServer(agent=create_agent, history_source="agent_server")
+    server = ResponsesHostServer(agent=create_agent, history_source="host_managed")
     server.run()
 
 
