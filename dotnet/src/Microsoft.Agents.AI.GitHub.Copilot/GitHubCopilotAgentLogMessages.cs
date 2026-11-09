@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 
@@ -28,4 +29,14 @@ internal static partial class GitHubCopilotAgentLogMessages
         this ILogger logger,
         int count,
         string tools);
+
+    /// <summary>
+    /// Logs when stopping an owned Copilot client fails after the Copilot CLI version check failed.
+    /// </summary>
+    [LoggerMessage(
+        Level = LogLevel.Debug,
+        Message = "Failed to stop the GitHub Copilot client after the Copilot CLI version check failed.")]
+    public static partial void LogFailedToStopClientAfterVersionCheck(
+        this ILogger logger,
+        Exception exception);
 }

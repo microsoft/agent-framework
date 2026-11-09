@@ -10,6 +10,10 @@ pip install agent-framework-github-copilot
 
 The GitHub Copilot agent enables integration with GitHub Copilot, allowing you to interact with Copilot's agentic capabilities through the Agent Framework.
 
+The agent requires GitHub Copilot CLI version 1.0.85 or higher. When the agent starts, it checks the CLI version
+and raises an error if the version is older or cannot be determined. This applies to the CLI bundled with the
+`github-copilot-sdk` package as well as one selected with `cli_path`, `GITHUB_COPILOT_CLI_PATH`, or `COPILOT_CLI_PATH`.
+
 ## Context providers and function middleware
 
 Context providers can contribute messages, instructions, and tools to a run.
