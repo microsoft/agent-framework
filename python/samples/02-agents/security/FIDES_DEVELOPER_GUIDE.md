@@ -231,10 +231,9 @@ When declared, `source_integrity` establishes the local integrity fallback. Embe
   input normalization and even when the session already has persisted FIDES state.
 - Framework-authenticated approval requests and responses remain control-plane content. Their embedded function-call
   arguments still add confidentiality restrictions. Caller-only unbound controls are reconstructed conservatively.
-- Stored `HistoryProvider` messages are also folded into the label. FIDES records bounded, authenticated snapshots of
-  each ordered provider history and the completed run transcript. Exact covered prefixes are not re-tainted, while
-  appended, replaced, or otherwise changed unstamped assistant/tool content is reconstructed as
-  **UNTRUSTED + PRIVATE**. Explicit replay labels may still add restrictions.
+- Stored `HistoryProvider` messages are folded into the label each time they are loaded. Unstamped assistant/tool
+  content is reconstructed as **UNTRUSTED + PRIVATE**. Explicit replay labels are restriction-only: they can make
+  content less trusted or more confidential, but cannot promote replayed content to trusted.
 - Policy enforcement uses the context label for validation
 
 ### History and Context Provider Trust Boundary
@@ -242,12 +241,10 @@ When declared, `source_integrity` establishes the local integrity fallback. Embe
 `HistoryProvider` and `ContextProvider` implementations are trusted application
 plugins. FIDES cannot infer provenance from arbitrary provider behavior.
 
-- Unstamped history is classified conservatively when FIDES first sees it.
-- Exact ordered history already represented by durable FIDES state is not
-  re-tainted.
+- Unstamped history is classified conservatively every time FIDES loads it.
 - Rewriting, deduplicating, compacting, merging, or externally truncating a
-  transcript can invalidate that coverage. The retained messages are then
-  reconstructed conservatively and may become **UNTRUSTED + PRIVATE**.
+  transcript does not preserve or infer trust. Retained unstamped messages are
+  reconstructed conservatively as **UNTRUSTED + PRIVATE**.
 - Do not combine session-managed history with caller-supplied full-transcript
   replay unless the history provider explicitly preserves FIDES provenance.
 - Messages from non-history context providers are not automatically folded into
@@ -258,8 +255,8 @@ This fail-closed behavior can block protected tools after an unsupported
 provider transformation. That is preferable to inferring trust from message
 shape or role.
 
-For simple providers, wrap loaded messages and stamp an application-owned
-`security_label`. See
+For simple providers, wrap loaded messages and stamp an application-owned,
+restriction-only `security_label`. See
 [`provider_labeling_example.py`](provider_labeling_example.py). Providers that
 use extra lifecycle hooks, service-side continuation, cross-session merges, or
 custom transcript rewriting should implement labeling inside the provider

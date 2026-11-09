@@ -369,7 +369,6 @@ cd python/packages/core && ../../.venv/bin/pytest tests/test_security.py -v
 
 The system hides FIDES-labeled untrusted tool output from the LLM context and policy-checks tool calls against the
 cumulative security state before execution. Newly supplied assistant/tool messages are conservatively labeled even
-when state was restored. Bounded authenticated snapshots keep exact provider-history and completed-transcript prefixes
-covered, while appended, replaced, compacted, deduplicated, or otherwise transformed unstamped content is reconstructed
-conservatively when the transformation does not preserve FIDES provenance. Trusted non-history context providers remain
-responsible for labeling or hiding the data they inject.
+when state was restored. Stored provider history is reconstructed conservatively whenever it is loaded; FIDES does not
+infer trust through transcript persistence, deduplication, compaction, or merging. Trusted non-history context providers
+remain responsible for adding restriction labels or hiding the data they inject.

@@ -13,7 +13,7 @@ security model, middleware behavior, and API reference.
 | `repo_confidentiality_example.py` | Data exfiltration prevention | Confidentiality labels, Foundry-backed repository access, `max_allowed_confidentiality`, and approval before leaking private data |
 | `user_identity_security_example.py` | Principal-bound identity data | Canonical tenant/user principals, identity-scoped sources and destinations, and allowed versus blocked flows |
 | `github_mcp_example.py` | Remote MCP URL with local FIDES enforcement | `SecureMCPToolProxy(url=...)`, direct GitHub MCP access, tool auto-labeling, and post-tool-call policy enforcement |
-| `provider_labeling_example.py` | Provider trust boundaries | Simple wrappers that attach application-owned FIDES labels to ordinary history and context provider messages |
+| `provider_labeling_example.py` | Provider trust boundaries | Simple wrappers that attach application-owned FIDES restrictions to ordinary history and context provider messages |
 
 ## Prerequisites
 
@@ -146,7 +146,7 @@ uv run samples/02-agents/security/provider_labeling_example.py
 What to look for:
 
 - The wrappers copy messages instead of mutating provider-owned objects
-- The application, not message role or shape, chooses the FIDES label
+- The application, not message role or shape, chooses the restriction label
 - The context adapter participates in FIDES replay classification
 - Providers with custom lifecycle or transcript-rewriting behavior must label
   data inside their own implementation

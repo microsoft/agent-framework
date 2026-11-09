@@ -37,7 +37,7 @@ MessageLabeler = Callable[[Message], ContentLabel]
 
 
 def labeled_copy(message: Message, labeler: MessageLabeler) -> Message:
-    """Copy one message and attach the application's authoritative FIDES label."""
+    """Copy one message and attach an application-owned restriction label."""
     labeled = Message.from_dict(message.to_dict())
     labeled.additional_properties = dict(labeled.additional_properties)
     labeled.additional_properties["security_label"] = labeler(message).to_dict()
@@ -201,7 +201,7 @@ class ExternalNotesProvider(ContextProvider):
 
 
 def external_private_label(_: Message) -> ContentLabel:
-    """Classify imported provider data according to the host application's policy."""
+    """Restrict imported provider data according to the host application's policy."""
     return ContentLabel(
         integrity=IntegrityLabel.UNTRUSTED,
         confidentiality=ConfidentialityLabel.PRIVATE,

@@ -48,7 +48,6 @@ from ._middleware import (
 )
 from ._serialization import SerializationMixin
 from ._sessions import (
-    _PERSISTED_HISTORY_MESSAGES_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentSession,
     ContextProvider,
     HistoryProvider,
@@ -136,9 +135,6 @@ _TOOL_POLICY_MAX_ALLOWED_CONFIDENTIALITY_KEY = "max_allowed_confidentiality"
 _TOOL_POLICY_SOURCE_INTEGRITY_KEY = "source_integrity"
 _MAX_REPLAY_CONTENT_DEPTH = 32
 _APPROVAL_REPLAY_AUTHORITY_KEY = "_agent_framework_core_fides_authenticated_approval_calls"
-_HISTORY_FOLD_GUARD_CONTEXT_KEY = "_agent_framework_core_fides_history_fold_guard"
-_HISTORY_USE_PERSISTED_COVERAGE_CONTEXT_KEY = "_agent_framework_core_fides_use_persisted_history_coverage"
-_MAX_HISTORY_COVERAGE_SOURCES = 64
 _builtin_id = builtins.id
 _TOOL_SECURITY_POLICY_KEYS = frozenset({
     _TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY,
@@ -1431,7 +1427,6 @@ def _replayed_message_label(
     scope: _SecurityScope,
     approval_authority: _ApprovalReplayAuthority | None = None,
     bound_approval_call_keys: set[Any] | None = None,
-    covered_replay: bool = False,
 ) -> ContentLabel:
     """Return a restriction-only label for caller-replayed or stored history."""
     role = str(message.role)
@@ -1448,16 +1443,7 @@ def _replayed_message_label(
         )
     for index, content in enumerate(message.contents):
         if not isinstance(content, Content):
-            has_data_bearing_content = not covered_replay
-            continue
-        is_approval_control = content.type in {"function_approval_request", "function_approval_response"}
-        if covered_replay and not is_approval_control:
-            replayed_labels, _ = _replayed_content_labels(
-                content,
-                source=f"replayed content[{index}]",
-                scope=scope,
-            )
-            content_labels.extend(replayed_labels)
+            has_data_bearing_content = True
             continue
         replayed_labels, is_authenticated_hidden = _replayed_content_labels(
             content,
@@ -1501,7 +1487,6 @@ def _replayed_message_label(
         if (
             (role in {"user", "system"} and not has_role_independent_untrusted_content)
             or not reconstruct_unstamped
-            or (covered_replay and not has_role_independent_untrusted_content)
             or (has_authenticated_hidden_content and not has_data_bearing_content)
             or (has_bound_approval_control and not has_data_bearing_content)
         )
@@ -1530,117 +1515,6 @@ def _replayed_message_label(
     return combine_labels(*labels)
 
 
-def _coverage_content_payload(content: Content, *, include_security_labels: bool) -> dict[str, Any]:
-    """Return a canonical semantic projection of one content item."""
-    payload = content.to_dict(exclude={"raw_representation", "additional_properties", "id"})
-    if include_security_labels:
-        label_data = content.additional_properties.get("security_label")
-        if isinstance(label_data, Mapping):
-            payload["security_label"] = dict(cast(Mapping[str, Any], label_data))
-    if content.type == "function_call":
-        payload["arguments"] = _parse_replay_function_call_arguments(content)
-    if content.items is not None:
-        payload["items"] = [
-            _coverage_content_payload(item, include_security_labels=include_security_labels) for item in content.items
-        ]
-    return payload
-
-
-def _message_coverage_digest(
-    message: Message,
-    *,
-    exclude_approval_controls: bool = False,
-    include_security_labels: bool = False,
-) -> str | None:
-    """Return a canonical digest for one replay message."""
-    try:
-        payload: dict[str, Any] = {
-            "role": str(message.role),
-            "contents": [
-                _coverage_content_payload(content, include_security_labels=include_security_labels)
-                for content in message.contents
-                if not (
-                    exclude_approval_controls
-                    and content.type in {"function_approval_request", "function_approval_response"}
-                )
-            ],
-        }
-        if include_security_labels:
-            if isinstance(message, LabeledMessage):
-                payload["security_label"] = message.security_label.to_dict()
-            else:
-                label_data = message.additional_properties.get("security_label")
-                if isinstance(label_data, Mapping):
-                    payload["security_label"] = dict(cast(Mapping[str, Any], label_data))
-        canonical = _strict_json_value(
-            payload,
-            path="history message",
-            canonical=True,
-        )
-        encoded = json.dumps(
-            canonical,
-            ensure_ascii=False,
-            allow_nan=False,
-            separators=(",", ":"),
-        ).encode()
-    except (RecursionError, TypeError, ValueError):
-        return None
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _control_free_replay_projection(
-    messages: Sequence[Message],
-    *,
-    include_security_labels: bool = False,
-) -> tuple[list[int], list[str]] | None:
-    """Return original indices and digests for non-control replay messages."""
-    indices: list[int] = []
-    digests: list[str] = []
-    for index, message in enumerate(messages):
-        if message.contents and all(
-            content.type in {"function_approval_request", "function_approval_response"} for content in message.contents
-        ):
-            continue
-        digest = _message_coverage_digest(
-            message,
-            exclude_approval_controls=True,
-            include_security_labels=include_security_labels,
-        )
-        if digest is None:
-            return None
-        indices.append(index)
-        digests.append(digest)
-    return indices, digests
-
-
-def _history_coverage_record(digests: Sequence[str]) -> dict[str, Any]:
-    """Return a bounded authenticated snapshot for an ordered history prefix."""
-    encoded = json.dumps(list(digests), ensure_ascii=True, separators=(",", ":")).encode()
-    return {
-        "count": len(digests),
-        "digest": hashlib.sha256(encoded).hexdigest(),
-    }
-
-
-def _covered_history_prefix(record: Any, digests: Sequence[str]) -> int:
-    """Return the covered prefix length when a stored snapshot matches current history."""
-    if not isinstance(record, Mapping):
-        return 0
-    record_mapping = cast(Mapping[str, Any], record)
-    count = record_mapping.get("count")
-    digest = record_mapping.get("digest")
-    if (
-        type(count) is not int
-        or count < 0
-        or count > len(digests)
-        or not isinstance(digest, str)
-        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
-    ):
-        return 0
-    expected = _history_coverage_record(digests[:count])
-    return count if expected["digest"] == digest else 0
-
-
 class _ReplaySecurityChatMiddleware(ChatMiddleware):
     """Raise the session label from replayed history-provider messages."""
 
@@ -1648,20 +1522,14 @@ class _ReplaySecurityChatMiddleware(ChatMiddleware):
         self,
         scope: _SecurityScope,
         session: AgentSession,
-        state: dict[str, Any],
         history_source_ids: set[str],
         *,
         approval_authority: _ApprovalReplayAuthority,
-        history_fold_guard: dict[str, Any],
-        use_persisted_coverage: bool,
     ) -> None:
         self._scope = scope
         self._session = session
-        self._state = state
         self._history_source_ids = history_source_ids
         self._approval_authority = approval_authority
-        self._history_fold_guard = history_fold_guard
-        self._use_persisted_coverage = use_persisted_coverage
 
     def _history_source_id(self, message: Message) -> str | None:
         attribution = message.additional_properties.get("_attribution")
@@ -1687,12 +1555,8 @@ class _ReplaySecurityChatMiddleware(ChatMiddleware):
             self._scope,
             history_messages,
             session=self._session,
-            state=self._state,
             history_source_ids=self._history_source_ids,
             approval_authority=self._approval_authority,
-            history_fold_guard=self._history_fold_guard,
-            use_persisted_coverage=self._use_persisted_coverage,
-            commit_coverage=bool(history_messages),
         )
         await call_next()
 
@@ -1707,8 +1571,6 @@ _STATE_VARIABLES = "variables"
 _STATE_VARIABLE_METADATA = "variable_metadata"
 _STATE_AUDIT_LOG = "audit_log"
 _STATE_PENDING_APPROVALS = "pending_policy_approvals"
-_STATE_HISTORY_RECONSTRUCTION_COVERAGE = "history_reconstruction_coverage"
-_STATE_INPUT_REPLAY_COVERAGE = "input_replay_coverage"
 _STANDALONE_SESSION_STATE_KEY = "__agent_framework_fides_security__"
 
 
@@ -4466,7 +4328,6 @@ class SecureAgentConfig(ContextProvider):
             )
     """
 
-    after_run_once_per_turn = True
     requires_loaded_context_before_invocation = True
 
     DEFAULT_SOURCE_ID = "secure_agent"
@@ -4587,16 +4448,6 @@ class SecureAgentConfig(ContextProvider):
         return self._middleware_for_scope(self._scope_for_session(session))
 
     @staticmethod
-    def _history_fold_guard(context: SessionContext) -> dict[str, Any]:
-        """Return the run-local history snapshot guard shared with chat middleware."""
-        raw_guard = context.metadata.get(_HISTORY_FOLD_GUARD_CONTEXT_KEY)
-        if isinstance(raw_guard, dict):
-            return cast(dict[str, Any], raw_guard)
-        guard: dict[str, Any] = {}
-        context.metadata[_HISTORY_FOLD_GUARD_CONTEXT_KEY] = guard
-        return guard
-
-    @staticmethod
     def _authenticated_core_approval_calls(
         session: AgentSession,
         messages: Sequence[Message],
@@ -4647,112 +4498,15 @@ class SecureAgentConfig(ContextProvider):
         }
 
     @staticmethod
-    def _history_coverage_for_message_map(
-        history_messages: Mapping[str, Sequence[Message]],
-        history_source_ids: set[str],
-    ) -> dict[str, Any]:
-        """Return bounded durable coverage for the current provider histories."""
-        coverage: dict[str, Any] = {}
-        for source_id in sorted(history_source_ids):
-            projection = _control_free_replay_projection(
-                history_messages.get(source_id, ()),
-                include_security_labels=True,
-            )
-            if projection is not None and len(coverage) < _MAX_HISTORY_COVERAGE_SOURCES:
-                _, digests = projection
-                coverage[source_id] = _history_coverage_record(digests)
-        return coverage
-
-    @staticmethod
-    def _store_history_coverage(
-        state: dict[str, Any],
-        history_messages: Mapping[str, Sequence[Message]],
-        history_source_ids: set[str],
-    ) -> None:
-        """Persist bounded authenticated coverage for current provider histories."""
-        state[_STATE_HISTORY_RECONSTRUCTION_COVERAGE] = _encode_durable_state(
-            SecureAgentConfig._history_coverage_for_message_map(history_messages, history_source_ids),
-            path="history reconstruction coverage",
-        )
-
-    async def after_history_persisted(
-        self,
-        *,
-        agent: Any,
-        session: AgentSession,
-        context: SessionContext,
-        state: dict[str, Any],
-        history_messages: Mapping[str, Sequence[Message]],
-    ) -> None:
-        """Extend only run-local coverage with framework-owned persisted messages."""
-        del agent, session, state
-        self._history_fold_guard(context).update(
-            self._history_coverage_for_message_map(history_messages, set(history_messages))
-        )
-
-    @staticmethod
-    def _input_replay_covered_indices(
-        state: dict[str, Any],
-        messages: Sequence[Message],
-        *,
-        use_persisted_coverage: bool,
-    ) -> set[int]:
-        """Return exact input-message indices already represented by restored FIDES state."""
-        if not use_persisted_coverage:
-            return set()
-        raw_coverage = state.get(_STATE_INPUT_REPLAY_COVERAGE)
-        if raw_coverage is None:
-            return set()
-        try:
-            coverage = _decode_durable_state(raw_coverage, path="input replay coverage")
-        except ValueError:
-            return set()
-        projection = _control_free_replay_projection(messages)
-        if projection is None:
-            return set()
-        indices, digests = projection
-        covered_prefix = _covered_history_prefix(coverage, digests)
-        return set(indices[:covered_prefix])
-
-    @staticmethod
-    def _store_input_replay_coverage(
-        state: dict[str, Any],
-        messages: Sequence[Message],
-    ) -> None:
-        """Persist bounded coverage for the completed run's replayable transcript."""
-        projection = _control_free_replay_projection(messages)
-        if projection is None:
-            state.pop(_STATE_INPUT_REPLAY_COVERAGE, None)
-            return
-        _, digests = projection
-        state[_STATE_INPUT_REPLAY_COVERAGE] = _encode_durable_state(
-            _history_coverage_record(digests),
-            path="input replay coverage",
-        )
-
-    @staticmethod
     def _fold_history_message_map(
         scope: _SecurityScope,
         history_messages: Mapping[str, Sequence[Message]],
         *,
         session: AgentSession,
-        state: dict[str, Any],
         history_source_ids: set[str],
         approval_authority: _ApprovalReplayAuthority,
-        history_fold_guard: dict[str, Any],
-        use_persisted_coverage: bool,
-        commit_coverage: bool,
     ) -> None:
-        """Fold uncovered history messages and optionally commit authenticated coverage."""
-        raw_coverage = state.get(_STATE_HISTORY_RECONSTRUCTION_COVERAGE)
-        persisted_coverage: Mapping[str, Any] = {}
-        if use_persisted_coverage and raw_coverage is not None:
-            try:
-                decoded_coverage = _decode_durable_state(raw_coverage, path="history reconstruction coverage")
-            except ValueError:
-                decoded_coverage = None
-            if isinstance(decoded_coverage, Mapping):
-                persisted_coverage = cast(Mapping[str, Any], decoded_coverage)
+        """Fold replayed history messages conservatively into one FIDES scope."""
         history_labels: list[ContentLabel] = []
         for source_id in sorted(history_source_ids):
             messages = history_messages.get(source_id, ())
@@ -4766,26 +4520,7 @@ class SecureAgentConfig(ContextProvider):
                 scope=scope,
                 approval_authority=approval_authority,
             )
-            projection = _control_free_replay_projection(messages, include_security_labels=True)
-            covered_indices: set[int] = set()
-            if projection is not None:
-                indices, digests = projection
-                covered_prefix = max(
-                    _covered_history_prefix(persisted_coverage.get(source_id), digests),
-                    _covered_history_prefix(history_fold_guard.get(source_id), digests),
-                )
-                covered_indices = set(indices[:covered_prefix])
-                current_record = _history_coverage_record(digests)
-                history_fold_guard[source_id] = current_record
-            else:
-                history_fold_guard.pop(source_id, None)
-            for index, message in enumerate(messages):
-                is_covered = index in covered_indices
-                if is_covered and not any(
-                    content.type in {"function_approval_request", "function_approval_response"}
-                    for content in message.contents
-                ):
-                    continue
+            for message in messages:
                 history_labels.append(
                     _replayed_message_label(
                         message,
@@ -4793,17 +4528,10 @@ class SecureAgentConfig(ContextProvider):
                         scope=scope,
                         approval_authority=approval_authority,
                         bound_approval_call_keys=bound_call_keys,
-                        covered_replay=is_covered,
                     )
                 )
         if history_labels:
             scope.context_label = combine_labels(scope.context_label, *history_labels)
-        if commit_coverage:
-            SecureAgentConfig._store_history_coverage(
-                state,
-                history_messages,
-                history_source_ids,
-            )
 
     @staticmethod
     def _fold_history_labels(
@@ -4811,64 +4539,17 @@ class SecureAgentConfig(ContextProvider):
         context: SessionContext,
         *,
         session: AgentSession,
-        state: dict[str, Any],
         history_source_ids: set[str],
         approval_authority: _ApprovalReplayAuthority,
-        use_persisted_coverage: bool,
-        commit_coverage: bool,
     ) -> None:
         """Fold loaded history-provider messages into one FIDES scope."""
         SecureAgentConfig._fold_history_message_map(
             scope,
             context.context_messages,
             session=session,
-            state=state,
             history_source_ids=history_source_ids,
             approval_authority=approval_authority,
-            history_fold_guard=SecureAgentConfig._history_fold_guard(context),
-            use_persisted_coverage=use_persisted_coverage,
-            commit_coverage=commit_coverage,
         )
-
-    async def after_run(
-        self,
-        *,
-        agent: Any,
-        session: AgentSession,
-        context: SessionContext,
-        state: dict[str, Any],
-    ) -> None:
-        """Authenticate the caller-visible transcript at the completed user-turn boundary."""
-        del agent, session
-        replay_messages = list(context.input_messages)
-        if context.response is not None:
-            replay_messages.extend(context.response.messages)
-        self._store_input_replay_coverage(
-            state,
-            replay_messages,
-        )
-
-    async def after_run_complete(
-        self,
-        *,
-        agent: Any,
-        session: AgentSession,
-        context: SessionContext,
-        state: dict[str, Any],
-    ) -> None:
-        """Authenticate exact framework-owned history persisted for the completed run."""
-        history_source_ids = self._history_source_ids(agent)
-        del session
-        raw_persisted = context.metadata.get(_PERSISTED_HISTORY_MESSAGES_METADATA_KEY)
-        if isinstance(raw_persisted, Mapping):
-            persisted = cast(Mapping[str, Sequence[Message]], raw_persisted)
-            self._store_history_coverage(
-                state,
-                persisted,
-                history_source_ids.intersection(persisted),
-            )
-        elif not history_source_ids:
-            self._store_history_coverage(state, {}, set())
 
     async def after_context_loaded(
         self,
@@ -4879,7 +4560,6 @@ class SecureAgentConfig(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Fold complete loaded history before function approval replay can execute."""
-        use_persisted_coverage = context.metadata.get(_HISTORY_USE_PERSISTED_COVERAGE_CONTEXT_KEY) is True
         history_source_ids = self._history_source_ids(agent)
         raw_approval_authority = context.metadata.get(_APPROVAL_REPLAY_AUTHORITY_KEY)
         approval_authority = (
@@ -4892,11 +4572,8 @@ class SecureAgentConfig(ContextProvider):
             _SecurityScope(state, scope_id=session.session_id),
             context,
             session=session,
-            state=state,
             history_source_ids=history_source_ids,
             approval_authority=approval_authority,
-            use_persisted_coverage=use_persisted_coverage,
-            commit_coverage=True,
         )
 
     async def before_run(
@@ -4919,9 +4596,6 @@ class SecureAgentConfig(ContextProvider):
             context: The invocation context - tools, instructions, and middleware are added here.
             state: The provider-scoped mutable state dict.
         """
-        restored_context_label = _STATE_CONTEXT_LABEL in state
-        context.metadata[_HISTORY_USE_PERSISTED_COVERAGE_CONTEXT_KEY] = restored_context_label
-        history_fold_guard = self._history_fold_guard(context)
         scope = _SecurityScope(state, scope_id=session.session_id)
         middleware: list[FunctionMiddleware | ChatMiddleware] = [*self._middleware_for_scope(scope)]
         history_source_ids = self._history_source_ids(agent)
@@ -4935,11 +4609,6 @@ class SecureAgentConfig(ContextProvider):
             scope=scope,
             approval_authority=approval_authority,
         )
-        input_covered_indices = self._input_replay_covered_indices(
-            state,
-            context.input_messages,
-            use_persisted_coverage=restored_context_label,
-        )
         input_labels = [
             _replayed_message_label(
                 message,
@@ -4947,34 +4616,20 @@ class SecureAgentConfig(ContextProvider):
                 scope=scope,
                 approval_authority=approval_authority,
                 bound_approval_call_keys=input_bound_call_keys,
-                covered_replay=index in input_covered_indices,
             )
-            for index, message in enumerate(context.input_messages)
+            for message in context.input_messages
         ]
         if input_labels:
             scope.context_label = combine_labels(
                 scope.context_label,
                 *input_labels,
             )
-        self._fold_history_labels(
-            scope,
-            context,
-            session=session,
-            state=state,
-            history_source_ids=history_source_ids,
-            approval_authority=approval_authority,
-            use_persisted_coverage=restored_context_label,
-            commit_coverage=False,
-        )
         middleware.append(
             _ReplaySecurityChatMiddleware(
                 scope,
                 session,
-                state,
                 history_source_ids,
                 approval_authority=approval_authority,
-                history_fold_guard=history_fold_guard,
-                use_persisted_coverage=restored_context_label,
             )
         )
         self._provider_state_used = True
