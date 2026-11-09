@@ -241,12 +241,17 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     }
 
     /// <summary>
-    /// Checks names using <see cref="StringComparer.OrdinalIgnoreCase"/>.
+    /// Checks for collisions among the supplied names using <see cref="StringComparer.OrdinalIgnoreCase"/>
+    /// and logs the first collision.
     /// </summary>
-    private bool HasCaseVariantNames(string skillName, string kind, IEnumerable<string> names)
+    /// <param name="skillName">The owning skill's name, used only in the log message, not in comparisons.</param>
+    /// <param name="kind">The entry category ("resource" or "script"), used only in the log message.</param>
+    /// <param name="entryNames">The resource or script names to compare with each other.</param>
+    /// <returns><see langword="true"/> if a collision is found; otherwise, <see langword="false"/>.</returns>
+    private bool HasCaseVariantNames(string skillName, string kind, IEnumerable<string> entryNames)
     {
         var seen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (string name in names)
+        foreach (string name in entryNames)
         {
             if (seen.TryGetValue(name, out string? previous))
             {
