@@ -12,6 +12,7 @@ import pytest
 
 from agent_framework._evaluation import (
     CheckResult,
+    ConversationSplit,
     EvalItem,
     EvalItemResult,
     EvalNotPassedError,
@@ -1320,3 +1321,82 @@ class TestAssertNoFailedItems:
         with pytest.raises(EvalNotPassedError) as exc:
             parent.assert_no_failed_items()
         assert "sub-bad:fail" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Tool checks follow the conversation split
+# ---------------------------------------------------------------------------
+
+
+class TestToolChecksUseSplitResponse:
+    """Tool checks must inspect the response side of the conversation split.
+
+    A tool call made in an earlier turn must not satisfy a later turn's
+    tool check.  See issue #10091.
+    """
+
+    @staticmethod
+    def _two_turn_conversation() -> list[Message]:
+        return [
+            Message("user", ["Weather in NYC?"]),
+            Message("assistant", [Content.from_function_call("c1", "get_weather", arguments={"location": "NYC"})]),
+            Message("assistant", ["Sunny."]),
+            Message("user", ["And tomorrow?"]),
+            Message("assistant", ["No idea."]),
+        ]
+
+    def test_tool_called_check_ignores_earlier_turn(self):
+        items = EvalItem.per_turn_items(self._two_turn_conversation())
+        second = items[1]
+        assert second.response == "No idea."
+
+        result = tool_called_check("get_weather")(second)
+        assert result.passed is False  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert "get_weather" in result.reason  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+    def test_tool_called_check_still_sees_current_turn(self):
+        items = EvalItem.per_turn_items(self._two_turn_conversation())
+        first = items[0]
+
+        result = tool_called_check("get_weather")(first)
+        assert result.passed is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+    def test_tool_calls_present_ignores_earlier_turn(self):
+        items = EvalItem.per_turn_items(self._two_turn_conversation())
+        second = items[1]
+        second.expected_tool_calls = [ExpectedToolCall("get_weather")]
+
+        result = tool_calls_present(second)
+        assert result.passed is False  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert "get_weather" in result.reason  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+    def test_tool_call_args_match_ignores_earlier_turn(self):
+        items = EvalItem.per_turn_items(self._two_turn_conversation())
+        second = items[1]
+        second.expected_tool_calls = [ExpectedToolCall("get_weather", {"location": "NYC"})]
+
+        result = tool_call_args_match(second)
+        assert result.passed is False  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert "not called" in result.reason  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+    def test_full_split_still_counts_whole_trajectory(self):
+        items = EvalItem.per_turn_items(self._two_turn_conversation())
+        second = items[1]
+        second.split_strategy = ConversationSplit.FULL
+        second.expected_tool_calls = [ExpectedToolCall("get_weather")]
+
+        result = tool_calls_present(second)
+        assert result.passed is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+    def test_single_turn_conversation_is_unchanged(self):
+        conversation = [
+            Message("user", ["Weather in NYC?"]),
+            Message("assistant", [Content.from_function_call("c1", "get_weather", arguments={"location": "NYC"})]),
+            Message("assistant", ["Sunny."]),
+        ]
+        item = EvalItem(conversation=conversation)
+        item.expected_tool_calls = [ExpectedToolCall("get_weather", {"location": "NYC"})]
+
+        assert tool_called_check("get_weather")(item).passed is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert tool_calls_present(item).passed is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert tool_call_args_match(item).passed is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
