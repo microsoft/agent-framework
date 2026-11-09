@@ -77,6 +77,7 @@ regressions on a KVM-capable host with the corresponding native SDK installed:
 
 ```powershell
 $env:HYPERLIGHT_RUN_GUEST_TESTS = "true"
+$env:HYPERLIGHT_PYTHON_GUEST_PATH = "/absolute/path/to/python.wasm" # Path to the built Python guest module.
 dotnet test --project dotnet\tests\Microsoft.Agents.AI.Hyperlight.UnitTests -f net10.0 -p:HyperlightGuestTests=true
 ```
 
