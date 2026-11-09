@@ -1273,6 +1273,41 @@ class TestAssertScoreAtLeast:
         # Offender from sub-result is surfaced.
         assert "0.200" in str(exc.value)
 
+    def test_evaluator_filter_missing_evaluator_raises(self) -> None:
+        results = _score_results(
+            [
+                EvalScoreResult(name="judge", score=0.9),
+                EvalScoreResult(name="relevance", score=0.85),
+            ],
+        )
+        with pytest.raises(EvalNotPassedError) as exc:
+            results.assert_score_at_least(0.8, evaluator="judeg")
+        msg = str(exc.value)
+        assert "No scores found for evaluator 'judeg'" in msg
+        assert "judge" in msg
+        assert "relevance" in msg
+
+    def test_evaluator_filter_empty_scores_raises(self) -> None:
+        results = _score_results([])
+        with pytest.raises(EvalNotPassedError) as exc:
+            results.assert_score_at_least(0.8, evaluator="relevance")
+        assert "No scores found for evaluator 'relevance'. Available evaluator(s): none" in str(exc.value)
+
+    def test_evaluator_filter_custom_msg_on_missing_evaluator(self) -> None:
+        results = _score_results([EvalScoreResult(name="judge", score=0.9)])
+        with pytest.raises(EvalNotPassedError) as exc:
+            results.assert_score_at_least(0.8, evaluator="missing", msg="Custom missing evaluator message")
+        assert str(exc.value) == "Custom missing evaluator message"
+
+    def test_evaluator_filter_matches_in_sub_results(self) -> None:
+        sub = _score_results([EvalScoreResult(name="sub_eval", score=0.85)])
+        parent = _score_results(
+            [EvalScoreResult(name="parent_eval", score=0.9)],
+            sub_results={"sub": sub},
+        )
+        # Should match "sub_eval" in sub-results and pass without error
+        parent.assert_score_at_least(0.8, evaluator="sub_eval")
+
 
 class TestAssertNoFailedItems:
     """Tests for EvalResults.assert_no_failed_items (mirrors .NET coverage)."""
