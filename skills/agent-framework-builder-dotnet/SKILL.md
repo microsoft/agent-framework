@@ -77,11 +77,13 @@ relying on remembered preview-era syntax.
 
 ## Current documentation lookup
 
-Use local guidance for stable decisions and common patterns. For provider matrices, package maturity, hosted tools,
-deployment details, or unfamiliar APIs, consult current sources before generating code.
+This skill and its references guide high-level development choices; they are not product documentation. Use them for
+selection criteria, trade-offs, and constraints that materially change a choice. Microsoft Learn is the documentation
+source for implementing the selected approach.
 
-The reference pages intentionally describe selection rules, invariants, and non-obvious gotchas. Use XML docs or API
-reference pages for signatures and option details, and use Learn or maintained samples for end-to-end procedures.
+For provider matrices, package maturity, hosted tools, deployment details, or unfamiliar APIs, consult current sources
+before generating code. Use XML docs or API reference pages for signatures and option details, and use Learn or
+maintained samples for end-to-end procedures. Do not copy those details into this skill or its references.
 
 When the coding agent supports MCP, configure the Microsoft Learn MCP Server as a Streamable HTTP server:
 
