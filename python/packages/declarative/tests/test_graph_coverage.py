@@ -2615,6 +2615,38 @@ class TestBuilderEdgeWiring:
         assert asyncio.run(else_edge.should_route(else_branch)) is True
         assert asyncio.run(else_edge.should_route(then_branch)) is False
 
+    def test_empty_condition_group_case_wires_continuation_passthrough(self):
+        """An empty ConditionGroup case branch must still continue to the following action."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "empty_condition_group_case",
+            "actions": [
+                {
+                    "kind": "ConditionGroup",
+                    "id": "route",
+                    "conditions": [{"condition": "=true", "actions": []}],
+                },
+                {"kind": "SendActivity", "id": "after", "activity": {"text": "after"}},
+            ],
+        }
+
+        workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+        edges = {(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges}
+
+        assert ("route_eval", "route_case0_pass") in edges
+        assert ("route_case0_pass", "after") in edges
+
+        case_edge = next(
+            edge
+            for group in workflow.edge_groups
+            for edge in group.edges
+            if edge.source_id == "route_eval" and edge.target_id == "route_case0_pass"
+        )
+        matched_case = ConditionResult(matched=True, branch_index=0, value=True)
+
+        assert asyncio.run(case_edge.should_route(matched_case)) is True
+
     def test_non_empty_then_branch_does_not_add_passthrough(self):
         """A non-empty then branch should keep wiring directly to its action."""
         from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder

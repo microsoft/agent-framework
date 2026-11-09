@@ -748,6 +748,13 @@ class DeclarativeWorkflowBuilder:
                 branch_exit = self._get_branch_exit(branch_entry)
                 if branch_exit:
                     branch_exits.append(branch_exit)
+            else:
+                case_passthrough = JoinExecutor(
+                    {"kind": "CasePassthrough"}, id=self._allocate_generated_id(f"{action_id}_case{i}_pass")
+                )
+                self._executors[case_passthrough.id] = case_passthrough
+                branch_entries.append((i, case_passthrough))
+                branch_exits.append(case_passthrough)
 
         else_actions = action_def.get("elseActions", [])
         default_entry = None
