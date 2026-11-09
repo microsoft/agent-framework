@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using HyperlightSandbox.Api;
 using Microsoft.Extensions.AI;
@@ -70,18 +71,27 @@ public sealed class HyperlightCodeActProviderOptions
     public string? StackSize { get; set; }
 
     /// <summary>
-    /// Gets or sets the maximum execution time in seconds. Defaults to 30.
-    /// The value must be between 1 and 4,294,967 seconds.
+    /// Gets or sets the maximum execution time. Defaults to 30 seconds.
+    /// The value must be greater than <see cref="TimeSpan.Zero"/> and must not
+    /// exceed 4,294,967,294 milliseconds.
     /// </summary>
     /// <remarks>
     /// The limit interrupts guest execution but cannot interrupt runtime initialization
     /// or a host tool callback. Host tools must enforce their own cancellation policy.
     /// </remarks>
-    public int ExecutionTimeoutSeconds
+    public TimeSpan ExecutionTimeout
     {
         get;
-        set => field = Throw.IfOutOfRange(value, 1, 4_294_967);
-    } = 30;
+        set
+        {
+            if (value <= TimeSpan.Zero || value > TimeSpan.FromMilliseconds(uint.MaxValue - 1L))
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), value, "The execution timeout must be greater than zero and must not exceed 4,294,967,294 milliseconds.");
+            }
+
+            field = value;
+        }
+    } = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Gets or sets the initial set of provider-owned CodeAct tools made available

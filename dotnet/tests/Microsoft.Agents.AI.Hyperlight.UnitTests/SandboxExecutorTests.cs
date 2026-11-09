@@ -14,6 +14,24 @@ namespace Microsoft.Agents.AI.Hyperlight.UnitTests;
 public sealed class SandboxExecutorTests
 {
     [Theory]
+    [InlineData(1)]
+    [InlineData(250)]
+    [InlineData(4_294_967_294L)]
+    public void RunSnapshot_CapturesExecutionTimeout(long milliseconds)
+    {
+        // Arrange
+        var timeout = TimeSpan.FromMilliseconds(milliseconds);
+        var options = new HyperlightCodeActProviderOptions { ExecutionTimeout = timeout };
+
+        // Act
+        var snapshot = new SandboxExecutor.RunSnapshot([], [], [], options);
+        options.ExecutionTimeout = TimeSpan.FromSeconds(30);
+
+        // Assert
+        Assert.Equal(timeout, snapshot.ExecutionTimeout);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ExecuteAsync_InitializationFailureObeysPolicyAndReleasesLockAsync(bool includeDetailedErrors)
@@ -159,9 +177,9 @@ public sealed class SandboxExecutorTests
         Assert.True(
             warmupJson.RootElement.GetProperty("success").GetBoolean(),
             warmupJson.RootElement.GetProperty("stderr").GetString());
-        options.ExecutionTimeoutSeconds = 1;
+        options.ExecutionTimeout = TimeSpan.FromSeconds(1);
         var limitedSnapshot = new SandboxExecutor.RunSnapshot([], [], [], options);
-        options.ExecutionTimeoutSeconds = 30;
+        options.ExecutionTimeout = TimeSpan.FromSeconds(30);
         var elapsed = System.Diagnostics.Stopwatch.StartNew();
 
         // Act

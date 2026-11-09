@@ -57,8 +57,9 @@ an error; cancellation still propagates.
 ## Execution limits
 
 Guest execution has a finite 30-second limit by default. Configure
-`HyperlightCodeActProviderOptions.ExecutionTimeoutSeconds` to change it; values
-must be positive and within the supported timer range. Run snapshots capture the
+`HyperlightCodeActProviderOptions.ExecutionTimeout`, for example
+`ExecutionTimeout = TimeSpan.FromMilliseconds(500)`, to change it. Values must be
+greater than zero and at most 4,294,967,294 milliseconds. Run snapshots capture the
 limit independently of later option changes.
 
 Caller cancellation interrupts running guest code and propagates as

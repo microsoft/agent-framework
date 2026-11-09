@@ -46,12 +46,9 @@ stack traces and inner exceptions. This is separate from the
 outer `FunctionInvokingChatClient` error policy and sensitive-data logging; outer redaction cannot repair
 diagnostics already caught and returned by generated code.
 
-Hyperlight guest execution defaults to a finite 30-second limit, configurable through
-`HyperlightCodeActProviderOptions.ExecutionTimeoutSeconds`. Caller cancellation interrupts
-guest code, but neither cancellation nor the limit interrupts runtime initialization
-or host tool callbacks. Host tools must enforce their own limits. This requires the
-upstream SDK's cancellation-aware `Run` API; verify that it is available in the selected
-package version before using this option.
+Hyperlight bounds guest execution and supports caller cancellation, but these protections
+do not interrupt runtime initialization or host tool callbacks. Host tools must enforce
+their own limits.
 
 For AG-UI, remember that thread and run IDs are correlation identifiers, not authentication boundaries. The
 application owns authorization, durable snapshots, scaling, and rendering policy.

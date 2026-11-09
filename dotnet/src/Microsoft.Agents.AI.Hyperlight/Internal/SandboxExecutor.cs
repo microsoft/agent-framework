@@ -51,7 +51,7 @@ internal sealed class SandboxExecutor : IDisposable
             this.ModulePath = options.ModulePath;
             this.HeapSize = options.HeapSize;
             this.StackSize = options.StackSize;
-            this.ExecutionTimeout = TimeSpan.FromSeconds(options.ExecutionTimeoutSeconds);
+            this.ExecutionTimeout = options.ExecutionTimeout;
             this.HostInputDirectory = options.HostInputDirectory;
             this.IncludeDetailedErrors = options.IncludeDetailedErrors;
             this.ToolRegistryVersion = toolRegistryVersion;
