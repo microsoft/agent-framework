@@ -66,7 +66,12 @@ For example:
 
 A public API, package, sample, configuration, evaluation, integration, or hosting change does not automatically require
 a consumer skill update. Update a skill only when the change makes an existing development recommendation incorrect,
-adds a materially different choice, or invalidates a documentation link. Otherwise, leave the skill unchanged.
+adds a materially different choice, or invalidates a documentation link, except for the cleanup rule below. Otherwise,
+leave the skill unchanged.
+
+If a framework change invalidates implementation details already present in a skill or its references, remove those
+details or replace them with decision guidance and a link to current documentation. This cleanup exception does not
+permit expanding the details or adding new implementation details.
 
 Before adding content, identify the development decision it changes. If no decision changes, put the content in
 Microsoft Learn, API documentation, samples, or contributor guidance instead. Prefer revising an existing recommendation
