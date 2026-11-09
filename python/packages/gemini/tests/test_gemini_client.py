@@ -3233,3 +3233,34 @@ async def test_streaming_closes_sdk_stream_when_consumer_stops_early() -> None:
             break
 
     assert closed
+
+
+@pytest.mark.parametrize("bad_count", [0, "0", 2, "2", -1])
+def test_candidate_count_other_than_one_is_rejected(bad_count: Any) -> None:
+    """``candidate_count`` other than 1 (or absent) is rejected up front.
+
+    Both the streaming and non-streaming parsers read ``candidates[0]`` only, so any
+    other count would be billed while all but the first candidate are silently dropped.
+    Zero is rejected along with counts above one (follow-up to the review on #9929).
+    """
+    client, _ = _make_gemini_client()
+
+    with pytest.raises(ChatClientInvalidRequestException, match="candidate_count"):
+        client._prepare_config({"candidate_count": bad_count}, None)
+
+
+@pytest.mark.parametrize("good_count", [1, "1"])
+def test_candidate_count_one_passes_through_normalized(good_count: Any) -> None:
+    """A single candidate is accepted and normalized to an int for the config."""
+    client, _ = _make_gemini_client()
+
+    config = client._prepare_config({"candidate_count": good_count}, None)
+    assert config.candidate_count == 1
+
+
+def test_candidate_count_absent_leaves_config_unset() -> None:
+    """Without the option the config keeps Gemini's single-candidate default."""
+    client, _ = _make_gemini_client()
+
+    config = client._prepare_config({}, None)
+    assert config.candidate_count is None

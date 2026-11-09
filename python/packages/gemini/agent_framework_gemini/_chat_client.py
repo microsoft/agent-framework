@@ -891,6 +891,19 @@ class RawGeminiChatClient(
             if key == "stop" and isinstance(value, str):
                 # ChatOptions allows a single stop string; stop_sequences takes a list.
                 value = [value]
+            if key == "candidate_count":
+                # Both the streaming and non-streaming parsers read candidates[0] only,
+                # so any count other than one is billed while every candidate but the
+                # first is silently dropped. The default should be to not pass the
+                # option at all; if passed, it needs to be 1 (including the stringified
+                # form some config paths produce, which is normalized here).
+                if value not in (1, "1"):
+                    raise ChatClientInvalidRequestException(
+                        "Gemini chat client supports a single candidate. Remove "
+                        "candidate_count or set it to 1; candidate_count="
+                        f"{value!r} would silently drop every candidate but the first."
+                    )
+                value = 1
             kwargs[_OPTION_TRANSLATIONS.get(key, key)] = value
 
         response_format = options.get("response_format")
