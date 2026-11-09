@@ -18,7 +18,11 @@ from typing import (
 )
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._sessions import ContextProvider
+from ._sessions import (
+    _TRUSTED_HISTORY_PROJECTIONS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
+    ContextProvider,
+    _TrustedHistoryProjection,  # pyright: ignore[reportPrivateUsage]
+)
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import APPROVAL_REJECTION_RESULT_KEY, SKILL_CONTEXT_NAME_KEY, ChatResponse, Content, Message
 
@@ -2622,6 +2626,60 @@ async def apply_compaction(
 COMPACTION_STATE_KEY: Final[str] = "_compaction_messages"
 
 
+def _snapshot_projection_messages(messages: Sequence[Message]) -> tuple[Message, ...] | None:
+    """Detach messages for later verification without making compaction fail."""
+    snapshots: list[Message] = []
+    try:
+        for message in messages:
+            snapshots.append(Message.from_dict(message.to_dict()))
+    except (KeyError, RecursionError, TypeError, ValueError):
+        return None
+    return tuple(snapshots)
+
+
+def _record_trusted_history_projection(
+    context: Any,
+    *,
+    source_id: str,
+    phase: Literal["before_run", "after_run"],
+    original_messages: Sequence[Message],
+    original_snapshot: tuple[Message, ...],
+    projected_messages: Sequence[Message],
+) -> None:
+    """Record an order-preserving removal projection for downstream policy providers."""
+    projected_snapshot = _snapshot_projection_messages(projected_messages)
+    if projected_snapshot is None:
+        return
+
+    original_indices_by_identity: dict[int, deque[int]] = {}
+    for index, message in enumerate(original_messages):
+        original_indices_by_identity.setdefault(id(message), deque()).append(index)
+
+    retained_original_indices: list[int] = []
+    for message in projected_messages:
+        indices = original_indices_by_identity.get(id(message))
+        if not indices:
+            return
+        retained_original_indices.append(indices.popleft())
+    if retained_original_indices != sorted(retained_original_indices):
+        return
+
+    metadata = getattr(context, "metadata", None)
+    if not isinstance(metadata, dict):
+        return
+    metadata_mapping = cast(dict[str, Any], metadata)
+    raw_projections = metadata_mapping.setdefault(_TRUSTED_HISTORY_PROJECTIONS_METADATA_KEY, {})
+    if not isinstance(raw_projections, dict):
+        raise ValueError("Trusted history projection metadata must be a dictionary.")
+    projections = cast(dict[str, _TrustedHistoryProjection], raw_projections)
+    projections[source_id] = _TrustedHistoryProjection(
+        phase=phase,
+        original_messages=original_snapshot,
+        projected_messages=projected_snapshot,
+        retained_original_indices=tuple(retained_original_indices),
+    )
+
+
 class CompactionProvider(ContextProvider):
     """Context provider that compacts messages before and after agent runs.
 
@@ -2710,12 +2768,19 @@ class CompactionProvider(ContextProvider):
         if not all_messages:
             return
 
+        original_messages_by_source = {
+            source_id: list(messages) for source_id, messages in context.context_messages.items()
+        }
+        original_snapshots_by_source = {
+            source_id: _snapshot_projection_messages(messages)
+            for source_id, messages in original_messages_by_source.items()
+        }
         # Track each original message's source before compaction
         source_by_id: dict[int, str] = {
             id(message): sid for sid, msgs in context.context_messages.items() for message in msgs
         }
 
-        await _run_compaction_strategy(
+        changed = await _run_compaction_strategy(
             all_messages,
             strategy=self.before_strategy,
             tokenizer=self.tokenizer,
@@ -2740,6 +2805,19 @@ class CompactionProvider(ContextProvider):
 
         context.context_messages.clear()
         context.context_messages.update(rebuilt)
+        if changed:
+            for source_id, original_messages in original_messages_by_source.items():
+                original_snapshot = original_snapshots_by_source[source_id]
+                if original_snapshot is None:
+                    continue
+                _record_trusted_history_projection(
+                    context,
+                    source_id=source_id,
+                    phase="before_run",
+                    original_messages=original_messages,
+                    original_snapshot=original_snapshot,
+                    projected_messages=rebuilt.get(source_id, ()),
+                )
 
     async def after_run(
         self,
@@ -2762,13 +2840,24 @@ class CompactionProvider(ContextProvider):
         if not isinstance(raw_messages, list) or not raw_messages:
             return
         stored_messages: list[Message] = raw_messages  # type: ignore[assignment]
+        original_included_messages = project_included_messages(stored_messages)
+        original_snapshot = _snapshot_projection_messages(original_included_messages)
 
-        await _run_compaction_strategy(
+        changed = await _run_compaction_strategy(
             stored_messages,
             strategy=self.after_strategy,
             tokenizer=self.tokenizer,
             phase="after_run",
         )
+        if changed and original_snapshot is not None:
+            _record_trusted_history_projection(
+                context,
+                source_id=self.history_source_id,
+                phase="after_run",
+                original_messages=original_included_messages,
+                original_snapshot=original_snapshot,
+                projected_messages=project_included_messages(stored_messages),
+            )
 
         # Keep all messages (including excluded) in storage so annotations are
         # preserved. The history provider's ``skip_excluded`` flag controls

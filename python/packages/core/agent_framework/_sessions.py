@@ -70,6 +70,7 @@ MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY: str = "message_injection.pending_m
 _MESSAGE_INJECTION_LOCK = threading.Lock()
 _WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY = "workflow.defer_computer_function_results"
 _PERSISTED_HISTORY_MESSAGES_METADATA_KEY = "_agent_framework_core_persisted_history_messages"
+_TRUSTED_HISTORY_PROJECTIONS_METADATA_KEY = "_agent_framework_core_trusted_history_projections"
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
@@ -79,6 +80,16 @@ StateT = TypeVar("StateT")
 StateEncoder: TypeAlias = Callable[[Any], Mapping[str, Any]]
 StateDecoder: TypeAlias = Callable[[Mapping[str, Any]], Any]
 _STATE_SCALAR_TYPES = (str, int, float, bool, type(None))
+
+
+@dataclass(frozen=True, slots=True)
+class _TrustedHistoryProjection:
+    """A framework-owned, removal-only projection of one loaded history source."""
+
+    phase: Literal["before_run", "after_run"]
+    original_messages: tuple[Message, ...]
+    projected_messages: tuple[Message, ...]
+    retained_original_indices: tuple[int, ...]
 
 
 _DEFAULT_JSON_ENCODER = msgspec.json.Encoder()
@@ -1167,9 +1178,10 @@ class HistoryProvider(ContextProvider):
             if not isinstance(raw_persisted, dict):
                 raise ValueError("Persisted history metadata must be a dictionary.")
             persisted = cast(dict[str, list[Message]], raw_persisted)
+            loaded_messages = list(context.context_messages.get(self.source_id, ()))
             persisted[self.source_id] = [
-                *context.context_messages.get(self.source_id, ()),
-                *messages_to_store,
+                *loaded_messages,
+                *filter_new_messages(loaded_messages, messages_to_store),
             ]
 
 
