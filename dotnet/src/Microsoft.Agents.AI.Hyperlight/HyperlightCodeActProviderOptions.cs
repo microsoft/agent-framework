@@ -18,7 +18,6 @@ namespace Microsoft.Agents.AI.Hyperlight;
 /// </remarks>
 public sealed class HyperlightCodeActProviderOptions
 {
-
     /// <summary>
     /// Initializes a new instance configured for the JavaScript backend.
     /// Equivalent to <see cref="CreateForJavaScript()"/>.
