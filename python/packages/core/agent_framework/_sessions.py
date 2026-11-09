@@ -30,14 +30,14 @@ from abc import abstractmethod
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Iterable, Mapping, Sequence
 from contextvars import ContextVar, Token
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass
 from functools import partial
 from pathlib import Path
 from types import UnionType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, Union, cast, get_args, get_origin
 
 import msgspec
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, is_typeddict
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._filesystem import (
@@ -371,14 +371,12 @@ def _restore_union(value: Any, tree: Mapping[Any, Any], annotation: Any, path: s
     from pydantic import BaseModel, ConfigDict, TypeAdapter
 
     for segment, sub in tree.items():
-        branch = next(
-            (arg for arg in get_args(annotation) if _union_branch_label(arg) == segment),
-            None,
-        )
+        matching_branches = tuple(arg for arg in get_args(annotation) if _union_branch_label(arg) == segment)
         # Pydantic also uses is-instance labels and discriminator values. When
         # the label is not a type name, branch validation identifies the candidate
-        # without guessing the schema-specific label format.
-        candidates = (branch,) if branch is not None else get_args(annotation)
+        # without guessing the schema-specific label format. Duplicate class names
+        # are not unique labels, so every matching branch gets an independent try.
+        candidates = matching_branches or get_args(annotation)
         for candidate in candidates:
             restored = value
             try:
@@ -390,12 +388,20 @@ def _restore_union(value: Any, tree: Mapping[Any, Any], annotation: Any, path: s
                 )
                 if not changed:
                     continue
-                config = (
-                    None
-                    if isinstance(candidate, type) and issubclass(candidate, BaseModel)
-                    else ConfigDict(arbitrary_types_allowed=True)
-                )
-                TypeAdapter(cast(Any, candidate), config=config).validate_python(restored)
+                config_candidate: Any = candidate
+                annotation_origin = getattr(config_candidate, "__origin__", None)
+                if getattr(config_candidate, "__metadata__", None) is not None and annotation_origin is not None:
+                    config_candidate = annotation_origin
+                owns_validation_config = False
+                if isinstance(config_candidate, type):
+                    candidate_type = cast(Any, config_candidate)
+                    owns_validation_config = (
+                        issubclass(candidate_type, BaseModel)
+                        or is_dataclass(candidate_type)
+                        or is_typeddict(candidate_type)
+                    )
+                config = None if owns_validation_config else ConfigDict(arbitrary_types_allowed=True)
+                TypeAdapter(candidate, config=config).validate_python(restored)
             except ValueError:
                 # Registered codecs are application extension points. A failed
                 # candidate must not prevent a later branch from succeeding.

@@ -1592,6 +1592,208 @@ class TestFileSessionStore:
         assert child.data == raw_data
 
     @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_round_trips_annotated_model_union_branch(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        from typing import Annotated
+
+        from pydantic import BaseModel, ConfigDict, Field
+
+        class Item(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            kind: Literal["item"]
+            message: Message
+
+        class Other(BaseModel):
+            kind: Literal["other"]
+            other: str
+
+        class AnnotatedUnionWrapper(BaseModel):
+            child: Annotated[Item, Field(description="tagged model")] | Other
+
+        register_state_type(
+            AnnotatedUnionWrapper,
+            type_id=f"pydantic_annotated_union_{serialization_format}_test",
+        )
+        session = AgentSession(session_id=f"annotated-union-{serialization_format}")
+        session.state["value"] = AnnotatedUnionWrapper(
+            child=Item(kind="item", message=Message(role="user", contents=["persisted"]))
+        )
+
+        await FileSessionStore(tmp_path, serialization_format=serialization_format).set(
+            "tenant_annotated-union", session
+        )
+        restored = await FileSessionStore(tmp_path, serialization_format=serialization_format).get(
+            "tenant_annotated-union"
+        )
+
+        assert restored is not None
+        child = restored.state["value"].child
+        assert isinstance(child, Item)
+        assert isinstance(child.message, Message)
+        assert child.message.text == "persisted"
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_round_trips_dataclass_union_branch(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        from pydantic import BaseModel, ConfigDict
+
+        @dataclass
+        class Item:
+            __pydantic_config__ = ConfigDict(arbitrary_types_allowed=True)
+
+            kind: Literal["item"]
+            message: Message
+
+        class Other(BaseModel):
+            kind: Literal["other"]
+            other: str
+
+        class DataclassUnionWrapper(BaseModel):
+            child: Item | Other
+
+        register_state_type(
+            DataclassUnionWrapper,
+            type_id=f"pydantic_dataclass_union_{serialization_format}_test",
+        )
+        session = AgentSession(session_id=f"dataclass-union-{serialization_format}")
+        session.state["value"] = DataclassUnionWrapper(
+            child=Item(kind="item", message=Message(role="user", contents=["persisted"]))
+        )
+
+        await FileSessionStore(tmp_path, serialization_format=serialization_format).set(
+            "tenant_dataclass-union", session
+        )
+        restored = await FileSessionStore(tmp_path, serialization_format=serialization_format).get(
+            "tenant_dataclass-union"
+        )
+
+        assert restored is not None
+        child = restored.state["value"].child
+        assert isinstance(child, Item)
+        assert isinstance(child.message, Message)
+        assert child.message.text == "persisted"
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_round_trips_typed_dict_union_branch(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        from pydantic import BaseModel, ConfigDict
+        from typing_extensions import TypedDict
+
+        class Item(TypedDict):
+            kind: Literal["item"]
+            message: Message
+
+        # This is TypedDict metadata, not a field. Compute the attribute name
+        # so formatters do not turn it into an invalid direct class assignment.
+        setattr(Item, "__pydantic" + "_config__", ConfigDict(arbitrary_types_allowed=True))
+
+        class Other(BaseModel):
+            kind: Literal["other"]
+            other: str
+
+        class TypedDictUnionWrapper(BaseModel):
+            child: Item | Other
+
+        register_state_type(
+            TypedDictUnionWrapper,
+            type_id=f"pydantic_typed_dict_union_{serialization_format}_test",
+        )
+        session = AgentSession(session_id=f"typed-dict-union-{serialization_format}")
+        session.state["value"] = TypedDictUnionWrapper(
+            child=Item(kind="item", message=Message(role="user", contents=["persisted"]))
+        )
+
+        await FileSessionStore(tmp_path, serialization_format=serialization_format).set(
+            "tenant_typed-dict-union", session
+        )
+        restored = await FileSessionStore(tmp_path, serialization_format=serialization_format).get(
+            "tenant_typed-dict-union"
+        )
+
+        assert restored is not None
+        child = restored.state["value"].child
+        assert isinstance(child, dict)
+        assert isinstance(child["message"], Message)
+        assert child["message"].text == "persisted"
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_same_named_union_branches_try_each_matching_candidate(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        from pydantic import BaseModel, ConfigDict
+
+        class FirstResult(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            kind: Literal["a"] = "a"
+            message: Message
+
+        class SecondResult(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            kind: Literal["b"] = "b"
+            message: Message
+
+        class DistinctResult(BaseModel):
+            model_config = ConfigDict(arbitrary_types_allowed=True)
+
+            kind: Literal["b"] = "b"
+            message: Message
+
+        FirstResult.__name__ = "Result"
+        FirstResult.__module__ = "provider_a"
+        SecondResult.__name__ = "Result"
+        SecondResult.__module__ = "provider_b"
+        DistinctResult.__module__ = "provider_b"
+
+        class SameNameWrapper(BaseModel):
+            child: FirstResult | SecondResult
+
+        class DistinctNameWrapper(BaseModel):
+            child: FirstResult | DistinctResult
+
+        async def round_trip(wrapper_type: type[BaseModel], type_id: str, child: Any, storage_key: str) -> Any:
+            register_state_type(wrapper_type, type_id=type_id)
+            session = AgentSession(session_id=storage_key)
+            session.state["value"] = wrapper_type.model_validate({"child": child})
+            store = FileSessionStore(tmp_path, serialization_format=serialization_format)
+            await store.set(storage_key, session)
+            restored = await store.get(storage_key)
+            assert restored is not None
+            return restored.state["value"].child
+
+        first = await round_trip(
+            SameNameWrapper,
+            f"pydantic_same_name_first_{serialization_format}_test",
+            FirstResult(message=Message(role="user", contents=["first"])),
+            f"tenant_same-name-first-{serialization_format}",
+        )
+        assert isinstance(first, FirstResult)
+        assert first.message.text == "first"
+
+        second = await round_trip(
+            SameNameWrapper,
+            f"pydantic_same_name_first_{serialization_format}_test",
+            SecondResult(message=Message(role="user", contents=["second"])),
+            f"tenant_same-name-second-{serialization_format}",
+        )
+        assert isinstance(second, SecondResult)
+        assert second.message.text == "second"
+
+        distinct = await round_trip(
+            DistinctNameWrapper,
+            f"pydantic_distinct_name_{serialization_format}_test",
+            DistinctResult(message=Message(role="user", contents=["distinct"])),
+            f"tenant_distinct-name-{serialization_format}",
+        )
+        assert isinstance(distinct, DistinctResult)
+        assert distinct.message.text == "distinct"
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
     async def test_union_candidate_codec_failure_does_not_abort_fallback(
         self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
     ) -> None:
