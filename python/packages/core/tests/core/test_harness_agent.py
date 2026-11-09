@@ -1279,6 +1279,7 @@ def test_create_harness_agent_wires_loop_when_should_continue_given() -> None:
     assert agent.middleware is not None
     assert isinstance(agent.middleware[0], AgentLoopMiddleware)
     assert agent.middleware[0].should_continue is _should_continue
+    assert agent.middleware[0].return_final_only is False
 
 
 def test_create_harness_agent_loop_outermost_of_tool_approval_and_user_middleware() -> None:
@@ -1328,6 +1329,44 @@ def test_create_harness_agent_forwards_next_message_to_loop() -> None:
     assert loop.next_message is _next_message
 
 
+@pytest.mark.parametrize("return_final_only", [False, True])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_create_harness_agent_loop_return_final_only(return_final_only: bool, streaming: bool) -> None:
+    """Final-only results are opt-in for non-streaming; streaming preserves all updates."""
+    decisions = iter([True, False])
+
+    def should_continue(**kwargs: Any) -> bool:
+        return next(decisions)
+
+    agent = create_harness_agent(
+        client=_FakeChatClient(),
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        loop_should_continue=should_continue,
+        loop_next_message=lambda **kwargs: "Please continue.",
+        loop_return_final_only=return_final_only,
+    )
+
+    session = agent.create_session()
+    if streaming:
+        stream = agent.run("Hello", session=session, stream=True)
+        updates = [update async for update in stream]
+        result = await stream.get_final_response()
+        assert any(update.role == "user" and "Please continue." in update.text for update in updates)
+        assert sum(update.role == "assistant" and update.text == "Hello" for update in updates) == 2
+    else:
+        result = await agent.run("Hello", session=session)
+
+    loop = _find_loop_middleware(agent)
+    assert loop is not None
+    assert loop.return_final_only is return_final_only
+    final_only = return_final_only or streaming
+    assert sum(message.role == "assistant" for message in result.messages) == (1 if final_only else 2)
+    assert ("Please continue." in result.text) is not final_only
+    if final_only:
+        assert result.text == "Hello"
+
+
 def test_create_harness_agent_uses_default_max_iterations_when_omitted() -> None:
     """When loop_max_iterations is omitted, the loop keeps the middleware's default cap."""
     from agent_framework._harness._loop import DEFAULT_MAX_ITERATIONS
@@ -1375,7 +1414,7 @@ def test_create_harness_agent_forwards_max_iterations_to_loop() -> None:
     assert unbounded_loop.max_iterations is None
 
 
-def test_create_harness_agent_next_message_and_max_iterations_ignored_without_should_continue() -> None:
+def test_create_harness_agent_loop_options_ignored_without_should_continue() -> None:
     """Without loop_should_continue no loop is added, so loop params are simply ignored."""
 
     def _next_message(**kwargs: Any) -> Any:
@@ -1387,6 +1426,7 @@ def test_create_harness_agent_next_message_and_max_iterations_ignored_without_sh
         max_output_tokens=16_384,
         loop_next_message=_next_message,
         loop_max_iterations=5,
+        loop_return_final_only=True,
     )
     assert _find_loop_middleware(agent) is None
 
@@ -1653,7 +1693,7 @@ async def test_streaming_harness_tool_call_does_not_duplicate_transcript(chat_cl
     The streaming path rebuilt the response from updates in ``MessageInjectionMiddleware``, losing the
     local-history conversation-id sentinel set by ``PerServiceCallHistoryPersistingMiddleware``. The
     function loop then resent the whole turn on top of the injected history, leaving an assistant
-    function call with no results after it â€” which strict endpoints reject.
+    function call with no results after it — which strict endpoints reject.
     """
     streaming_calls, session = await _run_harness_tool_call_turn(chat_client_base, stream=True)
     non_streaming_calls, _ = await _run_harness_tool_call_turn(chat_client_base, stream=False)
