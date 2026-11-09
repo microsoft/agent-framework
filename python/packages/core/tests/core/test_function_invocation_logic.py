@@ -1043,6 +1043,99 @@ async def test_null_arguments_with_label_tracking_never_execute_the_tool(
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("requires_approval", [False, True], ids=["immediate", "approved"])
+async def test_hidden_reference_expansion_inside_a_wrapper_never_executes_the_tool(
+    chat_client_base: SupportsChatGetResponse, streaming: bool, requires_approval: bool
+) -> None:
+    """A wrapper whose raw value is rewritten by hidden-reference expansion stays malformed.
+
+    The label-tracking middleware expands a variable reference inside the
+    synthetic ``raw`` entry, which rebuilds the value without repairing the
+    malformed structure. Provenance must survive that expansion - through the
+    streaming and non-streaming loops and through a serialized approval resume
+    - so the permissive tool never runs with the synthetic argument.
+    """
+    from agent_framework.security import ContentLabel, IntegrityLabel, LabelTrackingFunctionMiddleware
+
+    calls: list[dict[str, Any]] = []
+
+    @tool(name="expansion_target", approval_mode="always_require" if requires_approval else "never_require")
+    def expansion_target(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "unexpected execution"
+
+    tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+
+    agent = Agent(client=chat_client_base, tools=[expansion_target], middleware=[tracker])
+    session = agent.create_session()
+    # Seed the hidden variable in the session-bound security scope: the
+    # middleware resolves references through the scope of the live session.
+    variable_id = tracker.get_variable_store(session).store(
+        "expanded external content",
+        ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+    )
+    function_call = Content.from_function_call(
+        "expansion-call",
+        "expansion_target",
+        arguments=f'["[{variable_id}]", "tail"]',
+        id="expansion-occurrence",
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message("assistant", [function_call])),
+            ChatResponse(messages=Message("assistant", ["done"])),
+        ]
+
+    async def run(messages: str | list[Message]) -> list[Message]:
+        if streaming:
+            response_stream = agent.run(messages, session=session, stream=True)
+            updates = [update async for update in response_stream]
+            response = await response_stream.get_final_response()
+            assert [
+                (content.call_id, content.result)
+                for update in updates
+                for content in update.contents
+                if content.type == "function_result"
+            ] == [
+                (content.call_id, content.result)
+                for message in response.messages
+                for content in message.contents
+                if content.type == "function_result"
+            ]
+        else:
+            response = await agent.run(messages, session=session)
+        return response.messages
+
+    messages = await run("go")
+    if requires_approval:
+        requests = [
+            content
+            for message in messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        ]
+        assert len(requests) == 1
+        assert calls == []
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        # The variable must survive the session round-trip, otherwise the
+        # resumed replay would keep the original value and could not exercise
+        # the expansion bypass this regression guards against.
+        assert tracker.get_variable_store(session).exists(variable_id)
+        messages = await run([Message("user", [requests[0].to_function_approval_response(approved=True)])])
+
+    assert calls == []
+    results = [content for message in messages for content in message.contents if content.type == "function_result"]
+    assert len(results) == 1
+    assert results[0].call_id == "expansion-call"
+    assert "Invalid arguments for 'expansion_target'" in str(results[0].exception)
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
 @pytest.mark.parametrize("object_payload", [False, True], ids=["scalar", "object"])
 async def test_declared_raw_rewritten_by_middleware_reaches_the_tool_with_its_declared_type(
     chat_client_base: SupportsChatGetResponse, streaming: bool, object_payload: bool

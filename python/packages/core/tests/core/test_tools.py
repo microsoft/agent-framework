@@ -2612,6 +2612,56 @@ async def test_builtin_label_tracking_middleware_preserves_malformed_wrapper_pro
     assert "Invalid arguments for 'typed_label_target'" in str(result.exception)
 
 
+async def test_hidden_reference_expansion_inside_a_wrapper_never_executes_a_permissive_tool() -> None:
+    """Expanding a hidden reference inside the wrapper is not a repair.
+
+    The label-tracking middleware rebuilds the wrapped value when it expands a
+    variable reference inside the synthetic ``raw`` entry. The wrapper is still
+    the wrapped malformed payload - only its value changed - so provenance has
+    to survive the expansion: a permissive tool must not run with the synthetic
+    argument just because the value is no longer the one that was parsed.
+    """
+    from agent_framework.security import ContentLabel, IntegrityLabel, LabelTrackingFunctionMiddleware
+
+    calls: list[dict[str, Any]] = []
+
+    async def list_accounts(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "ok"
+
+    account_tool = FunctionTool(
+        name="list_accounts",
+        description="List the accounts",
+        func=list_accounts,
+        input_model={"type": "object", "properties": {}},
+    )
+
+    tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+    variable_id = tracker.get_variable_store().store(
+        "expanded external content",
+        ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+    )
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[
+            Content.from_function_call(
+                call_id="call-1",
+                name="list_accounts",
+                arguments=f'["[{variable_id}]", "tail"]',
+            ),
+        ],
+        tools=[account_tool],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+    )
+
+    assert not should_terminate
+    assert calls == []
+    result = result_groups[0][0]
+    assert "Invalid arguments for 'list_accounts'" in str(result.exception)
+
+
 @tool(name="raw_reader", description="Read a raw value")
 def raw_reader_tool(raw: datetime) -> str:
     return f"raw:{raw.isoformat()}"
