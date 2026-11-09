@@ -29,7 +29,7 @@ dependencies = [
 ]
 [dependency-groups]
 dev = [
-    "types-PyYaml==6.0.12.20260906"
+    "types-PyYaml==6.0.12.20261030"
 ]
 test = [
     "tenacity>=9.1.4,<9.2.0",

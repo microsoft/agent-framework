@@ -33,12 +33,12 @@ classifiers = [
 [project.optional-dependencies]
 dev = [
     "pytest==9.2.0",
-    "watchdog==6.0.0",
+    "watchdog==7.0.0",
     "agent-framework-orchestrations>=1.0,<2.0",
 ]
 all = [
     "pytest==9.2.0",
-    "watchdog==6.0.0",
+    "watchdog==7.0.0",
 ]
 
 [project.scripts]

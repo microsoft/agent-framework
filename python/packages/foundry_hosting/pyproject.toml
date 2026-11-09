@@ -30,7 +30,7 @@ dependencies = [
     "httpx>=0.28,<1",
     "httpx2>=2.0.0,<3",
     "mcp>=2.2.0,<3",
-    "tenacity>=9.1.4,<9.2.0",
+    "tenacity>=9.1.4,<9.2.1",
 ]
 
 [dependency-groups]

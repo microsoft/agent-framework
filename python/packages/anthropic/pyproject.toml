@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.24.0,<2",
-    "anthropic>=1.11.0,<2",
+    "anthropic>=1.11.0,<2.3.0",
 ]
 
 [dependency-groups]
