@@ -979,6 +979,24 @@ async def test_output_item_tracker_keeps_mixed_text_and_refusal_in_one_message()
     ]
 
 
+async def test_output_item_tracker_replace_usage_is_copied() -> None:
+    stream = ResponseEventStream(response_id="resp_usage")
+    stream.emit_created()
+    stream.emit_in_progress()
+    tracker = _OutputItemTracker(stream)
+    usage = Content.from_usage(
+        {"input_token_count": 250, "output_token_count": 25, "total_token_count": 275},
+        merge_mode="replace",
+    )
+
+    async for _ in tracker.handle(usage):
+        pass
+    assert usage.usage_details is not None
+    usage.usage_details["input_token_count"] = 999
+
+    assert tracker.usage_details == {"input_token_count": 250, "output_token_count": 25, "total_token_count": 275}
+
+
 async def test_item_to_message_marks_refusal_text() -> None:
     message = await _item_to_message(
         cast(
