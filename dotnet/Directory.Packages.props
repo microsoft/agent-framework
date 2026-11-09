@@ -128,8 +128,8 @@
     <PackageVersion Include="ModelContextProtocol" Version="2.2.0" />
     <PackageVersion Include="ModelContextProtocol.Extensions.Tasks" Version="2.2.0" />
     <!-- Hyperlight -->
-    <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.6.0" />
-    <PackageVersion Include="Hyperlight.HyperlightSandbox.Guest.Python" Version="0.6.0" />
+    <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.9.0" />
+    <PackageVersion Include="Hyperlight.HyperlightSandbox.Guest.Python" Version="0.9.0" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Dapr.AI.Microsoft.Extensions" Version="1.18.5" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.15.2" />
