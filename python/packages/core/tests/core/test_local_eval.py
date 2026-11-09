@@ -1210,6 +1210,46 @@ class TestRubricAssertions:
         # The low-scoring "other" evaluator is filtered out; "policy" passes.
         results.assert_dimension_score_at_least("clarity", 3, evaluator="policy")
 
+    def test_evaluator_filter_missing_evaluator_raises_by_default(self) -> None:
+        # A filter that matches nothing must fail instead of vacuously
+        # passing (mirror of the assert_score_at_least fix).
+        results = _rubric_results(
+            [
+                EvalScoreResult(
+                    name="other",
+                    score=0.9,
+                    dimensions=[RubricScore(id="clarity", score=4, applicable=True, weight=1, reason="")],
+                )
+            ],
+        )
+        with pytest.raises(EvalNotPassedError) as exc:
+            results.assert_dimension_score_at_least("clarity", 3, evaluator="policy")
+        msg = str(exc.value)
+        assert "No scores found for evaluator 'policy'" in msg
+        assert "other" in msg
+
+    def test_dimension_filter_missing_dimension_raises_by_default(self) -> None:
+        results = _rubric_results(
+            [
+                EvalScoreResult(
+                    name="policy",
+                    score=0.9,
+                    dimensions=[RubricScore(id="clarity", score=4, applicable=True, weight=1, reason="")],
+                )
+            ],
+        )
+        with pytest.raises(EvalNotPassedError) as exc:
+            results.assert_dimension_score_at_least("coherence", 3)
+        msg = str(exc.value)
+        assert "No scores found for dimension 'coherence'" in msg
+        assert "clarity" in msg
+
+    def test_dimension_filter_empty_results_raises_by_default(self) -> None:
+        results = _rubric_results([])
+        with pytest.raises(EvalNotPassedError) as exc:
+            results.assert_dimension_score_at_least("clarity", 3)
+        assert "No scores found for dimension 'clarity'. Available dimension(s): none" in str(exc.value)
+
 
 def _score_results(
     *scores_per_item: list[EvalScoreResult],

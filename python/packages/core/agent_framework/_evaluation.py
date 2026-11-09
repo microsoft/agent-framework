@@ -585,22 +585,32 @@ class EvalResults:
             msg: Optional custom failure message.
 
         Raises:
-            EvalNotPassedError: When the dimension fails the threshold.
+            EvalNotPassedError: When the dimension fails the threshold, or when
+                ``evaluator``/``dimension_id`` matches nothing (default flags).
         """
         offenders: list[str] = []
         missing_items: list[str] = []
+        matching_scores_count = 0
+        dimension_seen = False
+        seen_evaluators: set[str] = set()
+        seen_dimensions: set[str] = set()
 
         def _check(results: EvalResults) -> None:
+            nonlocal matching_scores_count, dimension_seen
             for item in results.items:
                 found_applicable = False
                 for score in item.scores:
+                    seen_evaluators.add(score.name)
                     if evaluator is not None and score.name != evaluator:
                         continue
+                    matching_scores_count += 1
                     if not score.dimensions:
                         continue
                     for rs in score.dimensions:
+                        seen_dimensions.add(rs.id)
                         if rs.id != dimension_id:
                             continue
+                        dimension_seen = True
                         if not rs.applicable:
                             continue
                         found_applicable = True
@@ -615,6 +625,22 @@ class EvalResults:
                 _check(sub)
 
         _check(self)
+        # With the default flags, a filter that matches nothing must fail the
+        # assertion instead of vacuously passing (same fix as
+        # assert_score_at_least for evaluator filters). With
+        # require_applicable=True the not-applicable report below already
+        # fails the call, and its wording is pinned by existing tests.
+        if not require_applicable:
+            if evaluator is not None and matching_scores_count == 0:
+                available = f": {', '.join(sorted(seen_evaluators))}" if seen_evaluators else ": none"
+                raise EvalNotPassedError(
+                    msg or f"No scores found for evaluator '{evaluator}'. Available evaluator(s){available}"
+                )
+            if not dimension_seen:
+                available = f": {', '.join(sorted(seen_dimensions))}" if seen_dimensions else ": none"
+                raise EvalNotPassedError(
+                    msg or f"No scores found for dimension '{dimension_id}'. Available dimension(s){available}"
+                )
         problems: list[str] = []
         if offenders:
             problems.append(
