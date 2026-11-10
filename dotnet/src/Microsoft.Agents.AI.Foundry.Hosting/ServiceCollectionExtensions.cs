@@ -57,6 +57,15 @@ public static class ServiceCollectionExtensions
     /// transient agents are created per run, including background runs that outlive the HTTP request.
     /// </para>
     /// <para>
+    /// For each response run the handler uses the <see cref="AgentSessionStore"/> registered under the agent's
+    /// name, for example with <c>AddFoundryAgentSessionStore(store, "my-agent")</c>. Otherwise it uses the store
+    /// registered for all agents, with <c>AddFoundryAgentSessionStore(store)</c> or a non-keyed
+    /// <see cref="AgentSessionStore"/> registration, and otherwise the default store, which uses the AgentServer
+    /// SDK's local state-store fallback. A request answered by the default agent uses that agent's store. Each
+    /// store keeps its own sessions, so changing which store an agent uses means sessions saved in the previous
+    /// store are no longer found.
+    /// </para>
+    /// <para>
     /// Example:
     /// <code>
     /// builder.Services.AddKeyedSingleton&lt;AIAgent&gt;("my-agent", myAgent);
@@ -114,6 +123,16 @@ public static class ServiceCollectionExtensions
     /// a caller-provided identity for session isolation is unsupported.
     /// </para>
     /// <para>
+    /// A store passed in <c>agentSessionStore</c> is registered only under the agent's name. Every request this
+    /// agent answers uses it, including requests without a matching agent name, and other agents do not use it.
+    /// When the agent has no name, the store has no key to be registered under and is used for all agents
+    /// instead. When no store is passed, the agent uses the store registered for all agents, with
+    /// <see cref="AddFoundryAgentSessionStore(IServiceCollection, AgentSessionStore, string?)"/> or a non-keyed
+    /// <see cref="AgentSessionStore"/> registration, and otherwise the default store. Each store keeps its own
+    /// sessions, so changing which store an agent uses means sessions saved in the previous store are no
+    /// longer found.
+    /// </para>
+    /// <para>
     /// Example:
     /// <code>
     /// builder.Services.AddFoundryResponses(myAgent);
@@ -126,10 +145,8 @@ public static class ServiceCollectionExtensions
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
     /// <param name="agentSessionStore">
-    /// The session store for this agent. It is registered under the agent's name and is not used by other
-    /// agents. If null, the agent uses the store registered for all agents with
-    /// <see cref="AddFoundryAgentSessionStore(IServiceCollection, AgentSessionStore, string?)"/>, or the default
-    /// store, which uses the AgentServer SDK's local state-store fallback.
+    /// The session store for this agent, used only by this agent. If null, the agent uses the store registered
+    /// for all agents, or the default store, which uses the AgentServer SDK's local state-store fallback.
     /// </param>
     /// <param name="options">
     /// Optional <see cref="FoundryResponsesServerOptions"/>, for example to allow the
@@ -195,7 +212,8 @@ public static class ServiceCollectionExtensions
     /// The session store is registered separately with
     /// <see cref="AddFoundryAgentSessionStore(IServiceCollection, Func{IServiceProvider, AgentSessionStore}, ServiceLifetime, string?)"/>,
     /// with its own lifetime, because the response handler uses the store directly rather than through the
-    /// agent. Without such a registration the agent uses the default store. Conversation state is not kept on
+    /// agent. Without such a registration for <paramref name="agentName"/>, the agent uses the store registered
+    /// for all agents, or the default store. Conversation state is not kept on
     /// the agent object: each turn loads the saved session from the store's backing storage. Sessions are
     /// stored in the same location <c>AddFoundryResponses(agent)</c> uses for an agent with that name
     /// registered in the same order, whatever the lifetime, so switching between the two overloads or
@@ -245,14 +263,18 @@ public static class ServiceCollectionExtensions
     /// <para>
     /// For each response run the response handler uses the store registered under the agent's name, then the
     /// store registered for all agents, then the default store, which uses the AgentServer SDK's local
-    /// state-store fallback. The store receives the agent on every call and partitions sessions by agent and
-    /// by user, so one store can serve several agents.
+    /// state-store fallback. This applies to agents registered with any <c>AddFoundryResponses</c> overload or
+    /// directly in DI, and a request answered by the default agent uses that agent's store. The store receives
+    /// the agent on every call and partitions sessions by agent and by user, so one store can serve several
+    /// agents. Each store keeps its own sessions, so changing which store an agent uses means sessions saved in
+    /// the previous store are no longer found.
     /// </para>
     /// <para>
     /// The DI container never disposes <paramref name="agentSessionStore"/>, because the caller created it.
     /// Calling this method again for the same <paramref name="agentName"/>, or again for all agents, replaces
-    /// the earlier store, including one passed to <c>AddFoundryResponses(agent, agentSessionStore)</c>, in
-    /// whatever order the methods are called.
+    /// the earlier store, including one passed to <c>AddFoundryResponses(agent, agentSessionStore)</c> or
+    /// registered directly as a keyed or non-keyed <see cref="AgentSessionStore"/>, in whatever order the
+    /// methods are called.
     /// </para>
     /// <para>
     /// Example:
@@ -292,7 +314,8 @@ public static class ServiceCollectionExtensions
     /// <para>
     /// For each response run the response handler looks the store up once, from the DI scope of that run,
     /// using the store registered under the agent's name, then the store registered for all agents, then the
-    /// default store. The store's lifetime is independent of the agent's lifetime:
+    /// default store. This applies to agents registered with any <c>AddFoundryResponses</c> overload or
+    /// directly in DI. The store's lifetime is independent of the agent's lifetime:
     /// <list type="bullet">
     /// <item><description><see cref="ServiceLifetime.Singleton"/>: one instance for the process, disposed at shutdown.</description></item>
     /// <item><description><see cref="ServiceLifetime.Scoped"/>: one instance per response run, disposed when the run ends.</description></item>
@@ -304,8 +327,10 @@ public static class ServiceCollectionExtensions
     /// </para>
     /// <para>
     /// Calling this method again for the same <paramref name="agentName"/>, or again for all agents, replaces
-    /// the earlier store, including one passed to <c>AddFoundryResponses(agent, agentSessionStore)</c>, in
-    /// whatever order the methods are called.
+    /// the earlier store, including one passed to <c>AddFoundryResponses(agent, agentSessionStore)</c> or
+    /// registered directly as a keyed or non-keyed <see cref="AgentSessionStore"/>, in whatever order the
+    /// methods are called. Each store keeps its own sessions, so changing which store an agent uses means
+    /// sessions saved in the previous store are no longer found.
     /// </para>
     /// <para>
     /// Example:

@@ -89,7 +89,9 @@ Conversation state is not kept on the agent object; each turn loads the saved se
 stored under `agentName`, so switching from the instance overload keeps existing conversations.
 
 The session store has its own registration and lifetime, independent of the agent. Without one, every
-agent uses the default store, a single shared instance:
+agent uses the default store, a single shared instance. A store passed to `AddFoundryResponses(agent, store)`
+is used only by that agent. Each store keeps its own sessions, so moving an agent to a different store
+means the sessions it saved in the old store are no longer found:
 
 ```csharp
 // For every agent that has no store of its own. A store object you pass in is never disposed by DI.

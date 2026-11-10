@@ -25,6 +25,12 @@ public static class HostApplicationBuilderExtensions
     /// Keyed agent registrations may use any DI lifetime. Each response run resolves its agent and
     /// session store from a DI scope that is disposed when the run's event stream ends, so scoped and
     /// transient agents are created per run, including background runs that outlive the HTTP request.
+    /// For each run the handler uses the <see cref="AgentSessionStore"/> registered under the agent's name,
+    /// then the store registered for all agents (see
+    /// <see cref="AddFoundryAgentSessionStore(IHostApplicationBuilder, AgentSessionStore, string?)"/>), then the
+    /// default store. A request answered by the default agent uses that agent's store. Each store keeps its own
+    /// sessions, so changing which store an agent uses means sessions saved in the previous store are no
+    /// longer found.
     /// <code>
     /// builder.Services.AddKeyedSingleton&lt;AIAgent&gt;("my-agent", myAgent);
     /// builder.AddFoundryResponses();
@@ -62,6 +68,16 @@ public static class HostApplicationBuilderExtensions
     /// application builder.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// A store passed in <c>agentSessionStore</c> is registered only under the agent's name. Every request this
+    /// agent answers uses it, including requests without a matching agent name, and other agents do not use it.
+    /// When the agent has no name, the store has no key to be registered under and is used for all agents
+    /// instead. When no store is passed, the agent uses the store registered for all agents, with
+    /// <see cref="AddFoundryAgentSessionStore(IHostApplicationBuilder, AgentSessionStore, string?)"/> or a
+    /// non-keyed <see cref="AgentSessionStore"/> registration, and otherwise the default store. Each store keeps
+    /// its own sessions, so changing which store an agent uses means sessions saved in the previous store are no
+    /// longer found.
+    /// </para>
     /// <code>
     /// builder.AddFoundryResponses(myAgent);
     /// </code>
@@ -69,9 +85,8 @@ public static class HostApplicationBuilderExtensions
     /// <param name="host">The host application builder.</param>
     /// <param name="agent">The agent instance to register.</param>
     /// <param name="agentSessionStore">
-    /// The session store for this agent. It is registered under the agent's name and is not used by other
-    /// agents. If null, the agent uses the store registered for all agents with
-    /// <see cref="AddFoundryAgentSessionStore(IHostApplicationBuilder, AgentSessionStore, string?)"/>, or the default store.
+    /// The session store for this agent, used only by this agent. If null, the agent uses the store registered
+    /// for all agents, or the default store.
     /// </param>
     /// <param name="options">Optional hosting behavior. Required inputs belong on the extension method parameters.</param>
     /// <returns>The host application builder for chaining.</returns>
@@ -132,7 +147,8 @@ public static class HostApplicationBuilderExtensions
     /// <para>
     /// The session store is registered separately with
     /// <see cref="AddFoundryAgentSessionStore(IHostApplicationBuilder, Func{IServiceProvider, AgentSessionStore}, ServiceLifetime, string?)"/>,
-    /// with its own lifetime. Without such a registration the agent uses the default store. Sessions are
+    /// with its own lifetime. Without such a registration for <paramref name="agentName"/>, the agent uses the
+    /// store registered for all agents, or the default store. Sessions are
     /// stored in the same location <c>AddFoundryResponses(agent)</c> uses for an agent with that name
     /// registered in the same order, whatever the lifetime, so switching between the two overloads or
     /// between lifetimes keeps existing sessions readable.
@@ -168,9 +184,13 @@ public static class HostApplicationBuilderExtensions
     /// </summary>
     /// <remarks>
     /// The response handler uses the store registered under the agent's name, then the store registered for
-    /// all agents, then the default store. The DI container never disposes <paramref name="agentSessionStore"/>.
+    /// all agents, then the default store, for agents registered with any <c>AddFoundryResponses</c> overload
+    /// or directly in DI. The DI container never disposes <paramref name="agentSessionStore"/>.
     /// Calling this method again for the same <paramref name="agentName"/>, or again for all agents, replaces
-    /// the earlier store, in whatever order it is called relative to <c>AddFoundryResponses</c>.
+    /// the earlier store, including one passed to <c>AddFoundryResponses(agent, agentSessionStore)</c> or
+    /// registered directly in DI, in whatever order it is called relative to <c>AddFoundryResponses</c>. Each
+    /// store keeps its own sessions, so changing which store an agent uses means sessions saved in the previous
+    /// store are no longer found.
     /// <code>
     /// builder.AddFoundryAgentSessionStore(mySessionStore);
     /// </code>
@@ -198,10 +218,12 @@ public static class HostApplicationBuilderExtensions
     /// application builder.
     /// </summary>
     /// <remarks>
-    /// The response handler looks the store up once per response run, from the DI scope of that run. The
-    /// store's lifetime is independent of the agent's lifetime. Calling this method again for the same
-    /// <paramref name="agentName"/>, or again for all agents, replaces the earlier store, in whatever order it
-    /// is called relative to <c>AddFoundryResponses</c>.
+    /// The response handler looks the store up once per response run, from the DI scope of that run, for
+    /// agents registered with any <c>AddFoundryResponses</c> overload or directly in DI. The store's lifetime is
+    /// independent of the agent's lifetime. Calling this method again for the same <paramref name="agentName"/>,
+    /// or again for all agents, replaces the earlier store, including one passed to
+    /// <c>AddFoundryResponses(agent, agentSessionStore)</c> or registered directly in DI, in whatever order it is
+    /// called relative to <c>AddFoundryResponses</c>.
     /// <code>
     /// builder.AddFoundryAgentSessionStore(
     ///     sp => new MySessionStore(sp.GetRequiredService&lt;MyDbContext&gt;()),
