@@ -54,6 +54,10 @@ agent_framework/
 - **`SupportsAgentRun`** - Protocol defining the agent interface
 - **`BaseAgent`** - Abstract base class for agents
 - **`Agent`** - Main agent class wrapping a chat client with tools, instructions, and middleware
+- **`BaseAgent.as_tool(return_mode=...)`** - Defaults to `"all"` (the complete response text). `"last"` selects
+  the last assistant message's text without falling back to earlier text when it is empty; a synchronous
+  `AgentResponse -> str` callable supports custom extraction. Selection happens after pending-input checks and
+  does not filter streaming callbacks or change session history.
 - **`RawAgent.open()` / `close()`** (inherited by `Agent`) - Explicitly enter the client's and configured MCP tools'
   async contexts, then release them along with lazily connected MCP tools. `async with agent` delegates to these
   methods; a partially failed `open()` closes resources already entered.
