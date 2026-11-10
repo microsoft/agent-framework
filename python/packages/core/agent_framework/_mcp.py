@@ -16,6 +16,7 @@ from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import partial
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from inspect import currentframe, isawaitable
 from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, TypeAlias, TypedDict, TypeVar, cast
@@ -3703,13 +3704,20 @@ class MCPTool:
             )
 
     async def _invoke_tool(
-        self, tool_name: str, kwargs: dict[str, Any], trace_context: otel_context.Context
+        self,
+        tool_name: str,
+        kwargs: dict[str, Any],
+        trace_context: otel_context.Context,
+        *,
+        before_dispatch: Callable[[], None] | None = None,
     ) -> types.CallToolResult:
         token = otel_context.attach(trace_context)
         try:
             filtered_kwargs, meta = self._prepare_call_kwargs(tool_name, kwargs)
         finally:
             otel_context.detach(token)
+        if before_dispatch is not None:
+            before_dispatch()
         return await self._require_connection().call_tool(tool_name, filtered_kwargs, meta=meta)
 
     async def _call_tool_with_retries(
@@ -3724,14 +3732,41 @@ class MCPTool:
         from anyio import ClosedResourceError
         from mcp import MCPError
 
-        # A catalog refresh cannot retroactively make the first dispatch safe to repeat.
-        replay_eligible = self._is_call_replayable(tool_name)
+        replay_eligible = False
+        lost_connection: Exception | None = None
+        replay_error: ToolExecutionException | None = None
+
+        def validate_replay_eligibility(
+            attempt: int,
+            connection_error: Exception | None,
+            unknown_outcome: ToolExecutionException | None,
+        ) -> None:
+            nonlocal replay_eligible
+            if attempt == 0:
+                replay_eligible = self._is_call_replayable(tool_name)
+                return
+            if replay_eligible and self._is_call_replayable(tool_name):
+                return
+            cause = cast(Exception, connection_error)
+            error = cast(ToolExecutionException, unknown_outcome)
+            raise error from cause
+
         for attempt in range(2):
             failed_connection = self._connection
             close_generation = self._close_generation
             span_error_recorded = False
             try:
-                result = await self._invoke_tool(tool_name, kwargs, trace_context)
+                result = await self._invoke_tool(
+                    tool_name,
+                    kwargs,
+                    trace_context,
+                    before_dispatch=partial(
+                        validate_replay_eligibility,
+                        attempt,
+                        lost_connection,
+                        replay_error,
+                    ),
+                )
                 _capture_mcp_tool_result(result)
                 if result.is_error:
                     parsed = parser(result)
@@ -3748,7 +3783,10 @@ class MCPTool:
                 return parser(result)
             except ToolExecutionException as tool_ex:
                 if span.is_recording() and not span_error_recorded:
-                    set_mcp_span_error(span, type(tool_ex).__name__, str(tool_ex))
+                    if tool_ex is replay_error and lost_connection is not None:
+                        set_mcp_span_error(span, type(lost_connection).__name__, str(lost_connection))
+                    else:
+                        set_mcp_span_error(span, type(tool_ex).__name__, str(tool_ex))
                 raise
             except (ClosedResourceError, MCPError) as call_ex:
                 if not self._is_connection_loss(call_ex):
@@ -3770,21 +3808,17 @@ class MCPTool:
                         if span.is_recording():
                             set_mcp_span_error(span, type(recovery_error).__name__, str(recovery_error))
                         raise
-                    if not replay_eligible or not self._is_call_replayable(tool_name):
-                        # The request may have reached the server before the connection
-                        # dropped, so replaying it could execute a non-idempotent operation
-                        # twice. Surface the unknown outcome instead of a replay; the
-                        # connection is already back up for whoever decides to retry.
-                        if span.is_recording():
-                            set_mcp_span_error(span, type(call_ex).__name__, str(call_ex))
-                        raise _mcp_tool_execution_exception(
-                            f"Failed to call tool '{tool_name}' - connection lost and the remote "
-                            "execution outcome is unknown. The connection was re-established but "
-                            "the call was not replayed, because replay requires both a server "
-                            "idempotent/read-only hint and the client-owned "
-                            "trust_server_idempotency_hints opt-in; retry explicitly if safe.",
-                            inner_exception=call_ex,
-                        ) from call_ex
+                    # HTTP admission can reconcile a different identity on retry. Validate the
+                    # original and replacement catalogs only after that reconciliation, before dispatch.
+                    lost_connection = call_ex
+                    replay_error = _mcp_tool_execution_exception(
+                        f"Failed to call tool '{tool_name}' - connection lost and the remote "
+                        "execution outcome is unknown. The connection was re-established but "
+                        "the call was not replayed, because replay requires both a server "
+                        "idempotent/read-only hint and the client-owned "
+                        "trust_server_idempotency_hints opt-in; retry explicitly if safe.",
+                        inner_exception=call_ex,
+                    )
                     continue
 
                 # Second attempt also failed, give up.
@@ -4998,10 +5032,20 @@ class MCPStreamableHTTPTool(MCPTool):
             )
 
     async def _invoke_tool(
-        self, tool_name: str, kwargs: dict[str, Any], trace_context: otel_context.Context
+        self,
+        tool_name: str,
+        kwargs: dict[str, Any],
+        trace_context: otel_context.Context,
+        *,
+        before_dispatch: Callable[[], None] | None = None,
     ) -> types.CallToolResult:
         async with self._http_operation():
-            return await super()._invoke_tool(tool_name, kwargs, trace_context)
+            return await super()._invoke_tool(
+                tool_name,
+                kwargs,
+                trace_context,
+                before_dispatch=before_dispatch,
+            )
 
     async def _invoke_prompt(self, prompt_name: str, kwargs: dict[str, Any]) -> types.GetPromptResult:
         async with self._http_operation():
