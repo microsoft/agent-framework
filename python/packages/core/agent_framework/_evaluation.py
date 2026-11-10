@@ -1413,6 +1413,12 @@ def _coerce_result(value: Any, check_name: str) -> CheckResult:
 
     if isinstance(value, dict):
         d = cast(dict[str, Any], value)
+        if "passed" in d:
+            passed_val = d["passed"]
+            if not isinstance(passed_val, (bool, int)):
+                raise TypeError(
+                    f"Function evaluator '{check_name}' returned dict with non-boolean 'passed' value: {passed_val!r}"
+                )
         if "score" in d:
             try:
                 score = float(d["score"])
@@ -1426,10 +1432,6 @@ def _coerce_result(value: Any, check_name: str) -> CheckResult:
             return CheckResult(passed=passed, reason=reason, check_name=check_name)
         if "passed" in d:
             passed_val = d["passed"]
-            if not isinstance(passed_val, (bool, int)):
-                raise TypeError(
-                    f"Function evaluator '{check_name}' returned dict with non-boolean 'passed' value: {passed_val!r}"
-                )
             return CheckResult(
                 passed=bool(passed_val),
                 reason=str(d.get("reason", "passed" if passed_val else "failed")),
