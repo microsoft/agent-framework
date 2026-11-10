@@ -280,21 +280,27 @@ class MemoryIndexEntry:
     slug: str
     summary: str
     updated_at: str
-    __slots__ = ("slug", "summary", "topic", "updated_at")
+    storage_stem: str | None
+    __slots__ = ("slug", "storage_stem", "summary", "topic", "updated_at")
 
-    def __init__(self, topic: str, slug: str, summary: str, updated_at: str) -> None:
+    def __init__(self, topic: str, slug: str, summary: str, updated_at: str, storage_stem: str | None = None) -> None:
         """Initialize one memory-index entry.
 
         Args:
             topic: Human-readable topic name.
-            slug: Stable topic filename stem.
+            slug: Stable readable topic slug, kept in the documented lookup
+                contract (stores resolve the topic name or this slug).
             summary: Short summary used by the index line.
             updated_at: Last update timestamp for the topic.
+            storage_stem: Optional persisted filename stem used as the link
+                destination when the store's files carry digest suffixes;
+                entries without one link their slug, as before.
         """
         self.topic = _normalize_topic(topic)
         self.slug = _slugify_topic(slug)
         self.summary = _coerce_summary(summary, [])
         self.updated_at = updated_at
+        self.storage_stem = _slugify_topic(storage_stem) if storage_stem is not None else None
 
     def to_dict(self) -> dict[str, str]:
         """Serialize the index entry for tool output.
@@ -345,11 +351,13 @@ class MemoryIndexEntry:
         """
         return cls(
             topic=record.topic,
-            # The persisted stem, not the readable slug: distinct topics can
-            # share a slug, and an index link must point at the real file.
-            slug=record.storage_stem,
+            # The readable slug stays in the public field: stores resolve the
+            # topic name or that slug. The persisted stem, unique per record,
+            # rides in its own field and only names the link destination.
+            slug=record.slug,
             summary=_coerce_summary(record.summary, record.memories),
             updated_at=record.updated_at,
+            storage_stem=record.storage_stem,
         )
 
     def to_pointer_line(self, *, max_length: int = DEFAULT_MEMORY_INDEX_LINE_LENGTH) -> str:
@@ -365,8 +373,10 @@ class MemoryIndexEntry:
         # push the line past the budget, and cutting the destination would
         # strip the .md suffix and the closing parenthesis, leaving an index
         # link that opens nothing. Trim the summary first, then the visible
-        # label, never the destination itself.
-        link_tail = f"](topics/{self.slug}.md): "
+        # label, never the destination itself. The destination is the persisted
+        # stem when one rides along, else the readable slug, as before.
+        destination = self.storage_stem if self.storage_stem is not None else self.slug
+        link_tail = f"](topics/{destination}.md): "
         whole_link = f"[{self.topic}{link_tail}"
         if len("- ") + len(whole_link) + len(self.summary) <= max_length:
             return f"- {whole_link}{self.summary}"
@@ -1042,11 +1052,12 @@ class MemoryFileStore(MemoryStore):
 
         Digest-stemmed resolutions already validated exact identity; this guards
         the alias-capable resolutions (legacy slug-only files, shared slugs),
-        where the occupant may be a different topic. The comparison folds case
-        because a legacy heading may spell the topic differently than a lookup.
+        where the occupant may be a different topic. The comparison is exact on
+        the normalized topic: case folding would treat slug shaped neighbours
+        such as API and api as one topic and retire the original file.
         """
         record = MemoryTopicRecord.from_markdown(path.read_text(encoding="utf-8"), fallback_topic=path.stem)
-        return _normalize_topic(record.topic).casefold() == _normalize_topic(topic).casefold()
+        return _normalize_topic(record.topic) == _normalize_topic(topic)
 
     def rebuild_index(
         self,
@@ -1458,9 +1469,24 @@ class MemoryContextProvider(HistoryProvider):
             load_tool_turns=self.load_tool_turns,
         )
         selected_entries = self._select_topics(entries=index_entries, input_messages=context.input_messages)
-        selected_topics = [
-            self.store.get_topic(session, source_id=self.source_id, topic=entry.slug) for entry in selected_entries
-        ]
+        selected_topics: list[MemoryTopicRecord] = []
+        for entry in selected_entries:
+            # The same alias ladder the reload uses: the persisted stem (the
+            # exact file for digest stemmed records), then the readable slug
+            # and the topic name, both part of the documented get_topic
+            # contract that custom stores resolve.
+            record: MemoryTopicRecord | None = None
+            for alias in (entry.storage_stem, entry.slug, entry.topic):
+                if alias is None:
+                    continue
+                try:
+                    record = self.store.get_topic(session, source_id=self.source_id, topic=alias)
+                    break
+                except FileNotFoundError:
+                    continue
+            if record is None:
+                raise FileNotFoundError(f"No memory topic named '{entry.slug}' was found for this owner.")
+            selected_topics.append(record)
 
         @tool(name="list_memory_topics", approval_mode="never_require")
         def list_memory_topics() -> str:
@@ -1536,7 +1562,7 @@ class MemoryContextProvider(HistoryProvider):
             )
             return json.dumps({"consolidated_topics": consolidated_count}, ensure_ascii=False)
 
-        loaded_topic_blocks = [
+        loaded_topic_blocks: list[str] = [
             f"### topics/{record.slug}.md\n{record.to_markdown()}" for record in selected_topics
         ] or ["- none auto-loaded for this turn"]
         loaded_topics_text = "\n\n".join(loaded_topic_blocks)

@@ -1175,10 +1175,10 @@ def test_memory_index_pointer_links_resolve_to_the_persisted_files(tmp_path) -> 
     entries = store.rebuild_index(session, source_id="src", line_limit=50, line_length=200)
 
     assert len(entries) == 2
-    assert len({entry.slug for entry in entries}) == 2
+    assert len({entry.storage_stem for entry in entries}) == 2
     for entry in entries:
-        assert f"(topics/{entry.slug}.md)" in entry.to_pointer_line()
-        assert (topics_dir / f"{entry.slug}.md").exists()
+        assert f"(topics/{entry.storage_stem}.md)" in entry.to_pointer_line()
+        assert (topics_dir / f"{entry.storage_stem}.md").exists()
 
 
 def test_memory_explicit_slug_override_is_persisted_and_findable(tmp_path) -> None:
@@ -1265,8 +1265,8 @@ def test_memory_topic_truncation_after_a_separator_stays_canonical(tmp_path) -> 
     assert store.get_topic(session, source_id="src", topic=topic).memories == ["kept"]
     entries = store.rebuild_index(session, source_id="src", line_limit=10, line_length=200)
     for entry in entries:
-        assert (store._get_topics_directory(session, source_id="src") / f"{entry.slug}.md").exists()
-        assert store.get_topic(session, source_id="src", topic=entry.slug).memories == ["kept"]
+        assert (store._get_topics_directory(session, source_id="src") / f"{entry.storage_stem}.md").exists()
+        assert store.get_topic(session, source_id="src", topic=entry.storage_stem).memories == ["kept"]
 
 
 def test_memory_index_pointer_lines_keep_the_full_link_for_long_names(tmp_path) -> None:
@@ -1277,12 +1277,13 @@ def test_memory_index_pointer_lines_keep_the_full_link_for_long_names(tmp_path) 
         summary="quarterly planning review with the product and research teams across every region",
         updated_at="t",
     )
+    destination = entry.slug
     line = entry.to_pointer_line(max_length=150)
     assert len(line) <= 150
-    assert line.endswith(f"](topics/{entry.slug}.md): ...") or line.endswith("...")
-    assert f"](topics/{entry.slug}.md)" in line
+    assert line.endswith(f"](topics/{destination}.md): ...") or line.endswith("...")
+    assert f"](topics/{destination}.md)" in line
     parsed_slug = line.split("(topics/", 1)[1].split(".md)", 1)[0]
-    assert parsed_slug == entry.slug
+    assert parsed_slug == destination
 
 
 def test_memory_reads_a_legacy_topic_file_with_a_long_slug(tmp_path) -> None:
@@ -1325,7 +1326,29 @@ def test_memory_long_topic_writes_and_reloads_within_the_filename_limit(tmp_path
     assert by_stem.memories == ["kept"]
     entries = store.rebuild_index(session, source_id="src", line_limit=10, line_length=400)
     for entry in entries:
-        assert (store._get_topics_directory(session, source_id="src") / f"{entry.slug}.md").exists()
+        assert (store._get_topics_directory(session, source_id="src") / f"{entry.storage_stem}.md").exists()
+
+
+def test_memory_topics_that_differ_only_by_case_stay_distinct(tmp_path) -> None:
+    """Slug shaped neighbours such as API and api must not merge through the
+    case folded ownership check, in either write order."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    for first, second in (("API", "api"), ("api", "API")):
+        for name in (first, second):
+            store.write_topic(
+                session,
+                MemoryTopicRecord(topic=name, summary="s", memories=[name + " fact"], updated_at="t"),
+                source_id="src",
+            )
+        assert store.get_topic(session, source_id="src", topic=first).memories == [first + " fact"]
+        assert store.get_topic(session, source_id="src", topic=second).memories == [second + " fact"]
+        topics_dir = store._get_topics_directory(session, source_id="src")
+        assert len(list(topics_dir.glob("*.md"))) == 2
+        for path in topics_dir.glob("*.md"):
+            path.unlink()
 
 
 def test_memory_topic_is_deletable_by_every_lookup_alias(tmp_path) -> None:
@@ -1419,7 +1442,7 @@ def test_memory_write_extends_the_stem_when_another_topic_owns_the_primary_stem(
 
     entries = store.rebuild_index(session, source_id="src", line_limit=10, line_length=200)
     for entry in entries:
-        assert (topics_dir / f"{entry.slug}.md").exists()
+        assert (topics_dir / f"{entry.storage_stem}.md").exists()
 
 
 async def test_memory_consolidation_processes_records_stored_under_an_explicit_slug(tmp_path) -> None:
@@ -1548,7 +1571,7 @@ class _AliasOnlyDictStore(MemoryStore):
     def rebuild_index(
         self, session: AgentSession, *, source_id: str, line_limit: int, line_length: int
     ) -> list[MemoryIndexEntry]:
-        return []
+        return [MemoryIndexEntry.from_topic_record(r) for r in self.topics.values()][:line_limit]
 
     def get_index_text(
         self,
@@ -1572,6 +1595,37 @@ class _AliasOnlyDictStore(MemoryStore):
 
     def write_state(self, session: AgentSession, state: dict[str, Any], *, source_id: str) -> None:
         pass
+
+
+async def test_memory_before_run_injects_topics_from_a_conforming_custom_store() -> None:
+    """A custom store's entries resolve through the documented topic or slug.
+
+    The index entry factory derives from topic records, so its output must stay
+    inside the documented get_topic contract: injection resolves the readable
+    slug and topic name for stores that have no persisted filename stem.
+    """
+    store = _AliasOnlyDictStore()
+    provider = MemoryContextProvider(store=store)
+    session = AgentSession(session_id="session-1")
+    record = MemoryTopicRecord(topic="Notes", summary="s", memories=["kept"], updated_at="t")
+    store.write_topic(session, record, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    # The entry the file store style factory produces: readable slug, stem optional.
+    entry = MemoryIndexEntry.from_topic_record(record)
+    assert entry.slug == record.slug
+
+    from agent_framework._sessions import SessionContext
+
+    context = SessionContext(
+        input_messages=[Message(role="user", contents=["Read the notes topic."])],
+    )
+    state: dict[str, Any] = {}
+    await provider.before_run(agent=None, session=session, context=context, state=state)  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+    # before_run succeeded: the selected topic resolved through the documented
+    # slug or topic alias, and its content reached the injected messages.
+    injected_texts = [m.text for group in context.context_messages.values() for m in group]
+    assert any("kept" in text for text in injected_texts)
 
 
 async def test_memory_consolidation_processes_topics_in_a_conforming_custom_store(tmp_path) -> None:
