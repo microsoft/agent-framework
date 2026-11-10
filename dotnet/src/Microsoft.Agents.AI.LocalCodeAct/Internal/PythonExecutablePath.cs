@@ -6,26 +6,23 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.LocalCodeAct.Internal;
 
-/// <summary>Validates the interpreter path before extracting scripts or starting child processes.</summary>
+/// <summary>Validates an explicit interpreter file path without current-directory or PATH lookup.</summary>
 internal static class PythonExecutablePath
 {
     public static void Validate(string pythonExecutablePath)
     {
         _ = Throw.IfNullOrWhitespace(pythonExecutablePath);
 
-        if (OperatingSystem.IsWindows())
+        if (!Path.IsPathFullyQualified(pythonExecutablePath))
         {
-            if (!Path.IsPathFullyQualified(pythonExecutablePath))
-            {
-                throw new ArgumentException(
-                    "On Windows, the Python executable path must be fully qualified.",
-                    nameof(pythonExecutablePath));
-            }
+            throw new ArgumentException(
+                "The Python executable path must be fully qualified.",
+                nameof(pythonExecutablePath));
+        }
 
-            if (!File.Exists(pythonExecutablePath))
-            {
-                throw new FileNotFoundException("The Python executable file was not found.", pythonExecutablePath);
-            }
+        if (!File.Exists(pythonExecutablePath))
+        {
+            throw new FileNotFoundException("The Python executable file was not found.", pythonExecutablePath);
         }
     }
 }

@@ -72,10 +72,10 @@ hosted, and the agent never becomes ready.
 
 The hosted build instead supplies a **`LocalCodeActProvider`**, which runs the generated Python in a
 child process and relies on the hosted container itself as the isolation boundary.
-[`Program.cs`](./Program.cs) selects and validates `pythonExecutable` before creating the provider.
-On Windows, `LOCAL_CODEACT_PYTHON` must identify an existing, fully qualified Python executable;
-bare names and relative paths are rejected. Keep the executable and its parent directories protected
-from untrusted writes. Other platforms default to `python3` when the setting is unset or blank.
+[`Program.cs`](./Program.cs) reads `pythonExecutable` from `LOCAL_CODEACT_PYTHON`, and the provider
+validates it. On every platform, the setting must identify an existing, fully qualified Python
+executable; bare names and relative paths are rejected. Keep the executable and its parent directories
+protected from untrusted writes. The Dockerfile sets it to `/usr/bin/python3`, which the image installs.
 
 ```csharp
 await using ClawAgentBuild build = await ClawAgentFactory.CreateAsync(new ClawAgentFactoryOptions
@@ -85,7 +85,7 @@ await using ClawAgentBuild build = await ClawAgentFactory.CreateAsync(new ClawAg
     EnableShell = false,
 
     // Hyperlight needs a hypervisor + FUSE the hosted container lacks; LocalCodeAct relies on the
-    // container as the sandbox. Use the interpreter selected and validated at startup.
+    // container as the sandbox. The provider validates the configured interpreter path.
     CodeActProvider = new LocalCodeActProvider(pythonExecutable),
 });
 ```
@@ -96,12 +96,22 @@ await using ClawAgentBuild build = await ClawAgentFactory.CreateAsync(new ClawAg
 
 ## Run locally
 
-On Windows, set `LOCAL_CODEACT_PYTHON` before running the host. Replace the example below with
-the fully qualified path to your installed interpreter:
+Set `LOCAL_CODEACT_PYTHON` before running the host on any platform. Replace the example below with
+the fully qualified path to your installed interpreter.
+
+PowerShell:
 
 ```powershell
 $env:LOCAL_CODEACT_PYTHON = "C:/Program Files/Python/python.exe"
 ```
+
+Bash:
+
+```bash
+export LOCAL_CODEACT_PYTHON="/absolute/path/to/python3"
+```
+
+Then run the host:
 
 ```bash
 cd dotnet/samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step04_ProductionReady/ClawAgent.Hosted

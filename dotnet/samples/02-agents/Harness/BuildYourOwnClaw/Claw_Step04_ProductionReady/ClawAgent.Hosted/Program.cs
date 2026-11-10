@@ -42,25 +42,9 @@ builder.Services.AddSingleton<IHttpContextAccessor>(httpContextAccessor);
 var projectEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4";
-var pythonExecutable = Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON");
-if (OperatingSystem.IsWindows())
-{
-    if (string.IsNullOrWhiteSpace(pythonExecutable) || !Path.IsPathFullyQualified(pythonExecutable))
-    {
-        throw new InvalidOperationException(
-            "On Windows, set LOCAL_CODEACT_PYTHON to the fully qualified path of a trusted Python interpreter.");
-    }
-
-    if (!File.Exists(pythonExecutable))
-    {
-        throw new FileNotFoundException("The configured Python executable file was not found.", pythonExecutable);
-    }
-}
-else if (string.IsNullOrWhiteSpace(pythonExecutable))
-{
-    pythonExecutable = "python3";
-}
-
+var pythonExecutable = Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON")
+    ?? throw new InvalidOperationException(
+        "Set LOCAL_CODEACT_PYTHON to the fully qualified path of a trusted Python interpreter.");
 var purviewClientAppId = Environment.GetEnvironmentVariable("PURVIEW_CLIENT_APP_ID");
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in

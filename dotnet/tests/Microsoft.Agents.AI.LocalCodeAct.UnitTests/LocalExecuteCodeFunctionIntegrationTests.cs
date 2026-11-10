@@ -1087,7 +1087,7 @@ except Exception as exc:
     {
         var configured = Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON");
         if (!string.IsNullOrWhiteSpace(configured)
-            && (!OperatingSystem.IsWindows() || Path.IsPathFullyQualified(configured))
+            && Path.IsPathFullyQualified(configured)
             && IsUsablePython(configured))
         {
             return configured;
@@ -1102,8 +1102,7 @@ except Exception as exc:
             var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
             foreach (var dir in path.Split(Path.PathSeparator))
             {
-                if (string.IsNullOrWhiteSpace(dir)
-                    || (OperatingSystem.IsWindows() && !Path.IsPathFullyQualified(dir)))
+                if (string.IsNullOrWhiteSpace(dir) || !Path.IsPathFullyQualified(dir))
                 {
                     continue;
                 }

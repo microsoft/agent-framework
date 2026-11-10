@@ -11,10 +11,8 @@
 // Only deploy this sample to an externally sandboxed environment such as a
 // Foundry hosted-agent container.
 //
-// RUNTIME: this sample runs generated Python with a Python interpreter. The
-// hosted dotnet_10 source-deployment runtime provides python3. Windows runs
-// require LOCAL_CODEACT_PYTHON to identify an existing, fully qualified Python
-// executable. Other platforms use python3 unless LOCAL_CODEACT_PYTHON is set.
+// RUNTIME: set LOCAL_CODEACT_PYTHON to the fully qualified path of an existing
+// Python interpreter, both locally and in the hosted dotnet_10 environment.
 
 using System.ComponentModel;
 using Azure.AI.Projects;
@@ -43,22 +41,16 @@ var deploymentName = FirstNonBlank(
 var agentName = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-local-codeact";
 
 var pythonExecutable = System.Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON");
-if (OperatingSystem.IsWindows())
+// The published package used by this standalone sample does not yet validate the interpreter path.
+if (string.IsNullOrWhiteSpace(pythonExecutable) || !Path.IsPathFullyQualified(pythonExecutable))
 {
-    if (string.IsNullOrWhiteSpace(pythonExecutable) || !Path.IsPathFullyQualified(pythonExecutable))
-    {
-        throw new InvalidOperationException(
-            "On Windows, set LOCAL_CODEACT_PYTHON to the fully qualified path of a trusted Python interpreter.");
-    }
-
-    if (!File.Exists(pythonExecutable))
-    {
-        throw new FileNotFoundException("The configured Python executable file was not found.", pythonExecutable);
-    }
+    throw new InvalidOperationException(
+        "Set LOCAL_CODEACT_PYTHON to the fully qualified path of a trusted Python interpreter.");
 }
-else if (string.IsNullOrWhiteSpace(pythonExecutable))
+
+if (!File.Exists(pythonExecutable))
 {
-    pythonExecutable = "python3";
+    throw new FileNotFoundException("The configured Python executable file was not found.", pythonExecutable);
 }
 
 // ── Sandbox-only tools (model never sees these directly) ─────────────────────
