@@ -106,7 +106,7 @@ public sealed class AgentMcpSkillsSourceOptions
     /// Empty pages count toward this limit. Discovery fails rather than returning a partial catalog
     /// when the last allowed page includes a continuation cursor.
     /// </remarks>
-    public int? ListedMaxPageCount { get; set; }
+    public int? MaxPageCount { get; set; }
 
     /// <summary>
     /// Gets or sets the maximum number of skills accepted across all <c>skills/list</c> pages per discovery.
@@ -115,7 +115,7 @@ public sealed class AgentMcpSkillsSourceOptions
     /// When <see langword="null"/>, defaults to <c>100</c>. Must be positive.
     /// Every entry counts, including duplicate skill URIs. Discovery fails if the limit is exceeded.
     /// </remarks>
-    public int? ListedMaxSkillCount { get; set; }
+    public int? MaxSkillCount { get; set; }
 
     /// <summary>
     /// Gets or sets the maximum size, in bytes, of a resource discovered through <c>skills/list</c>,
@@ -128,7 +128,7 @@ public sealed class AgentMcpSkillsSourceOptions
     /// blobs for integrity verification.
     /// There is no combined resource-size limit per skill.
     /// </remarks>
-    public long? ListedResourceMaxSizeBytes { get; set; }
+    public long? MaxResourceSizeBytes { get; set; }
 
     /// <summary>
     /// Creates cache options from the partition retention settings.

@@ -865,7 +865,7 @@ public sealed partial class AgentMcpSkillsTests
             return Task.FromResult(result);
         });
         using var source = new AgentMcpSkillsSource(client.Object, loggerFactory: null,
-            options: new AgentMcpSkillsSourceOptions { ListedResourceMaxSizeBytes = Encoding.UTF8.GetByteCount(SkillContent) },
+            options: new AgentMcpSkillsSourceOptions { MaxResourceSizeBytes = Encoding.UTF8.GetByteCount(SkillContent) },
             timeProvider: clock);
         IList<AgentSkill> original = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         if (cached)
