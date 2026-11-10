@@ -102,9 +102,12 @@ def _normalize_topic(topic: str) -> str:
     return normalized
 
 
+_SPLITLINES_BREAK_RE = re.compile(r"\s*(?:\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029])\s*")
+
+
 def _normalize_memory_text(memory: str) -> str:
-    """Fold line breaks without changing meaningful spaces or tabs within a line."""
-    normalized = re.sub(r"\s*(?:\r\n|\r|\n)\s*", " ", memory.strip())
+    """Fold every splitlines separator without changing inline spaces or tabs."""
+    normalized = _SPLITLINES_BREAK_RE.sub(" ", memory.strip())
     if not normalized:
         raise ValueError("memory must not be empty.")
     return normalized

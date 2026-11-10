@@ -148,6 +148,31 @@ def test_memory_topic_record_normalizes_multiline_memories() -> None:
     assert MemoryTopicRecord.from_markdown(record.to_markdown()) == record
 
 
+@pytest.mark.parametrize(
+    "separator",
+    ["\n", "\r", "\r\n", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"],
+)
+def test_memory_topic_record_folds_every_splitlines_separator(separator: str) -> None:
+    """No separator recognized by splitlines can create Markdown structure on reload."""
+    record = MemoryTopicRecord(
+        topic="deployment",
+        summary="Deployment",
+        memories=[
+            f"Deploy staging.{separator}Then deploy production.",
+            'the literal "a  b"',
+            "keep\ttabs",
+        ],
+        updated_at="2026-04-21T10:05:00+00:00",
+    )
+
+    assert record.memories == [
+        "Deploy staging. Then deploy production.",
+        'the literal "a  b"',
+        "keep\ttabs",
+    ]
+    assert MemoryTopicRecord.from_markdown(record.to_markdown()) == record
+
+
 def test_memory_topic_record_preserves_single_line_whitespace_on_reload() -> None:
     """Single-line spaces and tabs are content, and distinct values must not deduplicate."""
     memories = ['the literal "a  b"', 'the literal "a b"', "keep\ttabs"]
