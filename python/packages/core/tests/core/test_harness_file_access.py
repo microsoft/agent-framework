@@ -3081,14 +3081,15 @@ async def test_filesystem_store_normalizes_windows_path_too_long_error(
 
         monkeypatch.setattr(Path, "mkdir", length_aware_mkdir)
     else:
-        # Grow the parent until it is just inside the directory limit, then add a file name
-        # that pushes the absolute path past the file limit, so only the open fails.
+        # Grow the parent until it is just inside the directory limit, then size the file
+        # name from the current length so the absolute path is guaranteed to reach the
+        # file limit wherever ``tmp_path`` happens to live.
         segments: list[str] = []
         current = len(str(tmp_path))
         while current + 1 + 34 <= 247:
             segments.append("d" * 34)
             current += 1 + 34
-        key = "/".join([*segments, "f" * 20])
+        key = "/".join([*segments, "f" * max(1, 260 - current - 1)])
         monkeypatch.setattr(os, "open", raise_too_long)
 
     with pytest.raises(OSError) as exc_info:
@@ -3132,3 +3133,69 @@ async def test_filesystem_store_propagates_other_file_not_found_errors(
         await store.write("nested/file.txt", "x")
 
     assert exc_info.value is missing
+
+
+async def test_filesystem_store_measures_long_paths_in_utf16_code_units(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Windows limit is compared in UTF-16 code units, not Python code points.
+
+    A supplementary character such as an emoji is one code point but two UTF-16 units.
+    A path one code point short of 260 can therefore already have reached the Windows
+    limit, and must still be reported as too long.
+    """
+    import errno
+
+    monkeypatch.setattr("agent_framework._harness._file_access._WINDOWS_PATH_LIMITS_APPLY", True)
+    store = FileSystemAgentFileStore(str(tmp_path))
+    root = str(store.root_path)
+    key = "f" * (257 - len(root)) + "\U0001f600"
+    target = store.root_path / key
+    # 259 code points, 260 UTF-16 units: only the Windows length has reached the limit.
+    assert len(str(target)) == 259
+    assert len(str(target).encode("utf-16-le")) // 2 == 260
+
+    too_long = FileNotFoundError(errno.ENOENT, "The system cannot find the path specified")
+
+    def raise_too_long(*_args: object, **_kwargs: object) -> None:
+        raise too_long
+
+    monkeypatch.setattr(os, "open", raise_too_long)
+
+    with pytest.raises(OSError) as exc_info:
+        await store.write(key, "x")
+
+    assert not isinstance(exc_info.value, FileNotFoundError)
+    assert exc_info.value.errno == errno.ENAMETOOLONG
+    assert exc_info.value.__cause__ is too_long
+
+
+@pytest.mark.parametrize("error_type", [FileExistsError, PermissionError])
+async def test_filesystem_store_preserves_non_missing_errors_on_long_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_type: type[OSError]
+) -> None:
+    """Collisions and permission failures on an over-long path keep their own type.
+
+    Only the legacy "missing path" symptom is rewritten. With long-path support enabled
+    Windows reports an existing file as ``FileExistsError`` and a refusal as
+    ``PermissionError``; relabeling either as a length problem would hide the real cause.
+    """
+    import errno
+
+    monkeypatch.setattr("agent_framework._harness._file_access._WINDOWS_PATH_LIMITS_APPLY", True)
+    store = FileSystemAgentFileStore(str(tmp_path))
+    key = "f" * (260 - len(str(store.root_path)) - 1)
+    error_number = errno.EEXIST if error_type is FileExistsError else errno.EACCES
+    error = error_type(error_number, "original failure")
+    assert len(str(store.root_path / key)) == 260
+
+    def raise_error(*_args: object, **_kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(os, "open", raise_error)
+
+    with pytest.raises(OSError) as exc_info:
+        await store.write(key, "x")
+
+    assert exc_info.value is error
+    assert exc_info.value.errno == error_number

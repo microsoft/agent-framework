@@ -100,11 +100,13 @@ _SEARCH_SNIPPET_RADIUS = 50
 _MAX_PATH_SEGMENTS: Final[int] = 255
 _MAX_PATH_LENGTH: Final[int] = 4096
 
-# Windows path length limits. They are consulted only to explain an error the OS already
-# raised (see :func:`_raise_if_path_too_long`); they never gate a path up front.
-# ``MAX_PATH`` is 260 characters including the drive, the separators and the terminating
-# NUL, and ``CreateDirectory`` needs room for the 8.3 name it may have to synthesize,
-# which is where the 248-character directory limit comes from.
+# Windows path length limits, counted the way Windows counts them: in UTF-16 code
+# units, not Python code points (a supplementary character is two units). They are
+# consulted only to explain an error the OS already raised (see
+# :func:`_raise_if_path_too_long`); they never gate a path up front. ``MAX_PATH`` is
+# 260 of those units including the drive, the separators and the terminating NUL, and
+# ``CreateDirectory`` needs room for the 8.3 name it may have to synthesize, which is
+# where the 248-unit directory limit comes from.
 # https://learn.microsoft.com/windows/win32/fileio/maximum-file-path-limitation
 _WINDOWS_MAX_PATH_CHARS: Final[int] = 260
 _WINDOWS_MAX_DIRECTORY_PATH_CHARS: Final[int] = 248
@@ -1342,6 +1344,17 @@ class InMemoryAgentFileStore(AgentFileStore):
                 self._explicit_dirs[key] = display
 
 
+def _windows_path_length(path: Path) -> int:
+    """Return the length Windows measures for *path*, in UTF-16 code units.
+
+    Windows path limits are expressed in UTF-16 code units, while ``len`` on a Python
+    string counts Unicode code points. A supplementary character such as an emoji is one
+    code point but two UTF-16 units, so counting code points would understate the path
+    and could miss a genuine length failure.
+    """
+    return len(str(path).encode("utf-16-le", "surrogatepass")) // 2
+
+
 def _raise_if_path_too_long(exc: OSError, path: Path, *, limit: int) -> None:
     """Re-raise an over-long Windows path failure as :data:`errno.ENAMETOOLONG`.
 
@@ -1349,16 +1362,23 @@ def _raise_if_path_too_long(exc: OSError, path: Path, *, limit: int) -> None:
     which CPython surfaces as :class:`FileNotFoundError`. Callers then go looking for a
     bug in their own path handling instead of shortening the key.
 
+    Only that missing-path symptom is rewritten. A collision or a permission failure has
+    its own exception type and must keep it, even when the path happens to be over the
+    limit: with long-path support enabled Windows reports those directly, and relabeling
+    them as a length problem would hide the real cause.
+
     The length is used only to explain an error that already happened. Nothing here
     rejects a path before it is used, so a host with long-path support behaves exactly as
     before and every in-limit path stays untouched. The rewrite additionally requires a
     prefix inside the limit to exist; without one the path is missing for an ordinary
     reason and the original error is the accurate one.
     """
-    if not _WINDOWS_PATH_LIMITS_APPLY or len(str(path)) < limit:
+    if not _WINDOWS_PATH_LIMITS_APPLY or not isinstance(exc, FileNotFoundError):
+        return
+    if _windows_path_length(path) < limit:
         return
     prefix = path
-    while len(str(prefix)) >= limit:
+    while _windows_path_length(prefix) >= limit:
         parent = prefix.parent
         if parent == prefix:
             return
@@ -1390,8 +1410,8 @@ class FileSystemAgentFileStore(AgentFileStore):
     single-tenant or co-operating-tenant use; it is not a sandbox against a
     hostile process that shares the root directory.
 
-    On Windows the length of the resolved path (root plus key) is limited to 260
-    characters for a file and 248 for a directory unless long-path support is enabled
+    On Windows the length of the resolved path (root plus key) is limited to 260 UTF-16
+    code units for a file and 248 for a directory unless long-path support is enabled
     (``LongPathsEnabled``). :meth:`write` reports that limit as :class:`OSError` with
     :data:`errno.ENAMETOOLONG` instead of the ``FileNotFoundError`` the OS raises, so a
     caller can tell "too long" apart from "missing". The limit only renames a failure
