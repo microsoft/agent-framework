@@ -810,6 +810,50 @@ class TestRedisHistoryProviderRedisKey:
 
         assert _trim_start_index(history, max_messages=2) == 0
 
+    def test_repeated_pending_request_does_not_pin_trim_after_final_response(self) -> None:
+        first_call = Content.from_function_call(id="c1", call_id="c1", name="f", arguments="{}")
+        second_call = Content.from_function_call(id="c2", call_id="c2", name="f", arguments="{}")
+        batch = Message(
+            role="assistant",
+            contents=[
+                first_call,
+                second_call,
+                Content.from_function_approval_request(id="c1", function_call=first_call),
+                Content.from_function_approval_request(id="c2", function_call=second_call),
+            ],
+        )
+        first_response = Message(
+            role="user",
+            contents=[Content.from_function_approval_response(approved=True, id="c1", function_call=first_call)],
+        )
+        repeated_request = Message(
+            role="assistant",
+            contents=[Content.from_function_approval_request(id="c2", function_call=second_call)],
+        )
+        second_response = Message(
+            role="user",
+            contents=[Content.from_function_approval_response(approved=True, id="c2", function_call=second_call)],
+        )
+        first_result = Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="one")])
+        second_result = Message(role="tool", contents=[Content.from_function_result(call_id="c2", result="two")])
+        first_later = Message(role="assistant", contents=["later one"])
+        second_later = Message(role="assistant", contents=["later two"])
+
+        pending = [batch, first_response, repeated_request, first_result, first_later, second_later]
+        assert _trim_start_index(pending, max_messages=2) == 0
+
+        completed = [
+            batch,
+            first_response,
+            repeated_request,
+            second_response,
+            first_result,
+            second_result,
+            first_later,
+            second_later,
+        ]
+        assert _trim_start_index(completed, max_messages=2) == 6
+
     async def test_multi_save_approval_batch_never_replays_orphaned_results(self, mock_redis_client: MagicMock) -> None:
         openai = pytest.importorskip("agent_framework_openai")
         with patch("agent_framework_redis._history_provider.redis.from_url", return_value=mock_redis_client):

@@ -18,6 +18,7 @@ from typing import Any, ClassVar, Literal, TypeVar, cast
 import redis.asyncio as redis
 from agent_framework import Message
 from agent_framework._compaction import (
+    _approval_request_identity,  # pyright: ignore[reportPrivateUsage]
     _unambiguous_approval_pairs,  # pyright: ignore[reportPrivateUsage]
     group_messages,
 )
@@ -38,11 +39,15 @@ _SAVE_WATCH_RETRIES = 8
 
 def _has_unfinished_approval(messages: Sequence[Message]) -> bool:
     """Return whether an approval group still lacks at least one response."""
-    request_count = sum(
-        content.type == "function_approval_request" for message in messages for content in message.contents
-    )
+    request_identities = {
+        identity
+        for message in messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+        if (identity := _approval_request_identity(content)) is not None
+    }
     paired_request_count = len(_unambiguous_approval_pairs(messages))
-    return request_count > paired_request_count
+    return len(request_identities) > paired_request_count
 
 
 def _trim_start_index(messages: Sequence[Message], max_messages: int) -> int:

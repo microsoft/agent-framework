@@ -169,8 +169,9 @@ def _approval_request_identity(content: Content) -> str | None:
 
 
 def _unambiguous_approval_pairs(messages: Sequence[Message]) -> list[tuple[int, int]]:
-    """Pair approval responses with their unambiguous request occurrences."""
+    """Pair approval responses with their latest matching request occurrence."""
     unmatched_request_indices: dict[str, list[int]] = {}
+    resolved_identities: set[str] = set()
     pairs: list[tuple[int, int]] = []
     for message_index in range(len(messages)):
         message = messages[message_index]
@@ -182,8 +183,9 @@ def _unambiguous_approval_pairs(messages: Sequence[Message]) -> list[tuple[int, 
             elif content.type == "function_approval_response":
                 identity = _approval_request_identity(content)
                 candidates = unmatched_request_indices.get(identity) if identity else None
-                if candidates is not None and len(candidates) == 1:
-                    pairs.append((candidates.pop(), message_index))
+                if candidates and identity is not None and identity not in resolved_identities:
+                    pairs.append((candidates[-1], message_index))
+                    resolved_identities.add(identity)
     return pairs
 
 

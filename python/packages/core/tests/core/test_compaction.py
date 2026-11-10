@@ -45,6 +45,7 @@ from agent_framework._compaction import (
     _function_call_result_pairs,
     _select_summary_input_groups,
     _serialize_message,
+    _unambiguous_approval_pairs,
     append_compaction_message,
     extend_compaction_messages,
 )
@@ -292,6 +293,37 @@ def test_group_annotations_keep_approval_request_response_and_result_atomic() ->
     assert _group_id(messages[1]) == approval_group
     assert _group_id(messages[2]) == approval_group
     assert _group_id(messages[3]) != approval_group
+
+
+def test_duplicate_approval_request_pairs_latest_occurrence_once() -> None:
+    first_call = Content.from_function_call(id="c1", call_id="c1", name="f", arguments="{}")
+    second_call = Content.from_function_call(id="c2", call_id="c2", name="f", arguments="{}")
+    batch = Message(
+        role="assistant",
+        contents=[
+            first_call,
+            second_call,
+            Content.from_function_approval_request(id="c1", function_call=first_call),
+            Content.from_function_approval_request(id="c2", function_call=second_call),
+        ],
+    )
+    first_response = Message(
+        role="user",
+        contents=[Content.from_function_approval_response(approved=True, id="c1", function_call=first_call)],
+    )
+    repeated_request = Message(
+        role="assistant",
+        contents=[Content.from_function_approval_request(id="c2", function_call=second_call)],
+    )
+    second_response = Message(
+        role="user",
+        contents=[Content.from_function_approval_response(approved=True, id="c2", function_call=second_call)],
+    )
+
+    assert _unambiguous_approval_pairs([batch, first_response, repeated_request, second_response]) == [
+        (0, 1),
+        (2, 3),
+    ]
 
 
 def test_group_annotations_link_separate_approval_request_to_original_call() -> None:
