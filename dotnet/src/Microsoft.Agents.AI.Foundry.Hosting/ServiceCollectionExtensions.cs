@@ -52,6 +52,11 @@ public static class ServiceCollectionExtensions
     /// a caller-provided identity for session isolation is unsupported.
     /// </para>
     /// <para>
+    /// Keyed agent registrations may use any DI lifetime. Each response run resolves its agent and
+    /// session store from a DI scope that is disposed when the run's event stream ends, so scoped and
+    /// transient agents are created per run, including background runs that outlive the HTTP request.
+    /// </para>
+    /// <para>
     /// Example:
     /// <code>
     /// builder.Services.AddKeyedSingleton&lt;AIAgent&gt;("my-agent", myAgent);
@@ -165,6 +170,165 @@ public static class ServiceCollectionExtensions
         RegisterResponseHandler(services);
         MarkFeatureUsed();
         return services;
+    }
+
+    /// <summary>
+    /// Registers the Azure AI Responses Server SDK and an <see cref="AIAgent"/> created by a factory
+    /// with the specified DI lifetime, as the handler for all incoming requests.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Use this overload when the agent or its session store depends on services that are not
+    /// singletons, for example a database context, or when they should not live for the whole process.
+    /// The agent and its session store are registered under <paramref name="agentName"/> and as the
+    /// default <see cref="AIAgent"/> and <see cref="AgentSessionStore"/>, so requests without an agent
+    /// name also reach them.
+    /// </para>
+    /// <para>
+    /// Every response run (streaming, non-streaming, background, or a run resumed after a restart) gets
+    /// its own DI scope, created when the run starts and disposed when its event stream ends. That is
+    /// later than the end of the HTTP request for a background run. The lifetime applies to the agent
+    /// and, when <paramref name="agentSessionStoreFactory"/> is supplied, to the session store:
+    /// <list type="bullet">
+    /// <item><description><see cref="ServiceLifetime.Singleton"/>: one instance for the process, disposed at shutdown.</description></item>
+    /// <item><description><see cref="ServiceLifetime.Scoped"/>: one instance per response run, disposed when the run ends.</description></item>
+    /// <item><description><see cref="ServiceLifetime.Transient"/>: a new instance on every lookup, disposed when the run ends.</description></item>
+    /// </list>
+    /// Conversation state is not kept on the agent or store object: each turn loads the saved session
+    /// from the store's backing storage. Sessions are stored under <paramref name="agentName"/>, the same
+    /// location <c>AddFoundryResponses(agent)</c> uses for an agent with that name, so switching between
+    /// the two overloads or between lifetimes keeps existing sessions readable.
+    /// </para>
+    /// <para>
+    /// This overload is for local or non-hosted scenarios. Foundry hosted applications must use
+    /// the <see cref="IHostApplicationBuilder"/> overload.
+    /// </para>
+    /// <para>
+    /// Example:
+    /// <code>
+    /// builder.Services.AddFoundryResponses(
+    ///     "my-agent",
+    ///     sp => new MyAgent(sp.GetRequiredService&lt;MyDbContext&gt;()),
+    ///     ServiceLifetime.Scoped,
+    ///     sp => new MySessionStore(sp.GetRequiredService&lt;MyDbContext&gt;()));
+    /// </code>
+    /// </para>
+    /// </remarks>
+    /// <param name="services">The service collection.</param>
+    /// <param name="agentName">The name the agent is registered under and the name requests use to select it.</param>
+    /// <param name="agentFactory">Creates the agent from the service provider of the current DI scope.</param>
+    /// <param name="lifetime">
+    /// The DI lifetime of the agent and of the session store created by <paramref name="agentSessionStoreFactory"/>.
+    /// Defaults to <see cref="ServiceLifetime.Singleton"/>.
+    /// </param>
+    /// <param name="agentSessionStoreFactory">
+    /// Creates the agent session store from the service provider of the current DI scope, with the same
+    /// <paramref name="lifetime"/> as the agent. If null, the default store, a singleton that uses the
+    /// AgentServer SDK's local state-store fallback, is used. When the factory returns an object created
+    /// elsewhere with a scoped or transient lifetime, the DI container still disposes it at the end of
+    /// each response run if it is disposable.
+    /// </param>
+    /// <param name="options">
+    /// Optional <see cref="FoundryResponsesServerOptions"/>, for example to allow the
+    /// agent's own service to store the responses it produces, or to opt in to durable long-running
+    /// (resilient) background responses via <see cref="ResponsesServerOptions.ResilientBackground"/>.
+    /// </param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddFoundryResponses(
+        this IServiceCollection services,
+        string agentName,
+        Func<IServiceProvider, AIAgent> agentFactory,
+        ServiceLifetime lifetime = ServiceLifetime.Singleton,
+        Func<IServiceProvider, AgentSessionStore>? agentSessionStoreFactory = null,
+        FoundryResponsesServerOptions? options = null)
+    {
+        _ = Throw.IfNull(services);
+        RegisterAgentFactory(services, agentName, agentFactory, lifetime, agentSessionStoreFactory);
+        return services.AddFoundryResponses(options);
+    }
+
+    /// <summary>
+    /// Registers an agent factory, and optionally a session store factory, under
+    /// <paramref name="agentName"/> and as the defaults, before the shared Responses registration runs.
+    /// </summary>
+    /// <remarks>
+    /// The default registrations forward to the keyed ones, so within one response run a scoped agent or
+    /// store is created once whether the request named the agent or not. Existing registrations win, the
+    /// same as for <c>AddFoundryResponses(agent)</c>.
+    /// </remarks>
+    internal static void RegisterAgentFactory(
+        IServiceCollection services,
+        string agentName,
+        Func<IServiceProvider, AIAgent> agentFactory,
+        ServiceLifetime lifetime,
+        Func<IServiceProvider, AgentSessionStore>? agentSessionStoreFactory)
+    {
+        _ = Throw.IfNullOrWhitespace(agentName);
+        _ = Throw.IfNull(agentFactory);
+        if (lifetime is not (ServiceLifetime.Singleton or ServiceLifetime.Scoped or ServiceLifetime.Transient))
+        {
+            Throw.ArgumentOutOfRangeException(nameof(lifetime), lifetime, "Unsupported service lifetime.");
+        }
+
+        (bool agentKeyedAdded, bool agentDefaultAdded) = AddKeyedWithDefaultAlias(
+            services, agentName, agentFactory, lifetime, "agent factory");
+        if (agentKeyedAdded)
+        {
+            services.AddSingleton(new FoundryAgentFactoryRegistration(agentName, isDefault: agentDefaultAdded));
+        }
+
+        if (agentSessionStoreFactory is not null)
+        {
+            _ = AddKeyedWithDefaultAlias(services, agentName, agentSessionStoreFactory, lifetime, "agent session store factory");
+        }
+        else
+        {
+            AgentSessionStore defaultStore = CreateDefaultAgentSessionStore();
+            services.TryAddKeyedSingleton(agentName, defaultStore);
+            services.TryAddSingleton(defaultStore);
+        }
+    }
+
+    /// <summary>
+    /// Registers <paramref name="factory"/> under <paramref name="name"/> and a default registration
+    /// that forwards to it, each only when no registration of that kind exists yet.
+    /// </summary>
+    /// <returns>Whether the keyed and the default registrations were added.</returns>
+    private static (bool KeyedAdded, bool DefaultAdded) AddKeyedWithDefaultAlias<TService>(
+        IServiceCollection services,
+        string name,
+        Func<IServiceProvider, TService> factory,
+        ServiceLifetime lifetime,
+        string factoryDescription)
+        where TService : class
+    {
+        bool keyedAdded = !services.Any(descriptor =>
+            descriptor.ServiceType == typeof(TService)
+            && descriptor.IsKeyedService
+            && Equals(descriptor.ServiceKey, name));
+        bool defaultAdded = !services.Any(descriptor =>
+            descriptor.ServiceType == typeof(TService)
+            && !descriptor.IsKeyedService);
+
+        if (keyedAdded)
+        {
+            services.Add(new ServiceDescriptor(
+                typeof(TService),
+                name,
+                (serviceProvider, _) => factory(serviceProvider)
+                    ?? throw new InvalidOperationException($"The {factoryDescription} registered for '{name}' returned null."),
+                lifetime));
+        }
+
+        if (defaultAdded)
+        {
+            services.Add(new ServiceDescriptor(
+                typeof(TService),
+                serviceProvider => serviceProvider.GetRequiredKeyedService<TService>(name),
+                lifetime));
+        }
+
+        return (keyedAdded, defaultAdded);
     }
 
     /// <summary>
