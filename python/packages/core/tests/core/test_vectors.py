@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 
 import msgspec
 import pytest
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel
 from pydantic import Field as PydanticField
 
 from agent_framework import (
@@ -719,6 +719,38 @@ async def test_pydantic_aliases_round_trip_by_field_name() -> None:
     assert serialized == {"id": "one"}
     assert isinstance(restored, AliasedRecord)
     assert restored.id == "one"
+
+
+async def test_pydantic_alias_choices_records_round_trip_through_a_collection() -> None:
+    # The encoder stores field names, so the decoder feeds the first declared alias choice back to
+    # Pydantic. Falling back to the field name only validates when the model also populates by name,
+    # which an alias-only field does not, so the record read back failed after a successful upsert.
+    @vectorstoremodel(collection_name="alias_choices_records")
+    class AliasChoiceRecord(BaseModel):
+        id: Annotated[
+            str,
+            PydanticField(validation_alias=AliasChoices("record_id", "document_id")),
+            VectorStoreField("key"),
+        ]
+        text: Annotated[str, VectorStoreField("data")]
+        embedding: Annotated[list[float], VectorStoreField("vector", dimensions=2)] = PydanticField(
+            default_factory=list
+        )
+
+    collection: InMemoryCollection[str, AliasChoiceRecord] = InMemoryCollection(AliasChoiceRecord)
+    await collection.ensure_collection_exists()
+
+    keys = await collection.upsert(
+        [AliasChoiceRecord(record_id="one", text="plain sample", embedding=[0.25, 0.75])],
+        generate_vectors=False,
+    )
+    restored = await collection.get(keys, include_vectors=True)
+
+    assert keys == ["one"]
+    assert len(restored) == 1
+    assert restored[0].id == "one"
+    assert restored[0].text == "plain sample"
+    assert restored[0].embedding == [0.25, 0.75]
 
 
 async def test_collection_serializes_records_and_generates_vectors() -> None:
