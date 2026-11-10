@@ -5,6 +5,7 @@
 # pyright: reportGeneralTypeIssues=false
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -2670,6 +2671,62 @@ class TestBuilderEdgeWiring:
         assert ("check_eval", "then_action") in edges
         assert ("then_action", "after") in edges
         assert ("check_then_pass", "after") not in edges
+
+    def test_non_empty_then_with_only_unknown_actions_does_not_add_passthrough(self, caplog):
+        """A non-empty then with only unknown actions must not be treated as empty."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "unknown_then_action",
+            "actions": [
+                {
+                    "kind": "If",
+                    "id": "check",
+                    "condition": "=true",
+                    "then": [{"kind": "UnknownAction", "id": "typo"}],
+                },
+                {"kind": "SendActivity", "id": "after", "activity": {"text": "after"}},
+            ],
+        }
+
+        with caplog.at_level(logging.WARNING):
+            workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+
+        edges = {(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges}
+
+        assert ("check_eval", "check_then_pass") not in edges
+        assert ("check_then_pass", "after") not in edges
+        assert "Unknown action kind 'UnknownAction'" in caplog.text
+
+    def test_non_empty_condition_group_case_with_only_unknown_actions_does_not_add_passthrough(
+        self,
+        caplog,
+    ):
+        """A non-empty case with only unknown actions must not be treated as empty."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "unknown_condition_group_case",
+            "actions": [
+                {
+                    "kind": "ConditionGroup",
+                    "id": "route",
+                    "conditions": [
+                        {"condition": "=true", "actions": [{"kind": "UnknownAction", "id": "typo"}]},
+                    ],
+                },
+                {"kind": "SendActivity", "id": "after", "activity": {"text": "after"}},
+            ],
+        }
+
+        with caplog.at_level(logging.WARNING):
+            workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+
+        edges = {(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges}
+
+        assert ("route_eval", "route_case0_pass") not in edges
+        assert ("route_case0_pass", "after") not in edges
+        assert "Unknown action kind 'UnknownAction'" in caplog.text
 
     def test_wire_to_target_with_if_structure(self):
         """Test wiring to an If structure routes to evaluator."""

@@ -620,7 +620,7 @@ class DeclarativeWorkflowBuilder:
         then_actions = action_def.get("then", action_def.get("actions", []))
         then_entry = self._create_executors_for_actions(then_actions, builder, branch_context)
         then_passthrough = None
-        if then_entry is None:
+        if not then_actions:
             # Empty then branch - create a passthrough for continuation when condition is true
             then_passthrough = JoinExecutor(
                 {"kind": "ThenPassthrough"}, id=self._allocate_generated_id(f"{action_id}_then_pass")
@@ -748,7 +748,7 @@ class DeclarativeWorkflowBuilder:
                 branch_exit = self._get_branch_exit(branch_entry)
                 if branch_exit:
                     branch_exits.append(branch_exit)
-            else:
+            elif not branch_actions:
                 case_passthrough = JoinExecutor(
                     {"kind": "CasePassthrough"}, id=self._allocate_generated_id(f"{action_id}_case{i}_pass")
                 )
