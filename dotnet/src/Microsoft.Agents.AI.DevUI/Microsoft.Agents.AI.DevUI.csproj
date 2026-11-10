@@ -12,6 +12,11 @@
     <NoWarn>$(NoWarn);CS1591;CA1852;CA1050;RCS1037;RCS1036;RCS1124;RCS1021;RCS1146;RCS1211;CA2007;CA1308;IL2026;IL3050;CA1812</NoWarn>
   </PropertyGroup>
 
+  <!-- Work around https://github.com/dotnet/sdk/issues/56656 until the SDK fixes referenced Web SDK libraries. -->
+  <PropertyGroup Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(NETCoreSdkVersion)', '^11\.0\.100-rc\.'))">
+    <EnableHotReloadInRuntimeConfigDevFile>false</EnableHotReloadInRuntimeConfigDevFile>
+  </PropertyGroup>
+
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>

@@ -299,7 +299,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         bool hadErrorContent = false;
         foreach (AgentResponseUpdate update in updates)
         {
-            if (update.Contents.Any())
+            if (update.Contents.Count > 0)
             {
                 // We should expect a single update which contains the error content.
                 ErrorContent errorContent = Assert.IsType<ErrorContent>(Assert.Single(update.Contents));
@@ -783,7 +783,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         // Assert
         WorkflowSession workflowSession = Assert.IsType<WorkflowSession>(session);
 
-        ChatMessage[] responseMessages = response.Messages.Where(message => message.Contents.Any())
+        ChatMessage[] responseMessages = response.Messages.Where(message => message.Contents.Count > 0)
                                                           .ToArray();
 
         ChatMessage[] sessionMessages = workflowSession.ChatHistoryProvider.GetAllMessages(workflowSession)

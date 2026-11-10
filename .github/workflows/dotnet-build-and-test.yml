@@ -103,6 +103,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { targetFramework: "net11.0", os: "ubuntu-latest", configuration: Release }
+          - { targetFramework: "net11.0", os: "windows-latest", configuration: Debug }
           - { targetFramework: "net10.0", os: "ubuntu-latest", configuration: Release }
           - { targetFramework: "net9.0", os: "windows-latest", configuration: Debug }
           - { targetFramework: "net8.0", os: "ubuntu-latest", configuration: Release }
@@ -127,6 +129,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
+          dotnet-version: "10.0.x"
 
       - name: Build dotnet solutions
         shell: bash
@@ -145,25 +148,45 @@ jobs:
 
           export SOLUTIONS=$(find ./dotnet/ -type f -name "*.slnx" | tr '\n' ' ')
           for solution in $SOLUTIONS; do
-            dotnet pack $solution /property:TargetFrameworks=${{ matrix.targetFramework }} -c ${{ matrix.configuration }} --no-build --no-restore --output "$TEMP_DIR/artifacts"
+            dotnet pack $solution -c ${{ matrix.configuration }} --no-build --no-restore --output "$TEMP_DIR/artifacts"
           done
 
+          CORE_PACKAGE_VERSION=$(dotnet msbuild dotnet/src/Microsoft.Agents.AI/Microsoft.Agents.AI.csproj -getProperty:PackageVersion -p:Configuration=${{ matrix.configuration }} -nologo)
+          LOCAL_CODE_ACT_PACKAGE_VERSION=$(dotnet msbuild dotnet/src/Microsoft.Agents.AI.LocalCodeAct/Microsoft.Agents.AI.LocalCodeAct.csproj -getProperty:PackageVersion -p:Configuration=${{ matrix.configuration }} -nologo)
+          unzip -l "$TEMP_DIR/artifacts/Microsoft.Agents.AI.$CORE_PACKAGE_VERSION.nupkg" | grep -F "lib/${{ matrix.targetFramework }}/"
+          unzip -l "$TEMP_DIR/artifacts/Microsoft.Agents.AI.LocalCodeAct.$LOCAL_CODE_ACT_PACKAGE_VERSION.nupkg" | grep -F "lib/${{ matrix.targetFramework }}/"
+
           pushd "$TEMP_DIR"
+          export NUGET_PACKAGES="$TEMP_DIR/packages"
 
-          # Create a new console app to test the package installation
-          dotnet new console -f ${{ matrix.targetFramework }} --name packcheck --output consoleapp
+          # The SDK template only accepts its current framework; set the target after creation.
+          dotnet new console --name packcheck --output consoleapp --no-restore
+          sed -i 's|<TargetFramework>[^<]*</TargetFramework>|<TargetFramework>${{ matrix.targetFramework }}</TargetFramework>|' consoleapp/packcheck.csproj
 
-          # Create minimal nuget.config and use only dotnet nuget commands
-          echo '<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><clear /></packageSources></configuration>' > consoleapp/nuget.config
-
-          # Add sources with local first using dotnet nuget commands
-          dotnet nuget add source ../artifacts --name local --configfile consoleapp/nuget.config
-          dotnet nuget add source https://api.nuget.org/v3/index.json --name nuget.org --configfile consoleapp/nuget.config
+          # Resolve Agent Framework packages from this build, not from a public feed or cache.
+          cat > consoleapp/nuget.config <<'EOF'
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="local" value="../artifacts" />
+              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+            </packageSources>
+            <packageSourceMapping>
+              <packageSource key="local">
+                <package pattern="Microsoft.Agents.AI" />
+                <package pattern="Microsoft.Agents.AI.*" />
+              </packageSource>
+              <packageSource key="nuget.org">
+                <package pattern="*" />
+              </packageSource>
+            </packageSourceMapping>
+          </configuration>
+          EOF
 
           # Change to project directory to ensure local nuget.config is used
           pushd consoleapp
-          dotnet add packcheck.csproj package Microsoft.Agents.AI --prerelease
-          dotnet add packcheck.csproj package Microsoft.Agents.AI.LocalCodeAct --prerelease
+          dotnet add packcheck.csproj package Microsoft.Agents.AI --version "$CORE_PACKAGE_VERSION"
+          dotnet add packcheck.csproj package Microsoft.Agents.AI.LocalCodeAct --version "$LOCAL_CODE_ACT_PACKAGE_VERSION"
           dotnet build -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} packcheck.csproj
 
           # Clean up
@@ -181,6 +204,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { targetFramework: "net11.0", os: "ubuntu-latest", configuration: Release, integration-tests: false }
           - { targetFramework: "net10.0", os: "ubuntu-latest", configuration: Release, integration-tests: false }
           - { targetFramework: "net472", os: "windows-latest", configuration: Release, integration-tests: false }
 
@@ -352,6 +376,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
+          dotnet-version: "10.0.x"
 
       - name: Generate test solution (no samples)
         shell: pwsh
@@ -505,6 +530,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { targetFramework: "net11.0", os: "ubuntu-latest", configuration: Release, integration-tests: true }
           - { targetFramework: "net10.0", os: "ubuntu-latest", configuration: Release, integration-tests: true }
           - { targetFramework: "net472", os: "windows-latest", configuration: Release, integration-tests: true }
     runs-on: ${{ matrix.os }}
@@ -572,6 +598,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
+          dotnet-version: "10.0.x"
 
       # Build the test csproj directly instead of a filtered slnx + -f override.
       # The test project pins TargetFrameworks=net10.0 and its ProjectReference closure

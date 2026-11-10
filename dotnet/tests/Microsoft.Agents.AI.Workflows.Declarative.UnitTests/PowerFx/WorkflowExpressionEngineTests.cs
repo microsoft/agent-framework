@@ -5,6 +5,7 @@ using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Threading;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
@@ -198,11 +199,15 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
         this.State.Set("Setting", FormulaValue.New("not-a-number"), scope, SensitivityLevel.Sensitive);
         this.State.Bind();
         using StringWriter output = new();
-        using TextWriterTraceListener listener = new(output);
+        using CurrentThreadTraceListener listener = new(output);
         Trace.Listeners.Add(listener);
 
         try
         {
+            Thread unrelatedTrace = new(() => listener.Write("not-a-number"));
+            unrelatedTrace.Start();
+            unrelatedTrace.Join();
+
             // Act
             this.State.Evaluator.GetValue(ValueExpression.Expression(expression));
             listener.Flush();
@@ -790,5 +795,27 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     {
         // Act & Assert
         Assert.Throws<TException>(() => evaluator.Invoke(this.State.Evaluator));
+    }
+
+    // Trace listeners are shared across tests, so capture only the evaluating thread.
+    private sealed class CurrentThreadTraceListener(TextWriter writer) : TextWriterTraceListener(writer)
+    {
+        private readonly int _ownerThreadId = Environment.CurrentManagedThreadId;
+
+        public override void Write(string? message)
+        {
+            if (Environment.CurrentManagedThreadId == this._ownerThreadId)
+            {
+                base.Write(message);
+            }
+        }
+
+        public override void WriteLine(string? message)
+        {
+            if (Environment.CurrentManagedThreadId == this._ownerThreadId)
+            {
+                base.WriteLine(message);
+            }
+        }
     }
 }

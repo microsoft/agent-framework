@@ -25,8 +25,9 @@
     <PackageReference Include="Microsoft.Agents.ObjectModel.Json" />
     <PackageReference Include="Microsoft.Agents.ObjectModel.PowerFx" />
     <PackageReference Include="Microsoft.PowerFx.Interpreter" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" />
-    <PackageReference Include="Microsoft.Extensions.Logging" />
+    <!-- The configuration and logging abstractions used by this project are included in .NET 11. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Condition="'$(TargetFramework)' != 'net11.0'" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Condition="'$(TargetFramework)' != 'net11.0'" />
   </ItemGroup>
 
   <ItemGroup>

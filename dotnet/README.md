@@ -2,6 +2,23 @@
 
 ## Quickstart
 
+### Building from source
+
+Install the [.NET 11 RC SDK](https://dotnet.microsoft.com/download/dotnet/11.0)
+specified in `global.json`. Libraries that support .NET 9 also target .NET 11,
+which is a Standard Term Support (STS) release. Existing targets are retained.
+The .NET 10 runtime is still required to run .NET 10 tests and samples.
+
+CI builds, packages, and runs unit and integration tests for `net11.0` alongside
+the existing targets. Code coverage and sample verification remain on `net10.0`.
+When moving to the final .NET 11 release, update `global.json`, the .NET 11
+`Microsoft.AspNetCore.TestHost` version in `Directory.Packages.props`, and the SDK
+container tags in the format workflow and source-building sample Dockerfiles.
+The DevUI project also has a temporary workaround for
+[dotnet/sdk#56656](https://github.com/dotnet/sdk/issues/56656) that disables
+generation of its Debug browser tools assets when using a .NET 11 RC SDK. Remove
+the workaround when the SDK issue is fixed.
+
 ### Basic Agent - .NET
 
 ```c#
