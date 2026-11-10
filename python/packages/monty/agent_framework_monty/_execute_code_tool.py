@@ -506,7 +506,8 @@ class MontyExecuteCodeTool(FunctionTool):
 
         tool_map = self._build_tool_map(tools)
         stub_map = self._build_type_stub_map(tools)
-        type_stubs = generate_type_stubs(stub_map) if stub_map else None
+        accepted_parameters = {tool_obj.name: tool_obj.parameters().get("properties", {}) for tool_obj in tools}
+        type_stubs = generate_type_stubs(stub_map, accepted_parameters=accepted_parameters) if stub_map else None
 
         # Snapshot mtimes of host files in read-write mounts so we can later
         # identify which files the sandbox actually touched.

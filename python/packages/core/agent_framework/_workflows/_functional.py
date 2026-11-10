@@ -2944,6 +2944,7 @@ class FunctionalWorkflowAgent(BaseAgent):
         return ResponseStream(
             _generate_updates(),
             finalizer=AgentResponse.from_updates,
+            cleanup_hooks=[workflow_stream.close],
         )
 
     def _request_info_to_approval_request(self, event: WorkflowEvent[Any]) -> Any:

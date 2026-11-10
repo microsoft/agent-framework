@@ -611,6 +611,29 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
         }
     }
 
+    /// <summary>
+    /// Removes from the recorded pending approval requests those whose tool call already has a result in the chat
+    /// history, keeping the requests whose calls are still unfinished.
+    /// </summary>
+    /// <remarks>
+    /// The records are normally consumed only when a run completes, so that a failed run can be retried with the same
+    /// approval response. When a cancelled streaming run still persists its partial interaction (see
+    /// <see cref="ChatClientAgentOptions.PersistPartialMessagesOnCancellation"/>), the results of the approved or
+    /// rejected calls are stored even though the run did not complete. Their records must then be consumed: with
+    /// per-service-call persistence the next run does not see the stored history before this decorator, so a leftover
+    /// record would be rejected again and produce a second result for a call that is already settled.
+    /// </remarks>
+    /// <param name="session">The session holding the recorded pending approval requests.</param>
+    /// <param name="settledCallIds">The call ids whose results have been persisted.</param>
+    internal static void RemoveSettledPendingApprovalRequests(AgentSession session, HashSet<string> settledCallIds)
+    {
+        var pendingRequests = LoadPendingApprovalRequests(session);
+        if (pendingRequests.RemoveAll(request => settledCallIds.Contains(request.ToolCall.CallId)) > 0)
+        {
+            SavePendingApprovalRequests(pendingRequests, session);
+        }
+    }
+
     private static List<ToolApprovalRequestContent> LoadPendingApprovalRequests(AgentSession session)
         => session.StateBag.TryGetValue<List<ToolApprovalRequestContent>>(StateBagKey, out var pendingRequests, AgentJsonUtilities.DefaultOptions)
             && pendingRequests is not null

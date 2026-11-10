@@ -226,8 +226,8 @@ only to approved first-party endpoints.
 | 49 | `foundry.agent` | Foundry agent | `Microsoft.Agents.AI.Foundry.FoundryAgent` |
 | 50 | `foundry.memory` | Foundry memory provider | `Microsoft.Agents.AI.Foundry.FoundryMemoryProvider` |
 | 51 | `foundry.evals` | Foundry evaluations | `Microsoft.Agents.AI.Foundry.FoundryEvals` |
-| 52 | `foundry.toolbox` | Foundry Toolbox MCP tool | `Microsoft.Agents.AI.Foundry.HostedMcpToolboxAITool` |
-| 53 | `foundry_hosting` | Foundry hosting layer | `Microsoft.Agents.AI.Foundry.Hosting.FoundryHostingExtensions.AddFoundryResponses` |
+| 52 | `foundry.toolbox` | Foundry Toolbox MCP integration | `Microsoft.Agents.AI.Foundry.Hosting.ServiceCollectionExtensions.AddFoundryToolboxes` |
+| 53 | `foundry_hosting` | Foundry hosting layer | `Microsoft.Agents.AI.Foundry.Hosting.ServiceCollectionExtensions.AddFoundryResponses` |
 | 54 | `openai` | OpenAI integration | `Microsoft.Agents.AI.OpenAI` |
 | 55 | `anthropic` | Anthropic integration | `Microsoft.Agents.AI.Anthropic` |
 | 56 | `copilotstudio` | Copilot Studio agent | `Microsoft.Agents.AI.CopilotStudio.CopilotStudioAgent` |

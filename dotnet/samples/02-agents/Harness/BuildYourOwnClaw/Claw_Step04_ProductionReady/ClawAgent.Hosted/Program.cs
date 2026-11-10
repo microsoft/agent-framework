@@ -85,7 +85,4 @@ var app = builder.Build();
 // Map the hosted-agent endpoint that live Foundry calls.
 app.MapFoundryResponses();
 
-// Contributor-only: map the per-agent OpenAI route shape for local debugging. Not used in production.
-app.MapDevTemporaryLocalAgentEndpoint();
-
 app.Run();

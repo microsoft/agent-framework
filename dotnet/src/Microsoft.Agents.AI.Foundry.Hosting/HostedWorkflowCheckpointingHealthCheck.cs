@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,7 +9,6 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -34,7 +32,6 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// or an agent written by the container author, has no checkpoints and is passed over.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal sealed class HostedWorkflowCheckpointingHealthCheck : IHealthCheck
 {
     private readonly IServiceProvider _serviceProvider;
@@ -67,7 +64,7 @@ internal sealed class HostedWorkflowCheckpointingHealthCheck : IHealthCheck
         List<string> incompatibleAgents = [];
         var checkedAgents = 0;
 
-        foreach (var agent in FoundryHostingExtensions.ResolveRegisteredAgents(this._serviceProvider))
+        foreach (var agent in ServiceCollectionExtensions.ResolveRegisteredAgents(this._serviceProvider))
         {
             if (agent.GetService<WorkflowAgentMetadata>() is not { } metadata)
             {
@@ -75,7 +72,7 @@ internal sealed class HostedWorkflowCheckpointingHealthCheck : IHealthCheck
             }
 
             checkedAgents++;
-            AIAgent redirected = FoundryHostingExtensions.ApplyWorkflowCheckpointing(
+            AIAgent redirected = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(
                 agent,
                 this._serviceProvider.GetService<ILoggerFactory>());
 

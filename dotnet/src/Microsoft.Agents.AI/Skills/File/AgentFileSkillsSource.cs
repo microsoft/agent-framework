@@ -27,6 +27,9 @@ namespace Microsoft.Agents.AI;
 /// value is retained for duplicate keys, and subsequent entries produce warnings without rejecting the skill.
 /// Resource and script files are discovered by scanning the skill
 /// directory for files with matching extensions. Invalid resources are skipped with logged warnings.
+/// Skills whose resource names or script names differ only by case are skipped.
+/// Names are compared using <see cref="StringComparer.OrdinalIgnoreCase"/>; Unicode equivalence
+/// follows the target runtime.
 /// Resource and script paths are checked against path traversal and symlink escape attacks.
 /// Discovered files are revalidated against their trusted skill directory immediately before use.
 /// </remarks>
@@ -223,12 +226,43 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         var resources = this.DiscoverResourceFiles(scope, frontmatter.Name);
         var scripts = this.DiscoverScriptFiles(scope, frontmatter.Name);
 
+        if (this.HasCaseVariantNames(frontmatter.Name, "resource", resources.Select(r => r.Name)) ||
+            this.HasCaseVariantNames(frontmatter.Name, "script", scripts.Select(s => s.Name)))
+        {
+            return null;
+        }
+
         return new AgentFileSkill(
             frontmatter: frontmatter,
             content: content,
             path: scope.SkillDirectoryPath,
             resources: resources,
             scripts: scripts);
+    }
+
+    /// <summary>
+    /// Checks for collisions among the supplied names using <see cref="StringComparer.OrdinalIgnoreCase"/>
+    /// and logs the first collision.
+    /// </summary>
+    /// <param name="skillName">The owning skill's name, used only in the log message, not in comparisons.</param>
+    /// <param name="kind">The entry category ("resource" or "script"), used only in the log message.</param>
+    /// <param name="entryNames">The resource or script names to compare with each other.</param>
+    /// <returns><see langword="true"/> if a collision is found; otherwise, <see langword="false"/>.</returns>
+    private bool HasCaseVariantNames(string skillName, string kind, IEnumerable<string> entryNames)
+    {
+        var seen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string name in entryNames)
+        {
+            if (seen.TryGetValue(name, out string? previous))
+            {
+                LogCaseVariantNames(this._logger, skillName, kind, SanitizePathForLog(previous), SanitizePathForLog(name));
+                return true;
+            }
+
+            seen.Add(name, name);
+        }
+
+        return false;
     }
 
     private bool TryParseFrontmatter(string content, string skillFilePath, [NotNullWhen(true)] out AgentSkillFrontmatter? frontmatter)
@@ -784,6 +818,9 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}': skill name '{SkillName}' does not match parent directory name '{DirectoryName}'")]
     private static partial void LogNameDirectoryMismatch(ILogger logger, string skillFilePath, string skillName, string directoryName);
+
+    [LoggerMessage(LogLevel.Error, "Skipping skill '{SkillName}': {Kind} names '{FirstName}' and '{SecondName}' differ only by case")]
+    private static partial void LogCaseVariantNames(ILogger logger, string skillName, string kind, string firstName, string secondName);
 
     [LoggerMessage(LogLevel.Warning, "Skipping resource in skill '{SkillName}': '{ResourcePath}' references a path outside the skill directory")]
     private static partial void LogResourcePathTraversal(ILogger logger, string skillName, string resourcePath);
