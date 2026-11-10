@@ -2,6 +2,8 @@
 
 """Tests for GAIA benchmark implementation."""
 
+from pathlib import Path
+
 import pytest
 from agent_framework_lab_gaia import gaia_scorer
 
@@ -130,6 +132,62 @@ class TestEnsureData:
 
         runner = GAIA(data_dir=str(tmp_path))
         assert runner._ensure_data() == tmp_path
+
+    def _write_shard(self, validation: Path, index: int, total: int) -> None:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        rows = [{"task_id": "v1", "Question": "q", "Final answer": "a", "Level": 1, "file_name": ""}]
+        pq.write_table(pa.Table.from_pylist(rows), validation / f"metadata-{index:05d}-of-{total:05d}.parquet")
+
+    def test_sharded_family_missing_shard_zero_forces_download(self, tmp_path, monkeypatch):
+        """A family holding every index except zero must not count as complete."""
+        pytest.importorskip("pyarrow")
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+        from agent_framework_lab_gaia.gaia import GAIA
+
+        validation = tmp_path / "2023" / "validation"
+        validation.mkdir(parents=True)
+        self._write_shard(validation, 1, 2)
+        self._write_shard(validation, 2, 2)
+
+        runner = GAIA(data_dir=str(tmp_path))
+        with pytest.raises(RuntimeError, match="HF_TOKEN"):
+            runner._ensure_data()
+
+    def test_sharded_family_with_mixed_totals_forces_download(self, tmp_path, monkeypatch):
+        """Files in one family declaring different totals describe an incoherent copy."""
+        pytest.importorskip("pyarrow")
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+        from agent_framework_lab_gaia.gaia import GAIA
+
+        validation = tmp_path / "2023" / "validation"
+        validation.mkdir(parents=True)
+        # Three distinct indexes against a largest declared total of three, so a
+        # count against the max total passes while the family disagrees on N.
+        self._write_shard(validation, 0, 3)
+        self._write_shard(validation, 1, 3)
+        self._write_shard(validation, 2, 3)
+        self._write_shard(validation, 2, 2)
+
+        runner = GAIA(data_dir=str(tmp_path))
+        with pytest.raises(RuntimeError, match="HF_TOKEN"):
+            runner._ensure_data()
+
+    def test_sharded_family_with_an_out_of_range_index_forces_download(self, tmp_path, monkeypatch):
+        """An index at or beyond the declared total must not stand in for a missing shard."""
+        pytest.importorskip("pyarrow")
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+        from agent_framework_lab_gaia.gaia import GAIA
+
+        validation = tmp_path / "2023" / "validation"
+        validation.mkdir(parents=True)
+        self._write_shard(validation, 0, 2)
+        self._write_shard(validation, 2, 2)
+
+        runner = GAIA(data_dir=str(tmp_path))
+        with pytest.raises(RuntimeError, match="HF_TOKEN"):
+            runner._ensure_data()
 
     def test_unsharded_file_does_not_rescue_an_incomplete_family(self, tmp_path, monkeypatch):
         """An unsharded file must not mask a partial sharded family (#9337 review)."""

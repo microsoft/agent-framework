@@ -276,7 +276,7 @@ def _has_complete_parquet_snapshot(data_dir: Path) -> bool:
     normal download path instead. Plain unsharded metadata parquet files count as
     complete on their own.
     """
-    sharded: dict[tuple[Path, str], tuple[set[int], int]] = {}
+    sharded: dict[tuple[Path, str], list[tuple[int, int]]] = {}
     unsharded_seen = False
     for path in data_dir.rglob("metadata*.parquet"):
         match = _SHARDED_PARQUET_RE.fullmatch(path.name)
@@ -284,14 +284,23 @@ def _has_complete_parquet_snapshot(data_dir: Path) -> bool:
             unsharded_seen = True
             continue
         key = (path.parent, match.group(1))
-        indexes, total = sharded.get(key, (set(), int(match.group(3))))
-        indexes.add(int(match.group(2)))
-        sharded[key] = (indexes, max(total, int(match.group(3))))
+        sharded.setdefault(key, []).append((int(match.group(2)), int(match.group(3))))
     if not sharded:
         return unsharded_seen
     # The loader reads every matching parquet file, so a single incomplete sharded
     # family disqualifies the directory even when unsharded files also exist.
-    return all(len(indexes) == total for indexes, total in sharded.values())
+    # A family is complete only when every file declares the same total and the
+    # indexes are exactly zero through that total minus one: counting files alone
+    # passes a family missing shard 0, a family with mixed totals, or a family
+    # holding an index at or beyond the declared total.
+    for shards in sharded.values():
+        totals = {total for _, total in shards}
+        if len(totals) != 1:
+            return False
+        indexes = {index for index, _ in shards}
+        if indexes != set(range(totals.pop())):
+            return False
+    return True
 
 
 def _has_usable_local_data(data_dir: Path) -> bool:
