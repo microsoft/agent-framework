@@ -832,8 +832,10 @@ public sealed class AgentSkillsProviderTests : IDisposable
         Assert.True(executorCalled);
     }
 
-    [Fact]
-    public async Task RunSkillScript_ForwardsJsonArgumentsAndServiceProviderToRunnerAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunSkillScript_ForwardsJsonArgumentsAndServiceProviderToRunnerAsync(bool encoded)
     {
         // Arrange — create a skill with a script file
         string skillDir = Path.Combine(this._testRoot, "fwd-skill");
@@ -870,7 +872,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         {
             ["skillName"] = "fwd-skill",
             ["scriptName"] = "scripts/run.py",
-            ["arguments"] = argsJson,
+            ["arguments"] = encoded ? JsonSerializer.SerializeToElement(argsJson.GetRawText(), AIJsonUtilities.DefaultOptions) : argsJson,
         })
         {
             Services = mockServiceProvider,
@@ -881,6 +883,123 @@ public sealed class AgentSkillsProviderTests : IDisposable
         Assert.Equal(JsonValueKind.Array, capturedArgs!.Value.ValueKind);
         Assert.Equal("""["arg1","arg2"]""", capturedArgs.Value.GetRawText());
         Assert.Same(mockServiceProvider, capturedServiceProvider);
+    }
+
+    [Fact]
+    public async Task RunSkillScript_ArgumentsSchemaIsNullableStringAsync()
+    {
+        // Arrange
+        var provider = new AgentSkillsProvider(new AgentInlineSkill("schema-skill", "Schema test", "Body."));
+
+        // Act
+        var result = await provider.InvokingAsync(new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext()), CancellationToken.None);
+        var tool = Assert.IsAssignableFrom<AIFunction>(result.Tools!.Single(t => t.Name == "run_skill_script"));
+        var schema = tool.JsonSchema.GetProperty("properties").GetProperty("arguments");
+
+        // Assert
+        Assert.Collection(schema.GetProperty("type").EnumerateArray(),
+            type => Assert.Equal("string", type.GetString()),
+            type => Assert.Equal("null", type.GetString()));
+        Assert.Contains("JSON", schema.GetProperty("description").GetString());
+        Assert.IsType<ApprovalRequiredAIFunction>(tool);
+    }
+
+    [Theory]
+    [InlineData("{\"value\":42}", true)]
+    [InlineData("{\"value\":42}", false)]
+    public async Task RunSkillScript_InlineArgumentsAsync(string json, bool encoded)
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("inline-skill", "Inline test", "Body.");
+        skill.AddScript("echo", (int value) => value);
+        var provider = new AgentSkillsProvider(skill);
+        var result = await provider.InvokingAsync(new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext()), CancellationToken.None);
+        var tool = Assert.IsAssignableFrom<AIFunction>(result.Tools!.Single(t => t.Name == "run_skill_script"));
+        using var document = JsonDocument.Parse(json);
+
+        // Act
+        var response = await tool.InvokeAsync(new AIFunctionArguments
+        {
+            ["skillName"] = "inline-skill",
+            ["scriptName"] = "echo",
+            ["arguments"] = encoded ? JsonSerializer.SerializeToElement(json, AIJsonUtilities.DefaultOptions) : document.RootElement,
+        });
+
+        // Assert
+        Assert.Equal("42", response!.ToString());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("null")]
+    [InlineData("\"{\\\"value\\\":42}\"")]
+    public async Task RunSkillScript_DecodesArgumentsOnlyOnceAsync(string? json)
+    {
+        // Arrange
+        JsonElement? captured = null;
+        bool called = false;
+        var skill = new AgentInlineSkill("custom-skill", "Custom marshaler", "Body.", argumentMarshaler: arguments =>
+        {
+            captured = arguments;
+            return new AIFunctionArguments();
+        });
+        skill.AddScript("run", () => called = true);
+        var provider = new AgentSkillsProvider(skill);
+        var result = await provider.InvokingAsync(new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext()), CancellationToken.None);
+        var tool = Assert.IsAssignableFrom<AIFunction>(result.Tools!.Single(t => t.Name == "run_skill_script"));
+
+        // Act
+        await tool.InvokeAsync(new AIFunctionArguments
+        {
+            ["skillName"] = "custom-skill",
+            ["scriptName"] = "run",
+            ["arguments"] = JsonSerializer.SerializeToElement(json, AIJsonUtilities.DefaultOptions),
+        });
+
+        // Assert
+        Assert.True(called);
+        if (json is null or "null")
+        {
+            Assert.True(captured is null || captured.Value.ValueKind == JsonValueKind.Null);
+        }
+        else
+        {
+            Assert.Equal(JsonValueKind.String, captured!.Value.ValueKind);
+            Assert.Equal("{\"value\":42}", captured.Value.GetString());
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunSkillScript_InvalidEncodedArgumentsUsesErrorPolicyAsync(bool includeDetails)
+    {
+        // Arrange
+        bool called = false;
+        var skill = new AgentInlineSkill("invalid-skill", "Invalid test", "Body.");
+        skill.AddScript("run", () => called = true);
+        var provider = new AgentSkillsProvider(new[] { skill }, new AgentSkillsProviderOptions { IncludeDetailedErrors = includeDetails });
+        var result = await provider.InvokingAsync(new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext()), CancellationToken.None);
+        var tool = Assert.IsAssignableFrom<AIFunction>(result.Tools!.Single(t => t.Name == "run_skill_script"));
+        var arguments = new AIFunctionArguments
+        {
+            ["skillName"] = "invalid-skill",
+            ["scriptName"] = "run",
+            ["arguments"] = JsonSerializer.SerializeToElement("invalid JSON", AIJsonUtilities.DefaultOptions),
+        };
+
+        // Act & Assert
+        if (includeDetails)
+        {
+            var response = await tool.InvokeAsync(arguments);
+            Assert.StartsWith("Error: Failed to execute script 'run'", response!.ToString());
+        }
+        else
+        {
+            await Assert.ThrowsAnyAsync<JsonException>(async () => await tool.InvokeAsync(arguments));
+        }
+
+        Assert.False(called);
     }
 
     private sealed class TestServiceProvider : IServiceProvider
