@@ -3510,6 +3510,7 @@ async def test_streaming_tool_approval_defers_structured_parse_error_to_value_ac
 async def test_tool_approval_clears_budget_on_turn_failure(
     chat_client_base: MockBaseChatClient,
     streaming: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed turn must clear per-attempt budget state from session so retries get full budget."""
     from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
@@ -3546,7 +3547,7 @@ async def test_tool_approval_clears_budget_on_turn_failure(
                 raise RuntimeError("transient provider error")
             return orig_stream(**kwargs)
 
-        chat_client_base._get_streaming_response = failing_stream
+        monkeypatch.setattr(chat_client_base, "_get_streaming_response", failing_stream)
         with pytest.raises(RuntimeError, match="transient provider error"):
             stream = agent.run("call tool", stream=True, session=session)
             async for _ in stream:
@@ -3573,7 +3574,7 @@ async def test_tool_approval_clears_budget_on_turn_failure(
                 raise RuntimeError("transient provider error")
             return await orig_non_stream(**kwargs)
 
-        chat_client_base._get_non_streaming_response = failing_non_stream
+        monkeypatch.setattr(chat_client_base, "_get_non_streaming_response", failing_non_stream)
         with pytest.raises(RuntimeError, match="transient provider error"):
             await agent.run("call tool", session=session)
 
