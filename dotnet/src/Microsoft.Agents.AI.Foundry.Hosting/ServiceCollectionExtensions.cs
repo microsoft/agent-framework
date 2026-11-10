@@ -125,7 +125,12 @@ public static class ServiceCollectionExtensions
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
-    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, the default store uses the AgentServer SDK's local state-store fallback.</param>
+    /// <param name="agentSessionStore">
+    /// The session store for this agent. It is registered under the agent's name and is not used by other
+    /// agents. If null, the agent uses the store registered for all agents with
+    /// <see cref="AddFoundryAgentSessionStore(IServiceCollection, AgentSessionStore, string?)"/>, or the default
+    /// store, which uses the AgentServer SDK's local state-store fallback.
+    /// </param>
     /// <param name="options">
     /// Optional <see cref="FoundryResponsesServerOptions"/>, for example to allow the
     /// agent's own service to store the responses it produces, or to opt in to durable long-running
@@ -154,19 +159,7 @@ public static class ServiceCollectionExtensions
             configuredOptions,
             includeServerOptions: serverAdded,
             applyOptions: serverAdded || options is not null);
-        agentSessionStore ??= CreateDefaultAgentSessionStore();
-
-        if (!string.IsNullOrWhiteSpace(agent.Name))
-        {
-            services.TryAddKeyedSingleton(agent.Name, agent);
-            services.TryAddKeyedSingleton(agent.Name, agentSessionStore);
-        }
-
-        // Also register as the default (non-keyed) agent so requests
-        // without an agent name can resolve it (e.g., local dev tooling).
-        TryAddDefaultAgent(services, agent);
-        services.TryAddSingleton(agentSessionStore);
-
+        RegisterAgentInstance(services, agent, agentSessionStore);
         RegisterResponseHandler(services);
         MarkFeatureUsed();
         return services;
@@ -178,18 +171,16 @@ public static class ServiceCollectionExtensions
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Use this overload when the agent or its session store depends on services that are not
-    /// singletons, for example a database context, or when they should not live for the whole process.
-    /// The agent and its session store are registered only under <paramref name="agentName"/>. When no
-    /// default agent is registered yet, requests without an agent name are also routed to this agent.
-    /// Existing registrations under <paramref name="agentName"/> are kept, the same as for
-    /// <c>AddFoundryResponses(agent)</c>.
+    /// Use this overload when the agent depends on services that are not singletons, for example a
+    /// database context, or when it should not live for the whole process. The agent is registered only
+    /// under <paramref name="agentName"/>. When no default agent is registered yet, requests without a
+    /// matching agent name are also routed to this agent. An existing registration under
+    /// <paramref name="agentName"/> is kept, the same as for <c>AddFoundryResponses(agent)</c>.
     /// </para>
     /// <para>
     /// Every response run (streaming, non-streaming, background, or a run resumed after a restart) gets
     /// its own DI scope, created when the run starts and disposed when its event stream ends. That is
-    /// later than the end of the HTTP request for a background run. The lifetime applies to the agent
-    /// and, when <paramref name="agentSessionStoreFactory"/> is supplied, to the session store:
+    /// later than the end of the HTTP request for a background run. The lifetime applies to the agent:
     /// <list type="bullet">
     /// <item><description><see cref="ServiceLifetime.Singleton"/>: one instance for the process, disposed at shutdown.</description></item>
     /// <item><description><see cref="ServiceLifetime.Scoped"/>: one instance per response run, disposed when the run ends.</description></item>
@@ -197,13 +188,18 @@ public static class ServiceCollectionExtensions
     /// </list>
     /// This scope is not the ASP.NET Core request scope, so scoped services that middleware fills in for an
     /// HTTP request are new, empty instances here. Do not derive the caller's identity from such services in
-    /// the factories; the per-request user identity is supplied by the platform and applied by the response
+    /// the factory; the per-request user identity is supplied by the platform and applied by the response
     /// handler when it loads and saves sessions.
-    /// Conversation state is not kept on the agent or store object: each turn loads the saved session
-    /// from the store's backing storage. Sessions are stored in the same location
-    /// <c>AddFoundryResponses(agent)</c> uses for an agent with that name registered in the same order,
-    /// whatever the lifetime, so switching between the two overloads or between lifetimes keeps
-    /// existing sessions readable.
+    /// </para>
+    /// <para>
+    /// The session store is registered separately with
+    /// <see cref="AddFoundryAgentSessionStore(IServiceCollection, Func{IServiceProvider, AgentSessionStore}, ServiceLifetime, string?)"/>,
+    /// with its own lifetime, because the response handler uses the store directly rather than through the
+    /// agent. Without such a registration the agent uses the default store. Conversation state is not kept on
+    /// the agent object: each turn loads the saved session from the store's backing storage. Sessions are
+    /// stored in the same location <c>AddFoundryResponses(agent)</c> uses for an agent with that name
+    /// registered in the same order, whatever the lifetime, so switching between the two overloads or
+    /// between lifetimes keeps existing sessions readable.
     /// </para>
     /// <para>
     /// This overload is for local or non-hosted scenarios. Foundry hosted applications must use
@@ -215,25 +211,14 @@ public static class ServiceCollectionExtensions
     /// builder.Services.AddFoundryResponses(
     ///     "my-agent",
     ///     sp => new MyAgent(sp.GetRequiredService&lt;MyDbContext&gt;()),
-    ///     ServiceLifetime.Scoped,
-    ///     sp => new MySessionStore(sp.GetRequiredService&lt;MyDbContext&gt;()));
+    ///     ServiceLifetime.Scoped);
     /// </code>
     /// </para>
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="agentName">The name the agent is registered under and the name requests use to select it.</param>
     /// <param name="agentFactory">Creates the agent from the service provider of the current DI scope.</param>
-    /// <param name="lifetime">
-    /// The DI lifetime of the agent and of the session store created by <paramref name="agentSessionStoreFactory"/>.
-    /// Defaults to <see cref="ServiceLifetime.Singleton"/>.
-    /// </param>
-    /// <param name="agentSessionStoreFactory">
-    /// Creates the agent session store from the service provider of the current DI scope, with the same
-    /// <paramref name="lifetime"/> as the agent. If null, the default store, a singleton that uses the
-    /// AgentServer SDK's local state-store fallback, is used. When the factory returns an object created
-    /// elsewhere with a scoped or transient lifetime, the DI container still disposes it at the end of
-    /// each response run if it is disposable.
-    /// </param>
+    /// <param name="lifetime">The DI lifetime of the agent. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
     /// <param name="options">
     /// Optional <see cref="FoundryResponsesServerOptions"/>, for example to allow the
     /// agent's own service to store the responses it produces, or to opt in to durable long-running
@@ -245,54 +230,191 @@ public static class ServiceCollectionExtensions
         string agentName,
         Func<IServiceProvider, AIAgent> agentFactory,
         ServiceLifetime lifetime = ServiceLifetime.Singleton,
-        Func<IServiceProvider, AgentSessionStore>? agentSessionStoreFactory = null,
         FoundryResponsesServerOptions? options = null)
     {
         _ = Throw.IfNull(services);
-        RegisterAgentFactory(services, agentName, agentFactory, lifetime, agentSessionStoreFactory);
+        RegisterAgentFactory(services, agentName, agentFactory, lifetime);
         return services.AddFoundryResponses(options);
     }
 
     /// <summary>
-    /// Registers an agent factory, and optionally a session store factory, under <paramref name="agentName"/>
-    /// before the shared Responses registration runs.
+    /// Registers the <see cref="AgentSessionStore"/> that Foundry Responses hosting uses for one agent, or for
+    /// every agent that has no store of its own.
     /// </summary>
     /// <remarks>
-    /// Only keyed registrations are added, so each created object has exactly one registration that owns
-    /// its disposal. When no default agent exists yet, a <see cref="FoundryAgentFactoryRegistration"/> marker
-    /// tells the response handler to route requests without an agent name to this agent. Existing keyed
-    /// registrations win, the same as for <c>AddFoundryResponses(agent)</c>; when the agent registration
-    /// is skipped no marker is added, so the existing registration keeps its routing and storage location.
+    /// <para>
+    /// For each response run the response handler uses the store registered under the agent's name, then the
+    /// store registered for all agents, then the default store, which uses the AgentServer SDK's local
+    /// state-store fallback. The store receives the agent on every call and partitions sessions by agent and
+    /// by user, so one store can serve several agents.
+    /// </para>
+    /// <para>
+    /// The DI container never disposes <paramref name="agentSessionStore"/>, because the caller created it.
+    /// Calling this method again for the same <paramref name="agentName"/>, or again for all agents, replaces
+    /// the earlier store, including one passed to <c>AddFoundryResponses(agent, agentSessionStore)</c>, in
+    /// whatever order the methods are called.
+    /// </para>
+    /// <para>
+    /// Example:
+    /// <code>
+    /// builder.Services.AddFoundryAgentSessionStore(mySessionStore);
+    /// </code>
+    /// </para>
+    /// </remarks>
+    /// <param name="services">The service collection.</param>
+    /// <param name="agentSessionStore">The session store to use.</param>
+    /// <param name="agentName">
+    /// The name of the agent the store is for, or <see langword="null"/> to use it for every agent that has no
+    /// store of its own.
+    /// </param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddFoundryAgentSessionStore(
+        this IServiceCollection services,
+        AgentSessionStore agentSessionStore,
+        string? agentName = null)
+    {
+        _ = Throw.IfNull(services);
+        _ = Throw.IfNull(agentSessionStore);
+        ValidateSessionStoreAgentName(agentName);
+
+        RemoveAgentSessionStoreRegistrations(services, agentName);
+        services.Add(agentName is null
+            ? ServiceDescriptor.Singleton(agentSessionStore)
+            : ServiceDescriptor.KeyedSingleton(agentName, agentSessionStore));
+        return services;
+    }
+
+    /// <summary>
+    /// Registers a factory for the <see cref="AgentSessionStore"/> that Foundry Responses hosting uses for one
+    /// agent, or for every agent that has no store of its own, with the specified DI lifetime.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// For each response run the response handler looks the store up once, from the DI scope of that run,
+    /// using the store registered under the agent's name, then the store registered for all agents, then the
+    /// default store. The store's lifetime is independent of the agent's lifetime:
+    /// <list type="bullet">
+    /// <item><description><see cref="ServiceLifetime.Singleton"/>: one instance for the process, disposed at shutdown.</description></item>
+    /// <item><description><see cref="ServiceLifetime.Scoped"/>: one instance per response run, disposed when the run ends.</description></item>
+    /// <item><description><see cref="ServiceLifetime.Transient"/>: a new instance on every lookup, disposed when the run ends.</description></item>
+    /// </list>
+    /// The DI container disposes what the factory returns according to that lifetime, even when the factory
+    /// returns an object it did not create. To share an object you dispose yourself, use
+    /// <see cref="AddFoundryAgentSessionStore(IServiceCollection, AgentSessionStore, string?)"/>.
+    /// </para>
+    /// <para>
+    /// Calling this method again for the same <paramref name="agentName"/>, or again for all agents, replaces
+    /// the earlier store, including one passed to <c>AddFoundryResponses(agent, agentSessionStore)</c>, in
+    /// whatever order the methods are called.
+    /// </para>
+    /// <para>
+    /// Example:
+    /// <code>
+    /// builder.Services.AddFoundryAgentSessionStore(
+    ///     sp => new MySessionStore(sp.GetRequiredService&lt;MyDbContext&gt;()),
+    ///     ServiceLifetime.Scoped);
+    /// </code>
+    /// </para>
+    /// </remarks>
+    /// <param name="services">The service collection.</param>
+    /// <param name="agentSessionStoreFactory">Creates the session store from the service provider of the current DI scope.</param>
+    /// <param name="lifetime">The DI lifetime of the session store. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
+    /// <param name="agentName">
+    /// The name of the agent the store is for, or <see langword="null"/> to use it for every agent that has no
+    /// store of its own.
+    /// </param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddFoundryAgentSessionStore(
+        this IServiceCollection services,
+        Func<IServiceProvider, AgentSessionStore> agentSessionStoreFactory,
+        ServiceLifetime lifetime = ServiceLifetime.Singleton,
+        string? agentName = null)
+    {
+        _ = Throw.IfNull(services);
+        _ = Throw.IfNull(agentSessionStoreFactory);
+        ValidateLifetime(lifetime);
+        ValidateSessionStoreAgentName(agentName);
+
+        string target = agentName is null ? "all agents" : $"agent '{agentName}'";
+        AgentSessionStore CreateStore(IServiceProvider serviceProvider) =>
+            agentSessionStoreFactory(serviceProvider)
+                ?? throw new InvalidOperationException($"The agent session store factory registered for {target} returned null.");
+
+        RemoveAgentSessionStoreRegistrations(services, agentName);
+        services.Add(agentName is null
+            ? new ServiceDescriptor(typeof(AgentSessionStore), CreateStore, lifetime)
+            : new ServiceDescriptor(typeof(AgentSessionStore), agentName, (serviceProvider, _) => CreateStore(serviceProvider), lifetime));
+        return services;
+    }
+
+    /// <summary>
+    /// Registers an agent factory under <paramref name="agentName"/> before the shared Responses registration runs.
+    /// </summary>
+    /// <remarks>
+    /// Only a keyed registration is added, so each created agent has exactly one registration that owns its
+    /// disposal. When no default agent exists yet, a <see cref="FoundryDefaultAgentName"/> tells the response
+    /// handler to route requests without a matching agent name to this agent. An existing keyed registration
+    /// wins, the same as for <c>AddFoundryResponses(agent)</c>; this agent is then not recorded as the default,
+    /// so the existing registration keeps its routing and storage location.
     /// </remarks>
     internal static void RegisterAgentFactory(
         IServiceCollection services,
         string agentName,
         Func<IServiceProvider, AIAgent> agentFactory,
-        ServiceLifetime lifetime,
-        Func<IServiceProvider, AgentSessionStore>? agentSessionStoreFactory)
+        ServiceLifetime lifetime)
     {
         _ = Throw.IfNullOrWhitespace(agentName);
         _ = Throw.IfNull(agentFactory);
-        if (lifetime is not (ServiceLifetime.Singleton or ServiceLifetime.Scoped or ServiceLifetime.Transient))
+        ValidateLifetime(lifetime);
+
+        if (services.Any(descriptor =>
+            descriptor.ServiceType == typeof(AIAgent)
+            && descriptor.IsKeyedService
+            && Equals(descriptor.ServiceKey, agentName)))
         {
-            Throw.ArgumentOutOfRangeException(nameof(lifetime), lifetime, "Unsupported service lifetime.");
+            return;
         }
 
-        if (TryAddKeyedFactory(services, agentName, agentFactory, lifetime, "agent factory"))
+        services.Add(new ServiceDescriptor(
+            typeof(AIAgent),
+            agentName,
+            (serviceProvider, _) => agentFactory(serviceProvider)
+                ?? throw new InvalidOperationException($"The agent factory registered for '{agentName}' returned null."),
+            lifetime));
+
+        if (!HasDefaultAgentRegistration(services))
         {
-            services.AddSingleton(new FoundryAgentFactoryRegistration(
-                agentName,
-                isDefault: !HasDefaultAgentRegistration(services)));
+            services.AddSingleton(new FoundryDefaultAgentName(agentName));
+        }
+    }
+
+    /// <summary>
+    /// Registers an agent passed to <c>AddFoundryResponses(agent, agentSessionStore)</c>, and its session store.
+    /// </summary>
+    /// <remarks>
+    /// The store is registered only under the agent's name, so other agents do not use it. An agent without a
+    /// name has no key to register its store under, so its store is registered for all agents. The default
+    /// store is registered for all agents unless another store already is.
+    /// </remarks>
+    internal static void RegisterAgentInstance(IServiceCollection services, AIAgent agent, AgentSessionStore? agentSessionStore)
+    {
+        if (!string.IsNullOrWhiteSpace(agent.Name))
+        {
+            services.TryAddKeyedSingleton(agent.Name, agent);
+            if (agentSessionStore is not null)
+            {
+                services.TryAddKeyedSingleton(agent.Name, agentSessionStore);
+            }
+        }
+        else if (agentSessionStore is not null)
+        {
+            services.TryAddSingleton(agentSessionStore);
         }
 
-        if (agentSessionStoreFactory is not null)
-        {
-            _ = TryAddKeyedFactory(services, agentName, agentSessionStoreFactory, lifetime, "agent session store factory");
-        }
-        else
-        {
-            services.TryAddKeyedSingleton<AgentSessionStore>(agentName, CreateDefaultAgentSessionStore());
-        }
+        // Also register as the default (non-keyed) agent so requests
+        // without an agent name can resolve it (e.g., local dev tooling).
+        TryAddDefaultAgent(services, agent);
+        services.TryAddSingleton<AgentSessionStore>(_ => CreateDefaultAgentSessionStore());
     }
 
     /// <summary>
@@ -309,43 +431,46 @@ public static class ServiceCollectionExtensions
 
     /// <summary>
     /// Whether a registration already receives requests without an agent name: a non-keyed
-    /// <see cref="AIAgent"/> or a factory registration recorded as the default.
+    /// <see cref="AIAgent"/> or a factory agent recorded as the default.
     /// </summary>
     private static bool HasDefaultAgentRegistration(IServiceCollection services) =>
         services.Any(descriptor =>
             (descriptor.ServiceType == typeof(AIAgent) && !descriptor.IsKeyedService)
-            || (descriptor.ServiceType == typeof(FoundryAgentFactoryRegistration)
-                && descriptor.ImplementationInstance is FoundryAgentFactoryRegistration { IsDefault: true }));
+            || descriptor.ServiceType == typeof(FoundryDefaultAgentName));
+
+    private static void ValidateLifetime(ServiceLifetime lifetime)
+    {
+        if (lifetime is not (ServiceLifetime.Singleton or ServiceLifetime.Scoped or ServiceLifetime.Transient))
+        {
+            Throw.ArgumentOutOfRangeException(nameof(lifetime), lifetime, "Unsupported service lifetime.");
+        }
+    }
+
+    private static void ValidateSessionStoreAgentName(string? agentName)
+    {
+        if (agentName is not null)
+        {
+            _ = Throw.IfNullOrWhitespace(agentName);
+        }
+    }
 
     /// <summary>
-    /// Registers <paramref name="factory"/> under <paramref name="name"/> with <paramref name="lifetime"/>
-    /// when no registration exists for that key.
+    /// Removes the session store registrations for <paramref name="agentName"/>, or the non-keyed ones when it
+    /// is <see langword="null"/>, so the store registered next replaces them.
     /// </summary>
-    /// <returns><see langword="true"/> when the registration was added.</returns>
-    private static bool TryAddKeyedFactory<TService>(
-        IServiceCollection services,
-        string name,
-        Func<IServiceProvider, TService> factory,
-        ServiceLifetime lifetime,
-        string factoryDescription)
-        where TService : class
+    private static void RemoveAgentSessionStoreRegistrations(IServiceCollection services, string? agentName)
     {
-        if (services.Any(descriptor =>
-            descriptor.ServiceType == typeof(TService)
-            && descriptor.IsKeyedService
-            && Equals(descriptor.ServiceKey, name)))
+        for (int i = services.Count - 1; i >= 0; i--)
         {
-            return false;
+            ServiceDescriptor descriptor = services[i];
+            if (descriptor.ServiceType == typeof(AgentSessionStore)
+                && Equals(descriptor.ServiceKey, agentName))
+            {
+                services.RemoveAt(i);
+            }
         }
-
-        services.Add(new ServiceDescriptor(
-            typeof(TService),
-            name,
-            (serviceProvider, _) => factory(serviceProvider)
-                ?? throw new InvalidOperationException($"The {factoryDescription} registered for '{name}' returned null."),
-            lifetime));
-        return true;
     }
+
     /// <summary>
     /// Applies the caller's <see cref="FoundryResponsesServerOptions"/> and registers the readiness checks
     /// that report a misconfigured agent: one having its own service store the responses it produces,

@@ -25,8 +25,9 @@ using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 /// <summary>
-/// Covers how the response handler resolves agents and session stores per response run, and the
-/// <c>AddFoundryResponses</c> overloads that register an agent factory with a DI lifetime.
+/// Covers how the response handler resolves agents and session stores per response run, the
+/// <c>AddFoundryResponses</c> overloads that register an agent factory with a DI lifetime, and
+/// <c>AddFoundryAgentSessionStore</c>, which registers session stores separately from agents.
 /// </summary>
 public sealed class FoundryAgentLifetimeTests
 {
@@ -184,11 +185,11 @@ public sealed class FoundryAgentLifetimeTests
         var factoryStore = new RecordingSessionStore();
         var factoryServices = new ServiceCollection();
         factoryServices.AddLogging();
+        factoryServices.AddFoundryAgentSessionStore(factoryStore);
         factoryServices.AddFoundryResponses(
             AgentName,
             _ => new TrackingAgent(new AgentLifetimeLog()),
-            lifetime,
-            _ => factoryStore);
+            lifetime);
         AgentFrameworkResponseHandler factoryHandler = ResolveHandler(factoryServices);
 
         // Act: one request names the agent and one does not.
@@ -209,7 +210,8 @@ public sealed class FoundryAgentLifetimeTests
         var log = new AgentLifetimeLog();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(log), lifetime, _ => new TestAgentSessionStore());
+        services.AddFoundryAgentSessionStore(new TestAgentSessionStore());
+        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(log), lifetime);
         AgentFrameworkResponseHandler handler = ResolveHandler(services);
 
         // Act
@@ -229,7 +231,8 @@ public sealed class FoundryAgentLifetimeTests
         var log = new AgentLifetimeLog();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(log), ServiceLifetime.Singleton, _ => new TestAgentSessionStore());
+        services.AddFoundryAgentSessionStore(new TestAgentSessionStore());
+        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(log), ServiceLifetime.Singleton);
         AgentFrameworkResponseHandler handler = ResolveHandler(services);
 
         // Act
@@ -245,52 +248,51 @@ public sealed class FoundryAgentLifetimeTests
     [Theory]
     [InlineData(ServiceLifetime.Scoped)]
     [InlineData(ServiceLifetime.Transient)]
-    public async Task AddFoundryResponses_StoreFactory_CreatesOneStorePerResponseWithTheAgentLifetimeAsync(ServiceLifetime lifetime)
+    public async Task AddFoundryAgentSessionStore_Factory_CreatesOneStorePerResponseIndependentlyOfTheAgentAsync(ServiceLifetime lifetime)
     {
-        // Arrange
+        // Arrange: a singleton agent with a store that has its own, shorter lifetime.
+        var log = new AgentLifetimeLog();
         var stores = new ConcurrentQueue<RecordingSessionStore>();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses(
-            AgentName,
-            _ => new TrackingAgent(new AgentLifetimeLog()),
-            lifetime,
+        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(log));
+        services.AddFoundryAgentSessionStore(
             _ =>
             {
                 var store = new RecordingSessionStore();
                 stores.Enqueue(store);
                 return store;
-            });
+            },
+            lifetime);
         AgentFrameworkResponseHandler handler = ResolveHandler(services);
 
         // Act
         await DrainAsync(handler, CreateRequest(AgentName), CreateContext());
         await DrainAsync(handler, CreateRequest(agentName: null), CreateContext());
 
-        // Assert: each run uses one store, which is disposed when the run ends.
+        // Assert: each run uses one store, which is disposed when the run ends, while the agent lives on.
         Assert.Equal(2, stores.Count);
-        Assert.All(stores, store => Assert.True(store.IsDisposed));
+        Assert.All(stores, store => Assert.Equal(1, store.DisposeCount));
         Assert.All(stores, store => Assert.NotEmpty(store.Identities));
         Assert.All(stores.SelectMany(store => store.Identities), identity => Assert.Equal($"name:{AgentName}", identity));
+        TrackingAgent agent = Assert.Single(log.Created);
+        Assert.False(agent.IsDisposed);
     }
 
     [Fact]
-    public async Task AddFoundryResponses_SingletonStoreFactory_CreatesOneStoreForTheProcessAsync()
+    public async Task AddFoundryAgentSessionStore_Factory_DefaultsToOneStoreForTheProcessAsync()
     {
-        // Arrange
+        // Arrange: a scoped agent with a store registered without a lifetime.
         var stores = new ConcurrentQueue<RecordingSessionStore>();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses(
-            AgentName,
-            _ => new TrackingAgent(new AgentLifetimeLog()),
-            ServiceLifetime.Singleton,
-            _ =>
-            {
-                var store = new RecordingSessionStore();
-                stores.Enqueue(store);
-                return store;
-            });
+        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped);
+        services.AddFoundryAgentSessionStore(_ =>
+        {
+            var store = new RecordingSessionStore();
+            stores.Enqueue(store);
+            return store;
+        });
         AgentFrameworkResponseHandler handler = ResolveHandler(services);
 
         // Act
@@ -303,18 +305,42 @@ public sealed class FoundryAgentLifetimeTests
     }
 
     [Fact]
-    public async Task AddFoundryResponses_StoreFactoryReturnsNull_ThrowsInvalidOperationExceptionAsync()
+    public async Task AddFoundryAgentSessionStore_Instance_IsNeverDisposedByTheContainerAsync()
+    {
+        // Arrange: a shared store object used by a scoped agent.
+        var store = new RecordingSessionStore();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped);
+        services.AddFoundryAgentSessionStore(store);
+        ServiceProvider provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+        var handler = Assert.IsType<AgentFrameworkResponseHandler>(provider.GetRequiredService<ResponseHandler>());
+
+        // Act
+        await DrainAsync(handler, CreateRequest(AgentName), CreateContext());
+        await DrainAsync(handler, CreateRequest(agentName: null), CreateContext());
+        await provider.DisposeAsync();
+
+        // Assert: the caller owns the store, so neither the response runs nor shutdown dispose it.
+        Assert.NotEmpty(store.Identities);
+        Assert.Equal(0, store.DisposeCount);
+    }
+
+    [Fact]
+    public async Task AddFoundryAgentSessionStore_FactoryReturnsNull_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped, _ => null!);
+        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped);
+        services.AddFoundryAgentSessionStore(_ => null!, ServiceLifetime.Scoped, AgentName);
         AgentFrameworkResponseHandler handler = ResolveHandler(services);
 
         // Act & Assert
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
             () => DrainAsync(handler, CreateRequest(AgentName), CreateContext()));
         Assert.Contains("session store factory", exception.Message, StringComparison.Ordinal);
+        Assert.Contains(AgentName, exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -323,7 +349,8 @@ public sealed class FoundryAgentLifetimeTests
         // Arrange
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses(AgentName, _ => null!, ServiceLifetime.Scoped, _ => new TestAgentSessionStore());
+        services.AddFoundryAgentSessionStore(new TestAgentSessionStore());
+        services.AddFoundryResponses(AgentName, _ => null!, ServiceLifetime.Scoped);
         AgentFrameworkResponseHandler handler = ResolveHandler(services);
 
         // Act & Assert
@@ -348,38 +375,25 @@ public sealed class FoundryAgentLifetimeTests
     }
 
     [Fact]
-    public void AddFoundryResponses_Factory_RegistersOnlyKeyedAgentAndStoreWithTheRequestedLifetime()
+    public void AddFoundryAgentSessionStore_InvalidArguments_Throw()
     {
         // Arrange
         var services = new ServiceCollection();
+        var store = new TestAgentSessionStore();
 
-        // Act
-        services.AddFoundryResponses(
-            AgentName,
-            _ => new TrackingAgent(new AgentLifetimeLog()),
-            ServiceLifetime.Scoped,
-            _ => new TestAgentSessionStore());
-
-        // Assert: one registration per created object, so DI owns its disposal once.
-        ServiceDescriptor keyed = Assert.Single(services, d => d.ServiceType == typeof(AIAgent));
-        Assert.True(keyed.IsKeyedService);
-        Assert.Equal(AgentName, keyed.ServiceKey);
-        Assert.Equal(ServiceLifetime.Scoped, keyed.Lifetime);
-        ServiceDescriptor keyedStore = Assert.Single(services, d => d.ServiceType == typeof(AgentSessionStore) && d.IsKeyedService);
-        Assert.Equal(AgentName, keyedStore.ServiceKey);
-        Assert.Equal(ServiceLifetime.Scoped, keyedStore.Lifetime);
-        Assert.All(
-            services.Where(d => d.ServiceType == typeof(AgentSessionStore) && !d.IsKeyedService),
-            d => Assert.Equal(ServiceLifetime.Singleton, d.Lifetime));
-        FoundryAgentFactoryRegistration marker = Assert.Single(
-            services.Where(d => d.ServiceType == typeof(FoundryAgentFactoryRegistration))
-                .Select(d => Assert.IsType<FoundryAgentFactoryRegistration>(d.ImplementationInstance)));
-        Assert.Equal(AgentName, marker.AgentName);
-        Assert.True(marker.IsDefault);
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddFoundryAgentSessionStore(store));
+        Assert.Throws<ArgumentNullException>(() => services.AddFoundryAgentSessionStore((AgentSessionStore)null!));
+        Assert.Throws<ArgumentNullException>(() => services.AddFoundryAgentSessionStore((Func<IServiceProvider, AgentSessionStore>)null!));
+        Assert.Throws<ArgumentException>(() => services.AddFoundryAgentSessionStore(store, " "));
+        Assert.Throws<ArgumentException>(() => services.AddFoundryAgentSessionStore(_ => store, ServiceLifetime.Singleton, string.Empty));
+        Assert.Throws<ArgumentOutOfRangeException>(() => services.AddFoundryAgentSessionStore(_ => store, (ServiceLifetime)42));
+        Assert.Throws<ArgumentNullException>(() => ((IHostApplicationBuilder)null!).AddFoundryAgentSessionStore(store));
+        Assert.Empty(services);
     }
 
     [Fact]
-    public void AddFoundryResponses_FactoryWithoutStoreFactory_RegistersTheKeyedStoreAsSingleton()
+    public void AddFoundryResponses_Factory_RegistersOnlyTheKeyedAgentWithTheRequestedLifetime()
     {
         // Arrange
         var services = new ServiceCollection();
@@ -387,12 +401,242 @@ public sealed class FoundryAgentLifetimeTests
         // Act
         services.AddFoundryResponses(AgentName, _ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped);
 
-        // Assert: without a store factory, the lifetime applies to the agent only.
-        ServiceDescriptor keyedStore = Assert.Single(services, d => d.ServiceType == typeof(AgentSessionStore) && d.IsKeyedService);
-        Assert.Equal(ServiceLifetime.Singleton, keyedStore.Lifetime);
-        Assert.IsType<FoundryAgentSessionStore>(keyedStore.KeyedImplementationInstance);
+        // Assert: one registration per created agent, so DI owns its disposal once, and no store of its own.
+        ServiceDescriptor keyed = Assert.Single(services, d => d.ServiceType == typeof(AIAgent));
+        Assert.True(keyed.IsKeyedService);
+        Assert.Equal(AgentName, keyed.ServiceKey);
+        Assert.Equal(ServiceLifetime.Scoped, keyed.Lifetime);
+        Assert.DoesNotContain(services, d => d.ServiceType == typeof(AgentSessionStore) && d.IsKeyedService);
+        ServiceDescriptor defaultStore = Assert.Single(services, d => d.ServiceType == typeof(AgentSessionStore));
+        Assert.Equal(ServiceLifetime.Singleton, defaultStore.Lifetime);
+        FoundryDefaultAgentName defaultAgentName = Assert.IsType<FoundryDefaultAgentName>(
+            Assert.Single(services, d => d.ServiceType == typeof(FoundryDefaultAgentName)).ImplementationInstance);
+        Assert.Equal(AgentName, defaultAgentName.Name);
     }
 
+    [Fact]
+    public void AddFoundryResponses_SecondFactoryAgent_IsNotRecordedAsTheDefault()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+
+        // Act
+        services.AddFoundryResponses("first", _ => new TrackingAgent(new AgentLifetimeLog(), name: "first"));
+        services.AddFoundryResponses("second", _ => new TrackingAgent(new AgentLifetimeLog(), name: "second"));
+
+        // Assert
+        FoundryDefaultAgentName defaultAgentName = Assert.IsType<FoundryDefaultAgentName>(
+            Assert.Single(services, d => d.ServiceType == typeof(FoundryDefaultAgentName)).ImplementationInstance);
+        Assert.Equal("first", defaultAgentName.Name);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AddFoundryAgentSessionStore_ForAllAgents_ReplacesTheDefaultStoreInAnyOrder(bool registerStoreFirst)
+    {
+        // Arrange
+        var store = new TestAgentSessionStore();
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        // Act
+        if (registerStoreFirst)
+        {
+            services.AddFoundryAgentSessionStore(store);
+            services.AddFoundryResponses(AgentName, _ => new TrackingAgent(new AgentLifetimeLog()));
+        }
+        else
+        {
+            services.AddFoundryResponses(AgentName, _ => new TrackingAgent(new AgentLifetimeLog()));
+            services.AddFoundryAgentSessionStore(store);
+        }
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        // Assert
+        Assert.Single(services, d => d.ServiceType == typeof(AgentSessionStore));
+        Assert.Same(store, provider.GetRequiredService<AgentSessionStore>());
+    }
+
+    [Fact]
+    public void AddFoundryAgentSessionStore_CalledTwice_TheLastCallWins()
+    {
+        // Arrange
+        var first = new TestAgentSessionStore();
+        var second = new TestAgentSessionStore();
+        var firstForAgent = new TestAgentSessionStore();
+        var secondForAgent = new TestAgentSessionStore();
+        var services = new ServiceCollection();
+
+        // Act
+        services.AddFoundryAgentSessionStore(first);
+        services.AddFoundryAgentSessionStore(firstForAgent, AgentName);
+        services.AddFoundryAgentSessionStore(_ => second, ServiceLifetime.Scoped);
+        services.AddFoundryAgentSessionStore(secondForAgent, AgentName);
+        using ServiceProvider provider = services.BuildServiceProvider();
+        using IServiceScope scope = provider.CreateScope();
+
+        // Assert: replacing the store for all agents keeps the store registered for the agent name.
+        Assert.Equal(2, services.Count(d => d.ServiceType == typeof(AgentSessionStore)));
+        Assert.Same(second, scope.ServiceProvider.GetRequiredService<AgentSessionStore>());
+        Assert.Same(secondForAgent, scope.ServiceProvider.GetRequiredKeyedService<AgentSessionStore>(AgentName));
+    }
+
+    [Fact]
+    public void AddFoundryAgentSessionStore_HostBuilder_RegistersTheStoreWithTheRequestedLifetime()
+    {
+        // Arrange
+        HostApplicationBuilder builder = Host.CreateApplicationBuilder();
+        var store = new TestAgentSessionStore();
+
+        // Act
+        builder.AddFoundryAgentSessionStore(store);
+        builder.AddFoundryAgentSessionStore(_ => new TestAgentSessionStore(), ServiceLifetime.Transient, AgentName);
+
+        // Assert
+        ServiceDescriptor forAllAgents = Assert.Single(builder.Services, d => d.ServiceType == typeof(AgentSessionStore) && !d.IsKeyedService);
+        Assert.Same(store, forAllAgents.ImplementationInstance);
+        ServiceDescriptor forAgent = Assert.Single(builder.Services, d => d.ServiceType == typeof(AgentSessionStore) && d.IsKeyedService);
+        Assert.Equal(AgentName, forAgent.ServiceKey);
+        Assert.Equal(ServiceLifetime.Transient, forAgent.Lifetime);
+    }
+
+    [Fact]
+    public async Task AddFoundryAgentSessionStore_ForAgentName_TakesPrecedenceOverTheStoreForAllAgentsAsync()
+    {
+        // Arrange
+        var storeForAll = new RecordingSessionStore();
+        var storeForSecond = new RecordingSessionStore();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddFoundryResponses("first", _ => new TrackingAgent(new AgentLifetimeLog(), name: "first"), ServiceLifetime.Scoped);
+        services.AddFoundryResponses("second", _ => new TrackingAgent(new AgentLifetimeLog(), name: "second"), ServiceLifetime.Scoped);
+        services.AddFoundryAgentSessionStore(storeForAll);
+        services.AddFoundryAgentSessionStore(storeForSecond, "second");
+        AgentFrameworkResponseHandler handler = ResolveHandler(services);
+
+        // Act
+        string firstIdentity = await DrainAndGetIdentityAsync(handler, storeForAll, "first");
+        string secondIdentity = await DrainAndGetIdentityAsync(handler, storeForSecond, "second");
+
+        // Assert
+        Assert.Equal("name:first", firstIdentity);
+        Assert.Equal("key:second", secondIdentity);
+        Assert.DoesNotContain("key:second", storeForAll.Identities);
+        Assert.DoesNotContain("name:first", storeForSecond.Identities);
+    }
+
+    [Fact]
+    public async Task AddFoundryAgentSessionStore_ForAgentName_ReplacesTheStorePassedToTheInstanceOverloadAsync()
+    {
+        // Arrange
+        var instanceStore = new RecordingSessionStore();
+        var replacement = new RecordingSessionStore();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddFoundryResponses(new TrackingAgent(new AgentLifetimeLog()), instanceStore);
+        services.AddFoundryAgentSessionStore(replacement, AgentName);
+        AgentFrameworkResponseHandler handler = ResolveHandler(services);
+
+        // Act
+        await DrainAsync(handler, CreateRequest(AgentName), CreateContext());
+
+        // Assert
+        Assert.Empty(instanceStore.Identities);
+        Assert.NotEmpty(replacement.Identities);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AddFoundryResponses_InstanceWithoutStore_UsesTheStoreForAllAgentsAsync(bool registerStoreFirst)
+    {
+        // Arrange
+        var storeForAll = new RecordingSessionStore();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        if (registerStoreFirst)
+        {
+            services.AddFoundryAgentSessionStore(storeForAll);
+        }
+
+        services.AddFoundryResponses(new TrackingAgent(new AgentLifetimeLog()));
+        if (!registerStoreFirst)
+        {
+            services.AddFoundryAgentSessionStore(storeForAll);
+        }
+
+        AgentFrameworkResponseHandler handler = ResolveHandler(services);
+
+        // Act
+        string namedIdentity = await DrainAndGetIdentityAsync(handler, storeForAll, AgentName);
+        string unnamedIdentity = await DrainAndGetIdentityAsync(handler, storeForAll, agentName: null);
+
+        // Assert
+        Assert.Equal($"name:{AgentName}", namedIdentity);
+        Assert.Equal(namedIdentity, unnamedIdentity);
+    }
+
+    [Fact]
+    public async Task AddFoundryResponses_InstanceWithStore_DoesNotShareItsStoreWithOtherAgentsAsync()
+    {
+        // Arrange: a store passed for one agent, and another agent registered by hand without a store.
+        var instanceStore = new RecordingSessionStore();
+        var storeForAll = new RecordingSessionStore();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddFoundryResponses(new TrackingAgent(new AgentLifetimeLog(), name: "first"), instanceStore);
+        services.AddKeyedSingleton<AIAgent>("other", new TrackingAgent(new AgentLifetimeLog(), name: "other"));
+        services.AddFoundryAgentSessionStore(storeForAll);
+        AgentFrameworkResponseHandler handler = ResolveHandler(services);
+
+        // Act
+        await DrainAsync(handler, CreateRequest("other"), CreateContext());
+        await DrainAsync(handler, CreateRequest("first"), CreateContext());
+
+        // Assert
+        Assert.Equal("key:other", Assert.Single(storeForAll.Identities.Distinct()));
+        Assert.Equal("name:first", Assert.Single(instanceStore.Identities.Distinct()));
+    }
+
+    [Fact]
+    public void AddFoundryResponses_InstanceWithStore_KeepsTheDefaultStoreForOtherAgents()
+    {
+        // Arrange
+        var instanceStore = new TestAgentSessionStore();
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        // Act
+        services.AddFoundryResponses(new TrackingAgent(new AgentLifetimeLog()), instanceStore);
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        // Assert
+        Assert.Same(instanceStore, provider.GetRequiredKeyedService<AgentSessionStore>(AgentName));
+        Assert.IsType<FoundryAgentSessionStore>(provider.GetRequiredService<AgentSessionStore>());
+    }
+
+    [Fact]
+    public async Task CreateAsync_UnknownAgentName_UsesTheDefaultAgentsOwnStoreAsync()
+    {
+        // Arrange: a request naming no registered agent is answered by the default agent.
+        var instanceStore = new RecordingSessionStore();
+        var storeForAll = new RecordingSessionStore();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddFoundryResponses(new TrackingAgent(new AgentLifetimeLog()), instanceStore);
+        services.AddFoundryAgentSessionStore(storeForAll);
+        AgentFrameworkResponseHandler handler = ResolveHandler(services);
+
+        // Act
+        await DrainAsync(handler, CreateRequest("unknown"), CreateContext());
+        await DrainAsync(handler, CreateRequest(agentName: null), CreateContext());
+
+        // Assert
+        Assert.Empty(storeForAll.Identities);
+        Assert.Equal($"name:{AgentName}", Assert.Single(instanceStore.Identities.Distinct()));
+    }
     [Theory]
     [InlineData(ServiceLifetime.Singleton)]
     [InlineData(ServiceLifetime.Scoped)]
@@ -410,8 +654,9 @@ public sealed class FoundryAgentLifetimeTests
         var factoryStore = new RecordingSessionStore();
         var factoryServices = new ServiceCollection();
         factoryServices.AddLogging();
-        factoryServices.AddFoundryResponses("first", _ => new TrackingAgent(new AgentLifetimeLog(), name: "first"), lifetime, _ => factoryStore);
-        factoryServices.AddFoundryResponses("second", _ => new TrackingAgent(new AgentLifetimeLog(), name: "second"), lifetime, _ => factoryStore);
+        factoryServices.AddFoundryAgentSessionStore(factoryStore);
+        factoryServices.AddFoundryResponses("first", _ => new TrackingAgent(new AgentLifetimeLog(), name: "first"), lifetime);
+        factoryServices.AddFoundryResponses("second", _ => new TrackingAgent(new AgentLifetimeLog(), name: "second"), lifetime);
         AgentFrameworkResponseHandler factoryHandler = ResolveHandler(factoryServices);
 
         // Act
@@ -441,7 +686,8 @@ public sealed class FoundryAgentLifetimeTests
         var store = new RecordingSessionStore();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses("first", _ => new TrackingAgent(log, name: "first"), ServiceLifetime.Scoped, _ => store);
+        services.AddFoundryAgentSessionStore(store);
+        services.AddFoundryResponses("first", _ => new TrackingAgent(log, name: "first"), ServiceLifetime.Scoped);
         services.AddFoundryResponses(new TrackingAgent(new AgentLifetimeLog(), name: "second"), store);
         AgentFrameworkResponseHandler handler = ResolveHandler(services);
 
@@ -464,7 +710,7 @@ public sealed class FoundryAgentLifetimeTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton<AgentSessionStore>(store);
-        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped, _ => store);
+        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped);
         services.AddSingleton<AIAgent>(new TrackingAgent(new AgentLifetimeLog()));
         AgentFrameworkResponseHandler handler = ResolveHandler(services);
 
@@ -487,16 +733,16 @@ public sealed class FoundryAgentLifetimeTests
         var stores = new ConcurrentQueue<RecordingSessionStore>();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses(
-            AgentName,
-            _ => new TrackingAgent(log),
-            lifetime,
+        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(log), lifetime);
+        services.AddFoundryAgentSessionStore(
             _ =>
             {
                 var store = new RecordingSessionStore();
                 stores.Enqueue(store);
                 return store;
-            });
+            },
+            lifetime,
+            AgentName);
         ServiceProvider provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         var handler = Assert.IsType<AgentFrameworkResponseHandler>(provider.GetRequiredService<ResponseHandler>());
 
@@ -525,7 +771,8 @@ public sealed class FoundryAgentLifetimeTests
         var store = new RecordingSessionStore();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(log), ServiceLifetime.Singleton, _ => store);
+        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(log), ServiceLifetime.Singleton);
+        services.AddFoundryAgentSessionStore(_ => store);
         ServiceProvider provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         var handler = Assert.IsType<AgentFrameworkResponseHandler>(provider.GetRequiredService<ResponseHandler>());
 
@@ -550,7 +797,8 @@ public sealed class FoundryAgentLifetimeTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddKeyedScoped<AIAgent>(AgentName, (_, _) => new TrackingAgent(log));
-        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(new AgentLifetimeLog()), agentSessionStoreFactory: _ => new TestAgentSessionStore());
+        services.AddFoundryAgentSessionStore(new TestAgentSessionStore());
+        services.AddFoundryResponses(AgentName, _ => new TrackingAgent(new AgentLifetimeLog()));
         AgentFrameworkResponseHandler handler = ResolveHandler(services);
 
         // Act
@@ -577,7 +825,7 @@ public sealed class FoundryAgentLifetimeTests
         // Assert: the existing registration wins, like the instance overload's TryAdd behavior.
         ServiceDescriptor keyed = Assert.Single(services, d => d.ServiceType == typeof(AIAgent) && d.IsKeyedService);
         Assert.Same(existing, keyed.KeyedImplementationInstance);
-        Assert.DoesNotContain(services, d => d.ServiceType == typeof(FoundryAgentFactoryRegistration));
+        Assert.DoesNotContain(services, d => d.ServiceType == typeof(FoundryDefaultAgentName));
     }
 
     [Fact]
@@ -607,8 +855,8 @@ public sealed class FoundryAgentLifetimeTests
         builder.Services.AddFoundryResponses(
             AgentName,
             _ => new TrackingAgent(log, gate),
-            ServiceLifetime.Scoped,
-            _ => new TestAgentSessionStore());
+            ServiceLifetime.Scoped);
+        builder.Services.AddFoundryAgentSessionStore(_ => new TestAgentSessionStore(), ServiceLifetime.Scoped);
         builder.Services.AddLogging();
         await using WebApplication app = builder.Build();
         app.MapFoundryResponses();

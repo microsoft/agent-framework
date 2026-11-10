@@ -79,18 +79,25 @@ database context, register a factory with a DI lifetime instead:
 builder.AddFoundryResponses(
     agentName,
     sp => new MyAgent(sp.GetRequiredService<MyDbContext>()),
-    ServiceLifetime.Scoped,
-    // Optional: a session store created with the same lifetime. Omit it to use the default store.
-    sp => new MySessionStore(sp.GetRequiredService<MyDbContext>()));
+    ServiceLifetime.Scoped);
 ```
 
 Each response run (streaming, background, or resumed after a restart) gets its own DI scope, which is
-disposed when that run's event stream ends. A `Scoped` agent, and a session store created by the
-optional store factory, are therefore created once per response and disposed afterwards, even when a
-background response keeps running after the HTTP request has returned. Without a store factory the
-default session store is a single shared instance. Conversation state is not kept on the agent object;
-each turn loads the saved session, and sessions are stored under `agentName`, so switching from the
-instance overload keeps existing conversations.
+disposed when that run's event stream ends. A `Scoped` agent is therefore created once per response and
+disposed afterwards, even when a background response keeps running after the HTTP request has returned.
+Conversation state is not kept on the agent object; each turn loads the saved session, and sessions are
+stored under `agentName`, so switching from the instance overload keeps existing conversations.
+
+The session store has its own registration and lifetime, independent of the agent. Without one, every
+agent uses the default store, a single shared instance:
+
+```csharp
+// For every agent that has no store of its own. A store object you pass in is never disposed by DI.
+builder.AddFoundryAgentSessionStore(sp => new MySessionStore(sp.GetRequiredService<MyDbContext>()), ServiceLifetime.Scoped);
+
+// Or for one agent only.
+builder.AddFoundryAgentSessionStore(mySessionStore, agentName);
+```
 
 ## Run and test locally
 

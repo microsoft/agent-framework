@@ -259,7 +259,8 @@ public sealed class ResilientTwoLifetimeIntegrationTests
         var options = new FoundryResponsesServerOptions { ResilientBackground = true };
         if (factoryLifetime is { } lifetime)
         {
-            builder.Services.AddFoundryResponses(agentName, _ => createAgent(), lifetime, _ => sessionStore, options);
+            builder.Services.AddFoundryResponses(agentName, _ => createAgent(), lifetime, options);
+            builder.Services.AddFoundryAgentSessionStore(sessionStore);
         }
         else
         {
