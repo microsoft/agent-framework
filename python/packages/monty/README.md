@@ -242,7 +242,7 @@ Available primitives:
 
 | Primitive | Behavior |
 |-----------|----------|
-| `await tool_name(**kwargs)` | Direct typed call to a registered host tool. Argument types are checked before execution. |
+| `await tool_name(**kwargs)` | Direct typed call to a registered host tool. Keyword arguments only; positional arguments are rejected. Argument types are checked before execution. |
 | `await call_tool("name", **kwargs)` | Generic fallback that dispatches by tool name. Not type-checked. |
 | `asyncio.gather(...)` | Fans out concurrent tool calls. |
 | `print(...)` | Captured and surfaced as text in the tool result. |
@@ -274,6 +274,6 @@ These functions execute on the host rather than inside the Monty interpreter.
   `workspace_root` / `file_mounts` to grant scoped filesystem access.
 - Code is type-checked against tool signatures via
   [ty](https://docs.astral.sh/ty/) before execution, so wrong argument types
-  surface as a clear error before any host tool runs.
+  or positional-argument usage surface as a clear error before any host tool runs.
 - The beta package is part of `agent-framework[all]` and is reachable through
   the lazy-loading namespace `agent_framework.monty`.

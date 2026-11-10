@@ -2561,6 +2561,71 @@ class TestAsAgent:
         response = await stream.get_final_response()
         assert len(response.messages) >= 1
 
+    @pytest.mark.parametrize("consume", ["none", "first", "all"])
+    async def test_as_agent_stream_close_releases_workflow(self, consume: str):
+        @built_workflow
+        async def wf(x: int) -> str:
+            return f"result: {x}"
+
+        agent = wf.as_agent()
+        stream = agent.run(1, stream=True)
+        if consume == "first":
+            assert (await anext(stream)).text == "result: 1"
+        elif consume == "all":
+            assert (await stream.get_final_response()).text == "result: 1"
+
+        await stream.close()
+        assert (await agent.run(2)).text == "result: 2"
+
+        # Closing an old stream again must not release a newer run's guard.
+        next_stream = agent.run(3, stream=True)
+        try:
+            await stream.close()
+            with pytest.raises(RuntimeError, match="already running"):
+                await agent.run(4)
+            assert (await next_stream.get_final_response()).text == "result: 3"
+        finally:
+            await next_stream.close()
+
+    @pytest.mark.parametrize("cancel", [False, True])
+    async def test_as_agent_stream_failure_releases_workflow(self, cancel: bool):
+        started = asyncio.Event()
+        stopped = asyncio.Event()
+
+        @built_workflow
+        async def wf(x: int) -> str:
+            if x == 1:
+                try:
+                    started.set()
+                    if cancel:
+                        await asyncio.Event().wait()
+                    raise ValueError("workflow failure")
+                finally:
+                    stopped.set()
+            return f"result: {x}"
+
+        agent = wf.as_agent()
+        stream = agent.run(1, stream=True)
+        pull = asyncio.create_task(anext(stream))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            if cancel:
+                pull.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await pull
+            else:
+                with pytest.raises(ValueError, match="workflow failure"):
+                    await pull
+            assert stopped.is_set()
+            await stream.close()
+            assert (await agent.run(2)).text == "result: 2"
+        finally:
+            if not pull.done():
+                pull.cancel()
+                with suppress(asyncio.CancelledError):
+                    await pull
+            await stream.close()
+
     async def test_as_agent_has_id_and_description(self):
         @built_workflow(description="A test workflow")
         async def wf(x: int) -> int:

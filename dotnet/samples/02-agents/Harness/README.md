@@ -37,7 +37,7 @@ Samples accompanying the [*Build your own agent harness or claw with Microsoft A
 
 ## Foundry hosted Harness sample
 
-The Research sample hosts a `HarnessAgent` as a Foundry hosted agent using source ZIP deployment with the default `AllowStoredOutputEnabled = false`, so the model service never stores the conversation.
+The Research sample hosts a `HarnessAgent` as a Foundry hosted agent using source ZIP deployment with the default `InferenceStoredOutputAllowed = false`, so the model service never stores the conversation.
 
 | Sample | Description |
 | --- | --- |

@@ -126,6 +126,13 @@ are not stopped solely because either output allowance is exceeded.
 - **Linux / macOS**: `/bin/bash --noprofile --norc` (falls back to `/bin/sh`).
 - Override via the `shell=` constructor argument or the
   `AGENT_FRAMEWORK_SHELL` environment variable.
+- **Windows executable lookup**: a bare executable name (the default `pwsh` or
+  `powershell`, a bare `shell=` or `AGENT_FRAMEWORK_SHELL` value, and the
+  `docker_binary` of `DockerShellTool`) is looked up only in the fully
+  qualified entries of `PATH`. The current directory and relative `PATH`
+  entries are never searched. Pass an absolute path to select a specific
+  executable. A path, like a `PATH` match, shows only that the file exists, not
+  that it can be trusted, so keep `PATH` and the directories on it protected.
 
 ## `ShellEnvironmentProvider` — context provider
 
