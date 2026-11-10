@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import ntpath
 import os
 import shutil
 import sys
@@ -12,6 +13,74 @@ from collections.abc import Sequence
 from ._types import ShellExecutionError
 
 _ENV_OVERRIDE = "AGENT_FRAMEWORK_SHELL"
+
+
+def _is_fully_qualified(path: str) -> bool:
+    """Return whether ``path`` names a fixed location that does not depend on the current directory."""
+    drive, rest = ntpath.splitdrive(path)
+    return bool(drive) and rest[:1] in ("\\", "/")
+
+
+def find_executable(name: str) -> str | None:
+    """Find a bare executable name in the fully qualified entries of ``PATH``.
+
+    The search follows Windows naming rules and never uses the current directory. Windows starts a
+    bare name from the current directory of the host process before it reads ``PATH``, and
+    :func:`shutil.which` puts that directory first too, so a file in that directory could replace the
+    intended executable. Empty, relative, drive-relative, and drive-less rooted ``PATH`` entries
+    depend on the current directory, so they are skipped.
+
+    Args:
+        name: A bare file name. ``.exe`` is added when it has no extension, as Windows does.
+
+    Returns:
+        The absolute path of the first match, or ``None`` when no fully qualified ``PATH`` entry holds
+        the file. A match shows only that the file exists there, not who owns it or whether it can be
+        trusted.
+    """
+    candidate = name if ntpath.splitext(name)[1] else f"{name}.exe"
+    # PATH entries are sometimes quoted; Windows tools differ in whether they strip the quotes.
+    for raw_entry in os.environ.get("PATH", "").split(ntpath.pathsep):
+        entry = raw_entry.strip().strip('"')
+        if not _is_fully_qualified(entry):
+            continue
+        path = ntpath.join(entry, candidate)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def resolve_executable(name: str) -> str:
+    """Return ``name`` in a form that can be launched without searching the current directory.
+
+    On Windows a bare name is replaced by the path that :func:`find_executable` returns. Every other
+    value is returned unchanged: names with a directory or a drive are an explicit choice of the caller,
+    and other platforms do not search the current directory for bare names.
+
+    Args:
+        name: The executable name or path that the caller configured.
+
+    Raises:
+        FileNotFoundError: On Windows, when a bare name is not found in the fully qualified ``PATH``
+            entries. The bare name is never used as a fallback.
+    """
+    if sys.platform != "win32" or ntpath.dirname(name) or ntpath.splitdrive(name)[0]:
+        return name
+    found = find_executable(name)
+    if found is None:
+        raise FileNotFoundError(
+            f"Executable {name!r} was not found in the fully qualified entries of PATH. "
+            "The current directory and relative PATH entries are not searched."
+        )
+    return found
+
+
+def _qualify_shell(parts: list[str]) -> list[str]:
+    """Resolve the executable of an explicit shell override."""
+    try:
+        return [resolve_executable(parts[0]), *parts[1:]]
+    except FileNotFoundError as exc:
+        raise ShellExecutionError(str(exc)) from exc
 
 
 def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> list[str]:
@@ -23,6 +92,10 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
        is used verbatim).
     2. ``AGENT_FRAMEWORK_SHELL`` environment variable.
     3. Platform default.
+
+    On Windows, a bare shell name (the default or an override) is resolved from the fully
+    qualified entries of ``PATH``; the current directory is never searched. Names that contain
+    a directory or a drive are used as given.
 
     When ``interactive=False`` (stateless mode), the returned argv is
     guaranteed to end with a ``-c`` (POSIX) or ``-Command`` (PowerShell)
@@ -48,6 +121,7 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
             parts = list(shell)
             if not parts:
                 raise ShellExecutionError("shell override must not be empty")
+        parts = _qualify_shell(parts)
         return parts if interactive else _ensure_command_flag(parts)
 
     env_override = os.environ.get(_ENV_OVERRIDE)
@@ -56,10 +130,11 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
 
         parts = shlex.split(env_override)
         if parts:
+            parts = _qualify_shell(parts)
             return parts if interactive else _ensure_command_flag(parts)
 
     if sys.platform == "win32":
-        binary = shutil.which("pwsh") or shutil.which("powershell")
+        binary = find_executable("pwsh") or find_executable("powershell")
         if binary is None:
             raise ShellExecutionError(
                 f"Neither 'pwsh' nor 'powershell' was found on PATH. Install PowerShell 7+ or set {_ENV_OVERRIDE}."
