@@ -346,6 +346,6 @@ public sealed partial class AgentMcpSkillTests
         long maxResourceSizeBytes = AgentMcpSkill.DefaultMaxResourceSizeBytes,
         TimeProvider? timeProvider = null,
         bool hasIsolationKey = false) =>
-        new(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri, new McpSkillDynamicResources(), client,
+        new(CreateFrontmatter(), CreateAdvertisedFrontmatter(), new Uri(SkillUri), new McpSkillDynamicResources(), client,
             maxResourceSizeBytes: maxResourceSizeBytes, timeProvider: timeProvider, hasIsolationKey: hasIsolationKey);
 }

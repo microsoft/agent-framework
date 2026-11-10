@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -26,6 +27,27 @@ public sealed partial class AgentMcpSkillTests
     private const string SkillRootUri = "skill://unit-converter/";
     private const string SkillUri = SkillRootUri + "SKILL.md";
     private const string SkillContent = "---\nname: unit-converter\ndescription: Convert units.\n---\nInstructions.";
+
+    [Fact]
+    public void Type_PublicWithInternalConstructorsAndPublicUri()
+    {
+        // Arrange
+        Type type = typeof(AgentMcpSkill);
+
+        // Act
+        var constructors = type.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        var uriProperty = type.GetProperty(nameof(AgentMcpSkill.Uri));
+
+        // Assert
+        Assert.True(type.IsPublic);
+        Assert.NotEmpty(constructors);
+        Assert.All(constructors, constructor => Assert.True(constructor.IsAssembly));
+        Assert.NotNull(uriProperty);
+        Assert.Equal(typeof(Uri), uriProperty.PropertyType);
+        Assert.NotNull(uriProperty.GetMethod);
+        Assert.True(uriProperty.GetMethod.IsPublic);
+        Assert.Null(uriProperty.SetMethod);
+    }
 
     [Theory]
     [InlineData(SkillUri, true)]
@@ -78,7 +100,7 @@ public sealed partial class AgentMcpSkillTests
 
         // Act
         ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
-            new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri, null!, client));
+            new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), new Uri(SkillUri), null!, client));
 
         // Assert
         Assert.Equal("resources", exception.ParamName);
@@ -105,7 +127,7 @@ public sealed partial class AgentMcpSkillTests
         };
 
         // Act
-        var skill = new AgentMcpSkill(frontmatter, document.RootElement.Clone(), SkillUri, new McpSkillManifestResources([]), Moq.Mock.Of<McpClient>());
+        var skill = new AgentMcpSkill(frontmatter, document.RootElement.Clone(), new Uri(SkillUri), new McpSkillManifestResources([]), Moq.Mock.Of<McpClient>());
         document.Dispose();
         frontmatter.License = "Apache-2.0";
         frontmatter.Metadata["Owner"] = "Changed";
@@ -127,7 +149,7 @@ public sealed partial class AgentMcpSkillTests
         var frontmatter = new AgentSkillFrontmatter("unit-converter", "Convert units.") { License = "MIT" };
 
         // Act
-        var skill = new AgentMcpSkill(frontmatter, CreateAdvertisedFrontmatter(), SkillUri, new McpSkillManifestResources([Resource(SkillUri, SkillContent)]), client);
+        var skill = new AgentMcpSkill(frontmatter, CreateAdvertisedFrontmatter(), new Uri(SkillUri), new McpSkillManifestResources([Resource(SkillUri, SkillContent)]), client);
 
         // Assert
         Assert.Same(frontmatter, skill.Frontmatter);
@@ -146,7 +168,7 @@ public sealed partial class AgentMcpSkillTests
             : null;
 
         // Act
-        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
+        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), new Uri(SkillUri),
             new McpSkillManifestResources([Resource(SkillUri, SkillContent)]), client, metadataLifetime: lifetime);
 
         // Assert
@@ -165,7 +187,7 @@ public sealed partial class AgentMcpSkillTests
             return ValueTask.FromResult(Text(uri, uri == SkillUri ? SkillContent : "Nested instructions."));
         });
         await using var client = await server.CreateClientAsync();
-        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri,
+        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), new Uri(SkillUri),
             new McpSkillManifestResources(
             [
                 Resource(NestedUri, "Nested instructions."),
@@ -200,7 +222,7 @@ public sealed partial class AgentMcpSkillTests
         McpSkillResourceEntry[] resources = includeNestedInstructions
             ? [Resource(SkillRootUri + "nested/SKILL.md", SkillContent)]
             : [];
-        var skill = new AgentMcpSkill(frontmatter, CreateAdvertisedFrontmatter(), SkillUri, new McpSkillManifestResources(resources), client);
+        var skill = new AgentMcpSkill(frontmatter, CreateAdvertisedFrontmatter(), new Uri(SkillUri), new McpSkillManifestResources(resources), client);
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
@@ -570,7 +592,7 @@ public sealed partial class AgentMcpSkillTests
             """);
         var frontmatter = CreateFrontmatter();
         frontmatter.License = "MIT";
-        var skill = new AgentMcpSkill(frontmatter, frontmatterJson, SkillUri, new McpSkillManifestResources([Resource(SkillUri, Content)]), client);
+        var skill = new AgentMcpSkill(frontmatter, frontmatterJson, new Uri(SkillUri), new McpSkillManifestResources([Resource(SkillUri, Content)]), client);
 
         // Act
         string verified = await skill.GetContentAsync();
@@ -606,7 +628,7 @@ public sealed partial class AgentMcpSkillTests
         {
             Metadata = new() { ["Owner"] = "Example" },
         };
-        var skill = new AgentMcpSkill(frontmatter, document.RootElement.Clone(), SkillUri, new McpSkillManifestResources([Resource(SkillUri, content)]), client);
+        var skill = new AgentMcpSkill(frontmatter, document.RootElement.Clone(), new Uri(SkillUri), new McpSkillManifestResources([Resource(SkillUri, content)]), client);
         document.Dispose();
 
         // Act
@@ -661,7 +683,7 @@ public sealed partial class AgentMcpSkillTests
             return ValueTask.FromResult(Text(uri, SkillContent));
         });
         await using var client = await server.CreateClientAsync();
-        var skill = new AgentMcpSkill(frontmatter, snapshot, SkillUri, new McpSkillManifestResources([Resource(SkillUri, SkillContent)]), client);
+        var skill = new AgentMcpSkill(frontmatter, snapshot, new Uri(SkillUri), new McpSkillManifestResources([Resource(SkillUri, SkillContent)]), client);
 
         // Act & Assert
         for (int i = 0; i < 2; i++)
@@ -1148,7 +1170,7 @@ public sealed partial class AgentMcpSkillTests
 
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, Content)));
         await using var client = await server.CreateClientAsync();
-        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), SkillUri, new McpSkillManifestResources([instructions]), client);
+        var skill = new AgentMcpSkill(CreateFrontmatter(), CreateAdvertisedFrontmatter(), new Uri(SkillUri), new McpSkillManifestResources([instructions]), client);
 
         // Act & Assert
         if (useCharacterCount)
@@ -1408,7 +1430,7 @@ public sealed partial class AgentMcpSkillTests
         string content = SkillContent,
         long maxResourceSizeBytes = AgentMcpSkill.DefaultMaxResourceSizeBytes,
         TimeProvider? timeProvider = null) =>
-        new(CreateFrontmatter(), CreateAdvertisedFrontmatter(), root + "SKILL.md", new McpSkillManifestResources(
+        new(CreateFrontmatter(), CreateAdvertisedFrontmatter(), new Uri(root + "SKILL.md", UriKind.Absolute), new McpSkillManifestResources(
             [
                 Resource(root + "SKILL.md", content),
                 .. resources ??

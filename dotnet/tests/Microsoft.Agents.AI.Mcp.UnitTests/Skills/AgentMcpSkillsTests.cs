@@ -75,6 +75,79 @@ public sealed partial class AgentMcpSkillsTests
     }
 
     [Theory]
+    [InlineData("skill://FIRST/%73cope/unit-converter/SKILL.md", true)]
+    [InlineData("skill://first/%73cope/unit-converter/SKILL.md", true)]
+    [InlineData("skill://first/scope/unit-converter/SKILL.md", false)]
+    public async Task GetSkillsAsync_FilterDecorator_FiltersBySkillUriAsync(string includedUri, bool matches)
+    {
+        // Arrange
+        List<string> reads = [];
+        await using var server = CreateServer(
+            (_, _) => ValueTask.FromResult<JsonNode?>(ListResult(
+                Entry("skill://FIRST/%73cope/unit-converter/"),
+                Entry("skill://first/%73cope/unit-converter/"))),
+            (uri, _) =>
+            {
+                reads.Add(uri);
+                return ValueTask.FromResult(Text(uri, SkillContent));
+            });
+        await using var client = await server.CreateClientAsync();
+        using var source = new FilteringAgentSkillsSource(
+            new AgentMcpSkillsSource(client),
+            (skill, _) => skill is AgentMcpSkill mcpSkill &&
+                mcpSkill.Uri.Host == "first" && mcpSkill.Uri.OriginalString == includedUri);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        if (matches)
+        {
+            var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(skills));
+            Assert.Equal(includedUri, skill.Uri.OriginalString);
+            Assert.Equal("skill", skill.Uri.Scheme);
+            Assert.Equal("first", skill.Uri.Host);
+        }
+        else
+        {
+            Assert.Empty(skills);
+        }
+
+        Assert.Empty(reads);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ResourceReads_PreserveOriginalUriAsync()
+    {
+        // Arrange
+        const string RootUri = "skill://FIRST/%73cope/unit-converter/";
+        const string InstructionsUri = RootUri + "SKILL.md";
+        const string ResourceUri = RootUri + "references/checklist.md";
+        List<string> reads = [];
+        await using var server = CreateServer(
+            (_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry(RootUri))),
+            (uri, _) =>
+            {
+                reads.Add(uri);
+                return ValueTask.FromResult(Text(uri, uri == InstructionsUri ? SkillContent : "Checklist."));
+            });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())));
+
+        // Act
+        string content = await skill.GetContentAsync();
+        var resource = await skill.GetResourceAsync("references/checklist.md");
+
+        // Assert
+        Assert.Equal(InstructionsUri, skill.Uri.OriginalString);
+        Assert.Equal(SkillContent, content);
+        Assert.NotNull(resource);
+        Assert.Equal("Checklist.", await resource.ReadAsync());
+        Assert.Equal([InstructionsUri, ResourceUri], reads);
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("opaque cursor:+/=\u00e9")]
     public async Task GetSkillsAsync_PaginatedList_FollowsOpaqueCursorsAndEmptyPagesAsync(string firstCursor)
