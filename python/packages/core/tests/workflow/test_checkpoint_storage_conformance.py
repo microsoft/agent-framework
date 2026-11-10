@@ -387,6 +387,84 @@ async def test_concurrent_variant_saves_share_aliased_storage_directory(tmp_path
     assert (await winner.load(saved_ids[0])).state["marker"] == ("upper" if saved_ids[0] == "Round-A" else "lower")
 
 
+async def test_file_delete_and_save_share_physical_destination_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A delete cannot verify one revision and unlink a later save through a directory alias."""
+    if not _filesystem_is_case_insensitive(tmp_path):
+        pytest.skip("directory aliases require a case-insensitive filesystem")
+    upper_storage = FileCheckpointStorage(tmp_path / "Checkpoints")
+    lower_storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    assert upper_storage.storage_path.samefile(lower_storage.storage_path)
+
+    original = WorkflowCheckpoint(
+        workflow_name="workflow",
+        graph_signature_hash="topology",
+        checkpoint_id="Round-A",
+        state={"marker": "original"},
+    )
+    updated = WorkflowCheckpoint(
+        workflow_name="workflow",
+        graph_signature_hash="topology",
+        checkpoint_id="Round-A",
+        state={"marker": "updated"},
+    )
+    await upper_storage.save(original)
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    verified = threading.Event()
+    continue_delete = threading.Event()
+    original_assert = FileCheckpointStorage._assert_stored_spelling
+
+    def pause_after_verify(
+        file_path: Path, checkpoint_id: str, encoded_checkpoint: dict[str, Any] | None = None
+    ) -> None:
+        original_assert(file_path, checkpoint_id, encoded_checkpoint)
+        verified.set()
+        if not continue_delete.wait(timeout=5):
+            raise TimeoutError("delete was not released by the save interleaving")
+
+    monkeypatch.setattr(upper_storage, "_assert_stored_spelling", pause_after_verify)
+
+    original_lock = FileCheckpointStorage._delete_lock
+
+    class SaveSignallingLock:
+        def __init__(self, file_path: Path) -> None:
+            self._lock = original_lock(file_path)
+
+        def __enter__(self) -> Any:
+            # The fixed save path reaches its destination lock before replacing.
+            # Release the delete so it can finish and hand the lock to this save.
+            continue_delete.set()
+            return self._lock.__enter__()
+
+        def __exit__(self, *args: Any) -> Any:
+            return self._lock.__exit__(*args)
+
+    monkeypatch.setattr(lower_storage, "_delete_lock", lambda file_path: SaveSignallingLock(file_path))
+
+    original_replace = checkpoint_module.os.replace
+    lower_file_path = (lower_storage.storage_path / "Round-A.json").resolve()
+
+    def replace_then_release(source: Any, destination: Any) -> Any:
+        result = original_replace(source, destination)
+        if Path(destination) == lower_file_path:
+            # On the unfixed path the save needs no destination lock, so the
+            # replace itself releases the paused delete after the new data lands.
+            continue_delete.set()
+        return result
+
+    monkeypatch.setattr(checkpoint_module.os, "replace", replace_then_release)
+
+    delete_task = asyncio.create_task(upper_storage.delete("Round-A"))
+    assert await asyncio.to_thread(verified.wait, 5)
+    save_task = asyncio.create_task(lower_storage.save(updated))
+    await asyncio.wait_for(asyncio.gather(delete_task, save_task), timeout=10)
+
+    assert (await lower_storage.load("Round-A")).state["marker"] == "updated"
+
+
 async def test_file_load_validates_read_identity_when_variant_disappears(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -749,8 +749,8 @@ class FileCheckpointStorage:
 
     @classmethod
     def _delete_lock(cls, file_path: Path) -> threading.Lock:
-        """Return the process-local deletion lock for a checkpoint file."""
-        return cls._DELETE_LOCKS[hash(file_path) % cls._DELETE_LOCK_STRIPE_COUNT]
+        """Return the process-local operation lock for a physical checkpoint destination."""
+        return cls._DELETE_LOCKS[hash(_destination_key(file_path)) % cls._DELETE_LOCK_STRIPE_COUNT]
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint and return its ID.
@@ -784,11 +784,11 @@ class FileCheckpointStorage:
                         raise
                     time.sleep(0.001 * (2**attempt))
 
-        def _write_atomic() -> None:
-            # No lock here: ownership of the destination is already held by the caller
-            # of this function, taken from the process-wide queue before the write was
-            # submitted. Acquiring it on the worker instead is what let same-path saves
-            # pile up inside the executor.
+        def _write_atomic_locked() -> None:
+            # Destination ownership is already held by the caller of this function,
+            # taken from the process-wide queue before the write was submitted. The
+            # caller also holds the alias-safe operation lock shared with delete, so
+            # the collision check and replacement stay one indivisible revision.
             #
             # Use a unique temp file per save in the destination directory so
             # concurrent saves of distinct checkpoint IDs never contend on a
@@ -832,6 +832,12 @@ class FileCheckpointStorage:
                         # Best-effort cleanup only; leaking a temp file is harmless
                         # compared to masking the original exception.
                         logger.debug(f"Failed to remove checkpoint temp file {tmp_path}", exc_info=True)
+
+        def _write_atomic() -> None:
+            # A delete through another path spelling or storage instance must not
+            # verify one revision and unlink this newer replacement (#9466 review).
+            with self._delete_lock(file_path):
+                _write_atomic_locked()
 
         def _write_atomic_and_release(ticket: _WriteTicket) -> None:
             # Release on the worker thread, as the write's last act. The coroutine's
@@ -1014,10 +1020,9 @@ class FileCheckpointStorage:
                 storage directory cannot be listed to rule that out.
         """
         file_path = self._validate_file_path(checkpoint_id)
-        file_lock = self._delete_lock(file_path)
 
         def _delete() -> bool:
-            with file_lock:
+            with self._delete_lock(file_path):
                 if not file_path.exists():
                     return False
                 self._assert_stored_spelling(file_path, checkpoint_id)
