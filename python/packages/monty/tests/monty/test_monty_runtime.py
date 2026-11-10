@@ -103,3 +103,40 @@ async def test_keyword_tool_call_runs_and_omitted_parameters_use_defaults(
 
     assert not any(content.type == "error" for content in contents)
     assert calls == ["named", None]
+
+
+@pytest.mark.parametrize(
+    ("unsupplied_parameter_host_tool", "expected_call"),
+    [
+        ("context", "x:FunctionInvocationContext"),
+        ("var_keyword", "x"),
+        ("var_positional", "x"),
+        ("method", "x"),
+    ],
+    indirect=["unsupplied_parameter_host_tool"],
+)
+async def test_typed_call_does_not_require_parameters_that_guest_code_cannot_supply(
+    unsupplied_parameter_host_tool: tuple[FunctionTool, list[str]],
+    expected_call: str,
+) -> None:
+    host_tool, calls = unsupplied_parameter_host_tool
+    execute_code = MontyExecuteCodeTool(tools=[host_tool], include_detailed_errors=True)
+
+    contents = await execute_code._run_code(code='await lookup(query="x")')
+
+    assert not any(content.type == "error" for content in contents)
+    assert calls == [expected_call]
+
+
+@pytest.mark.parametrize("unsupplied_parameter_host_tool", ["var_keyword"], indirect=True)
+async def test_typed_call_with_undeclared_keyword_is_rejected_before_any_host_tool_runs(
+    unsupplied_parameter_host_tool: tuple[FunctionTool, list[str]],
+) -> None:
+    host_tool, calls = unsupplied_parameter_host_tool
+    execute_code = MontyExecuteCodeTool(tools=[host_tool], include_detailed_errors=True)
+
+    contents = await execute_code._run_code(code='await lookup(query="x", extra=1)')
+
+    assert [content.type for content in contents] == ["error"]
+    assert "unknown-argument" in (contents[0].error_details or "")
+    assert calls == []

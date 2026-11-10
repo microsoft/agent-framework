@@ -12,7 +12,7 @@ import inspect
 import keyword
 import types
 import typing
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Annotated, Any, cast, get_type_hints
 
 MAX_PRINT_OUTPUT_CHARS = 8192
@@ -95,7 +95,11 @@ def _python_type_repr(annotation: Any) -> str:
     return str(annotation)
 
 
-def generate_type_stubs(tool_callables: dict[str, Callable[..., Any]]) -> str:
+def generate_type_stubs(
+    tool_callables: dict[str, Callable[..., Any]],
+    *,
+    accepted_parameters: Mapping[str, Collection[str]] | None = None,
+) -> str:
     """Generate Python type stub declarations for tools + DSL primitives.
 
     Stubs are fed to Monty's ``type_check_stubs`` so ``ty`` can validate the
@@ -105,7 +109,12 @@ def generate_type_stubs(tool_callables: dict[str, Callable[..., Any]]) -> str:
     Host tools receive keyword arguments only, so every tool parameter is
     declared keyword-only regardless of how the host function declares it.
     ``ty`` then rejects positional calls before any code runs instead of the
-    bridge silently dropping the positional arguments.
+    bridge silently dropping the positional arguments. ``*args`` and
+    ``**kwargs`` are never declared because guest code cannot supply them.
+
+    ``accepted_parameters`` maps a tool name to the parameter names guest code
+    may pass (the tool's schema properties). Other parameters of the callable,
+    such as an injected context parameter or ``self``, are left out of the stub.
 
     Tools whose ``name`` is not a valid Python identifier are skipped because
     their name cannot be safely splatted into stub source. The model can still
@@ -137,8 +146,13 @@ def generate_type_stubs(tool_callables: dict[str, Callable[..., Any]]) -> str:
             lines.append("")
             continue
 
+        accepted = accepted_parameters.get(name) if accepted_parameters is not None else None
         params: list[str] = []
         for param_name, param in sig.parameters.items():
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+            if accepted is not None and param_name not in accepted:
+                continue
             annotation = hints.get(param_name, inspect.Parameter.empty)
             type_str = _python_type_repr(annotation)
             if param.default is not inspect.Parameter.empty:
@@ -302,7 +316,8 @@ class InlineCodeBridge:
     def _schedule_direct_tool(self, snapshot: Any, name: str) -> Any:
         # The generated stubs are keyword-only, so ``ty`` rejects positional calls before any code runs. Fail
         # closed on anything that still reaches the host (for example when type checking is bypassed) instead of
-        # dropping the positional arguments and running the host tool with its defaults.
+        # dropping the positional arguments and running the host tool with its defaults. This is a bridge-owned
+        # usage error, not a host failure, so it stays actionable under redaction (like ``_schedule_call_tool``).
         if snapshot.args:
             return snapshot.resume(
                 _external_error(

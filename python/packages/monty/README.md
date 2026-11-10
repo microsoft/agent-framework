@@ -274,6 +274,6 @@ These functions execute on the host rather than inside the Monty interpreter.
   `workspace_root` / `file_mounts` to grant scoped filesystem access.
 - Code is type-checked against tool signatures via
   [ty](https://docs.astral.sh/ty/) before execution, so wrong argument types
-  or positional arguments surface as a clear error before any host tool runs.
+  or positional-argument usage surface as a clear error before any host tool runs.
 - The beta package is part of `agent-framework[all]` and is reachable through
   the lazy-loading namespace `agent_framework.monty`.

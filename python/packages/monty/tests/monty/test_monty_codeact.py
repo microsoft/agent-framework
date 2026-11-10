@@ -25,7 +25,7 @@ from typing import Annotated, Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
-from agent_framework import Content, FunctionTool, Message, tool
+from agent_framework import Content, FunctionInvocationContext, FunctionTool, Message, tool
 from agent_framework._sessions import SessionContext
 from agent_framework.exceptions import ToolException
 
@@ -1770,6 +1770,24 @@ def test_generate_type_stubs_declares_every_parameter_keyword_only() -> None:
     assert "async def keyword_only(*, tenant_id: str | None = ...) -> int:" in stubs
     # A tool without parameters keeps an empty parameter list.
     assert "async def no_parameters() -> int:" in stubs
+
+
+def test_generate_type_stubs_omits_parameters_guest_code_cannot_supply() -> None:
+    def wrapper(query: str, *args: int, **kwargs: Any) -> str:
+        return query
+
+    def with_context(query: str, ctx: FunctionInvocationContext) -> str:
+        return query
+
+    stubs = bridge_module.generate_type_stubs(
+        {"wrapper": wrapper, "with_context": with_context},
+        accepted_parameters={"with_context": ["query"]},
+    )
+
+    # ``*args`` and ``**kwargs`` are never declared, with or without an accepted-parameter list.
+    assert "async def wrapper(*, query: str) -> str:" in stubs
+    # Parameters outside the accepted list, such as an injected context, are left out.
+    assert "async def with_context(*, query: str) -> str:" in stubs
 
 
 def test_generate_type_stubs_preserves_none_and_optional() -> None:
