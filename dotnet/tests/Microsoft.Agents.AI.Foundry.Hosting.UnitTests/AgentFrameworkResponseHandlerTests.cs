@@ -1860,7 +1860,7 @@ public class AgentFrameworkResponseHandlerTests
 
         // Assert: both turns persisted under the same partition key → one created session.
         Assert.NotNull(agent.LastSession);
-        Assert.Equal("alice", agent.LastSession!.GetHostedUserId());
+        Assert.Equal("alice", agent.LastSession!.GetFoundryHostedUserId());
         Assert.Equal(1, agent.SessionCount);
     }
 

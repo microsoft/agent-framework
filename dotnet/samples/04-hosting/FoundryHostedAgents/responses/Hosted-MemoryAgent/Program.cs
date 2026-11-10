@@ -9,7 +9,7 @@
 // Memory scope flows from request -> hosting layer -> session -> provider:
 //   1. Foundry sets x-agent-user-id on every inbound request.
 //   2. The hosting layer reads context.PlatformContext.UserIdKey and associates it with the session.
-//   3. FoundryMemoryProvider's stateInitializer reads that id via GetHostedUserId and uses it as the
+//   3. FoundryMemoryProvider's stateInitializer reads that id via GetFoundryHostedUserId and uses it as the
 //      FoundryMemoryProviderScope, partitioning memories per user.
 
 using Azure.AI.Projects;
@@ -99,7 +99,7 @@ static FoundryMemoryProvider.State CreatePerUserMemoryState(AgentSession? sessio
     // Repository builds use the reduced session API; published 1.27 exposes the context object.
     string userId =
 #if USE_LOCAL_AGENT_FRAMEWORK_SOURCE
-        session?.GetHostedUserId()
+        session?.GetFoundryHostedUserId()
 #else
         session?.GetHostedContext()?.UserId
 #endif

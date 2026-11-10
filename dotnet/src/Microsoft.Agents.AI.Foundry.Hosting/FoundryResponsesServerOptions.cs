@@ -22,22 +22,22 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 public sealed class FoundryResponsesServerOptions : ResponsesServerOptions
 {
     /// <summary>
-    /// Gets or sets a value indicating whether the agent's own chat client is allowed to store the
-    /// responses it produces.
+    /// Gets or sets a value indicating whether the agent's chat client is allowed to store responses
+    /// in the inference service it calls.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A hosted turn is already recorded by the storage provider that runs around this handler, and
-    /// that record is the conversation the caller reads back. When the service behind the agent's chat
-    /// client also stores the turn, the same exchange is written a second time onto a trail of its own,
-    /// which nothing here reads and no one reconciles with the first.
+    /// This option controls storage in the inference service, not storage of the hosted response
+    /// returned to the caller. Foundry response storage is configured separately through the hosting
+    /// Responses API, including the caller's <c>store</c> setting. Disabling inference-service storage
+    /// does not disable Foundry response storage.
     /// </para>
     /// <para>
-    /// While this is <see langword="false"/>, hosting turns that storage off for every run (the "store"
-    /// property in the JSON representation), and the readiness probe reports an agent whose
-    /// configuration would keep it on. Set it to <see langword="true"/> to leave the agent's own
-    /// setting exactly as the container configured it, in which case hosting neither changes it nor
-    /// checks it.
+    /// While this is <see langword="false"/>, hosting sets <c>store</c> to <see langword="false"/> on
+    /// OpenAI Responses and Chat Completions requests sent by the agent's chat client to the inference
+    /// service. Other request types are left unchanged. The readiness probe reports an agent whose
+    /// configuration would keep inference-service storage on. Set this option to <see langword="true"/>
+    /// to leave the agent's own storage setting unchanged and skip that check.
     /// </para>
     /// <para>
     /// A local conversation marker used by the framework to persist chat history in the agent
@@ -62,16 +62,27 @@ public sealed class FoundryResponsesServerOptions : ResponsesServerOptions
     public string OAuthConsentInterruptedToolResult { get; set; } = McpConsentResults.NotExecuted;
 
     /// <summary>
-    /// Gets or sets a value indicating whether to exclude an encrypted version of reasoning tokens from
-    /// reasoning item outputs.
+    /// Gets or sets a value indicating whether hosting should refrain from requesting encrypted
+    /// reasoning content from the inference service.
     /// </summary>
     /// <remarks>
-    /// By default, encrypted reasoning tokens are included so reasoning items can be used in multi-turn
-    /// conversations when using the Responses API statelessly (like when the store parameter is set to
-    /// false, or when an organization is enrolled in the zero data retention program). Set this option
-    /// to <see langword="true"/> to omit them. It applies only while
-    /// <see cref="InferenceStoredOutputAllowed"/> is <see langword="false"/>, because that is when hosting
-    /// turns storage off and the reasoning items would otherwise be lost between turns.
+    /// <para>
+    /// While <see cref="InferenceStoredOutputAllowed"/> is <see langword="false"/>, hosting adds
+    /// <c>reasoning.encrypted_content</c> to the included properties of OpenAI Responses requests sent
+    /// by the agent's chat client. Encrypted reasoning content is an opaque value that compatible
+    /// clients can send back to the inference service to continue reasoning across turns without
+    /// storing the response in that service.
+    /// </para>
+    /// <para>
+    /// Set this option to <see langword="true"/> to prevent hosting from adding that included property.
+    /// It does not remove an included property already configured by the agent. This option has no
+    /// effect while <see cref="InferenceStoredOutputAllowed"/> is <see langword="true"/>.
+    /// </para>
+    /// <para>
+    /// This option changes requests to the inference service, not the hosted response returned to the
+    /// caller or Foundry response storage. Requesting encrypted reasoning content does not by itself
+    /// ensure that hosting preserves it or sends it back on later turns.
+    /// </para>
     /// </remarks>
     /// <value>
     /// Default is <see langword="false"/>.

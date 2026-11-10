@@ -15,10 +15,15 @@ public static class AgentSessionExtensions
     /// <summary>
     /// Gets the trusted Foundry user id associated with a hosted agent session.
     /// </summary>
+    /// <remarks>
+    /// Reads the identity saved in the session, not the current request context. Foundry Responses
+    /// hosting assigns this value when it resolves a user identity. Other hosting integrations do
+    /// not currently assign it.
+    /// </remarks>
     /// <param name="session">The session to read from.</param>
     /// <returns>The platform user id, or <see langword="null"/> when no hosted user identity was resolved.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="session"/> is <see langword="null"/>.</exception>
-    public static string? GetHostedUserId(this AgentSession session)
+    public static string? GetFoundryHostedUserId(this AgentSession session)
     {
         Throw.IfNull(session);
 
