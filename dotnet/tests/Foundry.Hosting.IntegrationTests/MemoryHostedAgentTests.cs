@@ -12,8 +12,8 @@ namespace Foundry.Hosting.IntegrationTests;
 /// <summary>
 /// Validates the Hosted-MemoryAgent end-to-end against a deployed test container running the
 /// <c>IT_SCENARIO=memory</c> scenario. Asserts that <see cref="Microsoft.Agents.AI.Foundry.FoundryMemoryProvider"/>
-/// scoped via <see cref="Microsoft.Agents.AI.Foundry.Hosting.HostedSessionContext"/> recalls user
-/// preferences across multiple turns of a conversation.
+/// scoped via the hosted session's trusted user id recalls user preferences across multiple turns
+/// of a conversation.
 /// </summary>
 [Trait("Category", "FoundryHostedAgents")]
 public sealed class MemoryHostedAgentTests(MemoryHostedAgentFixture fixture) : IClassFixture<MemoryHostedAgentFixture>

@@ -2,27 +2,24 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>
 /// Adapts <see cref="FoundryToolboxService.StartupStatus"/> to the AspNetCore
 /// HealthChecks pipeline so the <c>GET /readiness</c> probe (mapped by
-/// <see cref="FoundryHostingExtensions.MapFoundryResponses"/>) reflects toolbox startup status,
+/// <see cref="EndpointRouteBuilderExtensions.MapFoundryResponses"/>) reflects toolbox startup status,
 /// not whether every pre-registered toolbox is usable. Pending and Unhealthy use the
 /// registration's failure status; Healthy, NoEndpoint, ConsentRequired, and Degraded
 /// report <c>Healthy</c>. Registered automatically by
-/// <see cref="FoundryHostingExtensions.AddFoundryToolboxes(IServiceCollection, TokenCredential, string[])"/>
+/// <see cref="ServiceCollectionExtensions.AddFoundryToolboxService(IServiceCollection, TokenCredential, string[])"/>
 /// and its overloads.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal sealed class FoundryToolboxHealthCheck : IHealthCheck
 {
     private readonly FoundryToolboxService _toolboxService;

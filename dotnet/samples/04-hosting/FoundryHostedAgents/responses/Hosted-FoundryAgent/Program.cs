@@ -41,7 +41,7 @@ FoundryAgent agent = aiProjectClient.AsAIAgent(agentRecord);
 
 // Host the agent using the Responses protocol.
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent);
+builder.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();
