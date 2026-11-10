@@ -262,6 +262,15 @@ use extra lifecycle hooks, service-side continuation, cross-session merges, or
 custom transcript rewriting should implement labeling inside the provider
 itself rather than relying on the sample wrappers.
 
+When several simple `ContextProvider` instances add messages during
+`before_run`, a final provider can inspect and label the combined message set.
+See
+[`provider_message_labeling_example.py`](provider_message_labeling_example.py).
+Place the message producers first, the labeler next, and `SecureAgentConfig`
+last. This pattern deliberately consumes and re-groups the prior context
+messages, so do not use it around persistent history providers or providers
+whose later lifecycle depends on their original message bucket.
+
 **Automatic Hiding:**
 - UNTRUSTED results/items are automatically hidden in variable store
 - LLM context sees only `VariableReferenceContent`
