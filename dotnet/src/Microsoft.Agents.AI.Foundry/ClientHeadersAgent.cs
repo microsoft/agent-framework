@@ -23,8 +23,8 @@ namespace Microsoft.Agents.AI.Foundry;
 /// <c>RunAsync</c> begins does not leak into in-flight requests.
 /// </para>
 /// <para>
-/// Streaming uses the async-iterator pattern so the AsyncLocal scope stays alive across yields,
-/// which is required because the underlying HTTP send happens during enumeration.
+/// Streaming applies the snapshot before each iterator advancement and disposal. An async iterator
+/// resumes in the consumer's execution context, so the scope must be assigned again after each yield.
 /// </para>
 /// </remarks>
 internal sealed class ClientHeadersAgent : DelegatingAIAgent
@@ -43,16 +43,8 @@ internal sealed class ClientHeadersAgent : DelegatingAIAgent
     {
         FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryAgent);
 
-        var snapshot = TrySnapshot(options);
-        if (snapshot is not null)
-        {
-            // This method is async, so the runtime restores the caller's ExecutionContext (and
-            // therefore the previous ClientHeadersScope.Current value) when the returned task
-            // completes. Awaiting the inner call is what establishes that async-method boundary,
-            // so the per-run scope set here cannot carry into a later run on the same async flow.
-            // See ClientHeadersScope remarks. The streaming path relies on the same behavior.
-            ClientHeadersScope.Current = snapshot;
-        }
+        // Assign the run's snapshot, including null. The async-method boundary restores the caller's scope.
+        ClientHeadersScope.Current = TrySnapshot(options);
 
         return await this.InnerAgent.RunAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
     }
@@ -67,14 +59,26 @@ internal sealed class ClientHeadersAgent : DelegatingAIAgent
         FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryAgent);
 
         var snapshot = TrySnapshot(options);
-        if (snapshot is not null)
+        var enumerator = this.InnerAgent
+            .RunStreamingAsync(messages, session, options, cancellationToken)
+            .GetAsyncEnumerator(cancellationToken);
+        try
+        {
+            while (true)
+            {
+                ClientHeadersScope.Current = snapshot;
+                if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                {
+                    yield break;
+                }
+
+                yield return enumerator.Current;
+            }
+        }
+        finally
         {
             ClientHeadersScope.Current = snapshot;
-        }
-
-        await foreach (var update in this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
-        {
-            yield return update;
+            await enumerator.DisposeAsync().ConfigureAwait(false);
         }
     }
 
