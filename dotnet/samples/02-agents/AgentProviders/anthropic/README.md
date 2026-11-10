@@ -45,7 +45,7 @@ Set the following environment variables:
 $env:ANTHROPIC_API_KEY="your-anthropic-api-key"  # Replace with your Anthropic API key
 ```
 
-If the variables are not set, you will be prompted for the values when running the samples.
+If a required variable is not set, the sample stops with an error that names the missing variable.
 
 Execute the following command to build the sample:
 

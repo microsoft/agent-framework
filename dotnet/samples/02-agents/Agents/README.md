@@ -67,7 +67,7 @@ $env:FOUNDRY_PROJECT_ENDPOINT="https://<your-project>.services.ai.azure.com/api/
 $env:FOUNDRY_MODEL="gpt-5.4-mini"  # Optional, defaults to gpt-5.4-mini
 ```
 
-If the variables are not set, you will be prompted for the values when running the samples.
+If a required variable is not set, the sample stops with an error that names the missing variable.
 
 Execute the following command to build the sample:
 
