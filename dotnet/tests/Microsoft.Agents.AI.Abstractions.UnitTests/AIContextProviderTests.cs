@@ -694,10 +694,34 @@ public class AIContextProviderTests
 
     #endregion
 
+    #region MergeMessages Tests
+
+    [Fact]
+    public async Task InvokingAsync_OverriddenMergeMessages_CanPrependProvidedMessagesAsync()
+    {
+        // Arrange
+        var provideContext = new AIContext { Messages = [new ChatMessage(ChatRole.System, "Context")] };
+        var provider = new TestAIContextProvider(provideContext: provideContext, prependProvidedMessages: true);
+        var inputContext = new AIContext { Messages = [new ChatMessage(ChatRole.User, "User input")] };
+        var context = new AIContextProvider.InvokingContext(s_mockAgent, s_mockSession, inputContext);
+
+        // Act
+        var result = await provider.InvokingAsync(context);
+        var messages = result.Messages!.ToList();
+
+        // Assert
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("Context", messages[0].Text);
+        Assert.Equal("User input", messages[1].Text);
+    }
+
+    #endregion
+
     private sealed class TestAIContextProvider : AIContextProvider
     {
         private readonly AIContext? _provideContext;
         private readonly bool _captureFilteredContext;
+        private readonly bool _prependProvidedMessages;
 
         public InvokedContext? LastStoredContext { get; private set; }
 
@@ -708,12 +732,17 @@ public class AIContextProviderTests
             bool captureFilteredContext = false,
             Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideInputMessageFilter = null,
             Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
-            Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
+            Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null,
+            bool prependProvidedMessages = false)
             : base(provideInputMessageFilter, storeInputRequestMessageFilter, storeInputResponseMessageFilter)
         {
             this._provideContext = provideContext;
             this._captureFilteredContext = captureFilteredContext;
+            this._prependProvidedMessages = prependProvidedMessages;
         }
+
+        protected override IEnumerable<ChatMessage> MergeMessages(IEnumerable<ChatMessage> inputMessages, IEnumerable<ChatMessage> providedMessages)
+            => this._prependProvidedMessages ? providedMessages.Concat(inputMessages) : base.MergeMessages(inputMessages, providedMessages);
 
         protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
         {
