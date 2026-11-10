@@ -902,26 +902,29 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
     private (AIAgent Agent, string? SessionStoreKey) ResolveAgent(CreateResponse request, IServiceProvider services)
     {
         var agentName = GetAgentName(request);
-        var defaultAgent = services.GetService<AIAgent>();
 
         if (!string.IsNullOrEmpty(agentName))
         {
             var agent = services.GetKeyedService<AIAgent>(agentName);
             if (agent is not null)
             {
-                // The factory default has no non-keyed registration to compare against, so it is
-                // recognized by name. It keeps the location AddFoundryResponses(agent) uses for the
-                // default agent, unless a non-keyed agent took the default role.
-                string storageIdentity = defaultAgent is null
+                // The default agent is looked up only after the requested agent, as before: the storage
+                // location depends on whether both registrations return the same object. The factory default
+                // has no non-keyed registration to compare against, so it is recognized by name. It keeps the
+                // location AddFoundryResponses(agent) uses for the default agent, unless a non-keyed agent took
+                // the default role.
+                var registeredDefaultAgent = services.GetService<AIAgent>();
+                string storageIdentity = registeredDefaultAgent is null
                     && string.Equals(agentName, this._defaultAgentName, StringComparison.Ordinal)
                         ? DefaultAgentStorageIdentity(agentName)
-                        : FoundryHostingAgent.ResolveSessionStorageIdentity(agent, agentName, defaultAgent);
+                        : FoundryHostingAgent.ResolveSessionStorageIdentity(agent, agentName, registeredDefaultAgent);
                 return (this.PrepareResolvedAgent(agent, storageIdentity), agentName);
             }
 
             LogKeyedAgentNotFound(this._logger, agentName);
         }
 
+        var defaultAgent = services.GetService<AIAgent>();
         if (defaultAgent is not null)
         {
             string storageIdentity = FoundryHostingAgent.ResolveSessionStorageIdentity(

@@ -142,6 +142,57 @@ public sealed class FoundryAgentLifetimeTests
     }
 
     [Fact]
+    public async Task CreateAsync_NamedRequest_CreatesTheRequestedAgentBeforeTheDefaultAgentAsync()
+    {
+        // Arrange: a keyed agent and an unrelated non-keyed default agent, both created per response.
+        var created = new ConcurrentQueue<string>();
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
+        services.AddKeyedScoped<AIAgent>("named", (_, _) =>
+        {
+            created.Enqueue("named");
+            return new TrackingAgent(new AgentLifetimeLog(), name: "named");
+        });
+        services.AddScoped<AIAgent>(_ =>
+        {
+            created.Enqueue("default");
+            return new TrackingAgent(new AgentLifetimeLog(), name: "default");
+        });
+        AgentFrameworkResponseHandler handler = CreateHandler(services);
+
+        // Act
+        await DrainAsync(handler, CreateRequest("named"), CreateContext());
+
+        // Assert: the requested agent is resolved first; the default is only consulted afterwards to
+        // decide the storage location.
+        Assert.Equal(["named", "default"], created.ToArray());
+    }
+
+    [Fact]
+    public async Task CreateAsync_NamedAgentFactoryThrows_DoesNotCreateTheDefaultAgentAsync()
+    {
+        // Arrange
+        int defaultAgentsCreated = 0;
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
+        services.AddKeyedScoped<AIAgent>("named", (_, _) => throw new InvalidOperationException("named agent failed"));
+        services.AddScoped<AIAgent>(_ =>
+        {
+            Interlocked.Increment(ref defaultAgentsCreated);
+            return new TrackingAgent(new AgentLifetimeLog(), name: "default");
+        });
+        AgentFrameworkResponseHandler handler = CreateHandler(services);
+
+        // Act
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => DrainAsync(handler, CreateRequest("named"), CreateContext()));
+
+        // Assert: the failure of the requested agent surfaces without creating the unrelated default agent.
+        Assert.Equal("named agent failed", exception.Message);
+        Assert.Equal(0, defaultAgentsCreated);
+    }
+
+    [Fact]
     public async Task CreateAsync_ScopedKeyedSessionStore_IsCreatedPerResponseAndDisposedAsync()
     {
         // Arrange
