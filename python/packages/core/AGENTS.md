@@ -411,6 +411,10 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   - **Approval escape hatch** - `_has_pending_approval_request(result)` checks whether an iteration's response carries a pending tool-approval request (any content with `type == "function_approval_request"`). Both the streaming and non-streaming loops stop and return that response to the caller *before* evaluating `should_continue`/`max_iterations` or injecting `next_message`, so the loop is HITL-safe even when wrapped outermost around a `ToolApprovalMiddleware` (mirrors the C# `LoopAgent`'s `HasPendingApprovalRequests`).
   - **Harness integration** - `create_harness_agent` enables the loop when a `loop_should_continue` callable is passed; it prepends `AgentLoopMiddleware(loop_should_continue, max_iterations=loop_max_iterations, next_message=loop_next_message)` ahead of `ToolApprovalMiddleware` so the loop is the outermost middleware (each iteration is a full agent run including tool approval, and the escape hatch hands pending approvals back to the caller). `loop_next_message` and `loop_max_iterations` only take effect together with `loop_should_continue` (with no `loop_should_continue` there is no loop, so they are ignored); `loop_max_iterations` defaults to the loop's default cap (`None` → unbounded).
 
+  `loop_return_final_only=True` forwards to the loop's `return_final_only` setting so non-streaming callers receive
+  only the last iteration's response. It defaults to `False`, is ignored without `loop_should_continue`, and does
+  not change streamed updates or streaming finalization.
+
 ### Workflows (`_workflows/`)
 
 - **`Workflow`** - Graph-based workflow definition. `cancel_pending_requests(request_ids)` cancels selected external
