@@ -114,7 +114,7 @@ public sealed partial class AgentMcpSkill : AgentSkill
     /// Gets the resource URI of the skill's <c>SKILL.md</c> file.
     /// </summary>
     /// <remarks>
-    /// Use <see cref="System.Uri.OriginalString"/> to obtain the exact URI provided by the MCP server.
+    /// Use <see cref="Uri.OriginalString"/> to obtain the exact URI provided by the MCP server.
     /// </remarks>
     public Uri Uri { get; }
 
@@ -541,7 +541,7 @@ public sealed partial class AgentMcpSkill : AgentSkill
         // Bound decoding work while still checking that the final pass has stabilized.
         for (int depth = 0; depth <= MaxResourceNameDecodingDepth; depth++)
         {
-            string decoded = System.Uri.UnescapeDataString(value).Replace('\\', '/');
+            string decoded = Uri.UnescapeDataString(value).Replace('\\', '/');
 
             // The stable form exposes traversal and control characters hidden by nested encoding.
             if (decoded == value)
