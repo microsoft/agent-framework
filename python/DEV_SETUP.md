@@ -2,7 +2,7 @@
 
 This document describes how to setup your environment with Python and uv,
 if you're working on new features or a bug fix for Agent Framework, or simply
-want to run the tests included.
+want to run the tests included. All commands shown here assume your terminal is opened in the "python" folder of your clone, where this file is located.
 
 For coding standards and conventions, see [CODING_STANDARD.md](CODING_STANDARD.md).
 
@@ -61,7 +61,7 @@ The exact supported uv version is declared by `required-version` in
 `pyproject.toml`. uv will stop with an actionable error when the installed
 version does not match.
 
-You can then run the following commands manually:
+You can then run the following commands manually in a terminal opened in the "python" folder of your clone:
 
 ```bash
 # Install every Python version covered by CI
