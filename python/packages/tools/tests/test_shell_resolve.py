@@ -120,10 +120,11 @@ def test_resolve_shell_windows_keeps_explicit_paths(fake_windows_host: _FakeWind
 
 def test_find_executable_searches_only_fully_qualified_path_entries(fake_windows_host: _FakeWindowsHost) -> None:
     fake_windows_host(
-        rf".;;bin;C:Tools;\rooted;{_TRUSTED_BIN}",
+        rf".;;bin;C:;C:Tools;\rooted;{_TRUSTED_BIN}",
         {
             r".\docker.exe",
             r"bin\docker.exe",
+            r"C:docker.exe",
             r"C:Tools\docker.exe",
             r"\rooted\docker.exe",
             rf"{_TRUSTED_BIN}\docker.exe",
@@ -137,8 +138,15 @@ def test_find_executable_returns_none_when_only_current_directory_dependent_entr
     fake_windows_host: _FakeWindowsHost,
 ) -> None:
     fake_windows_host(
-        rf".;;bin;C:Tools;\rooted;{_TRUSTED_BIN}",
-        {r".\docker.exe", "docker.exe", r"bin\docker.exe", r"C:Tools\docker.exe", r"\rooted\docker.exe"},
+        rf".;;bin;C:;C:Tools;\rooted;{_TRUSTED_BIN}",
+        {
+            r".\docker.exe",
+            "docker.exe",
+            r"bin\docker.exe",
+            "C:docker.exe",
+            r"C:Tools\docker.exe",
+            r"\rooted\docker.exe",
+        },
     )
 
     assert find_executable("docker") is None
@@ -170,6 +178,22 @@ def test_find_executable_accepts_quoted_and_unc_path_entries(fake_windows_host: 
 
     assert find_executable("docker") == r"C:\Program Files\Docker\docker.exe"
     assert find_executable("podman") == r"\\server\share\bin\podman.exe"
+
+
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        (r"\\server\share", r"\\server\share\docker.exe"),
+        ("//server/share", r"//server/share\docker.exe"),
+        (r"\\?\UNC\server\share", r"\\?\UNC\server\share\docker.exe"),
+    ],
+)
+def test_find_executable_accepts_unc_share_roots_without_a_trailing_separator(
+    fake_windows_host: _FakeWindowsHost, entry: str, expected: str
+) -> None:
+    fake_windows_host(entry, {expected})
+
+    assert find_executable("docker") == expected
 
 
 @pytest.mark.parametrize(

@@ -18,6 +18,9 @@ _ENV_OVERRIDE = "AGENT_FRAMEWORK_SHELL"
 def _is_fully_qualified(path: str) -> bool:
     """Return whether ``path`` names a fixed location that does not depend on the current directory."""
     drive, rest = ntpath.splitdrive(path)
+    if drive.replace("/", "\\").startswith("\\\\"):
+        # A UNC or device root such as \\server\share is complete without a trailing separator.
+        return True
     return bool(drive) and rest[:1] in ("\\", "/")
 
 
