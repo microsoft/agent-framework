@@ -864,6 +864,31 @@ async def test_run_code_direct_typed_call_invokes_registered_tool() -> None:
     assert final_resume[1] == {"return_value": 5}
 
 
+async def test_run_code_direct_typed_call_with_positional_arguments_is_rejected_without_invoking_host() -> None:
+    calls: list[str | None] = []
+
+    @tool
+    def record(label: str | None = None) -> str:
+        """Record the label received by the host."""
+        calls.append(label)
+        return "recorded"
+
+    func_snapshot = _FakeFunctionSnapshot(function_name="record", call_id=5, args=("positional",))
+    script = _set_script(func_snapshot, _FakeMontyComplete(output=None))
+
+    monty_tool = MontyExecuteCodeTool(tools=[record])
+    await monty_tool._run_code(code='await record("positional")')
+
+    payloads = [payload for _, _, payload in script.resume_log]
+    assert payloads == [
+        {
+            "exc_type": "TypeError",
+            "message": "record accepts keyword arguments only. Use keyword arguments for parameters.",
+        }
+    ]
+    assert calls == []
+
+
 async def test_run_code_call_tool_fallback_invokes_registered_tool() -> None:
     func_snapshot = _FakeFunctionSnapshot(
         function_name="call_tool",
@@ -1721,8 +1746,30 @@ def test_generate_type_stubs_emits_dsl_and_tool_signatures() -> None:
     stubs = bridge_module.generate_type_stubs({"custom": custom})
 
     assert "async def call_tool(name: str, **kwargs: Any) -> Any:" in stubs
-    assert "async def custom(x: int, y: str = ...) -> bool:" in stubs
+    assert "async def custom(*, x: int, y: str = ...) -> bool:" in stubs
     assert "when_any" not in stubs
+
+
+def test_generate_type_stubs_declares_every_parameter_keyword_only() -> None:
+    def positional_or_keyword(tenant_id: str | None = None, limit: int = 1000) -> int:
+        return limit
+
+    def keyword_only(*, tenant_id: str | None = None) -> int:
+        return 0
+
+    def no_parameters() -> int:
+        return 0
+
+    stubs = bridge_module.generate_type_stubs({
+        "positional_or_keyword": positional_or_keyword,
+        "keyword_only": keyword_only,
+        "no_parameters": no_parameters,
+    })
+
+    assert "async def positional_or_keyword(*, tenant_id: str | None = ..., limit: int = ...) -> int:" in stubs
+    assert "async def keyword_only(*, tenant_id: str | None = ...) -> int:" in stubs
+    # A tool without parameters keeps an empty parameter list.
+    assert "async def no_parameters() -> int:" in stubs
 
 
 def test_generate_type_stubs_preserves_none_and_optional() -> None:
@@ -1746,11 +1793,11 @@ def test_generate_type_stubs_preserves_none_and_optional() -> None:
     })
 
     # ``None`` return must round-trip as None, not Any.
-    assert "async def nullable_return(x: int) -> None:" in stubs
+    assert "async def nullable_return(*, x: int) -> None:" in stubs
     # ``Optional[X]`` is ``Union[X, None]`` at runtime; preserve None.
-    assert "async def optional_param(x: int | None = ...) -> bool:" in stubs
+    assert "async def optional_param(*, x: int | None = ...) -> bool:" in stubs
     # Multi-arm union with None.
-    assert "async def union_param(x: int | str | None) -> str:" in stubs
+    assert "async def union_param(*, x: int | str | None) -> str:" in stubs
 
 
 def test_generate_type_stubs_skips_non_identifier_tool_names() -> None:
@@ -1778,7 +1825,7 @@ def test_generate_type_stubs_skips_non_identifier_tool_names() -> None:
         "normal": normal,
     })
 
-    assert "async def normal(x: int) -> int:" in stubs
+    assert "async def normal(*, x: int) -> int:" in stubs
     assert "weird-name" not in stubs
     assert "injected" not in stubs
     assert "async def async(" not in stubs

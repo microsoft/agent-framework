@@ -102,6 +102,11 @@ def generate_type_stubs(tool_callables: dict[str, Callable[..., Any]]) -> str:
     LLM-generated code against the actual tool signatures before any host
     call runs.
 
+    Host tools receive keyword arguments only, so every tool parameter is
+    declared keyword-only regardless of how the host function declares it.
+    ``ty`` then rejects positional calls before any code runs instead of the
+    bridge silently dropping the positional arguments.
+
     Tools whose ``name`` is not a valid Python identifier are skipped because
     their name cannot be safely splatted into stub source. The model can still
     reach them via the ``call_tool("weird name", ...)`` fallback at runtime,
@@ -143,7 +148,7 @@ def generate_type_stubs(tool_callables: dict[str, Callable[..., Any]]) -> str:
 
         return_annotation = hints.get("return", inspect.Parameter.empty)
         return_str = _python_type_repr(return_annotation)
-        param_str = ", ".join(params)
+        param_str = ", ".join(["*", *params] if params else params)
         lines.append(f"async def {name}({param_str}) -> {return_str}:")
         lines.append("    raise NotImplementedError()")
         lines.append("")
@@ -295,10 +300,16 @@ class InlineCodeBridge:
         })
 
     def _schedule_direct_tool(self, snapshot: Any, name: str) -> Any:
-        # Positional args are rejected up-front by ``ty`` because the generated
-        # stubs declare every parameter as keyword-typed. Anything that slips
-        # through (e.g. tools with no signature inspection) is forwarded to the
-        # host tool as-is via kwargs only.
+        # The generated stubs are keyword-only, so ``ty`` rejects positional calls before any code runs. Fail
+        # closed on anything that still reaches the host (for example when type checking is bypassed) instead of
+        # dropping the positional arguments and running the host tool with its defaults.
+        if snapshot.args:
+            return snapshot.resume(
+                _external_error(
+                    TypeError(f"{name} accepts keyword arguments only. Use keyword arguments for parameters."),
+                    include_detailed_errors=True,
+                )
+            )
         self._pending_calls[int(snapshot.call_id)] = (name, dict(snapshot.kwargs))
         return snapshot.resume({"future": ...})
 
