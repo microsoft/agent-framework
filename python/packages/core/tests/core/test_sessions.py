@@ -910,6 +910,22 @@ class TestStateTypeRegistry:
         assert isinstance(restored.state["value"], PydanticState)
         assert restored.state["value"].value == "ok"
 
+    def test_explicit_pydantic_registration_round_trips_an_alias_choices_field(self) -> None:
+        from pydantic import AliasChoices, BaseModel
+        from pydantic import Field as PydanticField
+
+        class AliasChoiceState(BaseModel):
+            note: str = PydanticField(validation_alias=AliasChoices("note_text", "memo"))
+
+        register_state_type(AliasChoiceState, type_id="alias_choices_state_test")
+        session = AgentSession(session_id="alias-choices")
+        session.state["value"] = AliasChoiceState(note_text="ok")
+
+        restored = AgentSession.from_dict(session.to_dict())
+
+        assert isinstance(restored.state["value"], AliasChoiceState)
+        assert restored.state["value"].note == "ok"
+
     def test_conflicting_type_identifier_is_rejected(self) -> None:
         class FirstState:
             def to_dict(self) -> dict[str, Any]:
