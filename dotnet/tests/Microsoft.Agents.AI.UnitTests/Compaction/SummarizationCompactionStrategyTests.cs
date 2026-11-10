@@ -214,13 +214,13 @@ public class SummarizationCompactionStrategyTests
         // Act
         await strategy.CompactAsync(index);
 
-        // Assert — the custom prompt should be the system message, followed by the original messages
+        // Assert — the original messages should be followed by the custom system prompt
         Assert.NotNull(capturedMessages);
         Assert.Equal(2, capturedMessages.Count);
-        Assert.Equal(ChatRole.System, capturedMessages![0].Role);
-        Assert.Equal(CustomPrompt, capturedMessages[0].Text);
-        Assert.Equal(ChatRole.User, capturedMessages[1].Role);
-        Assert.Equal("Q1", capturedMessages[1].Text);
+        Assert.Equal(ChatRole.User, capturedMessages![0].Role);
+        Assert.Equal("Q1", capturedMessages[0].Text);
+        Assert.Equal(ChatRole.System, capturedMessages[1].Role);
+        Assert.Equal(CustomPrompt, capturedMessages[1].Text);
     }
 
     [Fact]
