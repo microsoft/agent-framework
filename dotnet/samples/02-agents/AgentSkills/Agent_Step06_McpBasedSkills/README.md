@@ -160,7 +160,7 @@ Listed resources, including `SKILL.md`, default to a maximum of **1 MiB (1,048,5
 Discovery rejects oversized advertised sizes, and reads check actual UTF-8 text and decoded binary
 sizes before encoding text or decoding blobs for integrity verification.
 
-Configure the resource limit with `AgentMcpSkillsSourceOptions.ListedResourceMaxSizeBytes` passed to
+Configure the resource limit with `AgentMcpSkillsSourceOptions.MaxResourceSizeBytes` passed to
 `UseMcpSkills`; the limit must be positive.
 
 These checks do not limit incoming messages before the supplied client receives and parses them.

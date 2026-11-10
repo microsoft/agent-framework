@@ -80,13 +80,13 @@ internal sealed partial class McpSkillsCatalog
     {
         this._client = Throw.IfNull(client);
         this._logger = logger ?? NullLogger.Instance;
-        this._maxResourceSizeBytes = options?.ListedResourceMaxSizeBytes ?? AgentMcpSkill.DefaultMaxResourceSizeBytes;
+        this._maxResourceSizeBytes = options?.MaxResourceSizeBytes ?? AgentMcpSkill.DefaultMaxResourceSizeBytes;
         this._maxPageCount = options?.MaxPageCount ?? DefaultMaxPageCount;
         this._maxSkillCount = options?.MaxSkillCount ?? DefaultMaxSkillCount;
         this._timeProvider = timeProvider ?? TimeProvider.System;
         this._ttlResolver = options?.TtlResolver;
         this._hasIsolationKey = hasIsolationKey;
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.MaxResourceSizeBytes));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.MaxPageCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.MaxSkillCount));
         this._catalogCache = new(this._timeProvider, StringComparer.Ordinal);

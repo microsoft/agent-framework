@@ -128,7 +128,7 @@ public sealed class AgentMcpSkillsSourceOptions
     /// blobs for integrity verification.
     /// There is no combined resource-size limit per skill.
     /// </remarks>
-    public long? ListedResourceMaxSizeBytes { get; set; }
+    public long? MaxResourceSizeBytes { get; set; }
 
     /// <summary>
     /// Creates cache options from the partition retention settings.
