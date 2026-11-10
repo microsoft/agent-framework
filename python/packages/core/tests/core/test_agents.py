@@ -64,7 +64,10 @@ from agent_framework import (
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool, _build_prefixed_mcp_name, _normalize_mcp_name
 from agent_framework._middleware import FunctionInvocationContext
-from agent_framework._tools import _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY
+from agent_framework._tools import (
+    _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY,
+    _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,
+)
 from agent_framework._types import SKILL_CONTEXT_NAME_KEY
 from agent_framework.exceptions import (
     AgentInvalidRequestException,
@@ -2842,6 +2845,77 @@ async def test_chat_agent_as_tool_run_level_approval_ownership_is_per_invocation
     # Only the run that passes the approval middleware isolates its key; later runs treat it as ordinary state.
     assert child_saw_state == [False, True]
     assert list(parent_agent.middleware or []) == configured_middleware
+
+
+@pytest.mark.parametrize("run_level_middleware", [True, False])
+@pytest.mark.parametrize(
+    "caller_claim",
+    [frozenset(), {"runtime_approval"}, ["runtime_approval"], "runtime_approval"],
+    ids=["empty-frozenset", "set", "list", "str"],
+)
+async def test_chat_agent_as_tool_approval_ownership_ignores_malformed_caller_claims(
+    caller_claim: Any,
+    run_level_middleware: bool,
+) -> None:
+    """Test that a caller-supplied ownership claim can neither break a run nor weaken approval-state isolation."""
+    child_saw_state: list[bool] = []
+
+    @tool(name="inspect_session_state", approval_mode="never_require")
+    def inspect_session_state(ctx: FunctionInvocationContext) -> str:
+        assert ctx.session is not None
+        child_saw_state.append("runtime_approval" in ctx.session.state)
+        return "State inspected."
+
+    child_client = MockBaseChatClient()
+    child_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="inspect-state", name="inspect_session_state", arguments={})
+                ],
+            )
+        ],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Child completed.")])],
+    ]
+    child_agent = Agent(
+        client=child_client,
+        name="ChildAgent",
+        tools=[inspect_session_state],
+        middleware=[ToolApprovalMiddleware(source_id="child_approval")],
+    )
+    parent_client = MockBaseChatClient()
+    parent_client.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="delegate-call", name="delegate", arguments={"task": "Inspect the session."}
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=[Content.from_text("Parent completed.")])),
+    ]
+    parent_agent = Agent(
+        client=parent_client,
+        name="ParentAgent",
+        tools=[child_agent.as_tool(name="delegate", propagate_session=True)],
+    )
+    session = AgentSession()
+    session.state["runtime_approval"] = {"rules": []}
+
+    result = await parent_agent.run(
+        "Delegate the task.",
+        session=session,
+        middleware=[ToolApprovalMiddleware(source_id="runtime_approval")] if run_level_middleware else None,
+        function_invocation_kwargs={_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY: caller_claim},
+    )
+
+    assert result.text == "Parent completed."
+    # Run-level approval middleware always isolates its own key. Without it, a malformed claim is no claim.
+    assert child_saw_state == [not run_level_middleware]
 
 
 async def test_chat_agent_as_tool_does_not_restore_custom_approval_queue_on_fresh_delegation() -> None:

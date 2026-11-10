@@ -1677,9 +1677,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
         )
         # Approval middleware that runs for this invocation claims its session-state key here. Keep the claim out of
-        # the kwargs that MCP header providers and tools can read.
-        claimed_approval_source_ids = effective_function_invocation_kwargs.pop(
-            _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY, None
+        # the kwargs that MCP header providers and tools can read. As for the other readers of this private channel,
+        # only a frozenset is a claim; any other value is no claim.
+        claim = effective_function_invocation_kwargs.pop(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY, None)
+        claimed_approval_source_ids: frozenset[str] = (
+            cast("frozenset[str]", claim) if isinstance(claim, frozenset) else frozenset()
         )
         additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
@@ -1715,12 +1717,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             )
 
         # Claims only add isolated keys; they never remove keys declared by this agent's own middleware.
-        additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = _tool_approval_source_ids(
-            self.middleware
-        ) | (
-            cast("frozenset[str]", claimed_approval_source_ids)
-            if isinstance(claimed_approval_source_ids, frozenset)
-            else frozenset()
+        additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = (
+            _tool_approval_source_ids(self.middleware) | claimed_approval_source_ids
         )
         # Recompute ownership for this invoking agent; caller kwargs must not replace its declarations.
         additional_function_arguments[_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY] = (
