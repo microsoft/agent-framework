@@ -24,8 +24,8 @@ from agent_framework import Agent, Message, Workflow
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_declarative import WorkflowFactory
 from agent_framework_foundry_hosting import (
-    HostedResponseRequest,
-    ResponsesHostServer,
+    ResponsesRequest,
+    ResponsesWorkflowHostServer,
     WorkflowTurn,
     response_input_messages,
 )
@@ -80,7 +80,7 @@ class SupportAgent(Agent):
             self.credential.close()
 
 
-def build_workflow(request: HostedResponseRequest) -> Workflow:
+def build_workflow(request: ResponsesRequest) -> Workflow:
     """Load a fresh declarative graph with fresh request-owned agents and stable YAML IDs."""
     triage = SupportAgent(
         "TriageAgent",
@@ -105,14 +105,14 @@ def build_workflow(request: HostedResponseRequest) -> Workflow:
     return factory.create_workflow_from_yaml_path(str(Path(__file__).parent / "workflow.yaml"))
 
 
-async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[list[Message]]:
+async def parse_input(request: ResponsesRequest) -> WorkflowTurn[list[Message]]:
     """Use the explicit current-turn message migration helper; checkpoints retain prior workflow state."""
     return WorkflowTurn(input=await response_input_messages(request))
 
 
 def main() -> None:
     load_dotenv()
-    ResponsesHostServer(workflow=build_workflow, parse_response=parse_response).run()
+    ResponsesWorkflowHostServer(workflow=build_workflow, parse_input=parse_input).run()
 
 
 if __name__ == "__main__":

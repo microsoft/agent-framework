@@ -21,7 +21,7 @@ into application code.
 - Treat translated request options as caller-controlled input and forward only an explicit allowlist.
 - Choose one history owner; do not combine competing host, service, and agent history mechanisms.
 - Reuse an agent instance only when all mutable state is session-scoped. Otherwise use a request-owned factory.
-- Prefer native workflow hosting. A shared `workflow.as_agent()` instance can leak workflow state across requests.
+- Use native workflow hosting. Foundry agent hosts reject `WorkflowAgent` instances and factory results.
 - Build fresh workflows and request-owned resources while keeping workflow and executor identities stable for
   checkpoint restoration. A builder reused across requests returns new workflows that share its registered
   executors, including each `AgentExecutor` and its `AgentSession`; create those executors inside the per-request
@@ -44,6 +44,47 @@ choose patterns with predictable matching time for untrusted values and property
 
 Read the selected host's public docstrings and maintained sample for constructor options, parsers, history modes,
 storage providers, and protocol details.
+
+### Foundry agent and native workflow hosts
+
+Use `ResponsesHostServer(agent=...)` or `InvocationsHostServer(agent=...)` for agents.
+Agent factories may be synchronous or asynchronous and can accept the protocol's request:
+`ResponsesRequest` for Responses (including trusted scope and current-turn input), or
+Starlette `Request` for Invocations. Zero-argument factories also work; when both forms bind,
+the request form wins. Responses factories run before the options hook; Invocations factories
+run after parsing and option preparation. Factory-owned resource cleanup is unchanged.
+For native workflows, import `ResponsesWorkflowHostServer` or `InvocationsWorkflowHostServer`
+from `agent_framework_foundry_hosting` (also available under `agent_framework.foundry`).
+The agent hosts no longer accept `workflow=` or checkpoint stores, and reject `WorkflowAgent` even when
+returned by a factory. Workflow factories must return a built `Workflow`, not an agent or wrapper.
+
+Both workflow hosts require a request-aware sync/async `workflow` factory returning an isolated,
+built `Workflow`. Create executors, agents, clients, providers, and mutable tools inside that factory;
+a fresh graph wrapper around shared executors is not enough. Keep graph and executor IDs stable.
+Built workflow instances are rejected even for local one-shot hosting.
+
+Responses workflow hosts require `parse_input(ResponsesRequest) -> WorkflowTurn` and retain
+the `prepare_options` model-options hook. Invocations workflow hosts require
+`parse_input(starlette.requests.Request) -> WorkflowTurn`; configure workflow kwargs in that parser,
+not through agent-only option hooks. Both support async parsers. Workflow state and pending replies
+are checkpoint-owned, not agent-session-owned. Do not copy agent history/background-source settings,
+agent-session stores, or separate agent approval stores into workflow hosts.
+This split does not change SDK options, wire-level `store`, checkpoint/retry guarantees, or the
+experimental status of Invocations and Toolbox.
+
+For migration, rename `parse_response` (Responses workflows) or `parse_request` (Invocations agents/workflows)
+to `parse_input`, and `HostedResponseRequest` to `ResponsesRequest`. There are no aliases for the old names.
+Invocations agent parsers return `InvocationRun`; workflow parsers return `WorkflowTurn` for typed start input
+or complete validated pending replies.
+
+Responses agent history uses `history_source="host_managed"` (default), `"agent_managed"`, or
+`"inference_service"`; the old values were `"agent_server"`, `"agent"`, and `"service"`, respectively.
+`agent_managed` preserves developer-owned provider **or** service storage. Background execution uses
+`background_source="host_managed"` (default) or `"inference_service"` instead of `"agent_server"` or
+`"provider"`. Inference-service background requires inference-service history and a supported storing,
+resumable client. These literal renames do not change defaults or execution behavior.
+Use `response_store=` for the outer Responses storage backend. The old constructor `store=` alias
+is removed and rejected, including `None`; the per-request wire `store` flag is unchanged.
 
 ## Deployment readiness
 

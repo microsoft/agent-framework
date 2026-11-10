@@ -257,7 +257,7 @@ async def main() -> None:
     load_dotenv()
     provider = CustomSessionStoreProvider()
     server = ResponsesHostServer(
-        agent=create_agent, history_source="agent_server", agent_session_store_provider=provider
+        agent=create_agent, history_source="host_managed", agent_session_store_provider=provider
     )
     server.shutdown_handler(provider.close)
     try:

@@ -3,7 +3,7 @@
 [`workflow.yaml`](workflow.yaml) defines a multi-turn customer-support flow
 using `InvokeAzureAgent`, `ConditionGroup`, `SendActivity`, and Power Fx
 expressions. [`main.py`](main.py) hosts the built declarative `Workflow`
-directly through `ResponsesHostServer(workflow=..., parse_response=...)`.
+directly through `ResponsesWorkflowHostServer(workflow=..., parse_input=...)`.
 
 The parser uses the explicit `response_input_messages()` migration helper for
 the declarative workflow's `list[Message]` start contract. The host restores the

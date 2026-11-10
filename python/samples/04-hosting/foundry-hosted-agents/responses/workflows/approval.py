@@ -18,8 +18,8 @@ from agent_framework import (
 )
 from agent_framework_foundry_hosting import (
     CheckpointStoreProvider,
-    HostedResponseRequest,
-    ResponsesHostServer,
+    ResponsesRequest,
+    ResponsesWorkflowHostServer,
     WorkflowTurn,
 )
 from pydantic import BaseModel, Field
@@ -55,11 +55,11 @@ class PublicationExecutor(Executor):
         await ctx.yield_output(PublicationResult(summary=ctx.get_state("summary"), approved=response.approved is True))
 
 
-def build_workflow(request: HostedResponseRequest) -> Workflow:
+def build_workflow(request: ResponsesRequest) -> Workflow:
     return WorkflowBuilder(name="approved-publication-v1", start_executor=PublicationExecutor()).build()
 
 
-async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[PublicationRequest]:
+async def parse_input(request: ResponsesRequest) -> WorkflowTurn[PublicationRequest]:
     items = await request.get_input_items()
     if any(item.get("type") == "mcp_approval_response" for item in items):
         return WorkflowTurn(responses=await request.get_workflow_responses())
@@ -67,9 +67,9 @@ async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[Publica
 
 
 def main() -> None:
-    ResponsesHostServer(
+    ResponsesWorkflowHostServer(
         workflow=build_workflow,
-        parse_response=parse_response,
+        parse_input=parse_input,
         checkpoint_store_provider=CheckpointStoreProvider(
             allowed_checkpoint_types=[f"{PublicationRequest.__module__}:{PublicationRequest.__qualname__}"],
         ),

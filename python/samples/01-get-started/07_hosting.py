@@ -30,7 +30,7 @@ def main() -> None:
         instructions="You are a friendly assistant. Keep your answers brief.",
         default_options={"store": False},
     )
-    ResponsesHostServer(agent=agent, history_source="agent_server").run()
+    ResponsesHostServer(agent=agent, history_source="host_managed").run()
 
 
 if __name__ == "__main__":
