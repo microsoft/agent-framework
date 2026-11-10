@@ -697,7 +697,8 @@ class BaseAgent(SerializationMixin):
 
             When parent and child both use ToolApprovalMiddleware with
             ``propagate_session=True``, configure distinct middleware ``source_id``
-            values. The delegated call raises ToolExecutionException before running
+            values, whether the parent middleware is set on the agent or passed to a
+            single run. The delegated call raises ToolExecutionException before running
             the child when their shared session-state keys overlap.
 
             Direct or custom-loop invocation with ``propagate_session=True`` must set
@@ -1675,6 +1676,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         effective_function_invocation_kwargs = (
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
         )
+        # Approval middleware that runs for this invocation claims its session-state key here. Keep the claim out of
+        # the kwargs that MCP header providers and tools can read.
+        claimed_approval_source_ids = effective_function_invocation_kwargs.pop(
+            _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY, None
+        )
         additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
         # Resolve final tool list (configured tools + runtime provided tools + local MCP server tools)
@@ -1708,8 +1714,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 duplicate_error_message=mcp_duplicate_message,
             )
 
+        # Claims only add isolated keys; they never remove keys declared by this agent's own middleware.
         additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = _tool_approval_source_ids(
             self.middleware
+        ) | (
+            cast("frozenset[str]", claimed_approval_source_ids)
+            if isinstance(claimed_approval_source_ids, frozenset)
+            else frozenset()
         )
         # Recompute ownership for this invoking agent; caller kwargs must not replace its declarations.
         additional_function_arguments[_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY] = (

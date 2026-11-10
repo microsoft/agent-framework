@@ -437,6 +437,17 @@ class ToolApprovalMiddleware(AgentMiddleware):
         if context.session is None:
             raise RuntimeError("ToolApprovalMiddleware requires an AgentSession.")
 
+        from .._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
+
+        # Claim this middleware's session-state key for the run. Agent tools that share the session, such as
+        # Agent.as_tool(propagate_session=True), keep claimed keys isolated, including for middleware that is
+        # supplied for one run instead of at agent construction.
+        claimed_source_ids = context.function_invocation_kwargs.get(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY)
+        context.function_invocation_kwargs[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = frozenset({
+            *(cast("frozenset[str]", claimed_source_ids) if isinstance(claimed_source_ids, frozenset) else ()),
+            self.source_id,
+        })
+
         state = _get_state(context.session, source_id=self.source_id)
         session_budget = context.session.state.setdefault(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, {})
         context.client_kwargs.setdefault(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, session_budget)
