@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Linq;
 using Microsoft.Extensions.AI;
 
@@ -7,6 +8,23 @@ namespace Microsoft.Agents.AI.Hyperlight.UnitTests;
 
 public sealed class HyperlightCodeActProviderTests
 {
+    [Theory]
+    [InlineData(-TimeSpan.TicksPerMillisecond)]
+    [InlineData(-1)]
+    [InlineData(0)]
+    [InlineData(42_949_672_940_001L)]
+    [InlineData(long.MinValue)]
+    [InlineData(long.MaxValue)]
+    public void ExecutionTimeout_InvalidValue_Throws(long ticks)
+    {
+        // Arrange
+        var options = new HyperlightCodeActProviderOptions();
+        var timeout = TimeSpan.FromTicks(ticks);
+
+        // Act / Assert
+        Assert.Throws<ArgumentOutOfRangeException>(() => options.ExecutionTimeout = timeout);
+    }
+
     [Fact]
     public void Ctor_NullOptions_UsesDefaults()
     {
@@ -168,6 +186,6 @@ public sealed class HyperlightCodeActProviderTests
         provider.Dispose();
 
         // Assert
-        Assert.Throws<System.ObjectDisposedException>(() => provider.AddTools(tool));
+        Assert.Throws<ObjectDisposedException>(() => provider.AddTools(tool));
     }
 }
