@@ -1,5 +1,4 @@
 ﻿#nullable enable
-Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.DefaultMcpToolHandler(System.Net.Http.IHttpClientFactory! httpClientFactory, string! httpClientName) -> void
 Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.DefaultMcpToolHandler(System.Collections.Generic.IEnumerable<string!>! allowedHosts, System.Net.Http.IHttpMessageHandlerFactory! httpMessageHandlerFactory, string! httpClientName) -> void
 Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.ProtocolVersion.get -> string?
 Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.ProtocolVersion.init -> void

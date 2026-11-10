@@ -42,7 +42,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
 
     private static readonly JsonWriterOptions s_toolListJsonWriterOptions = new() { Indented = true };
 
-    private readonly IHttpMessageHandlerFactory? _httpMessageHandlerFactory;
+    private readonly IHttpMessageHandlerFactory _httpMessageHandlerFactory;
     private readonly string _httpClientName;
     private readonly AllowedHttpHosts _allowedHosts;
 
@@ -59,31 +59,6 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
     /// Use separately configured handlers for servers requiring different protocol policies.
     /// </remarks>
     public string? ProtocolVersion { get; init; }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class using an application-provided HTTP client factory.
-    /// </summary>
-    /// <param name="httpClientFactory">
-    /// The application-owned factory. This parameter is retained for compatibility; this overload allows no destinations.
-    /// </param>
-    /// <param name="httpClientName">
-    /// The stable named-client configuration to use, or an empty string for the default configuration.
-    /// Do not derive names from workflow identifiers, credentials, or arbitrary server URLs.
-    /// </param>
-    /// <remarks>
-    /// This overload allows no destinations. Use the overload accepting allowed hosts to enable invocations.
-    /// The application is responsible for the HTTP pipeline's transport policy.
-    /// Disable cookies and automatic redirects, enable certificate revocation checking, and restrict credential injection
-    /// to the configured server origin. Pooled handlers must not retain per-invocation credentials or mutable origin state.
-    /// Configure a finite handler lifetime so new invocations can pick up endpoint changes without disrupting active calls.
-    /// </remarks>
-    /// <exception cref="ArgumentNullException">A required argument is <see langword="null"/>.</exception>
-    public DefaultMcpToolHandler(IHttpClientFactory httpClientFactory, string httpClientName)
-    {
-        Throw.IfNull(httpClientFactory);
-        this._httpClientName = Throw.IfNull(httpClientName);
-        this._allowedHosts = new([]);
-    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class with allowed hosts
@@ -231,9 +206,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
             throw new HttpRequestException("The request host and port are not in the allowed hosts list.");
         }
 
-        IHttpMessageHandlerFactory factory = this._httpMessageHandlerFactory
-            ?? throw new InvalidOperationException("MCP invocations require an HTTP message handler factory.");
-        HttpMessageHandler messageHandler = factory.CreateHandler(this._httpClientName);
+        HttpMessageHandler messageHandler = this._httpMessageHandlerFactory.CreateHandler(this._httpClientName);
         HttpTransportValidation.Validate(messageHandler);
         HttpClient httpClient = new(messageHandler, disposeHandler: false);
         HttpClientTransport? transport = null;

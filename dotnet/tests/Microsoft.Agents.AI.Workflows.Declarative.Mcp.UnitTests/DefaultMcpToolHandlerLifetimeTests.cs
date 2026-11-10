@@ -330,15 +330,15 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     public async Task UnsupportedScheme_DoesNotAcquireHttpClientAsync(string serverUrl)
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
-        DefaultMcpToolHandler handler = new(factory.Object, "workflow-mcp");
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
+        DefaultMcpToolHandler handler = new(["mcp.example"], factory.Object, "workflow-mcp");
 
         // Act
         await Assert.ThrowsAsync<ArgumentException>(() => handler.InvokeToolAsync(
             serverUrl, null, "ping", null, null, null));
 
         // Assert
-        factory.Verify(f => f.CreateClient(It.IsAny<string>()), Times.Never);
+        factory.Verify(f => f.CreateHandler(It.IsAny<string>()), Times.Never);
     }
 
     [Fact]

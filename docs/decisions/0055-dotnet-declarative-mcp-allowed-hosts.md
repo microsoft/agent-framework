@@ -17,7 +17,7 @@ the same host-and-port policy as the [default HTTP handler](0049-dotnet-declarat
 
 - Require application-configured destinations before creating an HTTP client.
 - Keep host normalization and port matching consistent between HTTP and MCP.
-- Preserve the existing constructor signature and per-invocation session lifetime.
+- Make destination and transport configuration explicit while preserving per-invocation session lifetime.
 
 ## Considered Options
 
@@ -28,7 +28,8 @@ the same host-and-port policy as the [default HTTP handler](0049-dotnet-declarat
 
 ## Decision Outcome
 
-Chosen option: retain the existing constructor with an empty policy and add an allowlist overload.
+Chosen option: require a new constructor signature with allowed hosts and an `IHttpMessageHandlerFactory`.
+Remove the constructor accepting `IHttpClientFactory` rather than retain an overload that cannot invoke tools.
 
 The application supplies exact hosts or IP literals with optional ports. The list is copied, an omitted
 port defaults to 443, and an empty list denies every invocation, including discovery. Matching uses the
@@ -48,6 +49,6 @@ pipeline. Client configuration callbacks registered through `IHttpClientFactory`
 headers and origin-bound authentication in delegating handlers. This matches the HTTP handler's ownership
 and transport-validation contract while keeping MCP protocol sessions separate per invocation.
 
-This changes behavior without removing the existing constructor. Callers must supply their intended
-destinations through the new overload; applications with different policies can provide an `IMcpToolHandler`.
+This removes the existing constructor. Callers must migrate to the constructor accepting their intended
+destinations and a message handler factory; applications with different policies can provide an `IMcpToolHandler`.
 Session creation, protocol selection, and resource disposal remain unchanged.

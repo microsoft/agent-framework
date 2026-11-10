@@ -74,7 +74,8 @@ the pooled handler pipeline. Construct the handler with an application-owned
 `IHttpMessageHandlerFactory` through
 `DefaultMcpToolHandler(IEnumerable<string>, IHttpMessageHandlerFactory, string)`. Supply
 allowed hosts from application configuration, not workflow content. An empty
-list, including the existing two-argument constructor, denies all destinations.
+list denies all destinations. The former constructor accepting `IHttpClientFactory`
+is removed; migrate to the constructor above with an explicit destination policy.
 Hosts are exact DNS names or IP literals with optional ports; omitted ports
 default to 443. Matching is case-insensitive and normalizes internationalized
 names and trailing DNS dots, without wildcards or implicit subdomains.
