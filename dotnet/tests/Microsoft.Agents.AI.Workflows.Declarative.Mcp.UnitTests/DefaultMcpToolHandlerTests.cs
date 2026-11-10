@@ -164,6 +164,19 @@ public sealed class DefaultMcpToolHandlerTests
         Assert.True(listedTool.GetProperty("annotations").GetProperty("readOnlyHint").GetBoolean());
         Assert.False(listedTool.GetProperty("annotations").GetProperty("destructiveHint").GetBoolean());
         Assert.Equal("initial", listedTool.GetProperty("_meta").GetProperty("revision").GetString());
+
+        // Act
+        Assert.NotNull(tool.Annotations);
+        tool.Annotations.ReadOnlyHint = false;
+        McpServerToolResultContent updatedResult = DefaultMcpToolHandler.CreateListToolsResultContent([tool]);
+
+        // Assert
+        TextContent updatedText = Assert.IsType<TextContent>(Assert.Single(updatedResult.Outputs ?? []));
+        using JsonDocument updatedDocument = JsonDocument.Parse(updatedText.Text);
+        JsonElement updatedTool = updatedDocument.RootElement.GetProperty("tools")[0];
+        Assert.False(updatedTool.GetProperty("annotations").GetProperty("readOnlyHint").GetBoolean());
+        Assert.Equal(listedTool.GetProperty("inputSchema").GetRawText(), updatedTool.GetProperty("inputSchema").GetRawText());
+        Assert.Equal(listedTool.GetProperty("_meta").GetRawText(), updatedTool.GetProperty("_meta").GetRawText());
     }
 
     #endregion
