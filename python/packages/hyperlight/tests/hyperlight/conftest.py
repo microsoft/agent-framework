@@ -227,6 +227,24 @@ async def occupied_default_executor(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
+def observe_sandbox_queue(monkeypatch: pytest.MonkeyPatch):
+    def observe(worker):
+        loop = asyncio.get_running_loop()
+        queued = asyncio.Event()
+        submit = worker._executor.submit
+
+        def submit_and_signal(fn, *args, **kwargs):
+            future = submit(fn, *args, **kwargs)
+            loop.call_soon_threadsafe(queued.set)
+            return future
+
+        monkeypatch.setattr(worker._executor, "submit", submit_and_signal)
+        return queued
+
+    return observe
+
+
+@pytest.fixture
 def interruptible_execution(monkeypatch: pytest.MonkeyPatch):
     started = threading.Event()
     entered = threading.Event()
@@ -234,6 +252,7 @@ def interruptible_execution(monkeypatch: pytest.MonkeyPatch):
     interrupted = threading.Event()
     kill_attempted = threading.Event()
     completed = threading.Event()
+    executed: list[str] = []
 
     class Sandbox:
         def __init__(self, **kwargs: Any) -> None:
@@ -249,6 +268,7 @@ def interruptible_execution(monkeypatch: pytest.MonkeyPatch):
             return SimpleNamespace(kill=kill)
 
         def run(self, code: str) -> SimpleNamespace:
+            executed.append(code)
             if code in {"guest", "host", "final_host"}:
                 self._host_callback = code in {"host", "final_host"}
                 entered.set()
@@ -280,6 +300,7 @@ def interruptible_execution(monkeypatch: pytest.MonkeyPatch):
         release=release,
         kill_attempted=kill_attempted,
         completed=completed,
+        executed=executed,
     )
     release.set()
     cast(Any, execute_code._registry).close()

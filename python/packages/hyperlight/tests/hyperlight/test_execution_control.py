@@ -169,27 +169,35 @@ async def test_repeated_cancellation_waits_for_host_callback_to_finish(interrupt
     assert recovered[0].text == "ok\n"
 
 
-async def test_queued_cancellation_does_not_interrupt_another_invocation(interruptible_execution) -> None:
+async def test_queued_cancellation_does_not_wait_for_or_interrupt_another_invocation(
+    interruptible_execution, observe_sandbox_queue
+) -> None:
     native = interruptible_execution
-    native.tool._execution_timeout_seconds = 5
+    native.tool._execution_timeout_seconds = 60
     active = asyncio.create_task(native.tool.invoke(arguments={"code": "host"}))
     queued = None
     try:
         assert await asyncio.to_thread(native.entered.wait, 2)
-        queued = asyncio.create_task(native.tool.invoke(arguments={"code": "None"}))
-        await asyncio.sleep(0.02)
+        entry = next(iter(native.tool._registry._entries.values()))
+        submitted = observe_sandbox_queue(entry.worker)
+        queued = asyncio.create_task(native.tool.invoke(arguments={"code": "guest"}))
+        await asyncio.wait_for(submitted.wait(), 2)
         queued.cancel()
-        await asyncio.sleep(0)
+        done, _ = await asyncio.wait({queued}, timeout=0.5)
+        assert done, "Queued cancellation waited for another invocation's host callback."
+        with pytest.raises(asyncio.CancelledError):
+            await queued
+        assert not active.done()
+        assert not native.release.is_set()
+        assert not native.completed.is_set()
         assert not native.kill_attempted.is_set()
     finally:
         native.release.set()
         result = await asyncio.wait_for(active, 2)
+        if queued is not None:
+            await asyncio.gather(queued, return_exceptions=True)
     assert result[0].text == "ok\n"
-    assert queued is not None
-    try:
-        await asyncio.wait_for(queued, 2)
-    except asyncio.CancelledError:
-        pass
-    else:
-        raise AssertionError("Queued cancellation was not preserved.")
+    recovered = await native.tool.invoke(arguments={"code": "None"})
+    assert recovered[0].text == "ok\n"
+    assert native.executed == ["None", "host", "None"]
     assert not native.kill_attempted.is_set()

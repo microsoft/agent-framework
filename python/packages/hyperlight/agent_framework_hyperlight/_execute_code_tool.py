@@ -307,7 +307,17 @@ class _SandboxWorker:
                 return False, (exc_type, exc_args)
 
         current_context = contextvars.copy_context()
-        ok, payload = self._executor.submit(lambda: current_context.run(_wrapped)).result()
+        execution = self._executor.submit(lambda: current_context.run(_wrapped))
+        cancelled = _execution_cancellation.get()
+        while True:
+            try:
+                ok, payload = execution.result(timeout=0.01 if cancelled is not None else None)
+                break
+            except TimeoutError:
+                # Future.cancel() atomically distinguishes queued work from work
+                # that has started and must finish cleanup on its owning thread.
+                if cancelled is not None and cancelled.is_set() and execution.cancel():
+                    raise asyncio.CancelledError from None
         if ok:
             return cast(_T, payload)
         exc_type, exc_args = cast(tuple[type[BaseException], tuple[str, ...]], payload)
