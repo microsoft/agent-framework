@@ -270,9 +270,6 @@ class Executor(RequestInfoMixin, DictConvertible):
             runner_context: The runner context that provides methods to send messages and events.
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking.
-
-        Returns:
-            An awaitable that resolves to the result of the execution.
         """
         async with self._get_execution_lock():
             # Create processing span for tracing (gracefully handles disabled tracing)

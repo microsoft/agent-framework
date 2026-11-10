@@ -991,19 +991,32 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 usage = message.usage or {}
                 input_tokens = usage.get("input_tokens")
                 output_tokens = usage.get("output_tokens")
+                cache_creation_tokens = usage.get("cache_creation_input_tokens")
+                cache_read_tokens = usage.get("cache_read_input_tokens")
+                # Anthropic's input_tokens excludes cache creation/read; total input
+                # (and gen_ai.usage.input_tokens) must include them, matching other
+                # connectors and the GenAI semconv.
+                input_total = input_tokens
+                for cache_tokens in (cache_creation_tokens, cache_read_tokens):
+                    if isinstance(cache_tokens, int):
+                        input_total = (
+                            cache_tokens
+                            if input_total is None
+                            else input_total + cache_tokens
+                        )
                 total_token_count = (
-                    input_tokens + output_tokens
-                    if isinstance(input_tokens, int) and isinstance(output_tokens, int)
+                    input_total + output_tokens
+                    if isinstance(input_total, int) and isinstance(output_tokens, int)
                     else None
                 )
                 usage_details = UsageDetails(**{
                     key: value
                     for key, value in {
-                        "input_token_count": input_tokens,
+                        "input_token_count": input_total,
                         "output_token_count": output_tokens,
                         "total_token_count": total_token_count,
-                        "cache_creation_input_token_count": usage.get("cache_creation_input_tokens"),
-                        "cache_read_input_token_count": usage.get("cache_read_input_tokens"),
+                        "cache_creation_input_token_count": cache_creation_tokens,
+                        "cache_read_input_token_count": cache_read_tokens,
                     }.items()
                     if isinstance(value, int)
                 })
