@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <RootNamespace>Microsoft.Agents.AI.Redis</RootNamespace>
+    <VersionSuffix>alpha</VersionSuffix>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+  <PropertyGroup>
+    <!-- Disable packing until we are ready to release this as a nuget -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework - Redis integration</Title>
+    <Description>Provides Redis implementations for Microsoft Agent Framework storage abstractions, starting with a workflow CheckpointStore built on StackExchange.Redis.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StackExchange.Redis" />
+  </ItemGroup>
+
+</Project>
