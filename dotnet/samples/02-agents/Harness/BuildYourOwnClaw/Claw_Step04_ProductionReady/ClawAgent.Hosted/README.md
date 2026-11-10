@@ -71,7 +71,11 @@ Foundry hosted container exposes — so the Hyperlight provider can't initialize
 hosted, and the agent never becomes ready.
 
 The hosted build instead supplies a **`LocalCodeActProvider`**, which runs the generated Python in a
-child process and relies on the hosted container itself as the isolation boundary:
+child process and relies on the hosted container itself as the isolation boundary.
+[`Program.cs`](./Program.cs) selects and validates `pythonExecutable` before creating the provider.
+On Windows, `LOCAL_CODEACT_PYTHON` must identify an existing, fully qualified Python executable;
+bare names and relative paths are rejected. Keep the executable and its parent directories protected
+from untrusted writes. Other platforms default to `python3` when the setting is unset or blank.
 
 ```csharp
 await using ClawAgentBuild build = await ClawAgentFactory.CreateAsync(new ClawAgentFactoryOptions
@@ -81,9 +85,8 @@ await using ClawAgentBuild build = await ClawAgentFactory.CreateAsync(new ClawAg
     EnableShell = false,
 
     // Hyperlight needs a hypervisor + FUSE the hosted container lacks; LocalCodeAct relies on the
-    // container as the sandbox. Override the interpreter with LOCAL_CODEACT_PYTHON if needed.
-    CodeActProvider = new LocalCodeActProvider(
-        Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON") ?? "python3"),
+    // container as the sandbox. Use the interpreter selected and validated at startup.
+    CodeActProvider = new LocalCodeActProvider(pythonExecutable),
 });
 ```
 
@@ -92,6 +95,13 @@ await using ClawAgentBuild build = await ClawAgentFactory.CreateAsync(new ClawAg
 > container. To turn CodeAct off entirely instead, set `EnableCodeAct = false`.
 
 ## Run locally
+
+On Windows, set `LOCAL_CODEACT_PYTHON` before running the host. Replace the example below with
+the fully qualified path to your installed interpreter:
+
+```powershell
+$env:LOCAL_CODEACT_PYTHON = "C:/Program Files/Python/python.exe"
+```
 
 ```bash
 cd dotnet/samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step04_ProductionReady/ClawAgent.Hosted
