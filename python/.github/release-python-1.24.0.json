@@ -1,0 +1,179 @@
+{
+  "tag": "python-1.24.0",
+  "packages": {
+    "agent-framework": "1.24.0",
+    "agent-framework-a2a": "1.0.0b261030",
+    "agent-framework-ag-ui": "1.7.1",
+    "agent-framework-anthropic": "1.0.0b261030",
+    "agent-framework-azure-ai-search": "1.0.0b261030",
+    "agent-framework-azure-contentunderstanding": "1.0.0b261030",
+    "agent-framework-azure-cosmos": "1.0.0b261030",
+    "agent-framework-azure-documentdb": "1.0.0a261030",
+    "agent-framework-bedrock": "1.0.0b261030",
+    "agent-framework-chatkit": "1.0.0b261030",
+    "agent-framework-claude": "1.0.0b261030",
+    "agent-framework-copilotstudio": "1.0.0b261030",
+    "agent-framework-core": "1.24.0",
+    "agent-framework-declarative": "1.4.1",
+    "agent-framework-devui": "1.0.0b261030",
+    "agent-framework-duckdb": "1.0.0a261030",
+    "agent-framework-foundry": "1.16.0",
+    "agent-framework-foundry-hosting": "1.0.0b261030",
+    "agent-framework-foundry-local": "1.0.0b261030",
+    "agent-framework-gemini": "1.0.0b261030",
+    "agent-framework-github-copilot": "2.1.1",
+    "agent-framework-hosting": "1.0.0a261030",
+    "agent-framework-hosting-a2a": "1.0.0a261030",
+    "agent-framework-hosting-mcp": "1.0.0a261030",
+    "agent-framework-hosting-responses": "1.0.0a261030",
+    "agent-framework-hosting-telegram": "1.0.0a261030",
+    "agent-framework-hyperlight": "1.0.0b261030",
+    "agent-framework-mem0": "1.0.0b261030",
+    "agent-framework-mistral": "1.0.0b261030",
+    "agent-framework-mongodb": "1.0.0a261030",
+    "agent-framework-monty": "1.0.0b261030",
+    "agent-framework-nvidia": "1.0.0a261030",
+    "agent-framework-ollama": "1.0.0b261030",
+    "agent-framework-openai": "1.18.0",
+    "agent-framework-oracle": "1.0.0a261030",
+    "agent-framework-orchestrations": "1.4.1",
+    "agent-framework-postgres": "1.0.0a261030",
+    "agent-framework-purview": "1.0.0b261030",
+    "agent-framework-qdrant": "1.0.0a261030",
+    "agent-framework-redis": "1.0.0b261030",
+    "agent-framework-sql-server": "1.0.0a261030",
+    "agent-framework-tools": "1.0.0b261030",
+    "agent-framework-typesafe": "1.0.0a261030"
+  },
+  "smoke_imports": {
+    "agent-framework": [
+      "agent_framework:Agent"
+    ],
+    "agent-framework-a2a": [
+      "agent_framework.a2a:A2AAgent"
+    ],
+    "agent-framework-ag-ui": [
+      "agent_framework.ag_ui:AgentFrameworkAgent"
+    ],
+    "agent-framework-anthropic": [
+      "agent_framework.anthropic:AnthropicClient"
+    ],
+    "agent-framework-azure-ai-search": [
+      "agent_framework.azure:AzureAISearchStore"
+    ],
+    "agent-framework-azure-contentunderstanding": [
+      "agent_framework.foundry:ContentUnderstandingContextProvider"
+    ],
+    "agent-framework-azure-cosmos": [
+      "agent_framework.azure:CosmosStore"
+    ],
+    "agent-framework-azure-documentdb": [
+      "agent_framework_azure_documentdb:AzureDocumentDBStore"
+    ],
+    "agent-framework-bedrock": [
+      "agent_framework.amazon:BedrockChatClient"
+    ],
+    "agent-framework-chatkit": [
+      "agent_framework.chatkit:stream_agent_response"
+    ],
+    "agent-framework-claude": [
+      "agent_framework.anthropic:ClaudeAgent"
+    ],
+    "agent-framework-copilotstudio": [
+      "agent_framework.microsoft:CopilotStudioAgent"
+    ],
+    "agent-framework-core": [
+      "agent_framework:Message"
+    ],
+    "agent-framework-declarative": [
+      "agent_framework.declarative:AgentFactory"
+    ],
+    "agent-framework-devui": [
+      "agent_framework.devui:serve"
+    ],
+    "agent-framework-duckdb": [
+      "agent_framework_duckdb:DuckDBStore"
+    ],
+    "agent-framework-foundry": [
+      "agent_framework.foundry:FoundryAgent"
+    ],
+    "agent-framework-foundry-hosting": [
+      "agent_framework.foundry:FoundryAgentSessionStore"
+    ],
+    "agent-framework-foundry-local": [
+      "agent_framework.foundry:FoundryLocalClient"
+    ],
+    "agent-framework-gemini": [
+      "agent_framework.gemini:GeminiEmbeddingClient"
+    ],
+    "agent-framework-github-copilot": [
+      "agent_framework.github:GitHubCopilotAgent"
+    ],
+    "agent-framework-hosting": [
+      "agent_framework_hosting:AgentState"
+    ],
+    "agent-framework-hosting-a2a": [
+      "agent_framework_hosting_a2a:AgentA2AAdapter"
+    ],
+    "agent-framework-hosting-mcp": [
+      "agent_framework_hosting_mcp:AgentMCPTool"
+    ],
+    "agent-framework-hosting-responses": [
+      "agent_framework_hosting_responses:responses_from_run"
+    ],
+    "agent-framework-hosting-telegram": [
+      "agent_framework_hosting_telegram:telegram_to_run"
+    ],
+    "agent-framework-hyperlight": [
+      "agent_framework.hyperlight:HyperlightCodeActProvider"
+    ],
+    "agent-framework-mem0": [
+      "agent_framework.mem0:Mem0ContextProvider"
+    ],
+    "agent-framework-mistral": [
+      "agent_framework.mistral:MistralChatClient"
+    ],
+    "agent-framework-mongodb": [
+      "agent_framework_mongodb:MongoDBStore"
+    ],
+    "agent-framework-monty": [
+      "agent_framework.monty:MontyCodeActProvider"
+    ],
+    "agent-framework-nvidia": [
+      "agent_framework_nvidia:NvidiaEmbeddingClient"
+    ],
+    "agent-framework-ollama": [
+      "agent_framework.ollama:OllamaChatClient"
+    ],
+    "agent-framework-openai": [
+      "agent_framework.openai:OpenAIChatClient"
+    ],
+    "agent-framework-oracle": [
+      "agent_framework_oracle:OracleStore"
+    ],
+    "agent-framework-orchestrations": [
+      "agent_framework.orchestrations:SequentialBuilder"
+    ],
+    "agent-framework-postgres": [
+      "agent_framework_postgres:PostgresStore"
+    ],
+    "agent-framework-purview": [
+      "agent_framework.microsoft:PurviewPolicyMiddleware"
+    ],
+    "agent-framework-qdrant": [
+      "agent_framework_qdrant:QdrantStore"
+    ],
+    "agent-framework-redis": [
+      "agent_framework.redis:RedisStore"
+    ],
+    "agent-framework-sql-server": [
+      "agent_framework_sql_server:SqlServerStore"
+    ],
+    "agent-framework-tools": [
+      "agent_framework.tools:LocalShellTool"
+    ],
+    "agent-framework-typesafe": [
+      "agent_framework_typesafe:TypeSafeChatClient"
+    ]
+  }
+}

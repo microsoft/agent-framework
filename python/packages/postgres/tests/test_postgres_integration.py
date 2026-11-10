@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass, make_dataclass
 from datetime import date, datetime, timezone
 from types import GenericAlias
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 from uuid import UUID, uuid4
 
 import pytest
@@ -27,7 +27,6 @@ from agent_framework import (
 from agent_framework.exceptions import IntegrationException
 from psycopg import AsyncConnection, AsyncCursor, sql
 from psycopg_pool import AsyncConnectionPool
-from typing_extensions import Self
 
 from agent_framework_postgres import PostgresCollection, PostgresStore
 

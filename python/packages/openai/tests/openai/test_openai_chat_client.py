@@ -1,11 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import asyncio
 import base64
+import copy
 import inspect
 import json
 import os
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Iterator, Mapping, Sequence
+import pickle
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Iterator, Mapping, Sequence
 from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
@@ -16,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import (
     Agent,
+    AgentTriggeredCompactionStrategy,
     Annotation,
     ChatOptions,
     ChatResponse,
@@ -30,6 +35,8 @@ from agent_framework import (
     SupportsImageGenerationTool,
     SupportsMCPTool,
     SupportsWebSearchTool,
+    TextSpanRegion,
+    TruncationStrategy,
     WorkflowBuilder,
     tool,
 )
@@ -54,10 +61,13 @@ from openai.types.responses import (
     ResponseErrorEvent,
     ResponseFunctionShellToolCall,
     ResponseFunctionShellToolCallOutput,
+    ResponseFunctionToolCall,
     ResponseOutputItemDoneEvent,
+    ResponseOutputMessage,
     ResponseOutputTextAnnotationAddedEvent,
+    ResponseStreamEvent,
 )
-from openai.types.responses.response_reasoning_item import Summary
+from openai.types.responses.response_reasoning_item import ResponseReasoningItem, Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
     ResponseReasoningSummaryTextDeltaEvent,
 )
@@ -77,7 +87,13 @@ from openai.types.responses.response_text_done_event import ResponseTextDoneEven
 from pydantic import BaseModel
 from pytest import param
 
-from agent_framework_openai import OpenAIChatClient, OpenAIChatOptions, RawOpenAIChatClient
+from agent_framework_openai import (
+    OpenAIChatClient,
+    OpenAIChatCompletionClient,
+    OpenAIChatOptions,
+    RawOpenAIChatClient,
+    RawOpenAIChatCompletionClient,
+)
 from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
@@ -89,11 +105,80 @@ skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
 )
 
 
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    ("option_name", "option_value"),
+    [
+        ("previous_response_id", "resp_existing"),
+        ("conversation", "conv_existing"),
+    ],
+)
+async def test_agent_triggered_compaction_rejects_native_service_continuation_aliases(
+    stream: bool,
+    option_name: str,
+    option_value: str,
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    strategy = AgentTriggeredCompactionStrategy(TruncationStrategy(max_n=2, compact_to=1))
+    options = cast(OpenAIChatOptions, {"store": False, option_name: option_value})
+
+    with pytest.raises(ChatClientInvalidRequestException, match="service-managed continuation"):
+        if stream:
+            response_stream = client.get_response(
+                [Message(role="user", contents=["Hello"])],
+                stream=True,
+                options=options,
+                compaction_strategy=strategy,
+            )
+            async for _ in response_stream:
+                pass
+        else:
+            response = client.get_response(
+                [Message(role="user", contents=["Hello"])],
+                stream=False,
+                options=options,
+                compaction_strategy=strategy,
+            )
+            _ = await response
+
+
 class OutputStruct(BaseModel):
     """A structured output for testing purposes."""
 
     location: str
     weather: str | None = None
+
+
+@pytest.mark.parametrize(
+    "client_type", [RawOpenAIChatClient, OpenAIChatClient, RawOpenAIChatCompletionClient, OpenAIChatCompletionClient]
+)
+@pytest.mark.parametrize("azure", [False, True])
+@pytest.mark.parametrize("injected", [False, True])
+async def test_openai_chat_client_context_ownership(client_type, azure: bool, injected: bool) -> None:
+    from azure.core.credentials_async import AsyncTokenCredential
+
+    sdk_client = AsyncOpenAI(api_key="test-key") if injected else None
+    credential = MagicMock(spec=AsyncTokenCredential)
+    credential.close = AsyncMock()
+    kwargs: dict[str, Any] = {"async_client": sdk_client} if injected else {}
+    if azure:
+        kwargs.update(azure_endpoint="https://test.openai.azure.com", credential=credential)
+    else:
+        kwargs["api_key"] = "test-key"
+
+    client = client_type(model="test-model", **kwargs)
+    with patch.object(client.client, "close", wraps=client.client.close) as close:
+        async with client as entered:
+            assert entered is client
+            close.assert_not_awaited()
+        await client.close()
+        assert close.await_count == (0 if injected else 1)
+    assert client.client.is_closed() is not injected
+    credential.close.assert_not_awaited()
+    assert "_owns_client" not in client.to_dict()
+    assert "_client_closed" not in client.to_dict()
+    if sdk_client is not None:
+        await sdk_client.close()
 
 
 class _FakeAsyncEventStream:
@@ -102,7 +187,7 @@ class _FakeAsyncEventStream:
         self._iterator: Iterator[object] = iter(())
         self._headers = headers or {}
 
-    def __aiter__(self) -> "_FakeAsyncEventStream":
+    def __aiter__(self) -> _FakeAsyncEventStream:
         self._iterator = iter(self._events)
         return self
 
@@ -117,14 +202,14 @@ class _FakeAsyncEventStream:
     # ``.headers``. The chat client then ``async with``-s the parsed stream so the
     # underlying socket is closed deterministically. Mimic both interfaces here so
     # test mocks remain a single object.
-    def parse(self) -> "_FakeAsyncEventStream":
+    def parse(self) -> _FakeAsyncEventStream:
         return self
 
     @property
     def headers(self) -> dict[str, str]:
         return self._headers
 
-    async def __aenter__(self) -> "_FakeAsyncEventStream":
+    async def __aenter__(self) -> _FakeAsyncEventStream:
         return self
 
     async def __aexit__(
@@ -163,7 +248,7 @@ def _as_raw(mock_response: MagicMock, *, headers: dict[str, str] | None = None) 
 
 
 class _FakeAsyncEventStreamContext(_FakeAsyncEventStream):
-    async def __aenter__(self) -> "_FakeAsyncEventStreamContext":
+    async def __aenter__(self) -> _FakeAsyncEventStreamContext:
         return self
 
     async def __aexit__(
@@ -846,7 +931,7 @@ class _BareEventStream:
         self._items = list(items)
         self._iterator: Iterator[object] = iter(())
 
-    def __aiter__(self) -> "_BareEventStream":
+    def __aiter__(self) -> _BareEventStream:
         self._iterator = iter(self._items)
         return self
 
@@ -877,7 +962,7 @@ class _FakeTelemetryStreamWrapper:
     def __init__(self, stream_async_iter: Any) -> None:
         self.stream_async_iter: Any = stream_async_iter
 
-    def __aiter__(self) -> "_FakeTelemetryStreamWrapper":
+    def __aiter__(self) -> _FakeTelemetryStreamWrapper:
         self.stream_async_iter = self.stream_async_iter.__aiter__()
         return self
 
@@ -1742,6 +1827,168 @@ def test_streaming_text_done_events_replace_deltas(
     response = ChatResponse.from_updates(updates)
     expected_text = done_event.text if hasattr(done_event, "text") else done_event.refusal
     assert response.messages[0].contents[0].text == expected_text
+
+
+@pytest.mark.parametrize("refusal", [False, True])
+def test_streaming_text_snapshots_preserve_separate_output_messages(refusal: bool) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    updates: list[ChatResponseUpdate] = []
+    for output_index, text in enumerate(("Checking the refund policy.", "The refund requires approval.")):
+        event_args: dict[str, Any] = {
+            "content_index": 0,
+            "item_id": f"message_{output_index}",
+            "output_index": output_index,
+            "sequence_number": output_index * 2,
+        }
+        events: tuple[ResponseStreamEvent, ...]
+        if refusal:
+            events = (
+                ResponseRefusalDeltaEvent(type="response.refusal.delta", delta=text, **event_args),
+                ResponseRefusalDoneEvent(type="response.refusal.done", refusal=text, **event_args),
+            )
+        else:
+            events = (
+                ResponseTextDeltaEvent(type="response.output_text.delta", delta=text, logprobs=[], **event_args),
+                ResponseTextDoneEvent(type="response.output_text.done", text=text, logprobs=[], **event_args),
+            )
+        updates.extend(client._parse_chunk_from_openai(event, {}, {}) for event in events)
+
+    response = ChatResponse.from_updates(updates)
+
+    assert [message.text for message in response.messages] == [
+        "Checking the refund policy.",
+        "The refund requires approval.",
+    ]
+
+
+def test_streaming_and_non_streaming_preserve_output_message_boundaries() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    first_message = ResponseOutputMessage.model_validate({
+        "type": "message",
+        "id": "message_0",
+        "role": "assistant",
+        "status": "completed",
+        "content": [
+            {
+                "type": "output_text",
+                "text": "Checking the refund policy.",
+                "annotations": [],
+                "logprobs": [],
+            }
+        ],
+    })
+    second_message = ResponseOutputMessage.model_validate({
+        "type": "message",
+        "id": "message_1",
+        "role": "assistant",
+        "status": "completed",
+        "content": [
+            {
+                "type": "output_text",
+                "text": "The refund requires approval.",
+                "annotations": [],
+                "logprobs": [],
+            }
+        ],
+    })
+    reasoning_item = ResponseReasoningItem.model_validate({
+        "type": "reasoning",
+        "id": "reasoning_0",
+        "content": [
+            {
+                "type": "reasoning_text",
+                "text": "The amount exceeds the automatic refund threshold.",
+            }
+        ],
+        "summary": [],
+        "status": "completed",
+    })
+    function_call = ResponseFunctionToolCall.model_validate({
+        "type": "function_call",
+        "id": "function_0",
+        "call_id": "call_0",
+        "name": "refund",
+        "arguments": '{"amount": 125}',
+        "status": "completed",
+    })
+    response = MagicMock(
+        output_parsed=None,
+        output=[first_message, reasoning_item, function_call, second_message],
+        metadata={},
+        usage=None,
+        id="response_0",
+        created_at=1_000_000_000,
+        model="test-model",
+        status="completed",
+        incomplete_details=None,
+        conversation=None,
+    )
+
+    non_streaming = client._parse_response_from_openai(response, options={"store": False})
+    streaming = client._finalize_response_updates([
+        client._parse_chunk_from_openai(
+            ResponseTextDoneEvent(
+                type="response.output_text.done",
+                content_index=0,
+                item_id="message_0",
+                output_index=0,
+                sequence_number=0,
+                text="Checking the refund policy.",
+                logprobs=[],
+            ),
+            {},
+            {},
+        ),
+        ChatResponseUpdate(
+            contents=[
+                Content.from_text_reasoning(
+                    id="reasoning_0",
+                    text="The amount exceeds the automatic refund threshold.",
+                )
+            ],
+            role="assistant",
+        ),
+        ChatResponseUpdate(
+            contents=[
+                Content.from_function_call(
+                    call_id="call_0",
+                    name="refund",
+                    arguments='{"amount": 125}',
+                )
+            ],
+            role="assistant",
+        ),
+        client._parse_chunk_from_openai(
+            ResponseTextDoneEvent(
+                type="response.output_text.done",
+                content_index=0,
+                item_id="message_1",
+                output_index=1,
+                sequence_number=1,
+                text="The refund requires approval.",
+                logprobs=[],
+            ),
+            {},
+            {},
+        ),
+    ])
+
+    expected = [
+        ("message_0", ["text", "text_reasoning", "function_call"], "Checking the refund policy."),
+        ("message_1", ["text"], "The refund requires approval."),
+    ]
+    assert [
+        (message.message_id, [content.type for content in message.contents], message.text)
+        for message in non_streaming.messages
+    ] == expected
+    assert [
+        (message.message_id, [content.type for content in message.contents], message.text)
+        for message in streaming.messages
+    ] == expected
+    assert [
+        (message.message_id, [content.type for content in message.contents], message.text)
+        for message in ChatResponse.from_dict(non_streaming.to_dict()).messages
+    ] == expected
 
 
 def test_prepare_marked_refusal_text_uses_native_assistant_shape_and_input_text_fallback() -> None:
@@ -2664,6 +2911,303 @@ def test_malformed_local_environment_shell_call_is_not_executable(
     contents = client._shell_item_to_contents(item, "run_shell")
 
     assert all(content.type != "function_call" for content in contents)
+
+
+@pytest.mark.parametrize("max_output_length", [None, 4096])
+@pytest.mark.parametrize("round_trip", [False, True])
+@pytest.mark.parametrize("environment", [{"type": "local"}, None])
+@pytest.mark.parametrize("service_storage", [False, True])
+def test_empty_local_shell_call_replays_with_empty_output(
+    max_output_length: int | None,
+    round_trip: bool,
+    environment: dict[str, str] | None,
+    service_storage: bool,
+) -> None:
+    """Zero local commands must replay with a matching empty result, not an orphan call."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = ResponseFunctionShellToolCall.model_validate({
+        "type": "shell_call",
+        "id": "sh_empty",
+        "call_id": "call_empty",
+        "status": "completed",
+        "action": {"commands": [], "max_output_length": max_output_length},
+        "environment": environment,
+    })
+
+    contents = client._shell_item_to_contents(item, "run_shell")
+
+    assert all(content.type != "function_call" for content in contents)
+    message = Message("assistant", contents)
+    if round_trip:
+        restored_result = Message.from_json(Message("assistant", [contents[1]]).to_json()).contents[0]
+        message = Message("assistant", [contents[0], restored_result])
+    replay = client._prepare_messages_for_openai(
+        [message, Message("user", ["Continue"])],
+        request_uses_service_side_storage=service_storage,
+    )
+
+    shell_calls = [entry for entry in replay if entry["type"] == "shell_call"]
+    assert len(shell_calls) == (0 if service_storage else 1)
+    if not service_storage:
+        assert shell_calls[0]["call_id"] == "call_empty"
+        assert shell_calls[0]["action"]["commands"] == []
+    shell_outputs = [entry for entry in replay if entry["type"] == "shell_call_output"]
+    expected_output: dict[str, Any] = {"type": "shell_call_output", "call_id": "call_empty", "output": []}
+    if max_output_length is not None:
+        expected_output["max_output_length"] = max_output_length
+    assert shell_outputs == [expected_output]
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_empty_local_shell_call_parsing_emits_pair_without_execution(streaming: bool) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    executed_commands: list[str] = []
+
+    def local_exec(command: str) -> str:
+        executed_commands.append(command)
+        return command
+
+    local_tool = OpenAIChatClient.get_shell_tool(func=local_exec)
+    item = ResponseFunctionShellToolCall.model_validate({
+        "type": "shell_call",
+        "id": "sh_empty",
+        "call_id": "call_empty",
+        "status": "completed",
+        "action": {"commands": []},
+        "environment": {"type": "local"},
+    })
+    if streaming:
+        event = ResponseOutputItemDoneEvent(
+            type="response.output_item.done", item=item, output_index=0, sequence_number=1
+        )
+        update = client._parse_chunk_from_openai(event, options={"tools": [local_tool]}, function_call_ids={})
+        finalized = ChatResponse.from_updates([update])
+        assert [content.type for content in finalized.messages[0].contents] == ["shell_tool_call", "shell_tool_result"]
+        contents = update.contents
+    else:
+        response = MagicMock(
+            output=[item],
+            output_parsed=None,
+            metadata={},
+            usage=None,
+            id="resp_empty",
+            model="test-model",
+            created_at=1000000000,
+            status="completed",
+            incomplete=None,
+        )
+        parsed = client._parse_response_from_openai(response, options={"tools": [local_tool]})
+        contents = parsed.messages[0].contents
+
+    assert [content.type for content in contents] == ["shell_tool_call", "shell_tool_result"]
+    assert [content.call_id for content in contents] == ["call_empty", "call_empty"]
+    assert contents[1].outputs == []
+    assert executed_commands == []
+
+
+@pytest.mark.parametrize(
+    ("environment", "tool_name", "item_id", "call_id", "commands"),
+    [
+        ({"type": "container_reference"}, "run_shell", "sh_empty", "call_empty", []),
+        ({"type": "local"}, None, "sh_empty", "call_empty", []),
+        (None, None, "sh_empty", "call_empty", []),
+        ({"type": "local"}, "run_shell", None, "call_empty", []),
+        ({"type": "local"}, "run_shell", "sh_empty", None, []),
+        ({"type": "local"}, "run_shell", "sh_empty", "call_empty", None),
+        ({"type": "local"}, "run_shell", "sh_empty", "call_empty", [1]),
+    ],
+)
+def test_empty_shell_result_is_not_synthesized_for_hosted_unconfigured_or_malformed_calls(
+    environment: dict[str, str] | None,
+    tool_name: str | None,
+    item_id: str | None,
+    call_id: str | None,
+    commands: Any,
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = SimpleNamespace(
+        type="shell_call",
+        id=item_id,
+        call_id=call_id,
+        environment=environment,
+        action=SimpleNamespace(commands=commands),
+        status="completed",
+    )
+
+    contents = client._shell_item_to_contents(item, tool_name)
+
+    assert [content.type for content in contents] == ["shell_tool_call"]
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("continuation", ["stateless", "response", "conversation"])
+async def test_empty_local_shell_output_survives_mixed_tool_continuation(streaming: bool, continuation: str) -> None:
+    """The next request submits local results once without replaying stored shell items."""
+    requests: list[dict[str, Any]] = []
+    executed: list[str] = []
+
+    def local_exec(command: str) -> str:
+        executed.append("shell")
+        return command
+
+    @tool(approval_mode="never_require")
+    def ordinary_tool() -> str:
+        """Return the ordinary tool result."""
+        executed.append("ordinary")
+        return "ordinary result"
+
+    shell_call = {
+        "type": "shell_call",
+        "id": "sh_empty",
+        "call_id": "call_empty",
+        "status": "completed",
+        "environment": {"type": "local"},
+        "action": {"commands": []},
+    }
+    hosted_call = {
+        "type": "shell_call",
+        "id": "sh_hosted",
+        "call_id": "call_hosted",
+        "status": "completed",
+        "environment": {"type": "container_reference", "container_id": "cntr_fixture"},
+        "action": {"commands": ["pwd"]},
+    }
+    hosted_output = {
+        "type": "shell_call_output",
+        "id": "sh_hosted_output",
+        "call_id": "call_hosted",
+        "status": "completed",
+        "output": [{"stdout": "/workspace", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
+    }
+
+    def respond(request: Any) -> Any:
+        requests.append(json.loads(request.content))
+        first = len(requests) == 1
+        output: list[dict[str, Any]] = (
+            [
+                hosted_call,
+                hosted_output,
+                shell_call,
+                {
+                    "type": "function_call",
+                    "id": "fc_ordinary",
+                    "call_id": "call_ordinary",
+                    "name": "ordinary_tool",
+                    "arguments": "{}",
+                    "status": "completed",
+                },
+            ]
+            if first
+            else [
+                {
+                    "type": "message",
+                    "id": "msg_done",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "done", "annotations": [], "logprobs": []}],
+                }
+            ]
+        )
+        response: dict[str, Any] = {
+            "id": "resp_first" if first else "resp_final",
+            "object": "response",
+            "created_at": 1000000000,
+            "status": "completed",
+            "model": "test-model",
+            "output": output,
+            "usage": None,
+            "metadata": {},
+            "parallel_tool_calls": True,
+            "tools": [],
+            "tool_choice": "auto",
+            "error": None,
+            "incomplete_details": None,
+            "conversation": {"id": "conv_fixture"} if continuation == "conversation" else None,
+        }
+        if not streaming:
+            return _OPENAI_HTTPX.Response(200, json=response)
+        events: list[dict[str, Any]] = [
+            {
+                "type": "response.created",
+                "response": {**response, "status": "in_progress", "output": []},
+            }
+        ]
+        for index, item in enumerate(output):
+            events.append({"type": "response.output_item.added", "output_index": index, "item": item})
+            if item["type"] == "function_call":
+                events.append({
+                    "type": "response.function_call_arguments.delta",
+                    "output_index": index,
+                    "item_id": item["id"],
+                    "delta": "{}",
+                })
+            elif item["type"] == "message":
+                events.append({
+                    "type": "response.output_text.delta",
+                    "output_index": index,
+                    "content_index": 0,
+                    "item_id": item["id"],
+                    "delta": "done",
+                    "logprobs": [],
+                })
+            events.append({"type": "response.output_item.done", "output_index": index, "item": item})
+        events.append({"type": "response.completed", "response": response})
+        body = "".join(
+            f"data: {json.dumps({**event, 'sequence_number': number})}\n\n" for number, event in enumerate(events)
+        )
+        return _OPENAI_HTTPX.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    async with AsyncOpenAI(
+        api_key="test-key", http_client=_OPENAI_HTTPX.AsyncClient(transport=_OPENAI_HTTPX.MockTransport(respond))
+    ) as api:
+        client = OpenAIChatClient(model="test-model", async_client=api)
+        options: OpenAIChatOptions[None] = {
+            "store": continuation != "stateless",
+            "tools": [OpenAIChatClient.get_shell_tool(func=local_exec), ordinary_tool],
+        }
+        messages = [Message("user", ["Use the tools."])]
+        if streaming:
+            stream = client.get_response(messages, options=options, stream=True)
+            updates = [update async for update in stream]
+            result = await stream.get_final_response()
+            assert (
+                sum(
+                    content.type == "shell_tool_result" and content.call_id == "call_empty"
+                    for update in updates
+                    for content in update.contents
+                )
+                == 1
+            )
+        else:
+            result = await client.get_response(messages, options=options)
+
+    assert result.text == "done"
+    assert (
+        sum(
+            content.type == "shell_tool_result" and content.call_id == "call_empty"
+            for message in result.messages
+            for content in message.contents
+        )
+        == 1
+    )
+    assert executed == ["ordinary"]
+    assert len(requests) == 2
+    next_input = requests[1]["input"]
+    assert [item for item in next_input if item["type"] == "shell_call_output" and item["call_id"] == "call_empty"] == [
+        {"type": "shell_call_output", "call_id": "call_empty", "output": []}
+    ]
+    assert (
+        sum(item["type"] == "function_call_output" and item["call_id"] == "call_ordinary" for item in next_input) == 1
+    )
+    if continuation != "stateless":
+        assert all(item["type"] not in {"shell_call", "function_call"} for item in next_input)
+        assert all(item.get("call_id") != "call_hosted" for item in next_input)
+        key, value = (
+            ("conversation", "conv_fixture")
+            if continuation == "conversation"
+            else ("previous_response_id", "resp_first")
+        )
+        assert requests[1][key] == value
 
 
 @pytest.mark.asyncio
@@ -3689,6 +4233,53 @@ def test_streaming_parse_and_replay_preserves_all_real_assistant_logprobs() -> N
     assert text_content.text == "hello"
     assert text_content.additional_properties["logprobs"] == [first_logprob, second_logprob]
     assert replayed["logprobs"] == [first_logprob, second_logprob]
+
+
+def test_streaming_parse_and_replay_scopes_logprobs_to_output_messages() -> None:
+    """Streamed token logprobs remain attached to their provider output message."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    message_logprobs = [
+        [
+            {"token": "first", "bytes": [102], "logprob": -0.1, "top_logprobs": []},
+            {"token": " message", "bytes": [109], "logprob": -0.2, "top_logprobs": []},
+        ],
+        [
+            {"token": "second", "bytes": [115], "logprob": -0.3, "top_logprobs": []},
+            {"token": " message", "bytes": [109], "logprob": -0.4, "top_logprobs": []},
+        ],
+    ]
+    updates = [
+        client._parse_chunk_from_openai(
+            ResponseTextDeltaEvent(
+                type="response.output_text.delta",
+                content_index=0,
+                item_id=f"message_{message_index}",
+                output_index=message_index,
+                sequence_number=message_index * 2 + chunk_index,
+                logprobs=[logprob],  # type: ignore[list-item]
+                delta=cast(str, logprob["token"]),
+            ),
+            options={},
+            function_call_ids={},
+        )
+        for message_index, logprobs in enumerate(message_logprobs)
+        for chunk_index, logprob in enumerate(logprobs)
+    ]
+
+    response = client._finalize_response_updates(updates)
+    replayed = client._prepare_messages_for_openai(
+        response.messages,
+        request_uses_service_side_storage=False,
+    )
+
+    assert [(message.message_id, message.text) for message in response.messages] == [
+        ("message_0", "first message"),
+        ("message_1", "second message"),
+    ]
+    assert [
+        message.contents[0].additional_properties["openai"]["logprobs"] for message in response.messages
+    ] == message_logprobs
+    assert [message["content"][0]["logprobs"] for message in replayed] == message_logprobs
 
 
 def test_prepare_messages_for_openai_assistant_history_uses_output_text_with_annotations() -> None:
@@ -5992,6 +6583,27 @@ def test_assistant_text_fans_out_multiple_annotated_regions() -> None:
     assert spans == [(4, 10), (16, 22), (36, 42)]
 
 
+def test_assistant_text_does_not_emit_source_coordinate_regions_as_output_spans() -> None:
+    """Source locations must not be serialized as generated-response offsets."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    text_content = Content.from_text(
+        "Answer",
+        annotations=[
+            Annotation(
+                type="citation",
+                title="Source document",
+                url="https://example.com/source",
+                annotated_regions=[TextSpanRegion(type="text_span", start_index=40, end_index=46)],
+                annotated_regions_coordinate_space="source",
+            )
+        ],
+    )
+
+    result = client._prepare_content_for_openai("assistant", text_content)
+
+    assert result["annotations"] == []
+
+
 def test_assistant_text_skips_regions_with_invalid_span() -> None:
     """Regions missing integer start/end bounds are skipped rather than emitted with `None`."""
     from agent_framework._types import Annotation, TextSpanRegion
@@ -6474,6 +7086,23 @@ def test_prepare_tools_for_openai_with_mcp() -> None:
     assert set(mcp["allowed_tools"]) == {"tool_a", "tool_b"}
     # approval mapping created from approval_mode dict
     assert "require_approval" in mcp
+
+
+def test_get_mcp_tool_merges_both_approval_lists() -> None:
+    """Both approval lists must survive: overwriting the first with the second would
+    silently auto-approve tools the caller asked to gate."""
+    tool_config = OpenAIChatClient.get_mcp_tool(
+        name="MCP",
+        url="https://mcp.example",
+        approval_mode={
+            "always_require_approval": ["dangerous_tool"],
+            "never_require_approval": ["safe_tool"],
+        },
+    )
+    assert tool_config["require_approval"] == {
+        "always": {"tool_names": ["dangerous_tool"]},
+        "never": {"tool_names": ["safe_tool"]},
+    }
 
 
 @pytest.mark.parametrize("allowed_tools", [None, [], ["read_only"]], ids=["omitted", "empty", "nonempty"])
@@ -7348,11 +7977,9 @@ async def test_streaming_completed_annotations_do_not_share_state_between_reques
         responses = await asyncio.gather(get_response(), get_response())
 
     for response in responses:
-        assert len(response.messages) == 1
-        assert len(response.messages[0].contents) == 1
-        annotations = response.messages[0].contents[0].annotations
-        assert annotations is not None
-        assert len(annotations) == 4
+        assert len(response.messages) == 2
+        assert [len(message.contents) for message in response.messages] == [1, 1]
+        assert [len(message.contents[0].annotations or []) for message in response.messages] == [3, 1]
 
 
 def test_streaming_completed_text_without_annotations_emits_no_content() -> None:
@@ -7609,7 +8236,7 @@ async def test_streaming_azure_ai_search_output_enriches_mapped_agent_response()
         ),
     ]
 
-    async def _stream() -> AsyncGenerator[ChatResponseUpdate, None]:
+    async def _stream() -> AsyncGenerator[ChatResponseUpdate]:
         for update in updates:
             yield update
 
@@ -8299,6 +8926,128 @@ def test_parse_chunk_from_openai_code_interpreter_done() -> None:
     assert result.contents[0].additional_properties["openai"]["item_id"] == "ci_456"
     assert result.contents[0].merge_mode == "replace"
     assert result.contents[0].inputs[0].merge_mode == "replace"
+
+
+def test_parse_chunk_from_openai_code_interpreter_output_item_done() -> None:
+    """Test _parse_chunk_from_openai with a completed code_interpreter_call output item.
+
+    `response.output_item.done` is the only place `outputs` (logs/images) are ever delivered
+    for a streamed code interpreter call - there is no incremental outputs event - so this
+    completed item must be parsed, and its `code` must carry `merge_mode="replace"` like
+    `code_interpreter_call_code.done`'s does, since both can carry the same final code.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_log_output = MagicMock()
+    mock_log_output.type = "logs"
+    mock_log_output.logs = "hello"
+    mock_image_output = MagicMock()
+    mock_image_output.type = "image"
+    mock_image_output.url = "https://example.com/plot.png"
+
+    mock_done_event = MagicMock()
+    mock_done_event.type = "response.output_item.done"
+    mock_done_item = MagicMock()
+    mock_done_item.type = "code_interpreter_call"
+    mock_done_item.call_id = "ci_789"
+    mock_done_item.id = "ci_789"
+    mock_done_item.code = "print('hello')"
+    mock_done_item.outputs = [mock_log_output, mock_image_output]
+    mock_done_item.status = "completed"
+    mock_done_event.item = mock_done_item
+
+    result = client._parse_chunk_from_openai(mock_done_event, chat_options, function_call_ids)
+    call_contents = [c for c in result.contents if c.type == "code_interpreter_tool_call"]
+    result_contents = [c for c in result.contents if c.type == "code_interpreter_tool_result"]
+    assert len(call_contents) == 1
+    assert call_contents[0].call_id == "ci_789"
+    assert call_contents[0].inputs
+    assert call_contents[0].inputs[0].text == "print('hello')"
+    assert call_contents[0].merge_mode == "replace"
+    assert call_contents[0].inputs[0].merge_mode == "replace"
+    assert len(result_contents) == 1
+    assert result_contents[0].call_id == "ci_789"
+    assert result_contents[0].merge_mode == "replace"
+    assert result_contents[0].outputs
+    assert any(out.type == "text" and out.text == "hello" for out in result_contents[0].outputs)
+    assert any(
+        out.type == "uri" and out.uri == "https://example.com/plot.png" and out.media_type == "image"
+        for out in result_contents[0].outputs
+    )
+
+
+def test_code_interpreter_streaming_sequence_does_not_duplicate_code_and_captures_outputs() -> None:
+    """A realistic added/delta/done/output_item.done sequence must not duplicate code.
+
+    `code_interpreter_call_code.done` and `response.output_item.done` can both carry the
+    same final code for one call; without both carrying `merge_mode="replace"`, the second
+    one to arrive would concatenate onto the first instead of being recognized as a repeat
+    of the same authoritative value.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options: dict[str, Any] = {}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+    updates = []
+
+    added_event = MagicMock()
+    added_event.type = "response.output_item.added"
+    added_item = MagicMock()
+    added_item.type = "code_interpreter_call"
+    added_item.call_id = "ci_1"
+    added_item.id = "ci_1"
+    added_item.code = None
+    added_item.outputs = None
+    added_item.status = "in_progress"
+    added_event.item = added_item
+    updates.append(client._parse_chunk_from_openai(added_event, chat_options, function_call_ids))
+
+    for index, delta in enumerate(["import pandas", " as pd"]):
+        delta_event = MagicMock()
+        delta_event.type = "response.code_interpreter_call_code.delta"
+        delta_event.item_id = "ci_1"
+        delta_event.delta = delta
+        delta_event.output_index = 0
+        delta_event.sequence_number = index + 1
+        delta_event.call_id = None
+        delta_event.id = None
+        updates.append(client._parse_chunk_from_openai(delta_event, chat_options, function_call_ids))
+
+    done_code_event = MagicMock()
+    done_code_event.type = "response.code_interpreter_call_code.done"
+    done_code_event.item_id = "ci_1"
+    done_code_event.code = "import pandas as pd"
+    done_code_event.output_index = 0
+    done_code_event.sequence_number = 3
+    done_code_event.call_id = None
+    done_code_event.id = None
+    updates.append(client._parse_chunk_from_openai(done_code_event, chat_options, function_call_ids))
+
+    mock_log_output = MagicMock()
+    mock_log_output.type = "logs"
+    mock_log_output.logs = "pandas 2.1.0"
+    done_item_event = MagicMock()
+    done_item_event.type = "response.output_item.done"
+    done_item = MagicMock()
+    done_item.type = "code_interpreter_call"
+    done_item.call_id = "ci_1"
+    done_item.id = "ci_1"
+    done_item.code = "import pandas as pd"
+    done_item.outputs = [mock_log_output]
+    done_item.status = "completed"
+    done_item_event.item = done_item
+    updates.append(client._parse_chunk_from_openai(done_item_event, chat_options, function_call_ids))
+
+    response = ChatResponse.from_updates(updates)
+    calls = [c for c in response.messages[0].contents if c.type == "code_interpreter_tool_call"]
+    results = [c for c in response.messages[0].contents if c.type == "code_interpreter_tool_result"]
+    assert len(calls) == 1
+    assert calls[0].inputs
+    assert "".join(item.text or "" for item in calls[0].inputs) == "import pandas as pd"
+    assert len(results) == 1
+    assert results[0].outputs
+    assert any(out.type == "text" and out.text == "pandas 2.1.0" for out in results[0].outputs)
 
 
 def test_parse_chunk_from_openai_reasoning() -> None:
@@ -9748,6 +10497,86 @@ def test_streaming_error_event_raises_chat_client_exception() -> None:
         client._parse_chunk_from_openai(error_event, options={}, function_call_ids={})
 
     assert "OpenAI streaming error: server_error: The response stream failed. (parameter: input)" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("request_path", ["create", "structured", "resume"])
+@pytest.mark.parametrize("code", ["server_error", "rate_limit_exceeded", None])
+@pytest.mark.parametrize("error_param", ["input", None])
+async def test_streaming_error_event_preserves_provider_details(
+    request_path: str, code: str | None, error_param: str | None
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    error_event = ResponseErrorEvent(
+        code=code,
+        message="The response stream failed.",
+        param=error_param,
+        sequence_number=2,
+        type="error",
+    )
+    events = _FakeAsyncEventStream([error_event])
+    options: OpenAIChatOptions[Any] = {}
+    if request_path == "structured":
+        options["response_format"] = OutputStruct
+        request_patch = patch.object(client.client.responses, "stream", return_value=events)
+    else:
+        method = "retrieve" if request_path == "resume" else "create"
+        request_patch = patch.object(client.client.responses.with_raw_response, method, return_value=events)
+        if request_path == "resume":
+            options["continuation_token"] = {"response_id": "resp_stream_error"}
+
+    with request_patch, pytest.raises(ChatClientException) as exc_info:
+        stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["test"])], stream=True, options=options
+        )
+        assert isinstance(stream, ResponseStream)
+        async for _ in stream:
+            pytest.fail("An error event must not yield a response update.")
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, RuntimeError)
+    assert getattr(cause, "code", None) == code
+    assert getattr(cause, "message", None) == error_event.message
+    assert getattr(cause, "param", None) == error_param
+    assert getattr(cause, "event", None) is error_event
+    if request_path == "resume":
+        assert "continuation_token" not in options
+
+
+@pytest.mark.parametrize(
+    "round_trip",
+    [
+        param(copy.copy, id="copy"),
+        param(copy.deepcopy, id="deepcopy"),
+        param(lambda value: pickle.loads(pickle.dumps(value)), id="pickle"),
+    ],
+)
+@pytest.mark.parametrize("wrapped", [False, True], ids=["inner", "wrapper"])
+def test_streaming_error_exception_round_trip_preserves_state(round_trip: Callable[[Any], Any], wrapped: bool) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    error_event = ResponseErrorEvent(
+        code="server_error", message="boom", param="input", sequence_number=1, type="error"
+    )
+    with pytest.raises(ChatClientException) as exc_info:
+        client._parse_chunk_from_openai(error_event, options={}, function_call_ids={})
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, RuntimeError)
+    cause.__dict__["trace_id"] = "trace-123"
+    cause.add_note("provider stream failed")
+
+    error = exc_info.value if wrapped else cause
+    restored = round_trip(error)
+    assert type(restored) is type(error)
+    assert str(restored) == str(error)
+    restored_cause = restored.args[1] if wrapped else restored
+    assert type(restored_cause) is type(cause)
+    assert restored_cause.args == cause.args
+    assert getattr(restored_cause, "code", None) == error_event.code
+    assert getattr(restored_cause, "message", None) == error_event.message
+    assert getattr(restored_cause, "param", None) == error_event.param
+    assert getattr(restored_cause, "event", None) == error_event
+    assert restored_cause.__dict__["trace_id"] == "trace-123"
+    assert restored_cause.__notes__ == ["provider stream failed"]
 
 
 async def test_resumed_stream_error_clears_continuation_token() -> None:

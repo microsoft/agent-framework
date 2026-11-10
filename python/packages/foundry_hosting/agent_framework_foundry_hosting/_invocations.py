@@ -16,7 +16,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from contextvars import Token
 from copy import deepcopy
 from dataclasses import asdict, is_dataclass
-from typing import cast
+from typing import Any, cast
 
 from agent_framework import (
     AgentResponse,
@@ -48,7 +48,6 @@ from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.types import Receive, Scope, Send
-from typing_extensions import Any
 
 from ._agent_source import AgentSource, is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex

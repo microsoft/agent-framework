@@ -12,6 +12,11 @@ on:
       - ".github/workflows/devflow-fix-ci.yml"
       - ".github/workflows/issue-plan.md"
       - ".github/workflows/issue-plan.lock.yml"
+      - ".github/workflows/issue-routing.md"
+      - ".github/workflows/issue-routing.lock.yml"
+      - ".github/issue-routing-owners.yaml"
+      - "dotnet/agent-framework-dotnet.slnx"
+      - "python/packages/*/pyproject.toml"
       - "python/pyproject.toml"
       - "python/tooling/requirements-api-compatibility.txt"
       - "python/uv.lock"
@@ -28,6 +33,11 @@ on:
       - ".github/workflows/devflow-fix-ci.yml"
       - ".github/workflows/issue-plan.md"
       - ".github/workflows/issue-plan.lock.yml"
+      - ".github/workflows/issue-routing.md"
+      - ".github/workflows/issue-routing.lock.yml"
+      - ".github/issue-routing-owners.yaml"
+      - "dotnet/agent-framework-dotnet.slnx"
+      - "python/packages/*/pyproject.toml"
       - "python/pyproject.toml"
       - "python/tooling/requirements-api-compatibility.txt"
       - "python/uv.lock"
@@ -41,20 +51,31 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
 
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version-file: "python/pyproject.toml"
 
+      - name: Set up pinned routing publisher for integration tests
+        uses: github/gh-aw-actions/setup@221ba4f4319de6b8e809d1a15528b3ae6a818aa5 # v1.0.1
+        with:
+          destination: ${{ runner.temp }}/routing-publisher
+        env:
+          GH_AW_OTLP_ENDPOINTS: "[]"
+          OTEL_EXPORTER_OTLP_ENDPOINT: ""
+          OTEL_EXPORTER_OTLP_HEADERS: ""
+
       - name: Run JavaScript tests
         run: node --test .github/tests/*.js
+        env:
+          GH_AW_TEST_RUNTIME: ${{ runner.temp }}/routing-publisher
 
       - name: Run Python tests
         run: python .github/tests/test_python_check_coverage.py

@@ -49,7 +49,7 @@ from agent_framework_foundry._agent import (
     RawFoundryAgentChatClient,
     _FoundryAgentChatClient,
 )
-from agent_framework_foundry._chat_client import FoundryChatClient
+from agent_framework_foundry._chat_client import FoundryChatClient, RawFoundryChatClient
 from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
@@ -72,6 +72,66 @@ _FOUNDRY_AZURE_AI_SEARCH_MODEL_ENV_VARS = (
 def test_raw_foundry_agent_chat_client_does_not_mark_openai_feature() -> None:
     assert RawOpenAIChatClient._FEATURE_USAGE_INDEX is OpenAIFeatureIndex.OPENAI
     assert RawFoundryAgentChatClient._FEATURE_USAGE_INDEX is FeatureIndex.FOUNDRY_AGENT
+
+
+@pytest.mark.parametrize(
+    "client_type", [RawFoundryChatClient, FoundryChatClient, RawFoundryAgentChatClient, _FoundryAgentChatClient]
+)
+@pytest.mark.parametrize("injected_project", [False, True])
+@pytest.mark.parametrize("timeout", [None, 60.0])
+async def test_foundry_chat_client_context_ownership(
+    client_type, injected_project: bool, timeout: float | None
+) -> None:
+    sdk_client = AsyncOpenAI(api_key="test-key")
+    project = MagicMock()
+    project.get_openai_client.return_value = sdk_client
+    project.close = AsyncMock()
+    credential = MagicMock()
+    kwargs: dict[str, Any] = (
+        {"agent_name": "test-agent"} if issubclass(client_type, RawFoundryAgentChatClient) else {"model": "test-model"}
+    )
+    module = "_agent" if "agent_name" in kwargs else "_chat_client"
+    with patch(f"agent_framework_foundry.{module}.AIProjectClient", return_value=project):
+        client = client_type(
+            project_endpoint="https://test.services.ai.azure.com/api/projects/test",
+            project_client=project if injected_project else None,
+            credential=credential,
+            timeout=timeout,
+            **kwargs,
+        )
+    with patch.object(client.client, "close", wraps=client.client.close) as close:
+        async with client as entered:
+            assert entered is client
+            assert not sdk_client.is_closed()
+        await client.close()
+        close.assert_awaited_once()
+    assert sdk_client.is_closed()
+    assert project.close.await_count == (0 if injected_project else 1)
+    credential.close.assert_not_called()
+
+
+@pytest.mark.parametrize("client_type", [RawFoundryChatClient, RawFoundryAgentChatClient])
+async def test_foundry_chat_client_closes_project_when_openai_close_fails(client_type) -> None:
+    sdk_client = MagicMock(spec=AsyncOpenAI)
+    sdk_client.close = AsyncMock(side_effect=RuntimeError("close failed"))
+    project = MagicMock()
+    project.get_openai_client.return_value = sdk_client
+    project.close = AsyncMock()
+    kwargs: dict[str, Any] = (
+        {"agent_name": "test-agent"} if issubclass(client_type, RawFoundryAgentChatClient) else {"model": "test-model"}
+    )
+    module = "_agent" if "agent_name" in kwargs else "_chat_client"
+    with patch(f"agent_framework_foundry.{module}.AIProjectClient", return_value=project):
+        client = client_type(
+            project_endpoint="https://test.services.ai.azure.com/api/projects/test",
+            credential=MagicMock(),
+            **kwargs,
+        )
+    with pytest.raises(RuntimeError, match="close failed"):
+        async with client:
+            pass
+    sdk_client.close.assert_awaited_once()
+    project.close.assert_awaited_once()
 
 
 def _get_foundry_azure_ai_search_model() -> str | None:
@@ -1388,7 +1448,7 @@ async def test_foundry_agent_tools_isolate_service_state_between_children(
     assert len(observed_options) == 3
     assert all("agent_session_id" not in options.get("extra_body", {}) for options in observed_options)
     assert all(options.get("conversation_id") is None for options in observed_options)
-    assert len(updates) == 3
+    assert len([update for update in updates if update.contents]) == 3
     expected_state = {"ordinary": "parent-value"}
     if parent_handle is not None:
         expected_state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = parent_handle

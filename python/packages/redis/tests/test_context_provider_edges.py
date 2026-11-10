@@ -14,12 +14,20 @@ from agent_framework.exceptions import IntegrationInvalidRequestException
 from redisvl.redis.utils import buffer_to_array
 from redisvl.utils.vectorize import BaseVectorizer
 
-from agent_framework_redis._context_provider import RedisContextProvider
+from agent_framework_redis._context_provider import (
+    _SCOPE_FIELDS,
+    _SCOPE_TAG_SEPARATOR,
+    RedisContextProvider,
+    _scope_token,
+    _scope_token_field,
+)
 
 
 @pytest.fixture
 def mock_index() -> AsyncMock:
     index = AsyncMock()
+    client = MagicMock()
+    index.client = client
     index.create = AsyncMock()
     index.exists = AsyncMock(return_value=False)
     index.load = AsyncMock()
@@ -31,22 +39,46 @@ def mock_index() -> AsyncMock:
 def patch_index(mock_index: AsyncMock) -> Generator[MagicMock]:
     with patch("agent_framework_redis._context_provider.AsyncSearchIndex") as mock_cls:
         mock_cls.from_dict = MagicMock(return_value=mock_index)
-        mock_cls.from_existing = AsyncMock()
+
+        async def mock_from_existing(*args: Any, **kwargs: Any) -> AsyncMock:  # noqa: ARG001
+            existing = AsyncMock()
+            existing.schema.to_dict = MagicMock(
+                side_effect=lambda: mock_cls.from_dict.call_args.args[0] if mock_cls.from_dict.call_args else {}
+            )
+            return existing
+
+        mock_cls.from_existing = AsyncMock(side_effect=mock_from_existing)
         yield mock_cls
 
 
 def test_build_filter_from_dict_combines_multiple_tags(
     patch_index: MagicMock,  # noqa: ARG001
 ) -> None:
-    provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+    provider = RedisContextProvider(source_id="ctx", user_id="user|1")
     combined = provider._build_filter_from_dict({
-        "application_id": "app-1",
+        "application_id": "App,1",
         "agent_id": None,
-        "user_id": "user-1",
+        "user_id": "user|1",
     })
 
     assert combined is not None
-    assert str(combined) == "(@application_id:{app\\-1} @user_id:{user\\-1})"
+    assert str(combined) == (
+        f"(@{_scope_token_field('application_id')}:{{{_scope_token('application_id', 'App,1')}}} "
+        f"@{_scope_token_field('user_id')}:{{{_scope_token('user_id', 'user|1')}}})"
+    )
+    assert "App,1" not in str(combined)
+    assert "user|1" not in str(combined)
+
+
+def test_scope_tokens_preserve_identity_and_field_domain() -> None:
+    assert _scope_token("user_id", "Alice") != _scope_token("user_id", "alice")
+    assert _scope_token("user_id", "same") != _scope_token("agent_id", "same")
+    assert set(_scope_token("user_id", r"a,b|c\ d{}*")) <= set("0123456789abcdef")
+
+
+def test_scope_token_field_rejects_unknown_names() -> None:
+    with pytest.raises(ValueError, match="Unsupported Redis context scope field"):
+        _scope_token_field("content")
 
 
 def test_schema_dict_includes_vector_configuration(
@@ -76,6 +108,21 @@ def test_schema_dict_includes_vector_configuration(
     }
 
 
+def test_schema_uses_versioned_identity_preserving_scope_tags(
+    patch_index: MagicMock,  # noqa: ARG001
+) -> None:
+    provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+    fields = {field["name"]: field for field in provider.schema_dict["fields"]}
+
+    for name in _SCOPE_FIELDS:
+        assert name not in fields
+        assert fields[_scope_token_field(name)] == {
+            "name": _scope_token_field(name),
+            "type": "tag",
+            "attrs": {"case_sensitive": True, "separator": _SCOPE_TAG_SEPARATOR},
+        }
+
+
 async def test_ensure_index_short_circuits_after_first_initialization(
     mock_index: AsyncMock,
     patch_index: MagicMock,  # noqa: ARG001
@@ -99,9 +146,46 @@ async def test_ensure_index_validates_existing_schema_before_create(
     with patch.object(provider, "_validate_schema_compatibility", AsyncMock()) as validate_schema:
         await provider._ensure_index()
 
-    validate_schema.assert_awaited_once()
+    assert validate_schema.await_count == 2
     mock_index.create.assert_awaited_once_with(overwrite=False, drop=False)
     assert provider._index_initialized is True
+
+
+async def test_ensure_index_validates_before_overwriting_compatible_index(
+    mock_index: AsyncMock,
+    patch_index: MagicMock,  # noqa: ARG001
+) -> None:
+    mock_index.exists.return_value = True
+    provider = RedisContextProvider(source_id="ctx", user_id="user-1", overwrite_index=True)
+
+    with patch.object(provider, "_validate_schema_compatibility", AsyncMock()) as validate_schema:
+        await provider._ensure_index()
+
+    assert validate_schema.await_count == 2
+    mock_index.create.assert_awaited_once_with(overwrite=True, drop=False)
+    assert provider._index_initialized is True
+
+
+async def test_ensure_index_validates_schema_created_by_concurrent_initializer(
+    mock_index: AsyncMock,
+    patch_index: MagicMock,  # noqa: ARG001
+) -> None:
+    mock_index.exists.return_value = False
+    provider = RedisContextProvider(source_id="ctx", user_id="user-1", overwrite_index=True)
+
+    with (
+        patch.object(
+            provider,
+            "_validate_schema_compatibility",
+            AsyncMock(side_effect=ValueError("incompatible concurrent schema")),
+        ) as validate_schema,
+        pytest.raises(ValueError, match="incompatible concurrent schema"),
+    ):
+        await provider._ensure_index()
+
+    mock_index.create.assert_awaited_once_with(overwrite=False, drop=False)
+    validate_schema.assert_awaited_once()
+    assert provider._index_initialized is False
 
 
 async def test_validate_schema_compatibility_raises_for_significant_mismatch(
@@ -117,7 +201,7 @@ async def test_validate_schema_compatibility_raises_for_significant_mismatch(
     )
     patch_index.from_existing = AsyncMock(return_value=existing_index)
 
-    with pytest.raises(ValueError, match="overwrite_index=True"):
+    with pytest.raises(ValueError, match="Delete the existing index and its context hashes"):
         await provider._validate_schema_compatibility()
 
 
@@ -154,8 +238,16 @@ async def test_add_vectorizes_documents_and_applies_defaults(
     with patch.object(provider, "_ensure_index", AsyncMock()):
         await provider._add(
             data=[
-                {"content": "first"},
-                {"content": "second", "conversation_id": "custom-conversation"},
+                {
+                    "content": "first",
+                    "application_id": "caller-app",
+                    "agent_id": "caller-agent",
+                    "user_id": "caller-user",
+                    "thread_id": "caller-thread",
+                    "conversation_id": "caller-conversation",
+                    _scope_token_field("user_id"): "caller-token",
+                },
+                {"content": "second"},
             ],
             session_id="session-1",
         )
@@ -167,6 +259,14 @@ async def test_add_vectorizes_documents_and_applies_defaults(
     assert loaded_docs[0]["user_id"] == "user-1"
     assert loaded_docs[0]["thread_id"] == "session-1"
     assert loaded_docs[0]["conversation_id"] == "session-1"
+    for name, value in {
+        "application_id": "app-1",
+        "agent_id": "agent-1",
+        "user_id": "user-1",
+        "thread_id": "session-1",
+        "conversation_id": "session-1",
+    }.items():
+        assert loaded_docs[0][_scope_token_field(name)] == _scope_token(name, value)
     assert isinstance(loaded_docs[0]["embedding"], bytes)
     assert isinstance(loaded_docs[1]["embedding"], bytes)
     vectorizer.aembed_many.assert_awaited_once_with(["first", "second"], batch_size=2)
@@ -189,6 +289,7 @@ async def test_after_run_stores_vectors_in_configured_dtype(
         vector_field_name="embedding",
         redis_index=mock_index,
     )
+    object.__setattr__(provider, "_validate_schema_compatibility", AsyncMock())
     session = AgentSession(session_id="session-1")
     context = SessionContext(
         session_id=session.session_id,
@@ -252,17 +353,99 @@ async def test_redis_search_combines_explicit_filter_expression(
     mock_index.query.assert_awaited_once()
 
 
+@pytest.mark.parametrize(
+    ("message", "terms"),
+    [
+        ("Why ?", "(why)"),
+        ("ps aux | grep python", "(ps | aux | grep | python)"),
+        ("Is it A | B?", "(is | it | a | b)"),
+        ("Run ` ls ` please", "(run | ls | please)"),
+        ("| name | age |", "(name | age)"),
+        ("see e.g. v1.2", r"(see | e\.g\. | v1\.2)"),
+    ],
+)
+async def test_redis_search_drops_query_syntax_in_user_text(
+    message: str,
+    terms: str,
+    mock_index: AsyncMock,
+    patch_index: MagicMock,  # noqa: ARG001
+) -> None:
+    """User prose reaches RediSearch as plain terms, not as query syntax (#10002).
+
+    A bare `|`, `?` or backtick in a message previously turned the generated query
+    string into malformed grammar (`@content:(ps | aux | | | grep | python)`), and
+    the syntax error failed the whole agent run. redisvl escapes every term itself,
+    so nothing here may add a backslash of its own (it would be escaped again).
+    """
+    provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+
+    with patch.object(provider, "_ensure_index", AsyncMock()):
+        await provider._redis_search(text=message)
+
+    query = mock_index.query.await_args.args[0]
+    query_string = query.query_string()
+    assert f"@content:{terms}" in query_string
+    assert "\\\\" not in query_string
+
+
+async def test_redis_search_only_syntax_chars_returns_no_results(
+    mock_index: AsyncMock,
+    patch_index: MagicMock,  # noqa: ARG001
+) -> None:
+    """A message made only of query syntax has no terms to search for."""
+    provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+
+    with patch.object(provider, "_ensure_index", AsyncMock()):
+        assert await provider._redis_search(text=" ? | ` ") == []
+
+    mock_index.query.assert_not_awaited()
+
+
+async def test_redis_search_drops_syntax_for_hybrid_query(
+    mock_index: AsyncMock,
+    patch_index: MagicMock,  # noqa: ARG001
+) -> None:
+    """The hybrid vector path gets the same cleaned text."""
+    mock_vectorizer = MagicMock(spec=BaseVectorizer)
+    mock_vectorizer.dims = 128
+    mock_vectorizer.dtype = "float32"
+    mock_vectorizer.aembed = AsyncMock(return_value=[0.1] * 128)
+
+    provider = RedisContextProvider(
+        source_id="ctx",
+        user_id="u1",
+        redis_vectorizer=mock_vectorizer,
+        vector_field_name="embedding",
+    )
+
+    with (
+        patch.object(provider, "_ensure_index", AsyncMock()),
+        patch("agent_framework_redis._context_provider.AggregateHybridQuery") as hybrid_query,
+    ):
+        hybrid_query.return_value = MagicMock()
+        await provider._redis_search(text="ps aux | grep python")
+
+    assert hybrid_query.call_args.kwargs["text"] == "ps aux grep python"
+    mock_index.query.assert_awaited_once()
+
+
 async def test_search_all_collects_paginated_batches(
     mock_index: AsyncMock,
     patch_index: MagicMock,  # noqa: ARG001
 ) -> None:
     provider = RedisContextProvider(source_id="ctx", user_id="user-1")
+    captured_query: list[Any] = []
 
-    async def paginate(*args: Any, **kwargs: Any) -> AsyncIterator[list[dict[str, str]]]:  # noqa: ARG001
-        yield [{"content": "first"}]
-        yield [{"content": "second"}, {"content": "third"}]
+    def paginate(*args: Any, **kwargs: Any) -> AsyncIterator[list[dict[str, str]]]:  # noqa: ARG001
+        captured_query.append(args[0])
 
-    mock_index.paginate = MagicMock(return_value=paginate())
+        async def batches() -> AsyncIterator[list[dict[str, str]]]:
+            yield [{"content": "first"}]
+            yield [{"content": "second"}, {"content": "third"}]
+
+        return batches()
+
+    mock_index.paginate = MagicMock(side_effect=paginate)
 
     results = await provider.search_all(page_size=2)
 
@@ -271,3 +454,5 @@ async def test_search_all_collects_paginated_batches(
         {"content": "second"},
         {"content": "third"},
     ]
+    assert _scope_token_field("user_id") in str(captured_query[0]._filter_expression)
+    assert "user-1" not in str(captured_query[0]._filter_expression)

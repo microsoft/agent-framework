@@ -322,7 +322,7 @@ public class AgentFrameworkResponseHandlerResilienceTests
             .ReturnsAsync(Array.Empty<Item>());
         if (shutdownRequested)
         {
-            mock.Object.IsShutdownRequested = true;
+            mock.Setup(x => x.IsShutdownRequested).Returns(true);
         }
 
         return mock.Object;

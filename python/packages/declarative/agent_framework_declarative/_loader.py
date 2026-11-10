@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 import yaml
 from agent_framework import (
@@ -43,11 +42,6 @@ from ._models import (
     _safe_mode_context,  # type: ignore[reportPrivateUsage]
     agent_schema_dispatch,
 )
-
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 
 @experimental(feature_id=ExperimentalFeature.DECLARATIVE_AGENTS)
@@ -743,8 +737,9 @@ class AgentFactory:
         additional_properties = options.additionalProperties.copy()
         if (chat_tool_mode := additional_properties.pop("chatToolMode", None)) is not None:
             chat_options["tool_choice"] = chat_tool_mode
-        if additional_properties:
-            chat_options["additional_chat_options"] = additional_properties
+        # Pass the rest through as regular options; the typed fields above win on conflicts.
+        for key, value in additional_properties.items():
+            chat_options.setdefault(key, value)
         return chat_options
 
     def _parse_tools(self, tools: list[Tool] | None) -> list[AFFunctionTool | dict[str, Any]] | None:

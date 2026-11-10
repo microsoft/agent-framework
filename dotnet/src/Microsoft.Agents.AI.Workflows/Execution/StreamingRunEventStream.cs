@@ -87,7 +87,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
             while (!linkedSource.Token.IsCancellationRequested)
             {
                 // Start a new run-stage activity for this input→processing→halt cycle
-                runActivity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity();
+                runActivity = this._stepRunner.TelemetryContext.StartWorkflowRunActivity(this._stepRunner.WorkflowName);
                 runActivity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId)
                             .SetTag(Tags.SessionId, this._stepRunner.SessionId);
                 runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowStarted));
