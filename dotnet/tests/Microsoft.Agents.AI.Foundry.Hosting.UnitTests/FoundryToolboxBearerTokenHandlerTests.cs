@@ -30,12 +30,14 @@ public class FoundryToolboxBearerTokenHandlerTests
     private static (FoundryToolboxBearerTokenHandler Handler, CountingHandler Inner) CreateHandlerPair(
         Mock<TokenCredential>? credential = null,
         string? featuresHeader = null,
+        string tokenScope = FoundryToolboxServiceOptions.DefaultTokenScope,
         HttpStatusCode statusCode = HttpStatusCode.OK)
     {
         credential ??= CreateMockCredential();
         var inner = new CountingHandler(statusCode);
         var handler = new FoundryToolboxBearerTokenHandler(
             credential.Object,
+            tokenScope,
             featuresHeader,
             new Uri("https://example.com"))
         {
@@ -106,6 +108,7 @@ public class FoundryToolboxBearerTokenHandlerTests
         var credential = CreateMockCredential();
         var handler = new FoundryToolboxBearerTokenHandler(
             credential.Object,
+            FoundryToolboxServiceOptions.DefaultTokenScope,
             null,
             new Uri("https://trusted.example.com"))
         {
@@ -160,6 +163,7 @@ public class FoundryToolboxBearerTokenHandlerTests
         using var handler = FoundryToolboxService.CreateToolboxHttpMessageHandler(
             new Uri(pinnedEndpoint),
             CreateMockCredential().Object,
+            FoundryToolboxServiceOptions.DefaultTokenScope,
             featuresHeader: null,
             capture);
         using var invoker = new HttpMessageInvoker(handler);
@@ -190,6 +194,7 @@ public class FoundryToolboxBearerTokenHandlerTests
         var messageHandler = FoundryToolboxService.CreateToolboxHttpMessageHandler(
             trustedEndpoint,
             credential.Object,
+            FoundryToolboxServiceOptions.DefaultTokenScope,
             featuresHeader: null,
             scriptedHandler);
         using var httpClient = new HttpClient(messageHandler);
@@ -249,6 +254,7 @@ public class FoundryToolboxBearerTokenHandlerTests
         using var handler = FoundryToolboxService.CreateToolboxHttpMessageHandler(
             new Uri("https://trusted.example.com/toolboxes/test/mcp"),
             credential.Object,
+            FoundryToolboxServiceOptions.DefaultTokenScope,
             featuresHeader: null,
             capture);
         using var invoker = new HttpMessageInvoker(handler);
@@ -271,7 +277,7 @@ public class FoundryToolboxBearerTokenHandlerTests
     }
 
     [Fact]
-    public async Task SendAsync_UsesAiAzureComScopeAsync()
+    public async Task SendAsync_UsesDefaultPublicCloudScopeAsync()
     {
         // Arrange
         var capturedContexts = new List<TokenRequestContext>();
@@ -290,6 +296,29 @@ public class FoundryToolboxBearerTokenHandlerTests
         // Assert: spec §4 mandates the https://ai.azure.com audience.
         Assert.Single(capturedContexts);
         Assert.Contains("https://ai.azure.com/.default", capturedContexts[0].Scopes);
+    }
+
+    [Fact]
+    public async Task SendAsync_UsesConfiguredTokenScopeAsync()
+    {
+        // Arrange
+        const string TokenScope = "https://ai.contoso.example/.default";
+        var capturedContexts = new List<TokenRequestContext>();
+        var credential = new Mock<TokenCredential>();
+        credential
+            .Setup(c => c.GetTokenAsync(It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()))
+            .Callback<TokenRequestContext, CancellationToken>((ctx, _) => capturedContexts.Add(ctx))
+            .ReturnsAsync(new AccessToken(FakeToken, DateTimeOffset.MaxValue));
+        var (handler, _) = CreateHandlerPair(credential, tokenScope: TokenScope);
+        using var invoker = new HttpMessageInvoker(handler);
+
+        // Act
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
+        await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert
+        Assert.Single(capturedContexts);
+        Assert.Equal(TokenScope, Assert.Single(capturedContexts[0].Scopes));
     }
 
     [Fact]
@@ -456,6 +485,7 @@ public class FoundryToolboxBearerTokenHandlerTests
 
         var handler = new FoundryToolboxBearerTokenHandler(
             CreateMockCredential().Object,
+            FoundryToolboxServiceOptions.DefaultTokenScope,
             null,
             new Uri("https://example.com"))
         {

@@ -2,12 +2,27 @@
 
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.UnitTests.Harness.FileMemory;
 
 public class InMemoryAgentFileStoreTests
 {
+    [Fact]
+    public async Task SearchFiles_PreCancelledToken_ThrowsAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentFileStore();
+        await store.WriteAsync("notes.md", "Hello world");
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Act + Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => store.SearchAsync("", "Hello", cancellationToken: cts.Token));
+    }
+
     [Fact]
     public async Task WriteAndReadFile_ReturnsContentAsync()
     {

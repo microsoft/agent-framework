@@ -82,6 +82,7 @@ internal static class IWorkflowContextExtensions
 
         if (isExternal)
         {
+            conversation = FormulaValue.NewRecordFromFields(conversation.Fields);
             conversation.UpdateField("Id", FormulaValue.New(conversationId));
             await context.QueueSystemUpdateAsync(SystemScope.Names.Conversation, conversation, cancellationToken).ConfigureAwait(false);
             await context.QueueSystemUpdateAsync(SystemScope.Names.ConversationId, FormulaValue.New(conversationId), cancellationToken).ConfigureAwait(false);

@@ -658,22 +658,22 @@ async def test_raw_client_decodes_closed_set_arguments_and_omits_optional_defaul
     )
     response = make_response({
         "urgent": {"type": "noul", "noul": 0.1},
-        "__af_tool__.t0.a0.value": {
-            "type": "choice",
-            "choice": "v1",
-            "confidence": 1.0,
-            "probabilities": {"v0": 0.0, "v1": 1.0},
-        },
-        "__af_tool__.t0.a1.present": {"type": "noul", "noul": 0.0},
-        "__af_tool__.t0.a1.value": {
+        "__af_tool__.t0.a0.value": {"type": "noul", "noul": 0.9},
+        "__af_tool__.t0.a1.m0": {"type": "noul", "noul": 0.2},
+        "__af_tool__.t0.a1.m1": {"type": "noul", "noul": 0.8},
+        "__af_tool__.t0.a2.present": {"type": "noul", "noul": 0.0},
+        "__af_tool__.t0.a2.value": {
             "type": "choice",
             "choice": "v0",
             "confidence": 1.0,
             "probabilities": {"v0": 1.0, "v1": 0.0},
         },
-        "__af_tool__.t0.a2.value": {"type": "noul", "noul": 0.9},
-        "__af_tool__.t0.a3.m0": {"type": "noul", "noul": 0.2},
-        "__af_tool__.t0.a3.m1": {"type": "noul", "noul": 0.8},
+        "__af_tool__.t0.a3.value": {
+            "type": "choice",
+            "choice": "v1",
+            "confidence": 1.0,
+            "probabilities": {"v0": 0.0, "v1": 1.0},
+        },
     })
     client = RawTypeSafeChatClient(async_client=cast(AsyncTypeSafeClient, StubTypeSafeClient(response=response)))
 

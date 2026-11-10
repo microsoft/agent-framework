@@ -14,6 +14,7 @@ pass through to ``agent.run(...)`` and which request-owned fields to drop.
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 import warnings
@@ -31,6 +32,7 @@ from agent_framework import (
     get_namespaced_value,
 )
 from agent_framework._telemetry import mark_feature_used
+from agent_framework.observability import OBSERVABILITY_SETTINGS
 from agent_framework_hosting import AgentRunArgs
 from openai.types.responses import (
     Response as OpenAIResponse,
@@ -51,8 +53,11 @@ from pydantic import TypeAdapter, ValidationError
 
 from ._feature_usage import FeatureIndex
 
+logger = logging.getLogger(__name__)
+
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
+_PUBLIC_STREAM_FAILURE_MESSAGE = "An internal server error occurred."
 _RESPONSE_OUTPUT_ITEM_ADAPTER: TypeAdapter[Any] = TypeAdapter(ResponseOutputItem)
 _RESPONSE_USAGE_ADAPTER: TypeAdapter[Any] = TypeAdapter(ResponseUsage)
 
@@ -74,6 +79,23 @@ _RESPONSES_CONTINUATION_KEYS = ("previous_response_id", "conversation", "convers
 _RESPONSES_INPUT_MESSAGE_ROLES = frozenset({"user", "assistant", "system", "developer"})
 _RESPONSES_STATUSES = frozenset({"completed", "failed", "in_progress", "cancelled", "queued", "incomplete"})
 _STREAMING_TERMINAL_STATUSES = frozenset({"completed", "failed", "incomplete"})
+
+
+def _log_stream_failure(response_id: str, exc: Exception) -> None:
+    """Log a correlated stream failure under the framework's sensitive-data policy."""
+    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+        logger.error(
+            "Responses stream failed (phase=stream processing, response_id=%s, error_type=%s).",
+            response_id,
+            type(exc).__name__,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+    else:
+        logger.error(
+            "Responses stream failed (phase=stream processing, response_id=%s, error_type=%s).",
+            response_id,
+            type(exc).__name__,
+        )
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -1495,6 +1517,7 @@ async def responses_from_streaming_run(
         terminal_event_type = f"response.{status}"
         yield event(terminal_event_type, response=payload)
     except Exception as exc:
+        _log_stream_failure(response_id, exc)
         for stream_event in close_message("incomplete"):
             yield stream_event
         partial_contents = [
@@ -1513,7 +1536,7 @@ async def responses_from_streaming_run(
             "metadata": {},
             "error": {
                 "code": "server_error",
-                "message": str(exc),
+                "message": _PUBLIC_STREAM_FAILURE_MESSAGE,
             },
         }
         if conversation_id is not None:

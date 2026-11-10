@@ -4,13 +4,13 @@ Instructions for AI coding agents working in the Python codebase.
 
 **Key Documentation:**
 - [DEV_SETUP.md](DEV_SETUP.md) - Development environment setup and available poe tasks
-- [CODING_STANDARD.md](CODING_STANDARD.md) - Coding standards, docstring format, and performance guidelines
+- [CODING_STANDARD.md](CODING_STANDARD.md) - Canonical Python engineering and API-design standards
 - [samples/SAMPLE_GUIDELINES.md](samples/SAMPLE_GUIDELINES.md) - Sample structure and guidelines
 - [Python function-calling loop specification](../docs/specs/004-python-function-calling-loop.md) - Required
   behavior, scenario-to-test mapping, coverage gaps, and extra validation for function-loop changes
 
 **Agent Skills** (`.github/skills/`) — detailed, task-specific instructions loaded on demand:
-- `python-development` — coding standards, type annotations, docstrings, logging, performance
+- `python-development` — Python development workflow and routing to the canonical standards and task-specific skills
 - `python-testing` — test structure, fixtures, async mode, running tests
 - `python-code-quality` — linting, formatting, type checking, prek hooks, CI workflow
 - `python-feature-lifecycle` — package-stage meaning plus staged API decorators, enums, and feature promotion
@@ -19,6 +19,8 @@ Instructions for AI coding agents working in the Python codebase.
 - `agent-framework-py-release` — Python release PR workflow, CHANGELOG-driven package bumps, lifecycle version rules, and dependency-floor validation
 
 ## Maintaining Documentation
+
+This section concerns contributor guidance, not public consumer skills.
 
 When making changes to a package, check if the following need updates:
 - The package's `AGENTS.md` file (adding/removing/renaming public APIs, architecture changes, import path changes)
@@ -30,6 +32,15 @@ incomplete, or misleading (renamed files, changed commands, new conventions
 the user confirmed, etc.). **Before adding a new principle or rule, ask the
 user whether they want it captured as a durable principle** — do not invent
 team norms from a single conversation without explicit confirmation.
+
+## Public Consumer Skills
+
+The installable skills under `/skills/` guide high-level application-development choices. They are not documentation
+or a checklist of framework behavior. Follow the
+[consumer skill maintenance contract](../skills/README.md#repository-maintenance-contract). Do not update them merely
+because a public API, package, sample, or implementation changed.
+
+This restriction concerns public consumer skills, not repository task skills under `.github/skills/`.
 
 ## Terminology
 

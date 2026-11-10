@@ -94,7 +94,7 @@ public sealed class FoundryListenPortTests
         // Arrange: the platform sets PORT only when it needs a port other than the default.
         var services = CreateServices(settings: new Dictionary<string, string?>
         {
-            [FoundryHostingExtensions.ListenPortKey] = "9099",
+            [ServiceCollectionExtensions.ListenPortKey] = "9099",
         });
 
         // Act
@@ -113,7 +113,7 @@ public sealed class FoundryListenPortTests
         // Arrange
         var services = CreateServices(settings: new Dictionary<string, string?>
         {
-            [FoundryHostingExtensions.ListenPortKey] = port,
+            [ServiceCollectionExtensions.ListenPortKey] = port,
         });
         services.AddFoundryResponses();
 
@@ -171,7 +171,7 @@ public sealed class FoundryListenPortTests
         // Arrange
         var builder = AgentHost.CreateBuilder(
         [
-            $"--{FoundryHostingExtensions.FoundryHostingEnvironmentKey}=foundry",
+            $"--{ServiceCollectionExtensions.FoundryHostingEnvironmentKey}=foundry",
         ]);
         var mockAgent = new Mock<AIAgent>();
         mockAgent.SetupGet(a => a.Name).Returns("test-agent");
@@ -184,7 +184,7 @@ public sealed class FoundryListenPortTests
         try
         {
             Assert.Equal("http://+:8088", GetConfiguredListenUrl(app.App.Services));
-            Assert.Equal([FoundryHostingExtensions.DefaultListenPort], GetCodeBackedPorts(app.App.Services));
+            Assert.Equal([ServiceCollectionExtensions.DefaultListenPort], GetCodeBackedPorts(app.App.Services));
         }
         finally
         {
@@ -201,7 +201,7 @@ public sealed class FoundryListenPortTests
         settings ??= [];
         if (hosted)
         {
-            settings[FoundryHostingExtensions.FoundryHostingEnvironmentKey] = "foundry";
+            settings[ServiceCollectionExtensions.FoundryHostingEnvironmentKey] = "foundry";
         }
 
         var services = new ServiceCollection();

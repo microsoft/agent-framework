@@ -1,8 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
+import base64
 import os
 import uuid
 from collections.abc import AsyncIterable
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -25,12 +29,28 @@ from agent_framework.exceptions import (
 )
 from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
+from ollama._types import Image as OllamaImage
 from ollama._types import Message as OllamaMessage
 from openai import AsyncStream
 from pydantic import BaseModel
 from pytest import fixture
 
 from agent_framework_ollama import OllamaChatClient
+
+
+@pytest.mark.parametrize("injected", [False, True])
+async def test_ollama_client_context_ownership(injected: bool) -> None:
+    sdk_client = AsyncClient(host="http://localhost:11434")
+    with patch("agent_framework_ollama._chat_client.AsyncClient", return_value=sdk_client):
+        client = OllamaChatClient(model="test-model", client=sdk_client if injected else None)
+    async with client as entered:
+        assert entered is client
+        assert not sdk_client._client.is_closed
+    await client.close()
+    assert sdk_client._client.is_closed is not injected
+    if injected:
+        await sdk_client._client.aclose()
+
 
 # region Service Setup
 
@@ -602,6 +622,126 @@ async def test_cmc_streaming_with_tool_call(
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_tool_call_finish_reason(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    chunk1 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
+        ),
+        model="test",
+        done=False,
+    )
+    chunk2 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+        ),
+        model="test",
+        done=True,
+        done_reason="stop",
+        prompt_eval_count=6,
+        eval_count=4,
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [chunk1, chunk2]
+    mock_chat.return_value = stream
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(function_invocation_configuration={"enabled": False})
+    result = ollama_client.get_response(messages=chat_history, stream=True)
+    async for _ in result:
+        pass
+    final_response = await result.get_final_response()
+
+    assert final_response.finish_reason == "tool_calls"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_tool_call_preserves_terminal_length(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    chunk1 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
+        ),
+        model="test",
+        done=False,
+    )
+    chunk2 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+        ),
+        model="test",
+        done=True,
+        done_reason="length",
+        prompt_eval_count=6,
+        eval_count=4,
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [chunk1, chunk2]
+    mock_chat.return_value = stream
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(function_invocation_configuration={"enabled": False})
+    result = ollama_client.get_response(messages=chat_history, stream=True)
+    async for _ in result:
+        pass
+    final_response = await result.get_final_response()
+
+    assert final_response.finish_reason == "length"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_tool_call_with_missing_terminal_finish_reason(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    chunk1 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
+        ),
+        model="test",
+        done=False,
+    )
+    chunk2 = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+        ),
+        model="test",
+        done=True,
+        done_reason=None,
+        prompt_eval_count=6,
+        eval_count=4,
+    )
+    stream = MagicMock(spec=AsyncStream)
+    stream.__aiter__.return_value = [chunk1, chunk2]
+    mock_chat.return_value = stream
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(function_invocation_configuration={"enabled": False})
+    result = ollama_client.get_response(messages=chat_history, stream=True)
+    async for _ in result:
+        pass
+    final_response = await result.get_final_response()
+
+    assert final_response.finish_reason == "tool_calls"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc_with_dict_tool_passthrough(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],
@@ -634,18 +774,98 @@ async def test_cmc_with_data_content_type(
     chat_history: list[Message],
     mock_chat_completion_response: OllamaChatResponse,
 ) -> None:
+    image_bytes = b"\x89PNG\r\n\x1a\n"
     mock_chat.return_value = mock_chat_completion_response
     chat_history.append(
         Message(
-            contents=[Content.from_uri(uri="data:image/png;base64,xyz", media_type="image/png")],
+            contents=[
+                Content.from_uri(
+                    uri=f"data:image/png;base64,{base64.b64encode(image_bytes).decode()}",
+                    media_type="image/png",
+                )
+            ],
             role="user",
         )
     )
 
     ollama_client = OllamaChatClient()
 
-    result = await ollama_client.get_response(messages=chat_history)
+    with (
+        patch.object(Path, "exists", side_effect=AssertionError("Path.exists must not be called")) as path_exists,
+        patch.object(
+            Path, "read_bytes", side_effect=AssertionError("Path.read_bytes must not be called")
+        ) as read_bytes,
+    ):
+        result = await ollama_client.get_response(messages=chat_history)
+        sent_image = mock_chat.call_args.kwargs["messages"][0].images[0]
+        assert isinstance(sent_image, OllamaImage)
+        assert sent_image.value == image_bytes
+        assert sent_image.model_dump() == base64.b64encode(image_bytes).decode()
+
     assert result.text == "test"
+    path_exists.assert_not_called()
+    read_bytes.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "data:image/png,/tmp/image.png",
+        "data:image/png;base64,/tmp/image.png",
+        r"data:image/png;base64,C:\temp\image.png",
+        r"data:image/png;base64,\\server\share\image.png",
+        "data:image/png;base64,../image.png",
+        "data:image/png;base64,",
+        "data:text/plain;base64,aGVsbG8=",
+    ],
+)
+def test_cmc_rejects_invalid_image_data_uri(
+    uri: str,
+    ollama_unit_test_env: dict[str, str],
+) -> None:
+    message = Message(
+        contents=[Content.from_uri(uri=uri, media_type="image/png")],
+        role="user",
+    )
+    ollama_client = OllamaChatClient()
+
+    with pytest.raises(ChatClientInvalidRequestException):
+        ollama_client._format_user_message(message)
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_treats_base64_shaped_path_as_inline_bytes(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+    mock_chat_completion_response: OllamaChatResponse,
+) -> None:
+    payload = "////tmpx"
+    expected_bytes = base64.b64decode(payload, validate=True)
+    mock_chat.return_value = mock_chat_completion_response
+    chat_history.append(
+        Message(
+            contents=[Content.from_uri(uri=f"data:image/png;base64,{payload}", media_type="image/png")],
+            role="user",
+        )
+    )
+
+    ollama_client = OllamaChatClient()
+
+    with (
+        patch.object(Path, "exists", side_effect=AssertionError("Path.exists must not be called")) as path_exists,
+        patch.object(
+            Path, "read_bytes", side_effect=AssertionError("Path.read_bytes must not be called")
+        ) as read_bytes,
+    ):
+        await ollama_client.get_response(messages=chat_history)
+        sent_image = mock_chat.call_args.kwargs["messages"][0].images[0]
+        assert isinstance(sent_image, OllamaImage)
+        assert sent_image.value == expected_bytes
+        assert sent_image.model_dump() == payload
+
+    path_exists.assert_not_called()
+    read_bytes.assert_not_called()
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)

@@ -75,6 +75,34 @@ public class AgentFileStoreContractTests
             => Task.FromResult<IReadOnlyList<string>>(this.Indexed.OrderBy(x => x, StringComparer.Ordinal).ToList());
     }
 
+    private sealed class CancelOnReadStore(CancellationTokenSource cancellationTokenSource) : ContentOnlyStore
+    {
+        public override Task<string?> ReadAsync(string path, CancellationToken cancellationToken = default)
+        {
+            cancellationTokenSource.Cancel();
+            return Task.FromResult<string?>(Needle);
+        }
+    }
+
+    private sealed class DeadlineTokenStore : ContentOnlyStore
+    {
+        public bool DiscoveryTokenCanBeCanceled { get; private set; }
+
+        public bool ReadTokenCanBeCanceled { get; private set; }
+
+        protected override Task<IReadOnlyList<string>> FindMatchingFilesAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
+        {
+            this.DiscoveryTokenCanBeCanceled = cancellationToken.CanBeCanceled;
+            return Task.FromResult<IReadOnlyList<string>>(["f.txt"]);
+        }
+
+        public override Task<string?> ReadAsync(string path, CancellationToken cancellationToken = default)
+        {
+            this.ReadTokenCanBeCanceled = cancellationToken.CanBeCanceled;
+            return base.ReadAsync(path, cancellationToken);
+        }
+    }
+
     [Fact]
     public void SplitLines_PublishesTheEditorsRule()
     {
@@ -246,6 +274,35 @@ public class AgentFileStoreContractTests
     }
 
     [Fact]
+    public async Task BaseSearch_StopsScanningWhenReadCancelsAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        var store = new CancelOnReadStore(cts);
+        await store.WriteAsync("f.txt", Needle);
+
+        // Act + Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => store.SearchAsync(string.Empty, Needle, cancellationToken: cts.Token));
+    }
+
+    [Fact]
+    public async Task BaseSearch_PassesDeadlineTokenToDiscoveryAndReadAsync()
+    {
+        // Arrange
+        var store = new DeadlineTokenStore();
+        await store.WriteAsync("f.txt", Needle);
+
+        // Act
+        IReadOnlyList<FileSearchResult> results = await store.SearchAsync(string.Empty, Needle);
+
+        // Assert
+        Assert.Single(results);
+        Assert.True(store.DiscoveryTokenCanBeCanceled);
+        Assert.True(store.ReadTokenCanBeCanceled);
+    }
+
+    [Fact]
     public void ScanContent_NullFileName_Throws()
     {
         // Arrange — a pattern that matches, since a non-matching scan returns null and hides the problem.
@@ -253,5 +310,24 @@ public class AgentFileStoreContractTests
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => AgentFileStore.ScanContent(null!, Needle, regex));
+    }
+
+    [Fact]
+    public void ScanContent_NullRegex_Throws()
+    {
+        // Act + Assert
+        Assert.Throws<ArgumentNullException>(() => AgentFileStore.ScanContent("f.txt", Needle, null!));
+    }
+
+    [Fact]
+    public void ScanContent_PreCancelledToken_Throws()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Act + Assert
+        Assert.ThrowsAny<OperationCanceledException>(
+            () => AgentFileStore.ScanContent("f.txt", Needle, new Regex(Needle), cts.Token));
     }
 }

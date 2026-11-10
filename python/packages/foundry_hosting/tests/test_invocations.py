@@ -21,7 +21,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mappi
 from contextlib import contextmanager
 from itertools import product
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -60,7 +60,6 @@ from azure.ai.agentserver.core.storage import FoundryStateStore
 from starlette.datastructures import QueryParams
 from starlette.requests import ClientDisconnect, Request
 from starlette.responses import Response, StreamingResponse
-from typing_extensions import Any
 
 from agent_framework_foundry_hosting import InvocationRun, InvocationsHostServer, StoreProvider
 from agent_framework_foundry_hosting._state_store import FoundryAgentSessionStore

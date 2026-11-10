@@ -1,14 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import sys
 from enum import Enum
+from typing import TypedDict
 
 from pydantic import BaseModel
-
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 
 class PurviewLocationType(str, Enum):

@@ -33,7 +33,7 @@
     <RootNamespace>HostedLocalCodeAct</RootNamespace>
     <AssemblyName>HostedLocalCodeAct</AssemblyName>
     <UserSecretsId>dd574e14-75e7-41f0-8ee6-b7c62d6952cb</UserSecretsId>
-    <AgentFrameworkVersion>1.22.0-preview.260918.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.27.0-preview.261030.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>

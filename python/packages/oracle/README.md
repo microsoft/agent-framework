@@ -11,8 +11,8 @@ describes the connection and pool settings resolved through Agent Framework.
 pip install agent-framework-oracle --pre
 ```
 
-Requires Python 3.10+, Oracle AI Database 26ai with `COMPATIBLE` set to
-**23.4.0 or higher**, `python-oracledb` 2.2.x or 3.x, and permission to
+Supports Python 3.11–3.15. Requires Oracle AI Database 26ai with `COMPATIBLE` set to
+**23.4.0 or higher**, `python-oracledb` 3.x, and permission to
 create/drop tables in the connected user's schema. The connector uses the
 driver's async Thin-mode API; it does not initialize the Thick client or
 provision a database.
@@ -64,7 +64,7 @@ pass them through `pool_parameters` or use a configured client.
 
 Alternatively, pass a configured `oracledb.AsyncConnection` or
 `oracledb.AsyncConnectionPool` as `client` for advanced authentication. A
-supplied client cannot be combined with connection settings and remains
+supplied client takes precedence over connection settings and remains
 caller-owned. A connector-created pool opens on first use and closes on
 `close()` or async context exit. A collection obtained from a store borrows its
 client; closing that collection does not close the store. The store must remain
@@ -182,5 +182,5 @@ deletes only that table.
 ## Documentation
 
 - [Oracle AI Vector Search requirements](https://docs.oracle.com/en/database/oracle/oracle-database/26/vecse/overview-ai-vector-search.html)
-- [python-oracledb 2.2 vector types](https://python-oracledb.readthedocs.io/en/v2.2.0/user_guide/vector_data_type.html)
+- [python-oracledb 3.0 vector types](https://python-oracledb.readthedocs.io/en/v3.0.0/user_guide/vector_data_type.html)
 - [Microsoft Agent Framework](https://learn.microsoft.com/agent-framework/)

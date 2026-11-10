@@ -9,7 +9,8 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// embedded in <c>previous_response_id</c>, and finally to the partition of the freshly minted
 /// response id (cold start). All response ids in a chain share the same partition, so a
 /// conversation continued purely via <c>previous_response_id</c> (no stored conversation) still
-/// converges to a single MAF session.
+/// converges to a single MAF session. An explicit conversation and an implicit response chain
+/// remain distinct session histories unless the caller keeps sending the conversation id.
 /// </summary>
 /// <remarks>
 /// This is deliberately conversation-level: it must NOT use the container session id

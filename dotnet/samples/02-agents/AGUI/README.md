@@ -7,7 +7,7 @@ This directory contains samples that demonstrate how to build AG-UI (Agent UI Pr
 
 ## Prerequisites
 
-- .NET 9.0 or later
+- .NET 10.0 SDK or later
 - Azure OpenAI service endpoint and deployment configured
 - Azure CLI installed and authenticated (`az login`)
 - User has the `Cognitive Services OpenAI Contributor` role for the Azure OpenAI resource
@@ -153,7 +153,7 @@ An interactive client that handles approval requests from the server. Demonstrat
 
 - Detecting `ToolApprovalRequestContent` in the streamed response
 - Displaying approval details to the user and prompting for approval or rejection
-- Sending the decision back as a `ToolApprovalResponseContent` created with `approvalRequest.CreateResponse(approved)`
+- Sending the decision back as a `ToolApprovalResponseContent` created with `approvalRequest.CreateResponse(...)`. When the user rejects the call, the sample includes a reason telling the model not to retry it
 - Resuming the run so the server continues after the decision is received
 
 **Run the client:**
@@ -291,11 +291,11 @@ Ensure the server is running before starting the client:
 
 ```bash
 # Terminal 1
-cd AGUI_Step01_ServerBasic
+cd Step01_GettingStarted/Server
 dotnet run --urls http://localhost:8888
 
 # Terminal 2 (after server starts)
-cd AGUI_Step02_ClientBasic
+cd Step01_GettingStarted/Client
 dotnet run
 ```
 

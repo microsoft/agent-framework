@@ -27,10 +27,12 @@ load_dotenv()
 
 
 async def main() -> None:
-    # 1. Set up the chat client
+    # 1. Set up the chat client. evaluate_traces() also needs the model
+    #    deployment that Foundry should use as the evaluator LLM judge.
+    model = os.environ.get("FOUNDRY_MODEL", "gpt-4o")
     chat_client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ.get("FOUNDRY_MODEL", "gpt-4o"),
+        model=model,
         credential=AzureCliCredential(),
     )
 
@@ -54,6 +56,7 @@ async def main() -> None:
         response_ids=response_ids,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.GROUNDEDNESS, FoundryEvals.TOOL_CALL_ACCURACY],
         client=chat_client,
+        model=model,
     )
 
     print(f"Status: {results.status}")
@@ -78,6 +81,7 @@ async def main() -> None:
         response_ids=response_ids,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.COHERENCE],
         client=chat_client,
+        model=model,
     )
 
     print(f"Status: {results.status}")
@@ -88,6 +92,7 @@ async def main() -> None:
     #     agent_id="travel-bot",
     #     evaluators=[FoundryEvals.INTENT_RESOLUTION, FoundryEvals.TASK_ADHERENCE],
     #     client=chat_client,
+    #     model=model,
     #     lookback_hours=24,
     # )
 

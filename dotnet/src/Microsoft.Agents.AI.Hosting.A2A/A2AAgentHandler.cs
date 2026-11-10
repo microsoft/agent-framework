@@ -60,6 +60,11 @@ internal sealed class A2AAgentHandler : IAgentHandler
         // Handle task updates
         if (context.IsContinuation)
         {
+            if (this._runMode == AgentRunMode.ReturnMessage)
+            {
+                throw new A2AException("Task resumption is not supported by the message-only handler.", A2AErrorCode.UnsupportedOperation);
+            }
+
             return this.HandleTaskUpdateAsync(context, eventQueue, cancellationToken);
         }
 
@@ -77,17 +82,23 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
     /// <inheritdoc/>
     public Task CancelAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
-        => CancelTaskAsync(context, eventQueue, cancellationToken);
+        => CancelTaskAsync(context, eventQueue, this._runMode, cancellationToken);
 
     /// <summary>
     /// Transitions the task identified by <paramref name="context"/> to the canceled state.
     /// </summary>
     /// <param name="context">The request context of the task to cancel.</param>
     /// <param name="eventQueue">The queue the cancellation event is written to.</param>
+    /// <param name="runMode">The run mode that determines whether task cancellation is supported.</param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> to cancel the operation.</param>
     /// <returns>A task that represents the asynchronous operation.</returns>
-    internal static async Task CancelTaskAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
+    internal static async Task CancelTaskAsync(RequestContext context, AgentEventQueue eventQueue, AgentRunMode runMode, CancellationToken cancellationToken)
     {
+        if (runMode == AgentRunMode.ReturnMessage)
+        {
+            throw new A2AException("Task cancellation is not supported by the message-only handler.", A2AErrorCode.UnsupportedOperation);
+        }
+
         var taskUpdater = new TaskUpdater(eventQueue, context.TaskId, context.ContextId);
         await taskUpdater.CancelAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
     }
@@ -117,12 +128,8 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// The response shape is decided by two independent inputs:
     /// <list type="number">
     /// <item><description>
-    /// Which A2A artifact the server returns. This is configured per agent registration, for example:
-    /// <code>
-    /// builder.AddA2AServer(agent, (A2AServerRegistrationOptions options) =>
-    ///     options.AgentRunMode = AgentRunMode.ReturnTask);
-    /// </code>
-    /// Use <c>AgentRunMode.ReturnMessage</c> to always respond with a message instead of a task.
+    /// Which A2A artifact the handler returns, as specified by its constructor's run mode.
+    /// The default server registration uses <c>AgentRunMode.ReturnMessage</c> unless configured otherwise.
     /// </description></item>
     /// <item><description>
     /// Whether the client asked for an immediate response. In the A2A protocol this is the
@@ -158,12 +165,12 @@ internal sealed class A2AAgentHandler : IAgentHandler
         // AIAgent does not support resuming from arbitrary prior tasks.
         // Throw explicitly so the client gets a clear error rather than a response
         // that silently ignores the referenced task context.
-        if (context.Message?.ReferenceTaskIds is { Count: > 0 })
+        if (context.IncomingMessage?.ReferenceTaskIds is { Count: > 0 })
         {
             throw new NotSupportedException("ReferenceTaskIds is not supported. AIAgent cannot resume from arbitrary prior task context.");
         }
 
-        List<ChatMessage> chatMessages = context.Message is not null ? [context.Message.ToChatMessage()] : [];
+        List<ChatMessage> chatMessages = context.IncomingMessage is { } message ? [message.ToChatMessage()] : [];
 
         // Decide which A2A artifact to return based on the configured run mode.
         var decisionContext = new A2ARunDecisionContext(context);

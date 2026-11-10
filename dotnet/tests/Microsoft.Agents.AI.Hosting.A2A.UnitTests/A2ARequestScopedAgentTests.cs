@@ -53,8 +53,8 @@ public sealed class A2ARequestScopedAgentTests
         A2AServer server = provider.GetRequiredKeyedService<A2AServer>("assistant");
 
         // Act
-        SendMessageResponse firstResponse = await server.SendMessageAsync(CreateRequest("ctx-1"));
-        SendMessageResponse secondResponse = await server.SendMessageAsync(CreateRequest("ctx-1"));
+        SendMessageResponse firstResponse = await server.SendMessageAsync(CreateRequest("ctx-1"), requestContext: null);
+        SendMessageResponse secondResponse = await server.SendMessageAsync(CreateRequest("ctx-1"), requestContext: null);
 
         // Assert
         Assert.Equal(2, createdAgents);
@@ -83,8 +83,8 @@ public sealed class A2ARequestScopedAgentTests
         int createdAtServerCreation = createdAgents;
 
         // Act
-        await server.SendMessageAsync(CreateRequest("ctx-1"));
-        SendMessageResponse secondResponse = await server.SendMessageAsync(CreateRequest("ctx-1"));
+        await server.SendMessageAsync(CreateRequest("ctx-1"), requestContext: null);
+        SendMessageResponse secondResponse = await server.SendMessageAsync(CreateRequest("ctx-1"), requestContext: null);
 
         // Assert
         Assert.Equal(1, createdAtServerCreation);
@@ -585,6 +585,9 @@ public sealed class A2ARequestScopedAgentTests
 
         public override ValueTask<AgentSession?> GetSessionAsync(AIAgent agent, AgentSessionStoreKey key, CancellationToken cancellationToken = default) =>
             new((AgentSession?)null);
+
+        public override ValueTask DeleteSessionAsync(AIAgent agent, AgentSessionStoreKey key, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
 
         public void Dispose() => this._disposed = true;
     }

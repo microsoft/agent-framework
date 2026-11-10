@@ -8,15 +8,12 @@ The host is deliberately thin:
 var builder = WebApplication.CreateBuilder(args);
 
 // Wires up the Responses API host for the agent and auto-applies OpenTelemetry.
-builder.Services.AddFoundryResponses(build.Agent);
+builder.AddFoundryResponses(build.Agent);
 
 var app = builder.Build();
 
 // The endpoint that live Foundry calls.
 app.MapFoundryResponses();
-
-// Contributor-only: local REPL route shape. Not used in production.
-app.MapDevTemporaryLocalAgentEndpoint();
 
 app.Run();
 ```

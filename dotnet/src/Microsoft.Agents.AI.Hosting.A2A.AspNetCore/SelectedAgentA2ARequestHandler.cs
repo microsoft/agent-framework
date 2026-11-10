@@ -98,7 +98,7 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler, IAsyn
     }
 
     /// <inheritdoc/>
-    public async Task<SendMessageResponse> SendMessageAsync(SendMessageRequest request, CancellationToken cancellationToken = default)
+    public async Task<SendMessageResponse> SendMessageAsync(SendMessageRequest request, A2ARequestContext? requestContext = null, CancellationToken cancellationToken = default)
     {
         // A continuation always returns a task, so with ReturnImmediately its run would outlive the request. Reject it
         // before A2AServer starts the execution, which would otherwise append the message to the task history and fail
@@ -112,7 +112,7 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler, IAsyn
         RequestBoundAgentHandler handler = selection.BindAgent(request.Message);
         try
         {
-            return await selection.A2AServer.SendMessageAsync(request, cancellationToken).ConfigureAwait(false);
+            return await selection.A2AServer.SendMessageAsync(request, requestContext, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -121,22 +121,23 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler, IAsyn
     }
 
     /// <inheritdoc/>
-    public IAsyncEnumerable<StreamResponse> SendStreamingMessageAsync(SendMessageRequest request, CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<StreamResponse> SendStreamingMessageAsync(SendMessageRequest request, A2ARequestContext? requestContext = null, CancellationToken cancellationToken = default)
     {
         Selection selection = this.GetSelection();
         RequestBoundAgentHandler handler = selection.BindAgent(request.Message);
-        return StreamAsync(selection.A2AServer, handler, request, cancellationToken);
+        return StreamAsync(selection.A2AServer, handler, request, requestContext, cancellationToken);
     }
 
     private static async IAsyncEnumerable<StreamResponse> StreamAsync(
         A2AServer server,
         RequestBoundAgentHandler handler,
         SendMessageRequest request,
+        A2ARequestContext? requestContext,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         try
         {
-            await foreach (StreamResponse response in server.SendStreamingMessageAsync(request, cancellationToken).ConfigureAwait(false))
+            await foreach (StreamResponse response in server.SendStreamingMessageAsync(request, requestContext, cancellationToken).ConfigureAwait(false))
             {
                 yield return response;
             }
@@ -150,40 +151,40 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler, IAsyn
     }
 
     /// <inheritdoc/>
-    public Task<AgentTask> GetTaskAsync(GetTaskRequest request, CancellationToken cancellationToken = default)
-        => this.GetSelection().A2AServer.GetTaskAsync(request, cancellationToken);
+    public Task<AgentTask> GetTaskAsync(GetTaskRequest request, A2ARequestContext? requestContext = null, CancellationToken cancellationToken = default)
+        => this.GetSelection().A2AServer.GetTaskAsync(request, requestContext, cancellationToken);
 
     /// <inheritdoc/>
-    public Task<ListTasksResponse> ListTasksAsync(ListTasksRequest request, CancellationToken cancellationToken = default)
-        => this.GetSelection().A2AServer.ListTasksAsync(request, cancellationToken);
+    public Task<ListTasksResponse> ListTasksAsync(ListTasksRequest request, A2ARequestContext? requestContext = null, CancellationToken cancellationToken = default)
+        => this.GetSelection().A2AServer.ListTasksAsync(request, requestContext, cancellationToken);
 
     /// <inheritdoc/>
-    public Task<AgentTask> CancelTaskAsync(CancelTaskRequest request, CancellationToken cancellationToken = default)
-        => this.GetSelection().A2AServer.CancelTaskAsync(request, cancellationToken);
+    public Task<AgentTask> CancelTaskAsync(CancelTaskRequest request, A2ARequestContext? requestContext = null, CancellationToken cancellationToken = default)
+        => this.GetSelection().A2AServer.CancelTaskAsync(request, requestContext, cancellationToken);
 
     /// <inheritdoc/>
-    public IAsyncEnumerable<StreamResponse> SubscribeToTaskAsync(SubscribeToTaskRequest request, CancellationToken cancellationToken = default)
-        => this.GetSelection().A2AServer.SubscribeToTaskAsync(request, cancellationToken);
+    public IAsyncEnumerable<StreamResponse> SubscribeToTaskAsync(SubscribeToTaskRequest request, A2ARequestContext? requestContext = null, CancellationToken cancellationToken = default)
+        => this.GetSelection().A2AServer.SubscribeToTaskAsync(request, requestContext, cancellationToken);
 
     /// <inheritdoc/>
-    public Task<TaskPushNotificationConfig> CreateTaskPushNotificationConfigAsync(TaskPushNotificationConfig config, CancellationToken cancellationToken = default)
-        => this.GetSelection().A2AServer.CreateTaskPushNotificationConfigAsync(config, cancellationToken);
+    public Task<TaskPushNotificationConfig> CreateTaskPushNotificationConfigAsync(TaskPushNotificationConfig config, A2ARequestContext? requestContext = null, CancellationToken cancellationToken = default)
+        => this.GetSelection().A2AServer.CreateTaskPushNotificationConfigAsync(config, requestContext, cancellationToken);
 
     /// <inheritdoc/>
-    public Task<TaskPushNotificationConfig> GetTaskPushNotificationConfigAsync(GetTaskPushNotificationConfigRequest request, CancellationToken cancellationToken = default)
-        => this.GetSelection().A2AServer.GetTaskPushNotificationConfigAsync(request, cancellationToken);
+    public Task<TaskPushNotificationConfig> GetTaskPushNotificationConfigAsync(GetTaskPushNotificationConfigRequest request, A2ARequestContext? requestContext = null, CancellationToken cancellationToken = default)
+        => this.GetSelection().A2AServer.GetTaskPushNotificationConfigAsync(request, requestContext, cancellationToken);
 
     /// <inheritdoc/>
-    public Task<ListTaskPushNotificationConfigsResponse> ListTaskPushNotificationConfigsAsync(ListTaskPushNotificationConfigsRequest request, CancellationToken cancellationToken = default)
-        => this.GetSelection().A2AServer.ListTaskPushNotificationConfigsAsync(request, cancellationToken);
+    public Task<ListTaskPushNotificationConfigsResponse> ListTaskPushNotificationConfigsAsync(ListTaskPushNotificationConfigsRequest request, A2ARequestContext? requestContext = null, CancellationToken cancellationToken = default)
+        => this.GetSelection().A2AServer.ListTaskPushNotificationConfigsAsync(request, requestContext, cancellationToken);
 
     /// <inheritdoc/>
-    public Task DeleteTaskPushNotificationConfigAsync(DeleteTaskPushNotificationConfigRequest request, CancellationToken cancellationToken = default)
-        => this.GetSelection().A2AServer.DeleteTaskPushNotificationConfigAsync(request, cancellationToken);
+    public Task DeleteTaskPushNotificationConfigAsync(DeleteTaskPushNotificationConfigRequest request, A2ARequestContext? requestContext = null, CancellationToken cancellationToken = default)
+        => this.GetSelection().A2AServer.DeleteTaskPushNotificationConfigAsync(request, requestContext, cancellationToken);
 
     /// <inheritdoc/>
-    public Task<AgentCard> GetExtendedAgentCardAsync(GetExtendedAgentCardRequest request, CancellationToken cancellationToken = default)
-        => this.GetSelection().A2AServer.GetExtendedAgentCardAsync(request, cancellationToken);
+    public Task<AgentCard> GetExtendedAgentCardAsync(GetExtendedAgentCardRequest request, A2ARequestContext? requestContext = null, CancellationToken cancellationToken = default)
+        => this.GetSelection().A2AServer.GetExtendedAgentCardAsync(request, requestContext, cancellationToken);
 
     private Selection GetSelection() =>
         this._selection.Value ?? throw new InvalidOperationException("No agent was selected for the current A2A request.");
@@ -261,11 +262,14 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler, IAsyn
     /// </summary>
     private sealed class SelectedAgentServer : IAgentHandler
     {
+        private readonly AgentRunMode _runMode;
+
         // A2AServer passes the incoming message to the handler, including when it runs the handler in the background.
         private readonly ConditionalWeakTable<Message, IAgentHandler> _handlers = new();
 
         public SelectedAgentServer(SelectedAgentA2ARequestHandler owner, string agentName)
         {
+            this._runMode = owner._options?.AgentRunMode ?? AgentRunMode.ReturnMessage;
             this.A2AServer = A2AServerServiceCollectionExtensions.CreateA2AServer(
                 owner._applicationServices,
                 agentName,
@@ -280,7 +284,7 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler, IAsyn
 
         public Task ExecuteAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
         {
-            if (context.Message is null || !this._handlers.TryGetValue(context.Message, out IAgentHandler? handler))
+            if (context.IncomingMessage is null || !this._handlers.TryGetValue(context.IncomingMessage, out IAgentHandler? handler))
             {
                 throw new InvalidOperationException("The A2A message is not associated with the agent selected for its request.");
             }
@@ -289,6 +293,6 @@ internal sealed class SelectedAgentA2ARequestHandler : IA2ARequestHandler, IAsyn
         }
 
         public Task CancelAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
-            => A2AAgentHandler.CancelTaskAsync(context, eventQueue, cancellationToken);
+            => A2AAgentHandler.CancelTaskAsync(context, eventQueue, this._runMode, cancellationToken);
     }
 }

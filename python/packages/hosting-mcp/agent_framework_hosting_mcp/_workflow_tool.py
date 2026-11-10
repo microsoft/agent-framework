@@ -86,7 +86,7 @@ class WorkflowMCPTool(Generic[WorkflowT]):
             raise ValueError(
                 f"MCP workflow tools require exactly one start-executor input type; found {len(input_types)}."
             )
-        return TypeAdapter(input_types[0])
+        return TypeAdapter(cast(Any, input_types[0]))
 
     def _workflow_input(self, workflow: WorkflowT, arguments: Mapping[str, Any] | None) -> Any:
         input_adapter = self._input_adapter(workflow)

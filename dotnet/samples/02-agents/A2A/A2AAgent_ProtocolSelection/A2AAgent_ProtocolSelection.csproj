@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="A2A" />
+    <PackageReference Include="A2A.Grpc" />
   </ItemGroup>
 
   <ItemGroup>

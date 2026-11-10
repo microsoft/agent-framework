@@ -205,7 +205,7 @@ async def test_keys_are_strict(definition_factory, record_factory, key_type, val
     [
         {},
         {"connection_string": ""},
-        {"connection_string": "x", "client": MagicMock(spec=AsyncConnection)},
+        {"connection_string": "x", "client": object()},
         {"client": object()},
     ],
 )

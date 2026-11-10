@@ -10,21 +10,23 @@ import re
 import sys
 import warnings
 from abc import abstractmethod
-from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
-from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
+from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Coroutine, Generator, Mapping, Sequence
+from contextlib import AsyncExitStack, _AsyncGeneratorContextManager, asynccontextmanager, contextmanager  # type: ignore
 from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-from inspect import isawaitable
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypedDict, cast
+from inspect import currentframe, isawaitable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, TypeAlias, TypedDict, TypeVar, cast
 
 if sys.version_info >= (3, 13):
     from warnings import deprecated  # pragma: no cover
 else:
     from typing_extensions import deprecated  # pragma: no cover
 
+
+from opentelemetry import context as otel_context
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
 from pydantic_core import to_jsonable_python
@@ -55,11 +57,6 @@ from .observability import (
     set_mcp_span_error,
 )
 
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
-
 if TYPE_CHECKING:
     # TODO(jpalvarezl): clean up and consolidate under httpx2
     import httpx2
@@ -74,6 +71,12 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+_MCPListResultT = TypeVar(
+    "_MCPListResultT",
+    "types.ListToolsResult",
+    "types.ListPromptsResult",
+)
 
 
 def _mcp_exception_log_level() -> Literal[10] | None:
@@ -153,18 +156,30 @@ else:
 class MCPSpecificApproval(TypedDict, total=False):
     """Represents the specific approval mode for an MCP tool.
 
-    When using this mode, the user must specify which tools always or never require approval.
+    When using this mode, the user specifies which tools always or never require approval and may set
+    ``default`` for every other tool and prompt.
     Names match raw remote names or unambiguous prefixed names when the raw name already
     matches its normalized form. Normalized-only aliases do not match. Discovery raises
     ``ToolExecutionException`` if a configured name matches multiple raw remote names.
+    A name list given as a single string is treated as one name.
+
+    A tool or prompt resolves in this order: a name in ``always_require_approval`` requires approval, otherwise
+    a name in ``never_require_approval`` does not, otherwise ``default`` applies. Without ``default``, a tool or
+    prompt named in neither list does not require approval, which is the framework default. Setting
+    ``never_require_approval`` without ``default`` emits a ``FutureWarning`` because this fallback may change
+    in a future release; set ``default`` explicitly. Hosted MCP tools do not read ``default``.
 
     Attributes:
         always_require_approval: A sequence of tool names that always require approval.
         never_require_approval: A sequence of tool names that never require approval.
+        default: The approval mode for tools and prompts named in neither list. Use ``"always_require"`` to
+            require approval for every tool except those in ``never_require_approval``, or ``"never_require"``
+            to require approval only for the tools in ``always_require_approval``. ``None`` means not set.
     """
 
     always_require_approval: Collection[str] | None
     never_require_approval: Collection[str] | None
+    default: Literal["always_require", "never_require"] | None
 
 
 MCPToolResultContentMode = Literal[
@@ -233,12 +248,34 @@ _mcp_tool_runtime_context: ContextVar[tuple[object, Mapping[str, Any]] | None] =
 )
 _MCP_HEADER_OWNER_EXTENSION = "agent_framework.mcp_header_owner"
 _MCP_INJECTED_HEADER_KEYS_EXTENSION = "agent_framework.mcp_injected_header_keys"
+_MCP_REQUEST_HEADERS_EXTENSION = "agent_framework.mcp_request_headers"
 _MCPHeaderIdentity: TypeAlias = tuple[tuple[str, str], ...]
-MCP_DEFAULT_TIMEOUT = 30
+_MCP_DEFAULT_READ_TIMEOUT_SECONDS = 30
 MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
 _MCP_SUBSCRIPTION_RETRY_INITIAL_DELAY = 0.1
 _MCP_SUBSCRIPTION_RETRY_MAX_DELAY = 2.0
+
+_DEFAULT_MCP_DISCOVERY_MAX_PAGES = 100
+_DEFAULT_MCP_DISCOVERY_MAX_ITEMS = 1_000
 _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES = 1024 * 1024
+
+
+@dataclass
+class _MCPHTTPInvocation:
+    """Track a live network attempt, including callbacks that inherit its context."""
+
+    owner: object
+    parent: _MCPHTTPInvocation | None
+    runtime_kwargs: Mapping[str, Any]
+    connection: _MCPConnection | None = None
+    active_depth: int = 0
+
+
+_mcp_http_invocation: ContextVar[_MCPHTTPInvocation | None] = ContextVar("_mcp_http_invocation", default=None)
+
+
+class _MCPDiscoveryRestart(Exception):
+    """Restart staged discovery when its connection is replaced."""
 
 
 @dataclass
@@ -518,14 +555,12 @@ class _MCPHeaderScopedClient:
         self._owner = owner
 
     def __getattr__(self, name: str) -> Any:
-        # Delegate the rest of the httpx client surface so this wrapper stays a
-        # drop-in for the MCP transport. Only the request-sending methods below
-        # are wrapped; anything the transport reads (timeouts, headers, ...)
-        # comes straight from the caller's client. ``_client`` itself is always a
-        # real instance attribute, so guard against recursing on a partially
-        # initialized wrapper.
         if name == "_client":
             raise AttributeError(name)
+        if name in {"get", "post", "put", "patch", "head", "options"}:
+            raise RuntimeError(
+                f"MCP HTTP transport cannot use unscoped {name}(); use request(), stream(), send(), or delete()."
+            )
         return getattr(self._client, name)
 
     def _tagged_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -536,6 +571,9 @@ class _MCPHeaderScopedClient:
 
     def stream(self, *args: Any, **kwargs: Any) -> Any:
         return self._client.stream(*args, **self._tagged_kwargs(kwargs))
+
+    async def request(self, *args: Any, **kwargs: Any) -> httpx2.Response:
+        return await self._client.request(*args, **self._tagged_kwargs(kwargs))
 
     async def send(self, request: httpx2.Request, **kwargs: Any) -> httpx2.Response:
         request.extensions[_MCP_HEADER_OWNER_EXTENSION] = self._owner
@@ -863,6 +901,63 @@ def _mcp_config_candidate_names(*, local_name: str, normalized_name: str, remote
     return tuple(names)
 
 
+_MCP_APPROVAL_MODES = ("always_require", "never_require")
+_MCP_APPROVAL_DEFAULT_WARNING = (
+    "approval_mode sets `never_require_approval` without `default`. Tools and prompts named in neither list use "
+    '"never_require" today, and this fallback may change in a future release. Set `default` to "never_require" '
+    'to keep the current behavior or to "always_require" to require approval for them.'
+)
+
+
+def _mcp_approval_names(names: Collection[str] | None) -> Collection[str]:
+    """Return approval-policy names, treating a bare string as one name rather than a substring pattern."""
+    if names is None:
+        return ()
+    if isinstance(names, str):
+        return (names,)
+    return names
+
+
+def _mcp_approval_default(
+    approval_mode: MCPSpecificApproval,
+    *,
+    warn_stacklevel: int | None = None,
+) -> Literal["always_require", "never_require"] | None:
+    """Return the validated ``default`` of an approval policy, or ``None`` when it is not set.
+
+    The per-tool resolver calls this for every discovered tool and prompt, so it stays silent unless asked.
+    Constructors pass ``warn_stacklevel``, counted as for ``warnings.warn`` from the caller of this function, to warn
+    once, at the code that built the tool, when ``never_require_approval`` is used without ``default``.
+    """
+    default = approval_mode.get("default")
+    if default is None:
+        if warn_stacklevel is not None and approval_mode.get("never_require_approval") is not None:
+            warnings.warn(_MCP_APPROVAL_DEFAULT_WARNING, FutureWarning, stacklevel=warn_stacklevel + 1)
+        return None
+    if default not in _MCP_APPROVAL_MODES:
+        raise ValueError(f"approval_mode `default` must be 'always_require' or 'never_require', got {default!r}.")
+    return default
+
+
+def _mcp_constructor_stacklevel(instance: object) -> int:
+    """Return the ``warnings.warn`` stacklevel, counted from ``MCPTool.__init__``, of the constructing code.
+
+    Subclass constructors that forward to ``MCPTool.__init__`` are skipped so the warning points at the caller.
+    """
+    stacklevel = 2
+    frame = currentframe()
+    caller: Any = None
+    try:
+        # frame is this helper, frame.f_back is MCPTool.__init__, and its f_back is the first constructor caller.
+        caller = frame.f_back.f_back if frame is not None and frame.f_back is not None else None
+        while caller is not None and caller.f_code.co_name == "__init__" and caller.f_locals.get("self") is instance:
+            stacklevel += 1
+            caller = caller.f_back
+        return stacklevel
+    finally:
+        del frame, caller
+
+
 def _make_mcp_tool_caller(
     mcp_tool: MCPTool, remote_tool_name: str
 ) -> Callable[..., Coroutine[Any, Any, str | list[Content]]]:
@@ -1004,14 +1099,11 @@ def streamable_http_client(*args: Any, **kwargs: Any) -> _AsyncGeneratorContextM
 def _should_propagate_cancelled_error(ex: BaseException) -> bool:
     """Return True if *ex* is a genuine task-cancellation that should propagate unchanged.
 
-    On Python >= 3.11, ``task.cancelling() > 0`` distinguishes a real caller-driven
+    ``task.cancelling() > 0`` distinguishes a real caller-driven
     cancellation from a CancelledError raised internally by a library (e.g. via an
-    anyio cancel scope).  On older Python versions the API is unavailable, so we
-    always return False and let callers wrap the error in ToolException instead.
+    anyio cancel scope).
     """
     if not isinstance(ex, asyncio.CancelledError):
-        return False
-    if sys.version_info < (3, 11):
         return False
     task = asyncio.current_task()
     return task is not None and task.cancelling() > 0
@@ -1092,7 +1184,12 @@ class MCPTool:
         self,
         name: str,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
+        approval_mode: (
+            Literal["always_require", "never_require"]
+            | MCPSpecificApproval
+            | Callable[[types.Tool | types.Prompt], Literal["always_require", "never_require"]]
+            | None
+        ) = None,
         allowed_tools: Collection[str] | None = None,
         tool_name_prefix: str | None = None,
         load_tools: bool = True,
@@ -1101,7 +1198,7 @@ class MCPTool:
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         mcp_client: Client | None = None,
         session: ClientSession | None = None,
-        request_timeout: int | None = None,
+        request_timeout: int | None = _MCP_DEFAULT_READ_TIMEOUT_SECONDS,
         client: SupportsChatGetResponse | None = None,
         sampling_approval_callback: SamplingApprovalCallback | None = None,
         sampling_max_tokens: int | None = _DEFAULT_SAMPLING_MAX_TOKENS,
@@ -1112,6 +1209,8 @@ class MCPTool:
         use_progressive_disclosure: bool = False,
         always_load: Collection[str] | None = None,
         *,
+        max_discovery_pages: int | None = _DEFAULT_MCP_DISCOVERY_MAX_PAGES,
+        max_discovery_items: int | None = _DEFAULT_MCP_DISCOVERY_MAX_ITEMS,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
     ) -> None:
@@ -1136,8 +1235,14 @@ class MCPTool:
                 object_name="MCP progressive disclosure",
                 category=ExperimentalWarning,
             )
+        if max_discovery_pages is not None and max_discovery_pages <= 0:
+            raise ValueError("max_discovery_pages must be positive or None.")
+        if max_discovery_items is not None and max_discovery_items <= 0:
+            raise ValueError("max_discovery_items must be positive or None.")
         if max_host_payload_size_bytes is not None and max_host_payload_size_bytes <= 0:
             raise ValueError("max_host_payload_size_bytes must be positive or None.")
+        if request_timeout is not None and request_timeout <= 0:
+            raise ValueError("request_timeout must be positive or None.")
         allowed_modes = {
             "structured_first",
             "content_first",
@@ -1149,6 +1254,8 @@ class MCPTool:
             raise ValueError(
                 f"tool_result_content must be one of {sorted(allowed_modes)}, got {tool_result_content!r}."
             )
+        if not callable(approval_mode) and isinstance(approval_mode, dict):
+            _mcp_approval_default(approval_mode, warn_stacklevel=_mcp_constructor_stacklevel(self))
         self.name = name
         self.description = description or ""
         self.approval_mode = approval_mode
@@ -1160,10 +1267,16 @@ class MCPTool:
         self.tool_result_content = tool_result_content
         self.load_prompts_flag = load_prompts
         self.parse_prompt_results = parse_prompt_results
+        self.max_discovery_pages = max_discovery_pages
+        self.max_discovery_items = max_discovery_items
         self.max_host_payload_size_bytes = max_host_payload_size_bytes
         self._exit_stack = AsyncExitStack()
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
+        self._close_generation = 0
+        # Cancelling a lifecycle waiter does not stop the owner's setup or teardown.
+        self._lifecycle_idle = asyncio.Event()
+        self._lifecycle_idle.set()
         self._function_load_lock = asyncio.Lock()
         self._lifecycle_queue: (
             asyncio.Queue[tuple[str, bool, bool, bool, asyncio.Future[None], asyncio.Future[bool]]] | None
@@ -1208,6 +1321,7 @@ class MCPTool:
         self._progressive_loaded_tool_names: set[str] = set()
         self._tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         self._tool_param_names_by_name: dict[str, set[str]] = {}
+        self._tool_annotations_by_name: dict[str, Any] = {}
         self._global_extra_arg_names, self._tool_extra_arg_names = _normalize_additional_tool_argument_names(
             additional_tool_argument_names
         )
@@ -1593,9 +1707,9 @@ class MCPTool:
     def _validate_config_names(self, functions: Sequence[FunctionTool]) -> None:
         """Reject configured names that identify more than one raw remote name."""
         configured_names = set(self.allowed_tools or ())
-        if isinstance(self.approval_mode, dict):
-            configured_names.update(self.approval_mode.get("always_require_approval") or ())
-            configured_names.update(self.approval_mode.get("never_require_approval") or ())
+        if not callable(self.approval_mode) and isinstance(self.approval_mode, dict):
+            configured_names.update(_mcp_approval_names(self.approval_mode.get("always_require_approval")))
+            configured_names.update(_mcp_approval_names(self.approval_mode.get("never_require_approval")))
         if not configured_names:
             return
 
@@ -2070,6 +2184,8 @@ class MCPTool:
                 if action == "connect" and future.cancelled():
                     if not self.is_connected and queue.empty():
                         return
+                    if queue.empty():
+                        self._lifecycle_idle.set()
                     continue
 
                 try:
@@ -2127,6 +2243,9 @@ class MCPTool:
                 else:
                     if not future.done():
                         future.set_result(None)
+                finally:
+                    if queue.empty():
+                        self._lifecycle_idle.set()
 
                 if action == "close":
                     return
@@ -2144,6 +2263,7 @@ class MCPTool:
 
             self._lifecycle_queue = None
             self._lifecycle_owner_task = None
+            self._lifecycle_idle.set()
 
     def _is_lifecycle_owner_task(self) -> bool:
         owner_task = self._lifecycle_owner_task
@@ -2178,6 +2298,7 @@ class MCPTool:
 
         future = asyncio.get_running_loop().create_future()
         acknowledged: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        self._lifecycle_idle.clear()
         await queue.put((action, reset, load_configured, reset_discovery, future, acknowledged))
         accepted = False
         try:
@@ -2255,6 +2376,7 @@ class MCPTool:
         ]
         self._tool_call_meta_by_name.clear()
         self._tool_param_names_by_name.clear()
+        self._tool_annotations_by_name.clear()
         self._progressive_loaded_tool_names.clear()
 
     def _reset_session_state(self) -> None:
@@ -2278,6 +2400,97 @@ class MCPTool:
         self._supports_tools = getattr(capabilities, "tools", None) is not None
         self._supports_prompts = getattr(capabilities, "prompts", None) is not None
         self._supports_logging = getattr(capabilities, "logging", None) is not None
+
+    async def _recover_connection_after_loss(
+        self,
+        *,
+        operation: str,
+        inner_exception: Exception,
+        load_configured: bool,
+        failed_connection: _MCPConnection | None = None,
+        close_generation: int | None = None,
+    ) -> None:
+        """Bound recovery and prevent failed operations from undoing an explicit close."""
+        connection = failed_connection if failed_connection is not None else self._connection
+        if close_generation is None:
+            close_generation = self._close_generation
+        if connection is not None and not connection.is_framework_owned:
+            connection_type = "Client" if connection.client is not None else "ClientSession"
+            raise _mcp_tool_execution_exception(
+                f"MCP connection lost during {operation}. The active {connection_type} is caller-owned and cannot "
+                "be recreated by Agent Framework. Create a replacement connection and MCP tool instance.",
+                inner_exception=inner_exception,
+            ) from inner_exception
+
+        try:
+            async with asyncio.timeout(self.request_timeout):
+                await self._recover_failed_connection(
+                    operation=operation,
+                    failed_connection=connection,
+                    close_generation=close_generation,
+                    load_configured=load_configured,
+                )
+        except TimeoutError as timeout_ex:
+            raise _mcp_tool_execution_exception(
+                f"Timed out recovering the MCP connection after {operation}.",
+                inner_exception=timeout_ex,
+            ) from timeout_ex
+        except ToolExecutionException:
+            raise
+        except Exception as reconnect_ex:
+            raise _mcp_tool_execution_exception(
+                f"Failed to reconnect to MCP server after {operation}.",
+                inner_exception=reconnect_ex,
+            ) from reconnect_ex
+
+    async def _recover_failed_connection(
+        self,
+        *,
+        operation: str,
+        failed_connection: _MCPConnection | None,
+        close_generation: int,
+        load_configured: bool,
+    ) -> None:
+        """Reuse a replacement connection or reconnect under the lifecycle lock."""
+        if self._is_lifecycle_owner_task():
+            self._check_recovery_generation(close_generation)
+            if not self.is_connected or self._connection is failed_connection:
+                await self._reconnect_without_loading()
+        else:
+            async with self._lifecycle_request_lock:
+                self._check_recovery_generation(close_generation)
+                if not self.is_connected or self._connection is failed_connection:
+                    logger.info("MCP connection was lost during %s. Reconnecting...", operation)
+                    await self._reconnect_without_loading()
+
+        # Discovery can recover too; holding the lifecycle request lock here would deadlock.
+        self._check_recovery_generation(close_generation)
+        if load_configured:
+            async with self._function_load_lock:
+                self._check_recovery_generation(close_generation)
+                if (self.load_tools_flag and not self._tools_loaded) or (
+                    self.load_prompts_flag and not self._prompts_loaded
+                ):
+                    try:
+                        await self._load_configured_discovery_locked()
+                    except (Exception, asyncio.CancelledError):
+                        await self.close()
+                        self._reset_session_discovery_state()
+                        raise
+        self._check_recovery_generation(close_generation)
+
+    def _check_recovery_generation(self, close_generation: int) -> None:
+        if close_generation != self._close_generation:
+            raise _mcp_tool_execution_exception("MCP connection recovery was interrupted by close().")
+
+    def _is_connection_loss(self, exception: Exception) -> bool:
+        """Return whether an exception proves that the active MCP connection ended."""
+        from anyio import ClosedResourceError
+        from mcp import MCPError
+
+        return isinstance(exception, ClosedResourceError) or (
+            isinstance(exception, MCPError) and "session terminated" in exception.error.message.lower()
+        )
 
     async def _reconnect_without_loading(self) -> None:
         if self._is_lifecycle_owner_task():
@@ -2313,6 +2526,7 @@ class MCPTool:
             reset_discovery: If True, removes state derived from the previous session after its transport closes.
 
         Raises:
+            ValueError: If ``request_timeout`` was set to a non-positive value after construction.
             ToolException: If connection or session initialization fails.
         """
         log_level = _to_mcp_logging_level(logger.level)
@@ -2331,6 +2545,8 @@ class MCPTool:
             self._exit_stack = AsyncExitStack()
         connection = self._connection
         if connection is None:
+            if self.request_timeout is not None and self.request_timeout <= 0:
+                raise ValueError("request_timeout must be positive or None.")
             try:
                 try:
                     from mcp import Client, types
@@ -2445,8 +2661,13 @@ class MCPTool:
         elif connection.client is None:
             raise RuntimeError("MCP connection has neither a Client nor a ClientSession.")
         functions_before_discovery = self._functions.copy()
+        approval_modes_before_discovery = [
+            (function, function.approval_mode) for function in functions_before_discovery
+        ]
+        progressive_loaded_names_before_discovery = self._progressive_loaded_tool_names.copy()
         call_meta_before_discovery = self._tool_call_meta_by_name
         param_names_before_discovery = self._tool_param_names_by_name
+        annotations_before_discovery = self._tool_annotations_by_name
         try:
             connection = self._require_connection()
             logger.debug("Connected to MCP server: %s", connection.client or connection.session)
@@ -2479,9 +2700,14 @@ class MCPTool:
             try:
                 await self._close_on_owner()
             finally:
+                for function, approval_mode in approval_modes_before_discovery:
+                    function.approval_mode = approval_mode
                 self._functions[:] = functions_before_discovery
                 self._tool_call_meta_by_name = call_meta_before_discovery
                 self._tool_param_names_by_name = param_names_before_discovery
+                self._tool_annotations_by_name = annotations_before_discovery
+                self._progressive_loaded_tool_names.clear()
+                self._progressive_loaded_tool_names.update(progressive_loaded_names_before_discovery)
             raise
 
     async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
@@ -2820,29 +3046,63 @@ class MCPTool:
     def _determine_approval_mode(
         self,
         *candidate_names: str,
+        item: types.Tool | types.Prompt | None = None,
+        is_retained: bool = False,
     ) -> Literal["always_require", "never_require"] | None:
-        if isinstance(self.approval_mode, dict):
-            if (always_require := self.approval_mode.get("always_require_approval")) and any(
-                name in always_require for name in candidate_names
-            ):
-                return "always_require"
-            if (never_require := self.approval_mode.get("never_require_approval")) and any(
-                name in never_require for name in candidate_names
-            ):
-                return "never_require"
+        """Resolve discovery policy, preserving retained functions under static policies."""
+        approval_mode = self.approval_mode
+        if callable(approval_mode):
+            if item is None:
+                raise ValueError("A discovered MCP tool or prompt is required for callable approval_mode.")
+            resolved_mode = approval_mode(item)
+            if resolved_mode not in _MCP_APPROVAL_MODES:
+                raise ToolExecutionException(
+                    f"approval_mode callable for MCP item {item.name!r} must return "
+                    "'always_require' or 'never_require', including its default decision."
+                )
+            return resolved_mode
+        if is_retained:
             return None
-        return self.approval_mode  # type: ignore[return-value]
+        if not isinstance(approval_mode, dict):
+            return approval_mode  # type: ignore[return-value]
+        always_require = _mcp_approval_names(approval_mode.get("always_require_approval"))
+        never_require = _mcp_approval_names(approval_mode.get("never_require_approval"))
+        if any(name in always_require for name in candidate_names):
+            return "always_require"
+        if any(name in never_require for name in candidate_names):
+            return "never_require"
+        return _mcp_approval_default(approval_mode)
 
     async def _load_configured_discovery_locked(self) -> None:
         """Load configured session discovery while the caller holds the discovery lock."""
+        await self._load_discovery_snapshot(self._load_configured_discovery_once)
+
+    async def _load_configured_discovery_once(self) -> None:
         if self.load_tools_flag:
             if self._supports_tools:
                 await self._load_tools_locked()
             self._tools_loaded = True
+        connection = self._connection
         if self.load_prompts_flag:
             if self._supports_prompts:
                 await self._load_prompts_locked()
             self._prompts_loaded = True
+        if connection is not self._connection:
+            # Prompt recovery also invalidates any tools loaded before the replacement.
+            raise _MCPDiscoveryRestart
+
+    async def _load_discovery_snapshot(self, load_snapshot: Callable[[], Awaitable[None]]) -> None:
+        """Discard staged pages and restart once after connection replacement."""
+        for attempt in range(2):
+            try:
+                await load_snapshot()
+                return
+            except _MCPDiscoveryRestart as exc:
+                if attempt:
+                    raise _mcp_tool_execution_exception(
+                        "Failed to load MCP discovery - connection changed again after restarting the catalog.",
+                        inner_exception=exc,
+                    ) from exc
 
     async def load_prompts(self) -> None:
         """Load prompts from the MCP server.
@@ -2858,7 +3118,9 @@ class MCPTool:
             await self._load_prompts_locked()
 
     async def _load_prompts_locked(self) -> None:
-        from anyio import ClosedResourceError
+        await self._load_discovery_snapshot(self._load_prompts_snapshot)
+
+    async def _load_prompts_snapshot(self) -> None:
         from mcp import types
 
         if not self._supports_prompts:
@@ -2877,55 +3139,18 @@ class MCPTool:
         prompt_functions: list[FunctionTool] = []
         retained_prompt_names: set[str] = set()
         new_functions: list[FunctionTool] = []
+        prompt_approval_updates: dict[str, Literal["always_require", "never_require"]] = {}
+        items_loaded = 0
 
-        params: types.PaginatedRequestParams | None = None
-        while True:
-            prompt_list: types.ListPromptsResult | None = None
-            for attempt in range(2):
-                try:
-                    # Ensure connection is still valid before each page request
-                    await self._ensure_connected()
-                    if not self._supports_prompts:
-                        logger.debug(
-                            "Skipping MCP prompt loading because the server did not advertise prompts support."
-                        )
-                        return
-                    with create_mcp_client_span(
-                        "prompts/list",
-                        attributes=self._mcp_base_span_attributes(),
-                        capture_unhandled_exceptions=False,
-                    ) as list_span:
-                        try:
-                            prompt_list = await self._require_connection().list_prompts_page(params)
-                        except Exception as list_ex:
-                            set_mcp_span_error(list_span, type(list_ex).__name__, str(list_ex))
-                            raise
-                    break
-                except ClosedResourceError as cl_ex:
-                    if attempt == 0:
-                        logger.info("MCP connection closed unexpectedly while loading prompts. Reconnecting...")
-                        try:
-                            await self._reconnect_without_loading()
-                        except Exception as reconn_ex:
-                            raise _mcp_tool_execution_exception(
-                                "Failed to reconnect to MCP server.",
-                                inner_exception=reconn_ex,
-                            ) from reconn_ex
-                        continue
-                    _log_mcp_exception(
-                        logging.ERROR,
-                        cl_ex,
-                        "MCP connection closed unexpectedly after reconnection: %s",
-                        cl_ex,
-                        redacted_message="MCP prompt discovery connection closed after reconnection",
-                    )
-                    raise _mcp_tool_execution_exception(
-                        "Failed to load prompts - connection lost.",
-                        inner_exception=cl_ex,
-                    ) from cl_ex
-
-            if prompt_list is None:
-                raise _mcp_tool_execution_exception("Failed to load prompts.")
+        def stage_prompt_page(prompt_list: types.ListPromptsResult) -> None:
+            nonlocal items_loaded
+            items_loaded += len(prompt_list.prompts)
+            if self.max_discovery_items is not None and items_loaded > self.max_discovery_items:
+                raise _mcp_tool_execution_exception(
+                    f"MCP prompt discovery exceeded max_discovery_items={self.max_discovery_items}; "
+                    f"the server returned {items_loaded} prompts. Increase max_discovery_items, "
+                    "or set it to None only for a trusted MCP server."
+                )
 
             for prompt in prompt_list.prompts:
                 normalized_name = _normalize_mcp_name(prompt.name)
@@ -2941,7 +3166,8 @@ class MCPTool:
                         local_name=local_name,
                         normalized_name=normalized_name,
                         remote_name=prompt.name,
-                    )
+                    ),
+                    item=prompt,
                 )
                 func: FunctionTool = FunctionTool(
                     func=_make_mcp_prompt_caller(self, prompt.name),
@@ -2967,15 +3193,42 @@ class MCPTool:
                         and existing_prompt.parameters() == func.parameters()
                     ):
                         # Keep the unchanged prompt function so local customizations survive a refresh.
+                        if callable(self.approval_mode) and approval_mode is not None:
+                            prompt_approval_updates[local_name] = approval_mode
                         prompt_functions.append(existing_prompt)
                         continue
                 prompt_functions.append(func)
                 new_functions.append(func)
 
-            # Check if there are more pages
-            if not prompt_list.next_cursor:
-                break
-            params = types.PaginatedRequestParams(cursor=prompt_list.next_cursor)
+        prompt_list = await self._try_list_page_with_recovery(
+            None,
+            kind="prompt",
+            request_page=lambda page_params: self._require_connection().list_prompts_page(page_params),
+        )
+        if prompt_list is None:
+            return
+        pages_loaded = 1
+        stage_prompt_page(prompt_list)
+        cursor = prompt_list.next_cursor
+
+        while cursor is not None:
+            if self.max_discovery_pages is not None and pages_loaded >= self.max_discovery_pages:
+                raise _mcp_tool_execution_exception(
+                    f"MCP prompt discovery exceeded max_discovery_pages={self.max_discovery_pages}; "
+                    f"the server returned a continuation cursor after page {pages_loaded}. "
+                    "Increase max_discovery_pages, or set it to None only for a trusted MCP server."
+                )
+
+            prompt_list = await self._try_list_page_with_recovery(
+                types.PaginatedRequestParams(cursor=cursor),
+                kind="prompt",
+                request_page=lambda page_params: self._require_connection().list_prompts_page(page_params),
+            )
+            if prompt_list is None:
+                return
+            pages_loaded += 1
+            stage_prompt_page(prompt_list)
+            cursor = prompt_list.next_cursor
 
         current_functions = [func for func in self._functions if not _is_mcp_prompt_function(func)]
         current_functions.extend(prompt_functions)
@@ -2983,10 +3236,100 @@ class MCPTool:
         if self._function_load_callback is not None:
             for function in new_functions:
                 self._function_load_callback(function, None)
+        for function in prompt_functions:
+            if function.name in prompt_approval_updates:
+                function.approval_mode = prompt_approval_updates[function.name]
         self._functions[:] = current_functions
         # Only prompts that keep the same remote identity retain their progressive-load state; a
         # different remote prompt that normalizes to the same local name must start unloaded.
         self._progressive_loaded_tool_names.difference_update(existing_prompts.keys() - retained_prompt_names)
+
+    async def _try_list_page_with_recovery(
+        self,
+        params: types.PaginatedRequestParams | None,
+        *,
+        kind: Literal["tool", "prompt"],
+        request_page: Callable[[types.PaginatedRequestParams | None], Awaitable[_MCPListResultT]],
+    ) -> _MCPListResultT | None:
+        """Fetch one catalog page and restart its snapshot after connection replacement."""
+        from anyio import ClosedResourceError
+        from tenacity import RetryCallState, retry, retry_if_exception_type, stop_after_attempt
+
+        catalog_name = f"{kind}s"
+        operation = f"{kind} discovery"
+        failed_connection = self._connection
+        close_generation = self._close_generation
+
+        async def recover_connection(retry_state: RetryCallState) -> None:
+            outcome = retry_state.outcome
+            exception = outcome.exception() if outcome else None
+
+            if not isinstance(exception, ClosedResourceError):
+                return
+
+            await self._recover_connection_after_loss(
+                operation=operation,
+                inner_exception=exception,
+                load_configured=False,
+                failed_connection=failed_connection,
+                close_generation=close_generation,
+            )
+            if self._connection is not failed_connection:
+                raise _MCPDiscoveryRestart from exception
+
+        @retry(
+            retry=retry_if_exception_type(ClosedResourceError),
+            stop=stop_after_attempt(2),
+            before_sleep=recover_connection,
+            reraise=True,
+        )
+        async def request_page_with_retry() -> _MCPListResultT | None:
+            nonlocal failed_connection, close_generation
+            previous_connection = self._connection
+            await self._ensure_connected()
+            if previous_connection is not None and self._connection is not previous_connection:
+                raise _MCPDiscoveryRestart
+            failed_connection = self._connection
+            close_generation = self._close_generation
+
+            # on reconnect we may have different capabilities.
+            is_supported = self._supports_tools if kind == "tool" else self._supports_prompts
+            if not is_supported:
+                logger.debug(
+                    "Skipping MCP %s loading because the server did not advertise %s support.",
+                    kind,
+                    catalog_name,
+                )
+                return None
+
+            with create_mcp_client_span(
+                f"{catalog_name}/list",
+                attributes=self._mcp_base_span_attributes(),
+                capture_unhandled_exceptions=False,
+            ) as list_span:
+                try:
+                    result = await request_page(params)
+                    if self._connection is not failed_connection:
+                        raise _MCPDiscoveryRestart
+                    return result
+                except Exception as exc:
+                    set_mcp_span_error(list_span, type(exc).__name__, str(exc))
+                    raise
+
+        try:
+            return await request_page_with_retry()
+        except ClosedResourceError as exc:
+            _log_mcp_exception(
+                logging.ERROR,
+                exc,
+                "MCP connection closed unexpectedly after reconnection: %s",
+                exc,
+                redacted_message=f"MCP {operation} connection closed after reconnection",
+            )
+            raise _mcp_tool_execution_exception(
+                f"Failed to load {catalog_name} - connection lost.",
+                inner_exception=exc,
+            ) from exc
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
@@ -3003,7 +3346,9 @@ class MCPTool:
             await self._load_tools_locked()
 
     async def _load_tools_locked(self) -> None:
-        from anyio import ClosedResourceError
+        await self._load_discovery_snapshot(self._load_tools_snapshot)
+
+    async def _load_tools_snapshot(self) -> None:
         from mcp import types
 
         if not self._supports_tools:
@@ -3025,60 +3370,25 @@ class MCPTool:
         tool_call_meta_by_name: dict[str, dict[str, Any]] = {}
         tool_param_names_by_name: dict[str, set[str]] = {}
         tool_annotations_by_name: dict[str, Any] = {}
+        tool_approval_updates: dict[str, Literal["always_require", "never_require"]] = {}
+        items_loaded = 0
 
-        params: types.PaginatedRequestParams | None = None
-        while True:
-            tool_list: types.ListToolsResult | None = None
-            for attempt in range(2):
-                try:
-                    # Ensure connection is still valid before each page request
-                    await self._ensure_connected()
-                    if not self._supports_tools:
-                        logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
-                        return
-                    with create_mcp_client_span(
-                        "tools/list",
-                        attributes=self._mcp_base_span_attributes(),
-                        capture_unhandled_exceptions=False,
-                    ) as list_span:
-                        try:
-                            tool_list = await self._require_connection().list_tools_page(params)
-                        except Exception as list_ex:
-                            set_mcp_span_error(list_span, type(list_ex).__name__, str(list_ex))
-                            raise
-                    break
-                except ClosedResourceError as cl_ex:
-                    if attempt == 0:
-                        logger.info("MCP connection closed unexpectedly while loading tools. Reconnecting...")
-                        try:
-                            await self._reconnect_without_loading()
-                        except Exception as reconn_ex:
-                            raise _mcp_tool_execution_exception(
-                                "Failed to reconnect to MCP server.",
-                                inner_exception=reconn_ex,
-                            ) from reconn_ex
-                        continue
-                    _log_mcp_exception(
-                        logging.ERROR,
-                        cl_ex,
-                        "MCP connection closed unexpectedly after reconnection: %s",
-                        cl_ex,
-                        redacted_message="MCP tool discovery connection closed after reconnection",
-                    )
-                    raise _mcp_tool_execution_exception(
-                        "Failed to load tools - connection lost.",
-                        inner_exception=cl_ex,
-                    ) from cl_ex
-
-            if tool_list is None:
-                raise _mcp_tool_execution_exception("Failed to load tools.")
+        def stage_tool_page(tool_list: types.ListToolsResult) -> None:
+            nonlocal items_loaded
+            items_loaded += len(tool_list.tools)
+            if self.max_discovery_items is not None and items_loaded > self.max_discovery_items:
+                raise _mcp_tool_execution_exception(
+                    f"MCP tool discovery exceeded max_discovery_items={self.max_discovery_items}; "
+                    f"the server returned {items_loaded} tools. Increase max_discovery_items, "
+                    "or set it to None only for a trusted MCP server."
+                )
 
             for tool in tool_list.tools:
                 task_support = getattr(getattr(tool, "execution", None), "task_support", None)
-                if task_support in ["required", "optional"]:
+                if task_support == "required":
                     logger.warning(
-                        "Skipping MCP tool %r because it (might) require the Tasks extension, "
-                        "which MCP Python SDK 2.2 does not implement.",
+                        "Skipping MCP tool %r because it requires the Tasks extension, "
+                        "which this client does not support.",
                         tool.name,
                     )
                     continue
@@ -3122,18 +3432,25 @@ class MCPTool:
                 existing_tool = existing_tools.get(local_name)
                 if (
                     existing_tool is not None
-                    and (existing_tool.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY) == tool.name
+                    and (existing_tool.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY) != tool.name
                 ):
-                    reused_tool_names.add(local_name)
-                    continue
+                    existing_tool = None
 
                 approval_mode = self._determine_approval_mode(
                     *_mcp_config_candidate_names(
                         local_name=local_name,
                         normalized_name=normalized_name,
                         remote_name=tool.name,
-                    )
+                    ),
+                    item=tool,
+                    is_retained=existing_tool is not None,
                 )
+
+                if existing_tool is not None:
+                    reused_tool_names.add(local_name)
+                    if approval_mode is not None:
+                        tool_approval_updates[local_name] = approval_mode
+                    continue
 
                 # Create FunctionTools out of each tool
                 func: FunctionTool = FunctionTool(
@@ -3150,10 +3467,35 @@ class MCPTool:
                 )
                 new_functions.append(func)
 
-            # Check if there are more pages
-            if not tool_list.next_cursor:
-                break
-            params = types.PaginatedRequestParams(cursor=tool_list.next_cursor)
+        tool_list = await self._try_list_page_with_recovery(
+            None,
+            kind="tool",
+            request_page=lambda page_params: self._require_connection().list_tools_page(page_params),
+        )
+        if tool_list is None:
+            return
+        pages_loaded = 1
+        stage_tool_page(tool_list)
+        cursor = tool_list.next_cursor
+
+        while cursor is not None:
+            if self.max_discovery_pages is not None and pages_loaded >= self.max_discovery_pages:
+                raise _mcp_tool_execution_exception(
+                    f"MCP tool discovery exceeded max_discovery_pages={self.max_discovery_pages}; "
+                    f"the server returned a continuation cursor after page {pages_loaded}. "
+                    "Increase max_discovery_pages, or set it to None only for a trusted MCP server."
+                )
+
+            tool_list = await self._try_list_page_with_recovery(
+                types.PaginatedRequestParams(cursor=cursor),
+                kind="tool",
+                request_page=lambda page_params: self._require_connection().list_tools_page(page_params),
+            )
+            if tool_list is None:
+                return
+            pages_loaded += 1
+            stage_tool_page(tool_list)
+            cursor = tool_list.next_cursor
 
         current_functions = [
             func
@@ -3173,9 +3515,13 @@ class MCPTool:
                 and self._function_load_callback is not None
             ):
                 self._function_load_callback(function, tool_annotations_by_name[remote_name])
+        for function in current_functions:
+            if function.name in tool_approval_updates:
+                function.approval_mode = tool_approval_updates[function.name]
         self._functions[:] = current_functions
         self._tool_call_meta_by_name = tool_call_meta_by_name
         self._tool_param_names_by_name = tool_param_names_by_name
+        self._tool_annotations_by_name = tool_annotations_by_name
         self._progressive_loaded_tool_names.difference_update(existing_tools.keys() - reused_tool_names)
 
     async def _cancel_pending_reload_tasks(self) -> None:
@@ -3203,6 +3549,10 @@ class MCPTool:
 
         Closes the connection and cleans up resources.
         """
+        self._close_generation += 1
+        await self._close_connection()
+
+    async def _close_connection(self) -> None:
         if self._is_lifecycle_owner_task():
             await self._close_on_owner()
             return
@@ -3234,35 +3584,60 @@ class MCPTool:
         Raises:
             ToolExecutionException: If reconnection fails.
         """
+        from anyio import ClosedResourceError
         from mcp import MCPError
 
         if not self._ping_available:
             return
 
+        failed_connection = self._connection
+        close_generation = self._close_generation
         try:
-            await self._require_connection().check_connection()
+            await self._check_connection()
         except MCPError as mcp_exc:
             if mcp_exc.error.code == -32601:
                 self._ping_available = False
                 logger.debug("Skipping future MCP pings because the server does not support ping.")
                 return
-            logger.info("MCP connection invalid or closed. Reconnecting...")
-            try:
-                await self._reconnect_without_loading()
-            except Exception as ex:
-                raise _mcp_tool_execution_exception(
-                    "Failed to establish MCP connection.",
-                    inner_exception=ex,
-                ) from ex
-        except Exception:
-            logger.info("MCP connection invalid or closed. Reconnecting...")
-            try:
-                await self._reconnect_without_loading()
-            except Exception as ex:
-                raise _mcp_tool_execution_exception(
-                    "Failed to establish MCP connection.",
-                    inner_exception=ex,
-                ) from ex
+            if self._is_connection_loss(mcp_exc) or self._connection is None or self._connection.is_framework_owned:
+                await self._recover_connection_after_loss(
+                    operation="connection liveness check",
+                    inner_exception=mcp_exc,
+                    load_configured=False,
+                    failed_connection=failed_connection,
+                    close_generation=close_generation,
+                )
+                return
+            raise _mcp_tool_execution_exception(
+                "MCP connection liveness check failed.",
+                inner_exception=mcp_exc,
+            ) from mcp_exc
+        except ClosedResourceError as connection_ex:
+            await self._recover_connection_after_loss(
+                operation="connection liveness check",
+                inner_exception=connection_ex,
+                load_configured=False,
+                failed_connection=failed_connection,
+                close_generation=close_generation,
+            )
+        except Exception as connection_ex:
+            connection = self._connection
+            if connection is None or connection.is_framework_owned:
+                await self._recover_connection_after_loss(
+                    operation="connection liveness check",
+                    inner_exception=connection_ex,
+                    load_configured=False,
+                    failed_connection=failed_connection,
+                    close_generation=close_generation,
+                )
+                return
+            raise _mcp_tool_execution_exception(
+                "MCP connection liveness check failed.",
+                inner_exception=connection_ex,
+            ) from connection_ex
+
+    async def _check_connection(self) -> None:
+        await self._require_connection().check_connection()
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool with the given arguments.
@@ -3302,9 +3677,8 @@ class MCPTool:
             raise _mcp_tool_execution_exception(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
             )
-        filtered_kwargs, meta = self._prepare_call_kwargs(tool_name, kwargs)
-
         parser = self.parse_tool_results or self._parse_tool_result_from_mcp
+        trace_context = otel_context.get_current()
 
         # Build MCP span attributes for tools/call
         mcp_span_attrs = self._mcp_base_span_attributes()
@@ -3320,17 +3694,27 @@ class MCPTool:
         ) as span:
             return await self._call_tool_with_retries(
                 tool_name,
-                filtered_kwargs,
-                meta,
+                kwargs,
+                trace_context,
                 parser,
                 span,
             )
 
+    async def _invoke_tool(
+        self, tool_name: str, kwargs: dict[str, Any], trace_context: otel_context.Context
+    ) -> types.CallToolResult:
+        token = otel_context.attach(trace_context)
+        try:
+            filtered_kwargs, meta = self._prepare_call_kwargs(tool_name, kwargs)
+        finally:
+            otel_context.detach(token)
+        return await self._require_connection().call_tool(tool_name, filtered_kwargs, meta=meta)
+
     async def _call_tool_with_retries(
         self,
         tool_name: str,
-        filtered_kwargs: dict[str, Any],
-        meta: types.RequestParamsMeta | None,
+        kwargs: dict[str, Any],
+        trace_context: otel_context.Context,
         parser: Callable[..., str | list[Content]],
         span: otel_trace.Span,
     ) -> str | list[Content]:
@@ -3339,13 +3723,11 @@ class MCPTool:
         from mcp import MCPError
 
         for attempt in range(2):
+            failed_connection = self._connection
+            close_generation = self._close_generation
             span_error_recorded = False
             try:
-                result = await self._require_connection().call_tool(
-                    tool_name,
-                    filtered_kwargs,
-                    meta=meta,
-                )
+                result = await self._invoke_tool(tool_name, kwargs, trace_context)
                 _capture_mcp_tool_result(result)
                 if result.is_error:
                     parsed = parser(result)
@@ -3365,29 +3747,26 @@ class MCPTool:
                     set_mcp_span_error(span, type(tool_ex).__name__, str(tool_ex))
                 raise
             except (ClosedResourceError, MCPError) as call_ex:
-                is_session_terminated = (
-                    isinstance(call_ex, MCPError) and "session terminated" in call_ex.error.message.lower()
-                )
-                is_connection_lost = isinstance(call_ex, ClosedResourceError) or is_session_terminated
-                if not is_connection_lost:
+                if not self._is_connection_loss(call_ex):
                     error_message = call_ex.error.message if isinstance(call_ex, MCPError) else str(call_ex)
                     if span.is_recording():
                         set_mcp_span_error(span, type(call_ex).__name__, error_message)
                     raise _mcp_tool_execution_exception(error_message, inner_exception=call_ex) from call_ex
 
                 if attempt == 0:
-                    # First attempt failed, try reconnecting.
-                    logger.info("MCP connection closed or terminated unexpectedly. Reconnecting...")
                     try:
-                        await self.connect(reset=True)
-                        continue
-                    except Exception as reconn_ex:
+                        await self._recover_connection_after_loss(
+                            operation="tool call",
+                            inner_exception=call_ex,
+                            load_configured=True,
+                            failed_connection=failed_connection,
+                            close_generation=close_generation,
+                        )
+                    except ToolExecutionException as recovery_error:
                         if span.is_recording():
-                            set_mcp_span_error(span, type(reconn_ex).__name__, str(reconn_ex))
-                        raise _mcp_tool_execution_exception(
-                            "Failed to reconnect to MCP server.",
-                            inner_exception=reconn_ex,
-                        ) from reconn_ex
+                            set_mcp_span_error(span, type(recovery_error).__name__, str(recovery_error))
+                        raise
+                    continue
 
                 # Second attempt also failed, give up.
                 _log_mcp_exception(
@@ -3503,36 +3882,38 @@ class MCPTool:
             capture_unhandled_exceptions=False,
         ) as span:
             for attempt in range(2):
+                failed_connection = self._connection
+                close_generation = self._close_generation
                 try:
-                    prompt_result = await self._require_connection().get_prompt(prompt_name, kwargs)
+                    prompt_result = await self._invoke_prompt(prompt_name, kwargs)
                     return parser(prompt_result)
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
-                        # First attempt failed, try reconnecting
-                        logger.info("MCP connection closed unexpectedly. Reconnecting...")
                         try:
-                            await self.connect(reset=True)
-                            continue  # Retry the operation
-                        except Exception as reconn_ex:
-                            set_mcp_span_error(span, type(reconn_ex).__name__, str(reconn_ex))
-                            raise _mcp_tool_execution_exception(
-                                "Failed to reconnect to MCP server.",
-                                inner_exception=reconn_ex,
-                            ) from reconn_ex
-                    else:
-                        # Second attempt also failed, give up
-                        _log_mcp_exception(
-                            logging.ERROR,
-                            cl_ex,
-                            "MCP connection closed unexpectedly after reconnection: %s",
-                            cl_ex,
-                            redacted_message="MCP prompt call connection closed after reconnection",
-                        )
-                        set_mcp_span_error(span, type(cl_ex).__name__, str(cl_ex))
-                        raise _mcp_tool_execution_exception(
-                            f"Failed to call prompt '{prompt_name}' - connection lost.",
-                            inner_exception=cl_ex,
-                        ) from cl_ex
+                            await self._recover_connection_after_loss(
+                                operation="prompt call",
+                                inner_exception=cl_ex,
+                                load_configured=True,
+                                failed_connection=failed_connection,
+                                close_generation=close_generation,
+                            )
+                        except ToolExecutionException as recovery_error:
+                            set_mcp_span_error(span, type(recovery_error).__name__, str(recovery_error))
+                            raise
+                        continue
+                    # Second attempt also failed, give up
+                    _log_mcp_exception(
+                        logging.ERROR,
+                        cl_ex,
+                        "MCP connection closed unexpectedly after reconnection: %s",
+                        cl_ex,
+                        redacted_message="MCP prompt call connection closed after reconnection",
+                    )
+                    set_mcp_span_error(span, type(cl_ex).__name__, str(cl_ex))
+                    raise _mcp_tool_execution_exception(
+                        f"Failed to call prompt '{prompt_name}' - connection lost.",
+                        inner_exception=cl_ex,
+                    ) from cl_ex
                 except MCPError as mcp_exc:
                     error_message = mcp_exc.error.message
                     set_mcp_span_error(span, type(mcp_exc).__name__, error_message)
@@ -3545,6 +3926,9 @@ class MCPTool:
             retries_exhausted = _mcp_tool_execution_exception(f"Failed to get prompt '{prompt_name}' after retries.")
             set_mcp_span_error(span, type(retries_exhausted).__name__, str(retries_exhausted))
             raise retries_exhausted
+
+    async def _invoke_prompt(self, prompt_name: str, kwargs: dict[str, Any]) -> types.GetPromptResult:
+        return await self._require_connection().get_prompt(prompt_name, kwargs)
 
     async def __aenter__(self) -> Self:
         """Enter the async context manager.
@@ -3616,18 +4000,23 @@ class MCPStdioTool(MCPTool):
     def __init__(
         self,
         name: str,
-        command: str,
+        command: str | None = None,
         *,
         tool_name_prefix: str | None = None,
         load_tools: bool = True,
         parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
-        request_timeout: int | None = None,
+        request_timeout: int | None = _MCP_DEFAULT_READ_TIMEOUT_SECONDS,
         mcp_client: Client | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
+        approval_mode: (
+            Literal["always_require", "never_require"]
+            | MCPSpecificApproval
+            | Callable[[types.Tool | types.Prompt], Literal["always_require", "never_require"]]
+            | None
+        ) = None,
         allowed_tools: Collection[str] | None = None,
         use_progressive_disclosure: bool = False,
         always_load: Collection[str] | None = None,
@@ -3641,6 +4030,8 @@ class MCPStdioTool(MCPTool):
         additional_properties: dict[str, Any] | None = None,
         task_options: Any | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
+        max_discovery_pages: int | None = _DEFAULT_MCP_DISCOVERY_MAX_PAGES,
+        max_discovery_items: int | None = _DEFAULT_MCP_DISCOVERY_MAX_ITEMS,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
@@ -3648,13 +4039,18 @@ class MCPStdioTool(MCPTool):
         """Initialize the MCP stdio tool.
 
         Note:
-            The arguments are used to create a StdioServerParameters object,
-            which is then used to create a stdio client. See ``mcp.client.stdio.stdio_client``
+            Supply either ``command`` for a framework-owned high-level Client, or an already-entered
+            ``mcp_client`` for a caller-owned high-level Client. The deprecated ``session`` path
+            remains caller-owned and may continue to be combined with ``command`` for compatibility.
+
+            In framework-owned command mode, the arguments are used to create a
+            ``StdioServerParameters`` object and stdio client. See ``mcp.client.stdio.stdio_client``
             and ``mcp.client.stdio.stdio_server_parameters`` for more details.
 
         Args:
             name: The name of the tool.
-            command: The command to run the MCP server.
+            command: The command to run for framework-owned stdio Client construction. Mutually exclusive
+                with ``mcp_client``. May be omitted when supplying ``mcp_client`` or the deprecated ``session``.
 
         Keyword Args:
             tool_name_prefix: Optional prefix to prepend to exposed MCP function names.
@@ -3672,12 +4068,15 @@ class MCPStdioTool(MCPTool):
                 MCP prompt results to a string. If you need per-function result parsing,
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
-            request_timeout: The default timeout in seconds for all requests.
+            request_timeout: The timeout in seconds for all requests. Framework-owned clients default to 30 seconds;
+                ``None`` disables the timeout. Connection recovery uses the same timeout as a separate budget.
+                Caller-owned clients retain their own request timeout policy.
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
-                with ``session``. Sampling options configured on this wrapper do not modify the supplied Client.
-                The supplied Client also owns its transport and authentication configuration, so it cannot be
-                combined with this wrapper's ``header_provider``.
+                with ``command`` and ``session``. ``request_timeout``, ``args``, ``env``, ``encoding``, and
+                additional stdio keyword arguments configure framework-owned process construction and cannot be
+                supplied with ``mcp_client``. Sampling options configured on this wrapper do not modify the
+                supplied Client.
             session: A deprecated low-level MCP ``ClientSession`` compatibility path. Prefer ``mcp_client`` for new
                 usage. The caller retains ownership; closing or resetting this wrapper does not close or replace
                 that session. Sampling options configured on this wrapper do not modify the supplied session.
@@ -3685,9 +4084,17 @@ class MCPStdioTool(MCPTool):
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
                 - "never_require": The tool never requires approval before use.
-                - A dict with keys `always_require_approval` or `never_require_approval`,
-                  followed by a sequence of strings with the names of the relevant tools.
-                A tool should not be listed in both, if so, it will require approval.
+                - A dict with keys `always_require_approval` and `never_require_approval`, each a sequence of
+                  strings with the names of the relevant tools, and an optional `default` ("always_require" or
+                  "never_require") for tools and prompts named in neither list. Without `default`, those tools
+                  and prompts do not require approval, and setting `never_require_approval` without `default`
+                  emits a ``FutureWarning``.
+                - A synchronous callable receiving the discovered ``mcp.types.Tool`` or ``mcp.types.Prompt``
+                  and returning "always_require" or "never_require", including its default decision. It runs once
+                  per item on each discovery refresh, including retained functions, before publication.
+                  Invalid results raise ``ToolExecutionException``; callback exceptions propagate.
+                  Callbacks should not mutate the discovery item or perform side effects.
+                A tool listed in both lists requires approval. ``None`` (the default) does not require approval.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
                 A non-empty collection exposes only the tools whose names appear in it.
@@ -3740,12 +4147,48 @@ class MCPStdioTool(MCPTool):
                 ``function_invocation_kwargs`` - for example through ``env`` - for servers whose
                 process you do not control.
             task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
+            max_discovery_pages: Maximum pages accepted independently for each tool or prompt catalog fetch.
+                ``None`` disables the limit.
+            max_discovery_items: Maximum entries accepted independently for each tool or prompt catalog fetch.
+                Defaults to 1,000. ``None`` disables the limit. Discovery limits apply after the MCP SDK parses
+                each page and do not bound the encoded response size; connect only to servers trusted to return
+                reasonably sized responses and configure transport-specific size limits where available.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
-            kwargs: Any extra arguments to pass to the stdio client.
+            kwargs: Additional arguments for framework-owned ``StdioServerParameters`` construction.
         """
+        if mcp_client is not None and session is not None:
+            raise ValueError("`mcp_client` and `session` are mutually exclusive. If possible, prefer `mcp_client`.")
+        if mcp_client is not None and command is not None:
+            raise ValueError(
+                "`command` and `mcp_client` are mutually exclusive; configure the process on the supplied Client."
+            )
+        if mcp_client is None and session is None and command is None:
+            raise ValueError("`command` is required when neither `mcp_client` nor `session` supplies a connection.")
+        if mcp_client is not None:
+            conflicting_options = [
+                option
+                for option, is_configured in (
+                    (
+                        "request_timeout",
+                        request_timeout not in (None, _MCP_DEFAULT_READ_TIMEOUT_SECONDS),
+                    ),
+                    ("args", args is not None),
+                    ("env", env is not None),
+                    ("encoding", encoding is not None),
+                    ("kwargs", bool(kwargs)),
+                )
+                if is_configured
+            ]
+            if conflicting_options:
+                formatted_options = ", ".join(f"`{option}`" for option in conflicting_options)
+                raise ValueError(
+                    f"`mcp_client` cannot be combined with framework-owned stdio options: {formatted_options}. "
+                    "Configure these settings on the supplied Client instead."
+                )
+
         super().__init__(
             name=name,
             description=description,
@@ -3768,6 +4211,8 @@ class MCPStdioTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             task_options=task_options,
+            max_discovery_pages=max_discovery_pages,
+            max_discovery_items=max_discovery_items,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
         )
@@ -3779,7 +4224,8 @@ class MCPStdioTool(MCPTool):
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         attrs = super()._mcp_base_span_attributes()
-        attrs[OtelAttr.NETWORK_TRANSPORT] = "pipe"
+        if self.command is not None:
+            attrs[OtelAttr.NETWORK_TRANSPORT] = "pipe"
         return attrs
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
@@ -3788,6 +4234,11 @@ class MCPStdioTool(MCPTool):
         Returns:
             An async context manager for the stdio client transport.
         """
+        if self.command is None:
+            raise RuntimeError(
+                "Internal invariant violated: MCPStdioTool requires `command` to create a framework-owned Client."
+            )
+
         args: dict[str, Any] = {
             "command": self.command,
             "args": self.args,
@@ -3831,18 +4282,23 @@ class MCPStreamableHTTPTool(MCPTool):
     def __init__(
         self,
         name: str,
-        url: str,
+        url: str | None = None,
         *,
         tool_name_prefix: str | None = None,
         load_tools: bool = True,
         parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
-        request_timeout: int | None = None,
+        request_timeout: int | None = _MCP_DEFAULT_READ_TIMEOUT_SECONDS,
         mcp_client: Client | None = None,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
+        approval_mode: (
+            Literal["always_require", "never_require"]
+            | MCPSpecificApproval
+            | Callable[[types.Tool | types.Prompt], Literal["always_require", "never_require"]]
+            | None
+        ) = None,
         allowed_tools: Collection[str] | None = None,
         use_progressive_disclosure: bool = False,
         always_load: Collection[str] | None = None,
@@ -3857,6 +4313,8 @@ class MCPStreamableHTTPTool(MCPTool):
         header_provider: Callable[[dict[str, Any]], dict[str, str]] | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         task_options: Any = None,
+        max_discovery_pages: int | None = _DEFAULT_MCP_DISCOVERY_MAX_PAGES,
+        max_discovery_items: int | None = _DEFAULT_MCP_DISCOVERY_MAX_ITEMS,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
@@ -3864,15 +4322,20 @@ class MCPStreamableHTTPTool(MCPTool):
         """Initialize the MCP streamable HTTP tool.
 
         Note:
-            The arguments are used to create a streamable HTTP client using the
-            new ``mcp.client.streamable_http.streamable_http_client`` API.
-            If an ``httpx2.AsyncClient`` is provided via ``http_client``, it will be used as the underlying transport
-            client.
-            Otherwise, the tool creates and manages a default client without response-cookie persistence.
+            Supply either ``url`` for a framework-owned high-level Client, or an already-entered
+            ``mcp_client`` for a caller-owned high-level Client. The deprecated ``session`` path
+            remains caller-owned and may continue to be combined with ``url`` for compatibility.
+
+            In framework-owned URL mode, the arguments are used to create a streamable HTTP client
+            using the new ``mcp.client.streamable_http.streamable_http_client`` API. If an
+            ``httpx2.AsyncClient`` is provided via ``http_client``, it will be used as the underlying
+            transport client. Otherwise, the tool creates and manages a default client without
+            response-cookie persistence.
 
         Args:
             name: The name of the tool.
-            url: The URL of the MCP server.
+            url: The URL of the MCP server for framework-owned Client construction. Mutually exclusive
+                with ``mcp_client``. May be omitted when supplying ``mcp_client`` or the deprecated ``session``.
 
         Keyword Args:
             tool_name_prefix: Optional prefix to prepend to exposed MCP function names.
@@ -3890,10 +4353,16 @@ class MCPStreamableHTTPTool(MCPTool):
                 MCP prompt results to a string. If you need per-function result parsing,
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
-            request_timeout: The default timeout in seconds for all requests.
+            request_timeout: The timeout in seconds for all requests. Framework-owned clients default to 30 seconds;
+                ``None`` disables the timeout. HTTP header admission and session reconciliation share one budget;
+                connection recovery has a separate budget using the same value. Neither bounds the entire call.
+                Caller-owned clients retain their own request timeout policy.
             mcp_client: An already-entered high-level MCP ``Client`` to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that client. Mutually exclusive
-                with ``session``. Sampling options configured on this wrapper do not modify the supplied Client.
+                with ``url`` and ``session``. ``request_timeout``, ``terminate_on_close``, ``http_client``,
+                ``static_headers``, and ``header_provider`` configure framework-owned HTTP construction and
+                cannot be supplied with ``mcp_client``. Sampling options configured on this wrapper do not
+                modify the supplied Client.
             session: A deprecated low-level MCP ``ClientSession`` compatibility path. Prefer ``mcp_client`` for new
                 usage. The caller retains ownership; closing or resetting this wrapper does not close or replace
                 that session. Sampling options configured on this wrapper do not modify the supplied session.
@@ -3901,9 +4370,17 @@ class MCPStreamableHTTPTool(MCPTool):
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
                 - "never_require": The tool never requires approval before use.
-                - A dict with keys `always_require_approval` or `never_require_approval`,
-                  followed by a sequence of strings with the names of the relevant tools.
-                A tool should not be listed in both, if so, it will require approval.
+                - A dict with keys `always_require_approval` and `never_require_approval`, each a sequence of
+                  strings with the names of the relevant tools, and an optional `default` ("always_require" or
+                  "never_require") for tools and prompts named in neither list. Without `default`, those tools
+                  and prompts do not require approval, and setting `never_require_approval` without `default`
+                  emits a ``FutureWarning``.
+                - A synchronous callable receiving the discovered ``mcp.types.Tool`` or ``mcp.types.Prompt``
+                  and returning "always_require" or "never_require", including its default decision. It runs once
+                  per item on each discovery refresh, including retained functions, before publication.
+                  Invalid results raise ``ToolExecutionException``; callback exceptions propagate.
+                  Callbacks should not mutate the discovery item or perform side effects.
+                A tool listed in both lists requires approval. ``None`` (the default) does not require approval.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
                 A non-empty collection exposes only the tools whose names appear in it.
@@ -3952,8 +4429,7 @@ class MCPStreamableHTTPTool(MCPTool):
             static_headers: Optional fixed HTTP headers to inject into requests to the
                 configured ``url`` origin. The headers are copied at construction, included
                 on connection-lifetime requests and tool calls, retained across same-origin
-                redirects, and removed on cross-origin redirects. Unlike ``header_provider``,
-                fixed headers do not serialize concurrent tool calls. Use ``header_provider``
+                redirects, and removed on cross-origin redirects. Use ``header_provider``
                 instead when header values depend on runtime invocation arguments. When both
                 are provided, dynamic headers override fixed headers with the same name.
             header_provider: Optional callable that receives the runtime keyword arguments
@@ -3967,7 +4443,10 @@ class MCPStreamableHTTPTool(MCPTool):
                 agent middleware) without creating a separate ``httpx2.AsyncClient``.
                 The complete header set used to initialize a connection becomes that session's
                 immutable effective identity. Header names are compared case-insensitively and
-                values case-sensitively. Before an Agent exposes a connected tool's functions for
+                values case-sensitively. Operations with the same effective identity may run
+                concurrently; an identity change waits for active operations before reconnecting.
+                Each outbound HTTP request retains its own header snapshot, including redirects.
+                Before an Agent exposes a connected tool's functions for
                 a run, it reconciles the run's effective headers and reconnects when they differ;
                 generated tool and prompt calls perform the same check before sending. Connection-lifetime
                 requests - including discovery, background pings, and resource and prompt reloads -
@@ -4025,17 +4504,47 @@ class MCPStreamableHTTPTool(MCPTool):
                 still allows a different value per request), or configure a custom
                 ``http_client``.
             task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
+            max_discovery_pages: Maximum pages accepted independently for each tool or prompt catalog fetch.
+                ``None`` disables the limit.
+            max_discovery_items: Maximum entries accepted independently for each tool or prompt catalog fetch.
+                Defaults to 1,000. ``None`` disables the limit. Discovery limits apply after the MCP SDK parses
+                each page and do not bound the encoded response size; connect only to servers trusted to return
+                reasonably sized responses and configure transport-specific size limits where available.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
                 ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
-        if mcp_client is not None and header_provider is not None:
+        if mcp_client is not None and session is not None:
+            raise ValueError("`mcp_client` and `session` are mutually exclusive. If possible, prefer `mcp_client`.")
+        if mcp_client is not None and url is not None:
             raise ValueError(
-                "`header_provider` cannot be used in combination with a user-supplied `mcp_client`; "
-                "configure per-request headers on the supplied Client's transport."
+                "`url` and `mcp_client` are mutually exclusive; configure the endpoint on the supplied Client."
             )
+        if mcp_client is None and session is None and url is None:
+            raise ValueError("`url` is required when neither `mcp_client` nor `session` supplies a connection.")
+        if mcp_client is not None:
+            conflicting_options = [
+                option
+                for option, is_configured in (
+                    (
+                        "request_timeout",
+                        request_timeout not in (None, _MCP_DEFAULT_READ_TIMEOUT_SECONDS),
+                    ),
+                    ("terminate_on_close", terminate_on_close is not None),
+                    ("http_client", http_client is not None),
+                    ("static_headers", static_headers is not None),
+                    ("header_provider", header_provider is not None),
+                )
+                if is_configured
+            ]
+            if conflicting_options:
+                formatted_options = ", ".join(f"`{option}`" for option in conflicting_options)
+                raise ValueError(
+                    f"`mcp_client` cannot be combined with framework-owned HTTP options: {formatted_options}. "
+                    "Configure these settings on the supplied Client instead."
+                )
 
         super().__init__(
             name=name,
@@ -4059,6 +4568,8 @@ class MCPStreamableHTTPTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             task_options=task_options,
+            max_discovery_pages=max_discovery_pages,
+            max_discovery_items=max_discovery_items,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
         )
@@ -4067,13 +4578,6 @@ class MCPStreamableHTTPTool(MCPTool):
         self._httpx_client: httpx2.AsyncClient | None = http_client
         self._static_headers = dict(static_headers or {})
         self._header_provider = header_provider
-        # Headers for the in-flight call_tool invocation. The streamable HTTP transport
-        # sends requests from tasks spawned at connect time, whose contexts never observe
-        # ContextVar values set later inside call_tool, so the request hook needs this
-        # instance-level snapshot as a cross-task fallback. The lock serializes tool calls
-        # when a header_provider is set: parallel invocations on the same instance would
-        # otherwise overwrite each other's snapshot and attach the wrong per-call headers.
-        self._active_call_headers: dict[str, str] | None = None
         # None means no run seeded this connection, which an empty mapping cannot express:
         # a run that supplies no kwargs still expects a missing provider key to be an error.
         self._connection_kwargs: dict[str, Any] | None = None
@@ -4086,15 +4590,21 @@ class MCPStreamableHTTPTool(MCPTool):
         self._pending_session_headers: dict[str, str] | None = None
         self._pending_connection_kwargs: dict[str, Any] | None = None
         self._call_headers_lock = asyncio.Lock()
+        self._header_operations = 0
+        self._header_operations_idle = asyncio.Event()
+        self._header_operations_idle.set()
+        self._header_exclusive_owner: asyncio.Task[Any] | None = None
         self._header_request_owner = object()
         self._header_hook_client: httpx2.AsyncClient | None = None
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         attrs = super()._mcp_base_span_attributes()
+        if self.url is None:
+            return attrs
         attrs[OtelAttr.NETWORK_TRANSPORT] = "tcp"
         attrs[OtelAttr.NETWORK_PROTOCOL_NAME] = "http"
         try:
-            from httpx import URL
+            from httpx2 import URL
 
             parsed = URL(self.url)
             if parsed.host:
@@ -4119,6 +4629,11 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
+        if self.url is None:
+            raise RuntimeError(
+                "Internal invariant violated: MCPStreamableHTTPTool requires `url` to create a framework-owned Client."
+            )
+
         from httpx2 import URL, AsyncClient, Timeout
 
         self._promote_pending_session_headers()
@@ -4130,7 +4645,7 @@ class MCPStreamableHTTPTool(MCPTool):
         if http_client is None:
             http_client = AsyncClient(
                 follow_redirects=True,
-                timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
+                timeout=Timeout(_MCP_DEFAULT_READ_TIMEOUT_SECONDS, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
                 cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
             )
             self._httpx_client = http_client
@@ -4147,26 +4662,26 @@ class MCPStreamableHTTPTool(MCPTool):
                         for key in request.extensions.pop(_MCP_INJECTED_HEADER_KEYS_EXTENSION, ()):
                             request.headers.pop(key, None)
                         return
-                    headers = self._static_headers.copy()
-                    if self._header_provider is not None:
-                        # The transport may send this request from a task whose context was
-                        # captured before call_tool set the ContextVar; fall back to the
-                        # instance-level snapshot of the active call's headers. Context values
-                        # are owner-tagged so a nested tool sharing the client cannot inherit
-                        # another tool's credentials. Both are None only when this is an ambient
-                        # request outside call_tool; an active call that legitimately produced
-                        # no headers yields an empty dict and must not trigger the ambient fallback.
+                    request_header_context = request.extensions.get(_MCP_REQUEST_HEADERS_EXTENSION)
+                    snapshot = (
+                        request_header_context[1]
+                        if request_header_context is not None
+                        and request_header_context[0] is self._header_request_owner
+                        else None
+                    )
+                    headers = self._static_headers.copy() if snapshot is None else dict(snapshot)
+                    if snapshot is None and self._header_provider is not None:
+                        # MCP >=2.2 carries the sender's context into each HTTP request task.
+                        # Copy it onto the request once, so redirects cannot resolve a new caller.
                         call_header_context = _mcp_call_headers.get(None)
                         dynamic_headers = (
                             call_header_context[1]
                             if call_header_context is not None and call_header_context[0] is self._header_request_owner
                             else None
                         )
-                        if dynamic_headers is None:
-                            dynamic_headers = self._active_call_headers
                     else:
                         dynamic_headers = None
-                    if dynamic_headers is None and self._header_provider is not None:
+                    if snapshot is None and dynamic_headers is None and self._header_provider is not None:
                         # Ambient request made outside call_tool (the initialize handshake,
                         # load_tools/load_prompts discovery, or background pings). Invoke the
                         # provider with the kwargs seeded by the run that established this
@@ -4198,6 +4713,7 @@ class MCPStreamableHTTPTool(MCPTool):
                                 dynamic_headers = {}
                     if dynamic_headers is not None:
                         headers.update(dynamic_headers)
+                    request.extensions[_MCP_REQUEST_HEADERS_EXTENSION] = (self._header_request_owner, headers.copy())
                     if self._session_headers is None:
                         self._bind_session_headers(headers)
                     for key in request.extensions.pop(_MCP_INJECTED_HEADER_KEYS_EXTENSION, ()):
@@ -4268,6 +4784,185 @@ class MCPStreamableHTTPTool(MCPTool):
             headers.update(self._header_provider(dict(kwargs)))
         return headers
 
+    @contextmanager
+    def _http_headers(
+        self, headers: Mapping[str, str], runtime_kwargs: Mapping[str, Any] | None = None
+    ) -> Generator[None]:
+        token = _mcp_call_headers.set((self._header_request_owner, dict(headers)))
+        invocation_token = _mcp_http_invocation.set(
+            _MCPHTTPInvocation(self, _mcp_http_invocation.get(), runtime_kwargs or {})
+        )
+        try:
+            yield
+        finally:
+            _mcp_http_invocation.reset(invocation_token)
+            _mcp_call_headers.reset(token)
+
+    def _active_http_invocation(self) -> _MCPHTTPInvocation | None:
+        invocation = _mcp_http_invocation.get()
+        while invocation is not None:
+            if invocation.owner is self and invocation.active_depth:
+                return invocation
+            invocation = invocation.parent
+        return None
+
+    @asynccontextmanager
+    async def _header_admission(self) -> AsyncGenerator[None]:
+        """Bound admission and identity reconciliation, not the admitted network operation."""
+        try:
+            async with asyncio.timeout(self.request_timeout):
+                yield
+        except TimeoutError as timeout_ex:
+            raise _mcp_tool_execution_exception(
+                "Timed out waiting for MCP header admission or session reconciliation.",
+                inner_exception=timeout_ex,
+            ) from timeout_ex
+
+    def _check_exclusive_header_access(self) -> None:
+        if (
+            not self._is_lifecycle_owner_task()
+            and self._header_exclusive_owner is not asyncio.current_task()
+            and self._active_http_invocation() is not None
+        ):
+            raise _mcp_tool_execution_exception(
+                "Cannot reconnect, discover, reset, or close an MCP tool from its active HTTP operation."
+            )
+
+    @asynccontextmanager
+    async def _exclusive_header_access(self) -> AsyncGenerator[None]:
+        if self._is_lifecycle_owner_task() or self._header_exclusive_owner is asyncio.current_task():
+            yield
+            return
+        self._check_exclusive_header_access()
+        async with self._call_headers_lock:
+            await self._header_operations_idle.wait()
+            await self._lifecycle_idle.wait()
+            self._header_exclusive_owner = asyncio.current_task()
+            try:
+                yield
+            finally:
+                self._header_exclusive_owner = None
+
+    @asynccontextmanager
+    async def _http_operation(self) -> AsyncGenerator[None]:
+        connection = self._connection
+        if self._header_provider is None and connection is not None and not connection.is_framework_owned:
+            yield
+            return
+        invocation = _mcp_http_invocation.get()
+        header_context = _mcp_call_headers.get(None)
+        if invocation is None or invocation.owner is not self or header_context is None:
+            raise RuntimeError("MCP HTTP operation requires an invocation header snapshot.")
+        headers = header_context[1]
+        ancestor = self._active_http_invocation()
+        if ancestor is not None:
+            # A queued identity change must not block a callback needed by an active request.
+            if (
+                ancestor.connection is not self._connection
+                or _mcp_header_identity(headers) != self._session_header_identity
+            ):
+                raise _mcp_tool_execution_exception("Cannot change MCP header identity from an active HTTP operation.")
+        else:
+            async with self._header_admission(), self._call_headers_lock:
+                await self._lifecycle_idle.wait()
+                if _mcp_header_identity(headers) != self._session_header_identity:
+                    await self._header_operations_idle.wait()
+                self._header_exclusive_owner = asyncio.current_task()
+                try:
+                    await self._ensure_session_identity(headers, invocation.runtime_kwargs)
+                finally:
+                    self._header_exclusive_owner = None
+                invocation.connection = self._connection
+                invocation.active_depth += 1
+                self._header_operations += 1
+                self._header_operations_idle.clear()
+        if ancestor is not None:
+            invocation.connection = self._connection
+            invocation.active_depth += 1
+            self._header_operations += 1
+            self._header_operations_idle.clear()
+        try:
+            yield
+        finally:
+            invocation.active_depth -= 1
+            self._header_operations -= 1
+            if not self._header_operations:
+                self._header_operations_idle.set()
+
+    async def connect(self, *, reset: bool = False) -> None:
+        async with self._exclusive_header_access():
+            await super().connect(reset=reset)
+
+    async def close(self) -> None:
+        self._check_exclusive_header_access()
+        await super().close()
+
+    async def _close_connection(self) -> None:
+        async with self._exclusive_header_access():
+            await super()._close_connection()
+
+    async def load_tools(self) -> None:
+        async with self._exclusive_header_access():
+            await super().load_tools()
+
+    async def load_prompts(self) -> None:
+        async with self._exclusive_header_access():
+            await super().load_prompts()
+
+    async def _check_connection(self) -> None:
+        if self._is_lifecycle_owner_task() or self._header_exclusive_owner is asyncio.current_task():
+            await super()._check_connection()
+            return
+        invocation = _mcp_http_invocation.get()
+        if invocation is not None and invocation.owner is self:
+            async with self._http_operation():
+                await super()._check_connection()
+        else:
+            async with self._exclusive_header_access():
+                await super()._check_connection()
+
+    async def _recover_failed_connection(
+        self,
+        *,
+        operation: str,
+        failed_connection: _MCPConnection | None,
+        close_generation: int,
+        load_configured: bool,
+    ) -> None:
+        invocation = _mcp_http_invocation.get()
+        if (
+            operation in ("tool call", "prompt call", "connection liveness check")
+            and invocation is not None
+            and invocation.owner is self
+            and invocation.connection is not None
+            and self._header_exclusive_owner is not asyncio.current_task()
+            and not self._is_lifecycle_owner_task()
+        ):
+            # Admission can replace the connection after the retry loop records it.
+            failed_connection = invocation.connection
+        async with self._exclusive_header_access():
+            await super()._recover_failed_connection(
+                operation=operation,
+                failed_connection=failed_connection,
+                close_generation=close_generation,
+                load_configured=load_configured,
+            )
+
+    async def _invoke_tool(
+        self, tool_name: str, kwargs: dict[str, Any], trace_context: otel_context.Context
+    ) -> types.CallToolResult:
+        async with self._http_operation():
+            return await super()._invoke_tool(tool_name, kwargs, trace_context)
+
+    async def _invoke_prompt(self, prompt_name: str, kwargs: dict[str, Any]) -> types.GetPromptResult:
+        async with self._http_operation():
+            return await super()._invoke_prompt(prompt_name, kwargs)
+
+    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> str:
+        headers = self._effective_headers({})
+        with self._http_headers(headers):
+            return await super().get_prompt(prompt_name, **kwargs)
+
     async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
         if not self.is_connected:
             await super()._prepare_for_run(kwargs)
@@ -4288,8 +4983,10 @@ class MCPStreamableHTTPTool(MCPTool):
                 sensitive_exc_info=True,
             )
             return
-        async with self._call_headers_lock:
-            await self._ensure_session_identity(headers, kwargs)
+        with self._http_headers(headers, kwargs):
+            async with self._http_operation():
+                # Reconcile through admission without draining same-identity active calls.
+                pass
 
     def _bind_session_headers(self, headers: Mapping[str, str]) -> None:
         self._session_headers = dict(headers)
@@ -4385,19 +5082,8 @@ class MCPStreamableHTTPTool(MCPTool):
             return await super()._call_prompt_with_runtime_kwargs(prompt_name, prompt_arguments, runtime_kwargs)
 
         headers = self._effective_headers(runtime_kwargs)
-        async with self._call_headers_lock:
-            await self._ensure_session_identity(headers, runtime_kwargs)
-            token = _mcp_call_headers.set((self._header_request_owner, headers))
-            self._active_call_headers = headers
-            try:
-                return await super()._call_prompt_with_runtime_kwargs(
-                    prompt_name,
-                    prompt_arguments,
-                    runtime_kwargs,
-                )
-            finally:
-                self._active_call_headers = None
-                _mcp_call_headers.reset(token)
+        with self._http_headers(headers, runtime_kwargs):
+            return await super().get_prompt(prompt_name, **prompt_arguments)
 
     def _release_connection_kwargs(self) -> None:
         self._connection_kwargs = None
@@ -4434,20 +5120,11 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             A list of Content items representing the tool output.
         """
-        if self._header_provider is not None:
-            runtime_context = _mcp_tool_runtime_context.get()
-            header_kwargs = runtime_context[1] if runtime_context is not None and runtime_context[0] is self else kwargs
-            headers = self._effective_headers(header_kwargs)
-            async with self._call_headers_lock:
-                await self._ensure_session_identity(headers, header_kwargs)
-                token = _mcp_call_headers.set((self._header_request_owner, headers))
-                self._active_call_headers = headers
-                try:
-                    return await super().call_tool(tool_name, **kwargs)
-                finally:
-                    self._active_call_headers = None
-                    _mcp_call_headers.reset(token)
-        return await super().call_tool(tool_name, **kwargs)
+        runtime_context = _mcp_tool_runtime_context.get()
+        header_kwargs = runtime_context[1] if runtime_context is not None and runtime_context[0] is self else kwargs
+        headers = self._effective_headers(header_kwargs)
+        with self._http_headers(headers, header_kwargs):
+            return await super().call_tool(tool_name, **kwargs)
 
 
 @deprecated("MCP WebSocket transport was removed in MCP v2. Use MCPStreamableHTTPTool instead.")
@@ -4469,10 +5146,15 @@ class MCPWebsocketTool(MCPTool):
         parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
-        request_timeout: int | None = None,
+        request_timeout: int | None = _MCP_DEFAULT_READ_TIMEOUT_SECONDS,
         session: ClientSession | None = None,
         description: str | None = None,
-        approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
+        approval_mode: (
+            Literal["always_require", "never_require"]
+            | MCPSpecificApproval
+            | Callable[[types.Tool | types.Prompt], Literal["always_require", "never_require"]]
+            | None
+        ) = None,
         allowed_tools: Collection[str] | None = None,
         use_progressive_disclosure: bool = False,
         always_load: Collection[str] | None = None,
@@ -4483,6 +5165,8 @@ class MCPWebsocketTool(MCPTool):
         additional_properties: dict[str, Any] | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         task_options: Any = None,
+        max_discovery_pages: int | None = _DEFAULT_MCP_DISCOVERY_MAX_PAGES,
+        max_discovery_items: int | None = _DEFAULT_MCP_DISCOVERY_MAX_ITEMS,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
@@ -4514,16 +5198,25 @@ class MCPWebsocketTool(MCPTool):
                 MCP prompt results to a string. If you need per-function result parsing,
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
-            request_timeout: The default timeout in seconds for all requests.
+            request_timeout: The timeout in seconds for all requests. Framework-owned clients default to 30 seconds;
+                ``None`` disables the timeout. Caller-owned sessions retain their own timeout policy.
             session: An existing MCP client session to use. The caller retains ownership;
                 closing or resetting this wrapper does not close or replace that session.
             description: The description of the tool.
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
                 - "never_require": The tool never requires approval before use.
-                - A dict with keys `always_require_approval` or `never_require_approval`,
-                  followed by a sequence of strings with the names of the relevant tools.
-                A tool should not be listed in both, if so, it will require approval.
+                - A dict with keys `always_require_approval` and `never_require_approval`, each a sequence of
+                  strings with the names of the relevant tools, and an optional `default` ("always_require" or
+                  "never_require") for tools and prompts named in neither list. Without `default`, those tools
+                  and prompts do not require approval, and setting `never_require_approval` without `default`
+                  emits a ``FutureWarning``.
+                - A synchronous callable receiving the discovered ``mcp.types.Tool`` or ``mcp.types.Prompt``
+                  and returning "always_require" or "never_require", including its default decision. It runs once
+                  per item on each discovery refresh, including retained functions, before publication.
+                  Invalid results raise ``ToolExecutionException``; callback exceptions propagate.
+                  Callbacks should not mutate the discovery item or perform side effects.
+                A tool listed in both lists requires approval. ``None`` (the default) does not require approval.
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
                 A non-empty collection exposes only the tools whose names appear in it.
@@ -4573,6 +5266,12 @@ class MCPWebsocketTool(MCPTool):
                 transport has no header hook, so source credentials outside
                 ``function_invocation_kwargs`` for servers you do not control.
             task_options: Deprecated compatibility parameter. Non-``None`` values are ignored with a warning.
+            max_discovery_pages: Maximum pages accepted independently for each tool or prompt catalog fetch.
+                ``None`` disables the limit.
+            max_discovery_items: Maximum entries accepted independently for each tool or prompt catalog fetch.
+                Defaults to 1,000. ``None`` disables the limit. Discovery limits apply after the MCP SDK parses
+                each page and do not bound the encoded response size; connect only to servers trusted to return
+                reasonably sized responses and configure transport-specific size limits where available.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
             tool_result_content: How to choose model-visible text when both ``content`` and
@@ -4600,6 +5299,8 @@ class MCPWebsocketTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             task_options=task_options,
+            max_discovery_pages=max_discovery_pages,
+            max_discovery_items=max_discovery_items,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
             tool_result_content=tool_result_content,
         )

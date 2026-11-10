@@ -1,11 +1,11 @@
 # Feature-usage bit registry (per-language)
 
-> **Status:** draft, accompanies [ADR-0033](../decisions/0033-feature-usage-bitmask-user-agent.md)
+> **Status:** draft, accompanies [ADR-0037](../decisions/0037-feature-usage-bitmask-user-agent.md)
 > and [SPEC-004](004-feature-usage-telemetry.md).
 > **Version:** `1` per language · **Width:** 128-bit
 
 This document is the proposed human-readable registry for the feature-usage
-mask. Until ADR-0033 is accepted and the index declarations ship, these tables
+mask. Until ADR-0037 is accepted and the index declarations ship, these tables
 are a **candidate mapping**, not a stable wire contract. The table is the
 allocation authority and published decoder contract; package-local private
 `FeatureIndex` declarations implement the rows they own. There is no generated
@@ -23,7 +23,7 @@ features were exercised** in a process — not which packages are installed. The
 candidate below uses package-level bits plus selected major capabilities: core
 agent/workflow/MCP features, stable skill source types, each orchestration
 pattern, each individual built-in context/history provider, and distinct Foundry
-surfaces. ADR-0033 still leaves the final v1 granularity open. A feature sets its
+surfaces. ADR-0037 still leaves the final v1 granularity open. A feature sets its
 index at first meaningful activation; the SDK shifts that index, ORs the mask,
 and emits the value.
 
@@ -102,7 +102,7 @@ no \"same bit, same meaning\" rule.
 - **OpenTelemetry: not in v1.** Deferred primarily for privacy (a span attribute
   would broadcast the fingerprint into the user's general telemetry / third-party
   APM vendors). Left open behind the version prefix; see
-  [ADR-0033](../decisions/0033-feature-usage-bitmask-user-agent.md#considered-options).
+  [ADR-0037](../decisions/0037-feature-usage-bitmask-user-agent.md#considered-options).
 
 ## Index table — Python (`agent-framework-python`, version 1)
 
@@ -188,7 +188,8 @@ only to approved first-party endpoints.
 | 86 | `hosting.responses` | OpenAI Responses hosting converters | `agent_framework_hosting_responses.responses_to_run` |
 | 87 | `hosting.telegram` | Telegram hosting converters | `agent_framework_hosting_telegram.telegram_to_run` |
 | 88 | `lab` | Experimental Agent Framework Lab features | `agent_framework.lab` feature entry points |
-| 89–127 | _reserved_ | future packages | — |
+| 89 | `nvidia` | NVIDIA NIM embedding client | `agent_framework_nvidia.NvidiaEmbeddingClient` |
+| 90–127 | _reserved_ | future packages | — |
 
 ## Index table — .NET (`agent-framework-dotnet`, version 1)
 
@@ -225,8 +226,8 @@ only to approved first-party endpoints.
 | 49 | `foundry.agent` | Foundry agent | `Microsoft.Agents.AI.Foundry.FoundryAgent` |
 | 50 | `foundry.memory` | Foundry memory provider | `Microsoft.Agents.AI.Foundry.FoundryMemoryProvider` |
 | 51 | `foundry.evals` | Foundry evaluations | `Microsoft.Agents.AI.Foundry.FoundryEvals` |
-| 52 | `foundry.toolbox` | Foundry Toolbox MCP tool | `Microsoft.Agents.AI.Foundry.HostedMcpToolboxAITool` |
-| 53 | `foundry_hosting` | Foundry hosting layer | `Microsoft.Agents.AI.Foundry.Hosting.FoundryHostingExtensions.AddFoundryResponses` |
+| 52 | `foundry.toolbox` | Foundry Toolbox MCP integration | `Microsoft.Agents.AI.Foundry.Hosting.ServiceCollectionExtensions.AddFoundryToolboxes` |
+| 53 | `foundry_hosting` | Foundry hosting layer | `Microsoft.Agents.AI.Foundry.Hosting.ServiceCollectionExtensions.AddFoundryResponses` |
 | 54 | `openai` | OpenAI integration | `Microsoft.Agents.AI.OpenAI` |
 | 55 | `anthropic` | Anthropic integration | `Microsoft.Agents.AI.Anthropic` |
 | 56 | `copilotstudio` | Copilot Studio agent | `Microsoft.Agents.AI.CopilotStudio.CopilotStudioAgent` |

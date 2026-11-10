@@ -33,7 +33,8 @@ public static class Program
 
         var resourceBuilder = ResourceBuilder
             .CreateDefault()
-            .AddService("WorkflowSample");
+            .AddService("WorkflowSample")
+            .AddAttributes([new("microsoft.agent-framework", "True")]);
 
         using var traceProvider = Sdk.CreateTracerProviderBuilder()
             .SetResourceBuilder(resourceBuilder)
@@ -55,10 +56,7 @@ public static class Program
         // Build the workflow by connecting executors sequentially
         var workflow = new WorkflowBuilder(uppercase)
             .AddEdge(uppercase, reverse)
-            .WithOpenTelemetry(
-                // Set `EnableSensitiveData` to true to include message content in traces
-                configure: cfg => cfg.EnableSensitiveData = true,
-                activitySource: s_activitySource)
+            .WithOpenTelemetry(activitySource: s_activitySource)
             .Build();
 
         // Execute the workflow with input data

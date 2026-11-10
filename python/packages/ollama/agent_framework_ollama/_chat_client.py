@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import sys
@@ -45,6 +47,7 @@ from ollama import AsyncClient
 
 # Rename imported types to avoid naming conflicts with Agent Framework types
 from ollama._types import ChatResponse as OllamaChatResponse
+from ollama._types import Image as OllamaImage
 from ollama._types import Message as OllamaMessage
 from pydantic import BaseModel
 
@@ -59,11 +62,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 
 __all__ = ["OllamaChatClient", "OllamaChatOptions"]
@@ -337,6 +335,8 @@ class OllamaChatClient(
         self.model = ollama_settings["model"]  # type: ignore[assignment, reportTypedDictNotRequiredAccess]
         # we can just pass in None for the host, the default is set by the Ollama package.
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
+        self._owns_client = client is None
+        self._client_closed = False
         # Save Host URL for serialization with to_dict()
         self.host = str(self.client._client.base_url)  # type: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
 
@@ -346,6 +346,13 @@ class OllamaChatClient(
             function_invocation_configuration=function_invocation_configuration,
         )
         self.middleware = list(self.chat_middleware)
+
+    @override
+    async def close(self) -> None:
+        """Close the owned HTTP transport; Ollama exposes no public close method."""
+        if self._owns_client and not self._client_closed:
+            await self.client._client.aclose()  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
+            self._client_closed = True
 
     @override
     def service_url(self) -> str:
@@ -382,9 +389,12 @@ class OllamaChatClient(
 
                 # The SDK stream owns the HTTP response; close it as soon as the consumer stops early
                 # instead of leaving the response open until the generator is garbage collected.
+                has_tool_calls = False
                 try:
                     async for part in response_object:
-                        yield self._parse_streaming_response_from_ollama(part)
+                        if getattr(part, "message", None) and getattr(part.message, "tool_calls", None):
+                            has_tool_calls = True
+                        yield self._parse_streaming_response_from_ollama(part, has_tool_calls=has_tool_calls)
                 finally:
                     aclose = getattr(response_object, "aclose", None)
                     if aclose is not None:
@@ -533,9 +543,31 @@ class OllamaChatClient(
                 raise ChatClientInvalidRequestException(
                     "Only image data content is supported for user messages in Ollama."
                 )
-            # Ollama expects base64 strings without prefix
-            user_message["images"] = [c.uri.split(",")[1] for c in data_contents if c.uri]
+            user_message["images"] = [OllamaImage(value=self._decode_image_data_uri(c)) for c in data_contents]
         return [user_message]
+
+    @staticmethod
+    def _decode_image_data_uri(content: Content) -> bytes:
+        uri = content.uri
+        if not uri or not uri.startswith("data:") or "," not in uri:
+            raise ChatClientInvalidRequestException("Ollama image content must be a base64-encoded data:image URI.")
+
+        metadata, payload = uri.split(",", 1)
+        metadata_parts = metadata[5:].split(";")
+        parameters = metadata_parts[1:]
+        if (
+            not metadata_parts[0].lower().startswith("image/")
+            or not parameters
+            or parameters[-1] != "base64"
+            or any(not parameter or "=" not in parameter for parameter in parameters[:-1])
+            or not payload
+        ):
+            raise ChatClientInvalidRequestException("Ollama image content must be a base64-encoded data:image URI.")
+
+        try:
+            return base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ChatClientInvalidRequestException("Ollama image content contains invalid base64 data.") from exc
 
     def _format_assistant_message(self, message: Message) -> list[OllamaMessage]:
         text_content = message.text
@@ -616,12 +648,18 @@ class OllamaChatClient(
             contents.extend(tool_calls)
         return contents
 
-    def _get_finish_reason_from_ollama(self, response: OllamaChatResponse) -> FinishReason | None:
-        if response.message.tool_calls:
+    def _get_finish_reason_from_ollama(
+        self, response: OllamaChatResponse, *, has_tool_calls: bool = False
+    ) -> FinishReason | None:
+        if response.message and response.message.tool_calls:
+            return FinishReason("tool_calls")
+        if has_tool_calls and (not response.done_reason or response.done_reason == "stop"):
             return FinishReason("tool_calls")
         return FinishReason(response.done_reason) if response.done_reason else None
 
-    def _parse_streaming_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponseUpdate:
+    def _parse_streaming_response_from_ollama(
+        self, response: OllamaChatResponse, *, has_tool_calls: bool = False
+    ) -> ChatResponseUpdate:
         contents = self._parse_contents_from_ollama(response, streaming=True)
         finish_reason = None
         if response.done:
@@ -640,7 +678,7 @@ class OllamaChatClient(
             )
             if usage_details:
                 contents.append(Content.from_usage(usage_details, merge_mode="replace", raw_representation=response))
-            finish_reason = self._get_finish_reason_from_ollama(response)
+            finish_reason = self._get_finish_reason_from_ollama(response, has_tool_calls=has_tool_calls)
         return ChatResponseUpdate(
             contents=contents,
             role="assistant",

@@ -78,14 +78,11 @@ await using ClawAgentBuild build = await ClawAgentFactory.CreateAsync(new ClawAg
 });
 
 // AddFoundryResponses wires up the Responses API host for the agent and auto-applies OpenTelemetry.
-builder.Services.AddFoundryResponses(build.Agent);
+builder.AddFoundryResponses(build.Agent);
 
 var app = builder.Build();
 
 // Map the hosted-agent endpoint that live Foundry calls.
 app.MapFoundryResponses();
-
-// Contributor-only: map the per-agent OpenAI route shape for local debugging. Not used in production.
-app.MapDevTemporaryLocalAgentEndpoint();
 
 app.Run();

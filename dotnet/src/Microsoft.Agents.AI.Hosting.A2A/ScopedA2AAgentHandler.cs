@@ -74,7 +74,7 @@ internal sealed class ScopedA2AAgentHandler : IAgentHandler
             // Canceling a task does not involve the agent, so only a custom handler needs to be resolved.
             Task cancellation = scope.ServiceProvider.GetKeyedService<IAgentHandler>(this._agentName) is { } agentHandler
                 ? agentHandler.CancelAsync(context, eventQueue, cancellationToken)
-                : A2AAgentHandler.CancelTaskAsync(context, eventQueue, cancellationToken);
+                : A2AAgentHandler.CancelTaskAsync(context, eventQueue, this._runMode, cancellationToken);
             await cancellation.ConfigureAwait(false);
         }
     }

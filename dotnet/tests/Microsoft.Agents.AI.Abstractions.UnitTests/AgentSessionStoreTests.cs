@@ -139,6 +139,12 @@ public sealed class AgentSessionStoreTests
             AgentSession session,
             CancellationToken cancellationToken = default)
             => default;
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default)
+            => default;
     }
 
     private sealed class TestAgentSession : AgentSession;
