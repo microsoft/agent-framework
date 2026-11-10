@@ -101,7 +101,7 @@ public static class HostApplicationBuilderExtensions
             host.Services.TryAddKeyedSingleton(agent.Name, agentSessionStore);
         }
 
-        host.Services.TryAddSingleton(agent);
+        ServiceCollectionExtensions.TryAddDefaultAgent(host.Services, agent);
         host.Services.TryAddSingleton(agentSessionStore);
 
         ServiceCollectionExtensions.RegisterResponseHandler(host.Services);
@@ -117,9 +117,10 @@ public static class HostApplicationBuilderExtensions
     /// <para>
     /// Use this overload when the agent or its session store depends on services that are not
     /// singletons, for example a database context, or when they should not live for the whole process.
-    /// The agent and its session store are registered under <paramref name="agentName"/> and as the
-    /// default <see cref="AIAgent"/> and <see cref="AgentSessionStore"/>, so requests without an agent
-    /// name also reach them.
+    /// The agent and its session store are registered only under <paramref name="agentName"/>. When no
+    /// default agent is registered yet, requests without an agent name are also routed to this agent.
+    /// Existing registrations under <paramref name="agentName"/> are kept, the same as for
+    /// <c>AddFoundryResponses(agent)</c>.
     /// </para>
     /// <para>
     /// Every response run (streaming, non-streaming, background, or a run resumed after a restart) gets
@@ -131,10 +132,15 @@ public static class HostApplicationBuilderExtensions
     /// <item><description><see cref="ServiceLifetime.Scoped"/>: one instance per response run, disposed when the run ends.</description></item>
     /// <item><description><see cref="ServiceLifetime.Transient"/>: a new instance on every lookup, disposed when the run ends.</description></item>
     /// </list>
+    /// This scope is not the ASP.NET Core request scope, so scoped services that middleware fills in for an
+    /// HTTP request are new, empty instances here. Do not derive the caller's identity from such services in
+    /// the factories; the per-request user identity is supplied by the platform and applied by the response
+    /// handler when it loads and saves sessions.
     /// Conversation state is not kept on the agent or store object: each turn loads the saved session
-    /// from the store's backing storage. Sessions are stored under <paramref name="agentName"/>, the same
-    /// location <c>AddFoundryResponses(agent)</c> uses for an agent with that name, so switching between
-    /// the two overloads or between lifetimes keeps existing sessions readable.
+    /// from the store's backing storage. Sessions are stored in the same location
+    /// <c>AddFoundryResponses(agent)</c> uses for an agent with that name registered in the same order,
+    /// whatever the lifetime, so switching between the two overloads or between lifetimes keeps
+    /// existing sessions readable.
     /// </para>
     /// <code>
     /// builder.AddFoundryResponses(

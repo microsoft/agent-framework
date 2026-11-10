@@ -11,11 +11,21 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Records an agent registered through the factory overload of <c>AddFoundryResponses</c>.
 /// </summary>
 /// <remarks>
-/// The response handler normally decides where sessions are stored by checking whether the keyed agent
-/// and the default agent are the same object. For a factory registration that check depends on the
-/// lifetime: a transient registration creates a new object on every lookup. This marker lets the
-/// handler use the registration name instead, so the storage location stays the same for every lifetime
-/// and matches what <c>AddFoundryResponses(agent)</c> uses for an agent with the same name.
+/// <para>
+/// The factory overload registers the agent and its session store only under the agent name. It does not
+/// add a non-keyed registration that forwards to the keyed one, because Microsoft DI records the object a
+/// factory returns for disposal once per registration: a forwarding registration would dispose the same
+/// object twice, and its lifetime could disagree with the keyed registration it forwards to. Instead, when
+/// no default agent existed at registration time, this marker records that requests without an agent name
+/// are routed to this agent by the response handler.
+/// </para>
+/// <para>
+/// The markers also fix where sessions are stored. The response handler normally decides that by checking
+/// whether the keyed agent and the default agent are the same object, which depends on the lifetime for a
+/// factory: a transient registration creates a new object on every lookup. The marker uses the location
+/// <c>AddFoundryResponses(agent)</c> would use for an agent with the same name in the same position:
+/// <c>name:{agentName}</c> for the default agent and <c>key:{agentName}</c> for any other agent.
+/// </para>
 /// </remarks>
 internal sealed class FoundryAgentFactoryRegistration
 {
@@ -28,11 +38,11 @@ internal sealed class FoundryAgentFactoryRegistration
     /// <summary>Gets the key the agent was registered under.</summary>
     public string AgentName { get; }
 
-    /// <summary>Gets a value indicating whether the registration also supplied the default (non-keyed) agent.</summary>
+    /// <summary>
+    /// Gets a value indicating whether no default agent existed when this agent was registered, so requests
+    /// without an agent name may be routed to it.
+    /// </summary>
     public bool IsDefault { get; }
-
-    /// <summary>Gets the session storage identity used for this registration.</summary>
-    public string StorageIdentity => $"name:{this.AgentName}";
 }
 
 /// <summary>
@@ -42,22 +52,44 @@ internal sealed class FoundryAgentFactoryRegistrations
 {
     private readonly Dictionary<string, string> _storageIdentities = new(StringComparer.Ordinal);
 
-    public FoundryAgentFactoryRegistrations(IEnumerable<FoundryAgentFactoryRegistration> registrations)
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FoundryAgentFactoryRegistrations"/> class.
+    /// </summary>
+    /// <param name="registrations">The markers registered by the factory overloads.</param>
+    /// <param name="nonKeyedAgentRegistered">
+    /// Whether the built container has a non-keyed <see cref="AIAgent"/> registration, or <see langword="null"/>
+    /// when the container cannot report it. A non-keyed agent registered after a factory overload receives
+    /// requests without an agent name, so no factory registration is then treated as the default. When the
+    /// container cannot report it, the decision made at registration time is used.
+    /// </param>
+    public FoundryAgentFactoryRegistrations(
+        IEnumerable<FoundryAgentFactoryRegistration> registrations,
+        bool? nonKeyedAgentRegistered = null)
     {
         foreach (FoundryAgentFactoryRegistration registration in registrations)
         {
-            this._storageIdentities[registration.AgentName] = registration.StorageIdentity;
-            if (registration.IsDefault)
+            bool isEffectiveDefault = registration.IsDefault
+                && nonKeyedAgentRegistered is not true
+                && this.DefaultAgentName is null;
+            string storageIdentity = isEffectiveDefault
+                ? $"name:{registration.AgentName}"
+                : $"key:{registration.AgentName}";
+            this._storageIdentities[registration.AgentName] = storageIdentity;
+            if (isEffectiveDefault)
             {
-                this.DefaultStorageIdentity = registration.StorageIdentity;
+                this.DefaultAgentName = registration.AgentName;
+                this.DefaultStorageIdentity = storageIdentity;
             }
         }
     }
 
     /// <summary>
-    /// Gets the storage identity of the factory registration that supplied the default agent, or
-    /// <see langword="null"/> when the default agent was not registered through a factory overload.
+    /// Gets the name of the factory registration that receives requests without an agent name, or
+    /// <see langword="null"/> when no factory registration was the default.
     /// </summary>
+    public string? DefaultAgentName { get; }
+
+    /// <summary>Gets the storage identity of <see cref="DefaultAgentName"/>.</summary>
     public string? DefaultStorageIdentity { get; }
 
     /// <summary>Gets the storage identity for a keyed factory registration.</summary>

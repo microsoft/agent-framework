@@ -164,7 +164,7 @@ public static class ServiceCollectionExtensions
 
         // Also register as the default (non-keyed) agent so requests
         // without an agent name can resolve it (e.g., local dev tooling).
-        services.TryAddSingleton(agent);
+        TryAddDefaultAgent(services, agent);
         services.TryAddSingleton(agentSessionStore);
 
         RegisterResponseHandler(services);
@@ -180,9 +180,10 @@ public static class ServiceCollectionExtensions
     /// <para>
     /// Use this overload when the agent or its session store depends on services that are not
     /// singletons, for example a database context, or when they should not live for the whole process.
-    /// The agent and its session store are registered under <paramref name="agentName"/> and as the
-    /// default <see cref="AIAgent"/> and <see cref="AgentSessionStore"/>, so requests without an agent
-    /// name also reach them.
+    /// The agent and its session store are registered only under <paramref name="agentName"/>. When no
+    /// default agent is registered yet, requests without an agent name are also routed to this agent.
+    /// Existing registrations under <paramref name="agentName"/> are kept, the same as for
+    /// <c>AddFoundryResponses(agent)</c>.
     /// </para>
     /// <para>
     /// Every response run (streaming, non-streaming, background, or a run resumed after a restart) gets
@@ -194,10 +195,15 @@ public static class ServiceCollectionExtensions
     /// <item><description><see cref="ServiceLifetime.Scoped"/>: one instance per response run, disposed when the run ends.</description></item>
     /// <item><description><see cref="ServiceLifetime.Transient"/>: a new instance on every lookup, disposed when the run ends.</description></item>
     /// </list>
+    /// This scope is not the ASP.NET Core request scope, so scoped services that middleware fills in for an
+    /// HTTP request are new, empty instances here. Do not derive the caller's identity from such services in
+    /// the factories; the per-request user identity is supplied by the platform and applied by the response
+    /// handler when it loads and saves sessions.
     /// Conversation state is not kept on the agent or store object: each turn loads the saved session
-    /// from the store's backing storage. Sessions are stored under <paramref name="agentName"/>, the same
-    /// location <c>AddFoundryResponses(agent)</c> uses for an agent with that name, so switching between
-    /// the two overloads or between lifetimes keeps existing sessions readable.
+    /// from the store's backing storage. Sessions are stored in the same location
+    /// <c>AddFoundryResponses(agent)</c> uses for an agent with that name registered in the same order,
+    /// whatever the lifetime, so switching between the two overloads or between lifetimes keeps
+    /// existing sessions readable.
     /// </para>
     /// <para>
     /// This overload is for local or non-hosted scenarios. Foundry hosted applications must use
@@ -248,13 +254,15 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers an agent factory, and optionally a session store factory, under
-    /// <paramref name="agentName"/> and as the defaults, before the shared Responses registration runs.
+    /// Registers an agent factory, and optionally a session store factory, under <paramref name="agentName"/>
+    /// before the shared Responses registration runs.
     /// </summary>
     /// <remarks>
-    /// The default registrations forward to the keyed ones, so within one response run a scoped agent or
-    /// store is created once whether the request named the agent or not. Existing registrations win, the
-    /// same as for <c>AddFoundryResponses(agent)</c>.
+    /// Only keyed registrations are added, so each created object has exactly one registration that owns
+    /// its disposal. When no default agent exists yet, a <see cref="FoundryAgentFactoryRegistration"/> marker
+    /// tells the response handler to route requests without an agent name to this agent. Existing keyed
+    /// registrations win, the same as for <c>AddFoundryResponses(agent)</c>; when the agent registration
+    /// is skipped no marker is added, so the existing registration keeps its routing and storage location.
     /// </remarks>
     internal static void RegisterAgentFactory(
         IServiceCollection services,
@@ -270,31 +278,51 @@ public static class ServiceCollectionExtensions
             Throw.ArgumentOutOfRangeException(nameof(lifetime), lifetime, "Unsupported service lifetime.");
         }
 
-        (bool agentKeyedAdded, bool agentDefaultAdded) = AddKeyedWithDefaultAlias(
-            services, agentName, agentFactory, lifetime, "agent factory");
-        if (agentKeyedAdded)
+        if (TryAddKeyedFactory(services, agentName, agentFactory, lifetime, "agent factory"))
         {
-            services.AddSingleton(new FoundryAgentFactoryRegistration(agentName, isDefault: agentDefaultAdded));
+            services.AddSingleton(new FoundryAgentFactoryRegistration(
+                agentName,
+                isDefault: !HasDefaultAgentRegistration(services)));
         }
 
         if (agentSessionStoreFactory is not null)
         {
-            _ = AddKeyedWithDefaultAlias(services, agentName, agentSessionStoreFactory, lifetime, "agent session store factory");
+            _ = TryAddKeyedFactory(services, agentName, agentSessionStoreFactory, lifetime, "agent session store factory");
         }
         else
         {
-            AgentSessionStore defaultStore = CreateDefaultAgentSessionStore();
-            services.TryAddKeyedSingleton(agentName, defaultStore);
-            services.TryAddSingleton(defaultStore);
+            services.TryAddKeyedSingleton<AgentSessionStore>(agentName, CreateDefaultAgentSessionStore());
         }
     }
 
     /// <summary>
-    /// Registers <paramref name="factory"/> under <paramref name="name"/> and a default registration
-    /// that forwards to it, each only when no registration of that kind exists yet.
+    /// Registers <paramref name="agent"/> as the default (non-keyed) agent unless a default already exists,
+    /// including a factory registration that receives requests without an agent name.
     /// </summary>
-    /// <returns>Whether the keyed and the default registrations were added.</returns>
-    private static (bool KeyedAdded, bool DefaultAdded) AddKeyedWithDefaultAlias<TService>(
+    internal static void TryAddDefaultAgent(IServiceCollection services, AIAgent agent)
+    {
+        if (!HasDefaultAgentRegistration(services))
+        {
+            services.AddSingleton(agent);
+        }
+    }
+
+    /// <summary>
+    /// Whether a registration already receives requests without an agent name: a non-keyed
+    /// <see cref="AIAgent"/> or a factory registration recorded as the default.
+    /// </summary>
+    private static bool HasDefaultAgentRegistration(IServiceCollection services) =>
+        services.Any(descriptor =>
+            (descriptor.ServiceType == typeof(AIAgent) && !descriptor.IsKeyedService)
+            || (descriptor.ServiceType == typeof(FoundryAgentFactoryRegistration)
+                && descriptor.ImplementationInstance is FoundryAgentFactoryRegistration { IsDefault: true }));
+
+    /// <summary>
+    /// Registers <paramref name="factory"/> under <paramref name="name"/> with <paramref name="lifetime"/>
+    /// when no registration exists for that key.
+    /// </summary>
+    /// <returns><see langword="true"/> when the registration was added.</returns>
+    private static bool TryAddKeyedFactory<TService>(
         IServiceCollection services,
         string name,
         Func<IServiceProvider, TService> factory,
@@ -302,35 +330,22 @@ public static class ServiceCollectionExtensions
         string factoryDescription)
         where TService : class
     {
-        bool keyedAdded = !services.Any(descriptor =>
+        if (services.Any(descriptor =>
             descriptor.ServiceType == typeof(TService)
             && descriptor.IsKeyedService
-            && Equals(descriptor.ServiceKey, name));
-        bool defaultAdded = !services.Any(descriptor =>
-            descriptor.ServiceType == typeof(TService)
-            && !descriptor.IsKeyedService);
-
-        if (keyedAdded)
+            && Equals(descriptor.ServiceKey, name)))
         {
-            services.Add(new ServiceDescriptor(
-                typeof(TService),
-                name,
-                (serviceProvider, _) => factory(serviceProvider)
-                    ?? throw new InvalidOperationException($"The {factoryDescription} registered for '{name}' returned null."),
-                lifetime));
+            return false;
         }
 
-        if (defaultAdded)
-        {
-            services.Add(new ServiceDescriptor(
-                typeof(TService),
-                serviceProvider => serviceProvider.GetRequiredKeyedService<TService>(name),
-                lifetime));
-        }
-
-        return (keyedAdded, defaultAdded);
+        services.Add(new ServiceDescriptor(
+            typeof(TService),
+            name,
+            (serviceProvider, _) => factory(serviceProvider)
+                ?? throw new InvalidOperationException($"The {factoryDescription} registered for '{name}' returned null."),
+            lifetime));
+        return true;
     }
-
     /// <summary>
     /// Applies the caller's <see cref="FoundryResponsesServerOptions"/> and registers the readiness checks
     /// that report a misconfigured agent: one having its own service store the responses it produces,
