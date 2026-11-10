@@ -350,22 +350,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
 
             foreach (Tool tool in tools)
             {
-                writer.WriteStartObject();
-                writer.WriteString("name", tool.Name);
-                writer.WriteString("description", tool.Description);
-                writer.WritePropertyName("inputSchema");
-                tool.InputSchema.WriteTo(writer);
-                writer.WritePropertyName("outputSchema");
-                if (tool.OutputSchema is JsonElement outputSchema)
-                {
-                    outputSchema.WriteTo(writer);
-                }
-                else
-                {
-                    writer.WriteNullValue();
-                }
-
-                writer.WriteEndObject();
+                JsonSerializer.Serialize(writer, tool, McpJsonUtilities.DefaultOptions.GetTypeInfo<Tool>());
             }
 
             writer.WriteEndArray();

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -145,7 +146,9 @@ public sealed class DefaultMcpToolHandlerTests
         {
             Name = "search",
             Description = "Searches documentation.",
-            InputSchema = inputSchema
+            InputSchema = inputSchema,
+            Annotations = new ToolAnnotations { ReadOnlyHint = true, DestructiveHint = false },
+            Meta = new JsonObject { ["revision"] = "initial" }
         };
 
         // Act
@@ -158,6 +161,9 @@ public sealed class DefaultMcpToolHandlerTests
         Assert.Equal("search", listedTool.GetProperty("name").GetString());
         Assert.Equal("Searches documentation.", listedTool.GetProperty("description").GetString());
         Assert.Equal("string", listedTool.GetProperty("inputSchema").GetProperty("properties").GetProperty("query").GetProperty("type").GetString());
+        Assert.True(listedTool.GetProperty("annotations").GetProperty("readOnlyHint").GetBoolean());
+        Assert.False(listedTool.GetProperty("annotations").GetProperty("destructiveHint").GetBoolean());
+        Assert.Equal("initial", listedTool.GetProperty("_meta").GetProperty("revision").GetString());
     }
 
     #endregion
@@ -354,7 +360,7 @@ public sealed class DefaultMcpToolHandlerTests
             Uri = "https://example.com/resource.bin",
             Name = string.Empty,
             MimeType = "application/zip",
-            Meta = new System.Text.Json.Nodes.JsonObject
+            Meta = new JsonObject
             {
                 ["traceId"] = "abc-123",
                 ["priority"] = 7,
@@ -467,7 +473,7 @@ public sealed class DefaultMcpToolHandlerTests
         TextContentBlock block = new()
         {
             Text = "hello",
-            Meta = new System.Text.Json.Nodes.JsonObject
+            Meta = new JsonObject
             {
                 ["traceId"] = "abc-123",
                 ["priority"] = 7,
