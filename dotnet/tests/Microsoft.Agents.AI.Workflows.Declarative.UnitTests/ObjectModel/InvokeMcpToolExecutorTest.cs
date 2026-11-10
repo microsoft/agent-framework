@@ -1253,6 +1253,51 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         Assert.Equal(0, invocationCount);
     }
 
+    [Theory]
+    [InlineData("""{"name":"test_tool"}""", false)]
+    [InlineData("""{"name":"test_tool","inputSchema":null}""", false)]
+    [InlineData("""{"name":"test_tool","inputSchema":[]}""", false)]
+    [InlineData("""{"name":"test_tool","inputSchema":{}}""", false)]
+    [InlineData("""{"name":"test_tool","inputSchema":{"type":"array"}}""", false)]
+    [InlineData("""{"name":"test_tool","inputSchema":{"type":null}}""", false)]
+    [InlineData("""{"name":"test_tool"}""", true)]
+    [InlineData("""{"name":"test_tool","inputSchema":null}""", true)]
+    [InlineData("""{"name":"test_tool","inputSchema":[]}""", true)]
+    [InlineData("""{"name":"test_tool","inputSchema":{}}""", true)]
+    [InlineData("""{"name":"test_tool","inputSchema":{"type":"array"}}""", true)]
+    [InlineData("""{"name":"test_tool","inputSchema":{"type":null}}""", true)]
+    public async Task InvokeMcpToolRejectsInvalidInputSchemaAsync(string invalidDefinition, bool isRevalidation)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        InvokeMcpTool model = this.CreateModelWithApproval(
+            nameof(InvokeMcpToolRejectsInvalidInputSchemaAsync), TestServerUrl, TestToolName);
+        string definition = isRevalidation
+            ? """{"name":"test_tool","inputSchema":{"type":"object"}}"""
+            : invalidDefinition;
+        List<(string ServerUrl, string ToolName, IDictionary<string, string>? Headers)> calls = [];
+        Mock<IMcpToolHandler> provider = CreateMetadataHandler(() => definition, calls);
+        InvokeMcpToolExecutor action = new(model, provider.Object, new MockAgentProvider().Object, this.State);
+        List<ExternalInputRequest> requests = [];
+        Mock<IWorkflowContext> context = CreateMockWorkflowContext(requests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None);
+        ExternalInputResponse approvedResponse = isRevalidation
+            ? await ApproveDiscoveryAsync(action, context.Object, requests)
+            : CreateApprovalResponseFor(requests, approved: true);
+        definition = invalidDefinition;
+
+        // Act
+        Exception? error = await Record.ExceptionAsync(
+            () => action.CaptureResponseAsync(context.Object, approvedResponse, CancellationToken.None).AsTask());
+
+        // Assert
+        Assert.DoesNotContain(calls, call => string.Equals(call.ToolName, TestToolName, StringComparison.Ordinal));
+        DeclarativeActionException exception = Assert.IsType<DeclarativeActionException>(error);
+        Assert.Contains("input schema", exception.Message);
+        Assert.Equal(isRevalidation ? 2 : 1, requests.Count);
+        Assert.Equal(isRevalidation ? 2 : 1, calls.Count);
+    }
+
     [Fact]
     public async Task InvokeMcpToolCaptureResponseUsesApprovedHeadersNotMutatedAsync()
     {
@@ -2464,7 +2509,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         InvokeMcpTool model = this.CreateModelWithApproval(
             nameof(InvokeMcpToolRestoredLegacyApprovalRequiresDiscoveryConsentAsync), TestServerUrl, TestToolName);
         List<(string ServerUrl, string ToolName, IDictionary<string, string>? Headers)> calls = [];
-        Mock<IMcpToolHandler> provider = CreateMetadataHandler(() => """{"name":"test_tool"}""", calls);
+        Mock<IMcpToolHandler> provider = CreateMetadataHandler(() => """{"name":"test_tool","inputSchema":{"type":"object"}}""", calls);
         InvokeMcpToolExecutor action = new(model, provider.Object, new MockAgentProvider().Object, this.State);
         List<ExternalInputRequest> requests = [];
         Dictionary<string, object?> stateStore = new()
@@ -2779,7 +2824,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         this.State.InitializeSystem();
         InvokeMcpTool model = this.CreateModelWithApproval(
             nameof(InvokeMcpToolAnnotationChangeRequiresFreshApprovalAsync), TestServerUrl, TestToolName);
-        string definition = """{"name":"test_tool","annotations":{"readOnlyHint":true}}""";
+        string definition = """{"name":"test_tool","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":true}}""";
         List<(string ServerUrl, string ToolName, IDictionary<string, string>? Headers)> calls = [];
         Mock<IMcpToolHandler> provider = CreateMetadataHandler(() => definition, calls);
         InvokeMcpToolExecutor action = new(model, provider.Object, new MockAgentProvider().Object, this.State);
@@ -2787,7 +2832,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         Mock<IWorkflowContext> context = CreateMockWorkflowContext(requests);
         await action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None);
         ExternalInputResponse approvedResponse = await ApproveDiscoveryAsync(action, context.Object, requests);
-        definition = """{"name":"test_tool","annotations":{"readOnlyHint":false}}""";
+        definition = """{"name":"test_tool","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":false}}""";
 
         // Act
         await action.CaptureResponseAsync(context.Object, approvedResponse, CancellationToken.None);
@@ -2807,7 +2852,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         InvokeMcpTool model = this.CreateModelWithApproval(
             nameof(InvokeMcpToolReservedDiscoveryRequiresOnlyItsOwnApprovalAsync), TestServerUrl, ListToolsToolName);
         List<(string ServerUrl, string ToolName, IDictionary<string, string>? Headers)> calls = [];
-        Mock<IMcpToolHandler> provider = CreateMetadataHandler(() => """{"name":"test_tool"}""", calls);
+        Mock<IMcpToolHandler> provider = CreateMetadataHandler(() => """{"name":"test_tool","inputSchema":{"type":"object"}}""", calls);
         InvokeMcpToolExecutor action = new(model, provider.Object, new MockAgentProvider().Object, this.State);
         List<ExternalInputRequest> requests = [];
         Mock<IWorkflowContext> context = CreateMockWorkflowContext(requests);
@@ -2843,7 +2888,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         }
 
         List<(string ServerUrl, string ToolName, IDictionary<string, string>? Headers)> calls = [];
-        Mock<IMcpToolHandler> provider = CreateMetadataHandler(() => """{"name":"test_tool"}""", calls);
+        Mock<IMcpToolHandler> provider = CreateMetadataHandler(() => """{"name":"test_tool","inputSchema":{"type":"object"}}""", calls);
         InvokeMcpToolExecutor action = new(AssignParent<InvokeMcpTool>(builder), provider.Object, new MockAgentProvider().Object, this.State);
         List<ExternalInputRequest> requests = [];
         Mock<IWorkflowContext> context = CreateMockWorkflowContext(requests);
@@ -3314,7 +3359,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         {
             string definitions = string.Join(
                 ",",
-                s_toolNames.Select(name => $"{{\"name\":{JsonSerializer.Serialize(name)},\"description\":\"Test tool\"}}"));
+                s_toolNames.Select(name => $"{{\"name\":{JsonSerializer.Serialize(name)},\"description\":\"Test tool\",\"inputSchema\":{{\"type\":\"object\"}}}}"));
             string toolList = $"{{\"tools\":[{definitions}]}}";
 
             base.Setup(provider => provider.InvokeToolAsync(
@@ -3364,7 +3409,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
                             result.Outputs =
                             [
                                 new TextContent(
-                                    $"{{\"tools\":[{{\"name\":{JsonSerializer.Serialize(TestToolName)},\"description\":\"Test tool\"}}]}}")
+                                    $"{{\"tools\":[{{\"name\":{JsonSerializer.Serialize(TestToolName)},\"description\":\"Test tool\",\"inputSchema\":{{\"type\":\"object\"}}}}]}}")
                             ];
                         }
                         else if (returnNullOutput)

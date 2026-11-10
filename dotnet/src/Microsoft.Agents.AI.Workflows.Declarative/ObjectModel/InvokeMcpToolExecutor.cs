@@ -436,6 +436,15 @@ internal sealed class InvokeMcpToolExecutor(
                         throw this.Exception($"The MCP server returned multiple definitions for tool '{toolName}'.");
                     }
 
+                    if (!tool.TryGetProperty("inputSchema", out JsonElement inputSchema) ||
+                        inputSchema.ValueKind != JsonValueKind.Object ||
+                        !inputSchema.TryGetProperty("type", out JsonElement schemaType) ||
+                        schemaType.ValueKind != JsonValueKind.String ||
+                        !string.Equals(schemaType.GetString(), "object", StringComparison.Ordinal))
+                    {
+                        throw this.Exception($"The MCP server returned an invalid input schema for tool '{toolName}'.");
+                    }
+
                     matchingToolFingerprint = ComputeToolDefinitionFingerprint(tool);
                 }
             }
