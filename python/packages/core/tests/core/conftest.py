@@ -77,6 +77,19 @@ def chat_history() -> list[Message]:
     return []
 
 
+@fixture
+def two_turn_conversation() -> list[Message]:
+    """A two-turn conversation in which only turn 1 calls ``get_weather``."""
+    return [
+        Message("user", ["Weather in NYC?"]),
+        Message("assistant", [Content.from_function_call("c1", "get_weather", arguments={"location": "NYC"})]),
+        Message("tool", [Content.from_function_result("c1", result="Sunny")]),
+        Message("assistant", ["Sunny."]),
+        Message("user", ["And tomorrow?"]),
+        Message("assistant", ["No idea."]),
+    ]
+
+
 # region Tools
 
 

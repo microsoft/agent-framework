@@ -986,20 +986,8 @@ class TestToolCalledCheckModeAny:
 class TestToolChecksUseConversationSplit:
     """Tool checks inspect the response side of the split, not the whole conversation."""
 
-    @staticmethod
-    def _two_turn_conversation() -> list[Message]:
-        # Only turn 1 calls get_weather; turn 2 makes no tool call.
-        return [
-            Message("user", ["Weather in NYC?"]),
-            Message("assistant", [Content.from_function_call("c1", "get_weather", arguments={"location": "NYC"})]),
-            Message("tool", [Content.from_function_result("c1", result="Sunny")]),
-            Message("assistant", ["Sunny."]),
-            Message("user", ["And tomorrow?"]),
-            Message("assistant", ["No idea."]),
-        ]
-
-    def test_per_turn_tool_checks_ignore_calls_from_prior_turn(self):
-        first, second = EvalItem.per_turn_items(self._two_turn_conversation())
+    def test_per_turn_tool_checks_ignore_calls_from_prior_turn(self, two_turn_conversation: list[Message]):
+        first, second = EvalItem.per_turn_items(two_turn_conversation)
         expected = [ExpectedToolCall("get_weather", {"location": "NYC"})]
         first.expected_tool_calls = expected
         second.expected_tool_calls = expected
@@ -1013,9 +1001,9 @@ class TestToolChecksUseConversationSplit:
         assert tool_calls_present(second).passed is False
         assert tool_call_args_match(second).passed is False
 
-    def test_full_split_counts_whole_trajectory(self):
+    def test_full_split_counts_whole_trajectory(self, two_turn_conversation: list[Message]):
         item = EvalItem(
-            conversation=self._two_turn_conversation(),
+            conversation=two_turn_conversation,
             expected_tool_calls=[ExpectedToolCall("get_weather", {"location": "NYC"})],
             split_strategy=ConversationSplit.FULL,
         )
@@ -1024,9 +1012,9 @@ class TestToolChecksUseConversationSplit:
         assert tool_calls_present(item).passed is True
         assert tool_call_args_match(item).passed is True
 
-    def test_single_turn_last_turn_unchanged(self):
+    def test_single_turn_last_turn_unchanged(self, two_turn_conversation: list[Message]):
         item = EvalItem(
-            conversation=self._two_turn_conversation()[:4],
+            conversation=two_turn_conversation[:4],
             expected_tool_calls=[ExpectedToolCall("get_weather", {"location": "NYC"})],
         )
 
@@ -1034,10 +1022,10 @@ class TestToolChecksUseConversationSplit:
         assert tool_calls_present(item).passed is True
         assert tool_call_args_match(item).passed is True
 
-    def test_conversation_without_user_message_counts_all_calls(self):
+    def test_conversation_without_user_message_counts_all_calls(self, two_turn_conversation: list[Message]):
         # LAST_TURN treats the whole conversation as the response when there is no user message.
         item = EvalItem(
-            conversation=self._two_turn_conversation()[1:4],
+            conversation=two_turn_conversation[1:4],
             expected_tool_calls=[ExpectedToolCall("get_weather", {"location": "NYC"})],
         )
 
@@ -1045,8 +1033,8 @@ class TestToolChecksUseConversationSplit:
         assert tool_calls_present(item).passed is True
         assert tool_call_args_match(item).passed is True
 
-    def test_custom_split_decides_which_calls_count(self):
-        conversation = self._two_turn_conversation()
+    def test_custom_split_decides_which_calls_count(self, two_turn_conversation: list[Message]):
+        conversation = two_turn_conversation
         expected = [ExpectedToolCall("get_weather", {"location": "NYC"})]
 
         def call_on_response_side(conv: list[Message]) -> tuple[list[Message], list[Message]]:
@@ -1067,9 +1055,9 @@ class TestToolChecksUseConversationSplit:
         assert tool_calls_present(on_query).passed is False
         assert tool_call_args_match(on_query).passed is False
 
-    def test_calls_in_the_current_turn_count_and_match_arguments(self):
+    def test_calls_in_the_current_turn_count_and_match_arguments(self, two_turn_conversation: list[Message]):
         conversation = [
-            *self._two_turn_conversation()[:4],
+            *two_turn_conversation[:4],
             Message("user", ["Compare Paris and Rome."]),
             Message(
                 "assistant",
