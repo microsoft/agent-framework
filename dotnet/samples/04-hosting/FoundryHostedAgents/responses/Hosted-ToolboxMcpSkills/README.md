@@ -169,7 +169,10 @@ in `azure.yaml`). No Dockerfile, no container registry.
 To approve and execute `load_skill`, use the
 [`Hosted-Toolbox-AuthPaths-Client`](../Using-Samples/Hosted-Toolbox-AuthPaths-Client/) REPL. It
 detects `mcp_approval_request`, asks for `Y` or `N`, and sends the native OpenAI
-`mcp_approval_response` item on the same session.
+`mcp_approval_response` item on the same `AgentSession`. The session preserves the explicit
+conversation id, so the approval request is sent with `conversation`, not
+`previous_response_id`. Sending only `previous_response_id` selects the separate implicit-chain
+path; sending both fields is rejected by the Responses API.
 
 ### Step 4: clean up
 

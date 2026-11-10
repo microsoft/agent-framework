@@ -66,7 +66,7 @@ public sealed class OAuthConsentToolInvocationTests
             ChatHistoryProvider = customHistory ? new InMemoryChatHistoryProvider() : null,
         });
         using var provider = CreateProvider(agent);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
         var history = new List<OutputItem>();
         var consentTurns = new List<List<ResponseStreamEvent>>();
 
@@ -191,7 +191,7 @@ public sealed class OAuthConsentToolInvocationTests
             ChatOptions = new ChatOptions { Tools = [sibling, CreateTool(client, "call_tool")] },
         });
         using var provider = CreateProvider(agent);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
 
         // Act
         var first = await RunTurnAsync(handler, [], 0, timeout.Token);
@@ -299,9 +299,9 @@ public sealed class OAuthConsentToolInvocationTests
         });
         using var provider = CreateProvider(
             agent,
-            allowStoredOutputEnabled: true,
+            inferenceStoredOutputAllowed: true,
             oauthConsentInterruptedToolResult: CustomInterruptedResult);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
 
         // Act
         var events = await RunTurnAsync(handler, [], 0, timeout.Token);
@@ -381,7 +381,7 @@ public sealed class OAuthConsentToolInvocationTests
         using var provider = CreateProvider(
             agent,
             oauthConsentInterruptedToolResult: CustomInterruptedResult);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
 
         // Act
         var first = await RunTurnAsync(
@@ -468,7 +468,7 @@ public sealed class OAuthConsentToolInvocationTests
             ChatOptions = new ChatOptions { Tools = [CreateTool(client, "call_tool")] },
         });
         using var provider = CreateProvider(agent);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
 
         // Act
         var events = await RunTurnAsync(handler, [], 0, timeout.Token);
@@ -534,7 +534,7 @@ public sealed class OAuthConsentToolInvocationTests
             },
         });
         using var provider = CreateProvider(agent);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
 
         // Act
         var events = await RunTurnAsync(handler, [], 0, timeout.Token);
@@ -599,7 +599,7 @@ public sealed class OAuthConsentToolInvocationTests
             ChatOptions = new ChatOptions { Tools = [new ApprovalRequiredAIFunction(CreateTool(client, "call_tool"))] },
         });
         using var provider = CreateProvider(agent);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
 
         // Act
         var first = await RunTurnAsync(handler, [], 0, timeout.Token);
@@ -790,16 +790,15 @@ public sealed class OAuthConsentToolInvocationTests
 
     private static ServiceProvider CreateProvider(
         AIAgent agent,
-        bool allowStoredOutputEnabled = false,
+        bool inferenceStoredOutputAllowed = false,
         string? oauthConsentInterruptedToolResult = null)
     {
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton(agent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
-        var options = new FoundryResponsesOptions
+        var options = new FoundryResponsesServerOptions
         {
-            AllowStoredOutputEnabled = allowStoredOutputEnabled,
+            InferenceStoredOutputAllowed = inferenceStoredOutputAllowed,
         };
         if (oauthConsentInterruptedToolResult is not null)
         {
@@ -914,7 +913,7 @@ public sealed class OAuthConsentToolInvocationTests
             ChatOptions = new ChatOptions { Tools = [tool] },
         });
         using var provider = CreateProvider(agent);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
         var context = new Mock<ResponseContext>(MockBehavior.Loose, "resp_" + new string('0', 46)) { CallBase = true };
         context.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<OutputItem>());
         context.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<Item>());

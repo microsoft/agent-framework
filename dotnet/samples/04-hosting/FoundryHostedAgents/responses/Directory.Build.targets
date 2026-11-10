@@ -1,0 +1,37 @@
+﻿<Project>
+
+  <!--
+    Source-deployment samples restore published packages after azd copies them outside the repository.
+    Inside this repository, use matching project references so samples compile against unreleased API
+    changes. This targets file is not included in source-deployment ZIPs.
+  -->
+  <PropertyGroup>
+    <_AgentFrameworkSourceRoot>$(MSBuildThisFileDirectory)..\..\..\..\src</_AgentFrameworkSourceRoot>
+    <UseLocalAgentFramework Condition="'$(UseLocalAgentFramework)' == '' and Exists('$(_AgentFrameworkSourceRoot)\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj')">true</UseLocalAgentFramework>
+    <DefineConstants Condition="'$(UseLocalAgentFramework)' == 'true'">$(DefineConstants);USE_LOCAL_AGENT_FRAMEWORK_SOURCE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(UseLocalAgentFramework)' == 'true'">
+    <ProjectReference Include="$(_AgentFrameworkSourceRoot)\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj"
+        Condition="'@(PackageReference->WithMetadataValue('Identity', 'Microsoft.Agents.AI'))' != ''" />
+    <ProjectReference Include="$(_AgentFrameworkSourceRoot)\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj"
+        Condition="'@(PackageReference->WithMetadataValue('Identity', 'Microsoft.Agents.AI.Abstractions'))' != ''" />
+    <ProjectReference Include="$(_AgentFrameworkSourceRoot)\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj"
+        Condition="'@(PackageReference->WithMetadataValue('Identity', 'Microsoft.Agents.AI.Foundry'))' != ''" />
+    <ProjectReference Include="$(_AgentFrameworkSourceRoot)\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj"
+        Condition="'@(PackageReference->WithMetadataValue('Identity', 'Microsoft.Agents.AI.Foundry.Hosting'))' != ''" />
+    <ProjectReference Include="$(_AgentFrameworkSourceRoot)\Microsoft.Agents.AI.Harness\Microsoft.Agents.AI.Harness.csproj"
+        Condition="'@(PackageReference->WithMetadataValue('Identity', 'Microsoft.Agents.AI.Harness'))' != ''" />
+    <ProjectReference Include="$(_AgentFrameworkSourceRoot)\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj"
+        Condition="'@(PackageReference->WithMetadataValue('Identity', 'Microsoft.Agents.AI.Hosting'))' != ''" />
+    <ProjectReference Include="$(_AgentFrameworkSourceRoot)\Microsoft.Agents.AI.LocalCodeAct\Microsoft.Agents.AI.LocalCodeAct.csproj"
+        Condition="'@(PackageReference->WithMetadataValue('Identity', 'Microsoft.Agents.AI.LocalCodeAct'))' != ''" />
+    <ProjectReference Include="$(_AgentFrameworkSourceRoot)\Microsoft.Agents.AI.Mcp\Microsoft.Agents.AI.Mcp.csproj"
+        Condition="'@(PackageReference->WithMetadataValue('Identity', 'Microsoft.Agents.AI.Mcp'))' != ''" />
+    <ProjectReference Include="$(_AgentFrameworkSourceRoot)\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj"
+        Condition="'@(PackageReference->WithMetadataValue('Identity', 'Microsoft.Agents.AI.Workflows'))' != ''" />
+
+    <PackageReference Remove="Microsoft.Agents.AI;Microsoft.Agents.AI.Abstractions;Microsoft.Agents.AI.Foundry;Microsoft.Agents.AI.Foundry.Hosting;Microsoft.Agents.AI.Harness;Microsoft.Agents.AI.Hosting;Microsoft.Agents.AI.LocalCodeAct;Microsoft.Agents.AI.Mcp;Microsoft.Agents.AI.Workflows" />
+  </ItemGroup>
+
+</Project>

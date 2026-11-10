@@ -194,6 +194,34 @@ cookie-bearing clients and MCP tool sessions to one authenticated principal; do 
 share a user-specific cookie jar across users. Rejecting cookies does not partition
 MCP protocol sessions or other server-side state between principals.
 
+### MCP HTTP concurrency and timeouts
+
+`MCPStreamableHTTPTool` and `FoundryToolbox` attach a separate header snapshot to each
+outgoing HTTP request. Calls with identical effective static and dynamic headers can
+overlap on one MCP session. A different identity waits for active operations before
+reconnecting and refreshing discovery. Discovery, reset, close, and recovery are
+exclusive against active network attempts on framework-owned MCP connections, with
+or without a header provider. Same-identity Agent run preparation does not drain
+active calls. Direct prompt calls resolve current headers rather than reusing an
+inherited invocation snapshot; generated prompts resolve host runtime kwargs
+separately from model arguments. Calls still share server-side session state;
+applications must order state-dependent operations themselves.
+
+Resource reads wait for replacement initialization before requiring the connection.
+Catalog discovery restarts the complete snapshot once after a connection replacement,
+without reusing old pages or cursors. A second replacement fails explicitly.
+
+`request_timeout` bounds header admission and session reconciliation together, and
+connection recovery separately from the RPC timeout. These are separate budgets,
+not an end-to-end deadline. `None` disables these budgets. An admission timeout does
+not cancel another caller's active operation. Cleanup may continue after a timeout
+or cancellation so the lifecycle owner can finish releasing resources safely.
+Caller-owned MCP clients retain their own RPC timeout policy and are not recreated.
+
+Concurrent failures of the same connection share its replacement. Calling `close()`
+interrupts older recovery so it cannot reopen the connection or retry the failed
+operation after shutdown. A later explicit `connect()` remains supported.
+
 ## 5. Multi-Agent Orchestration
 
 Coordinate multiple agents to collaborate on complex tasks using orchestration patterns:

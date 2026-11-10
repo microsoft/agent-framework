@@ -6,13 +6,12 @@
     <VersionSuffix>preview</VersionSuffix>
     <Title>Microsoft Agent Framework for Foundry Hosted Agents</Title>
     <Description>Provides Microsoft Agent Framework support for hosting Foundry Agents with the Azure AI Agent Service. Breaking change: this version targets the Foundry Responses container protocol v2.0 only and is not compatible with v1; use an earlier release for the v1 protocol definition.</Description>
-    <PackageReleaseNotes>Breaking change: this release migrates Foundry hosting to the Azure.AI.AgentServer 2.0 (Responses container protocol v2.0) surface. It is only compatible with responses protocol v2.0. Use a previous release for the v1 protocol definition. See docs/decisions/0030-hosted-platform-context-agentserver-2.0.md.</PackageReleaseNotes>
+    <PackageReleaseNotes>Breaking change: this release migrates Foundry hosting to the Azure.AI.AgentServer 2.0 (Responses container protocol v2.0) surface. It is only compatible with responses protocol v2.0. Use a previous release for the v1 protocol definition. See docs/decisions/0034-hosted-platform-context-agentserver-2.0.md.</PackageReleaseNotes>
   </PropertyGroup>
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
-    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectSharedRedaction>true</InjectSharedRedaction>
     <InjectSharedOriginPinning>true</InjectSharedOriginPinning>
     <NoWarn>$(NoWarn);OPENAI001;MEAI001;MAAI001</NoWarn>
@@ -32,18 +31,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.AI.AgentServer.Core" />
     <PackageReference Include="Azure.AI.AgentServer.Responses" />
-    <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Azure.Identity" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="ModelContextProtocol" />
-    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
-    <ProjectReference Include="..\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
-    <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
   </ItemGroup>
 
