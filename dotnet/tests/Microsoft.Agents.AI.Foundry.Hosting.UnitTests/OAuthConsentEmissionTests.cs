@@ -52,7 +52,7 @@ public class OAuthConsentEmissionTests
         // Arrange
         const string ConsentUrl = "https://auth.example.com/authorize?state=1";
         var stream = CreateTestStream();
-        var policy = new OAuthConsentLinkPolicy(["https://auth.example.com"]);
+        var policy = new OAuthConsentLinkPolicy([new Uri("https://auth.example.com")]);
 
         // Act
         List<ResponseStreamEvent> events =
@@ -71,7 +71,7 @@ public class OAuthConsentEmissionTests
     {
         // Arrange
         var stream = CreateTestStream();
-        var policy = new OAuthConsentLinkPolicy(["https://auth.example.com"]);
+        var policy = new OAuthConsentLinkPolicy([new Uri("https://auth.example.com")]);
 
         // Act
         void Emit()
@@ -91,9 +91,9 @@ public class OAuthConsentEmissionTests
     [Theory]
     [InlineData("http://external.example/authorize")]
     [InlineData("javascript:alert(1)")]
-    public void EmitOAuthConsentRequest_NullPolicy_StillRejectsUnsafeLink(string consentUrl)
+    public void EmitOAuthConsentRequest_NullPolicy_StillRejectsInvalidLink(string consentUrl)
     {
-        // Arrange: a null policy falls back to the safe-HTTPS policy instead of skipping validation.
+        // Arrange: a null policy still applies absolute HTTPS URL validation.
         var stream = CreateTestStream();
 
         // Act

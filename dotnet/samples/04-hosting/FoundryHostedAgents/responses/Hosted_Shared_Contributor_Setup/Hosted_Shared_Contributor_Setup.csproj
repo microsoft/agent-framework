@@ -12,16 +12,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.Core" />
-    <PackageReference Include="Azure.Identity" />
-  </ItemGroup>
-
-  <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj" />
   </ItemGroup>
 
