@@ -20,6 +20,8 @@ Instructions for AI coding agents working in the Python codebase.
 
 ## Maintaining Documentation
 
+This section concerns contributor guidance, not public consumer skills.
+
 When making changes to a package, check if the following need updates:
 - The package's `AGENTS.md` file (adding/removing/renaming public APIs, architecture changes, import path changes)
 - The agent skills in `.github/skills/` if conventions, commands, or workflows change
@@ -30,6 +32,15 @@ incomplete, or misleading (renamed files, changed commands, new conventions
 the user confirmed, etc.). **Before adding a new principle or rule, ask the
 user whether they want it captured as a durable principle** — do not invent
 team norms from a single conversation without explicit confirmation.
+
+## Public Consumer Skills
+
+The installable skills under `/skills/` guide high-level application-development choices. They are not documentation
+or a checklist of framework behavior. Follow the
+[consumer skill maintenance contract](../skills/README.md#repository-maintenance-contract). Do not update them merely
+because a public API, package, sample, or implementation changed.
+
+This restriction concerns public consumer skills, not repository task skills under `.github/skills/`.
 
 ## Terminology
 

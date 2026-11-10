@@ -175,6 +175,9 @@ while (true)
                 return new ChatMessage(ChatRole.User, [decision]);
             });
 
+            // Reuse the AgentSession so the client sends the same conversation id. An approval
+            // response belongs to that explicit conversation; previous_response_id alone selects
+            // the separate implicit-chain path, and the Responses API rejects sending both.
             response = await agent.RunAsync(decisions, session);
         }
 

@@ -44,6 +44,13 @@ client when its lifetime must extend beyond any one agent context. Do not assume
 For AG-UI, remember that thread and run IDs are correlation identifiers, not authentication boundaries. The
 application owns authorization, durable snapshots, scaling, and rendering policy.
 
+For GitHub Copilot, construction defaults and per-run MCP options configure SDK requests; resuming an `AgentSession`
+continues SDK/CLI-owned service state. Forwarding narrower options does not guarantee revocation of capabilities
+already resident in that session. Enforce authorization at the MCP service/tool boundary and use
+`agent.create_session()` with the narrowed options to start a fresh service session, without copying the previous
+`service_session_id` or reusing its SDK `session_id`. See the
+[Copilot session-lifetime guidance](https://github.com/microsoft/agent-framework/blob/main/python/packages/github_copilot/README.md#mcp-configuration-and-session-lifetime).
+
 For Purview, all prompt content uses the `UploadText` activity (`Activity.UPLOAD_TEXT`) and all response
 content uses `DownloadText` (`Activity.DOWNLOAD_TEXT`), including binary content. The middleware cannot
 reliably distinguish file attachments from inline binary content. Configure DLP policies for these text
@@ -58,6 +65,9 @@ outer redaction cannot repair a diagnostic already caught and returned by genera
 
 For Monty, distinguish interpreter `resource_limits` from host-side attachment capture. Capture has per-call
 file-count and raw-byte limits shared across read-write mounts. Omitted attachments do not undo filesystem writes.
+Monty requires `pydantic-monty>=1.0`. Use `max_feed_duration_secs` for the total sandbox execution budget or
+`max_turn_duration_secs` for the budget between host round trips. The legacy `max_duration_secs` option aliases
+`max_feed_duration_secs`; do not specify both.
 Check the [Monty file-mount and resource-limit guidance](https://github.com/microsoft/agent-framework/blob/main/python/packages/monty/README.md#file-mounts-and-resource-limits)
 before relying on output attachments or treating interpreter limits as host resource limits.
 

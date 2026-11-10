@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import base64
 import inspect
 import json
@@ -16,20 +17,24 @@ from uuid import uuid4
 
 import pytest
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
     BaseAgent,
+    BaseChatClient,
+    ChatOptions,
     Content,
     ContextProvider,
     FunctionInvocationContext,
+    FunctionTool,
     HistoryProvider,
     MCPStdioTool,
     Message,
     ResponseStream,
     tool,
 )
-from agent_framework.exceptions import AgentException
+from agent_framework.exceptions import AgentException, MiddlewareException
 from copilot.session import PermissionHandler, PermissionInvocation, PreToolUseHookInput
 from copilot.session_events import (
     AssistantUsageData,
@@ -46,6 +51,8 @@ from copilot.tools import ToolInvocation, ToolResult
 
 from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions, RawGitHubCopilotAgent
 from agent_framework_github_copilot._feature_usage import FeatureIndex
+
+SUPPORTED_CLI_VERSION = "1.0.106"
 
 
 def copilot_options(options: GitHubCopilotOptions) -> GitHubCopilotOptions:
@@ -156,6 +163,7 @@ def mock_client(mock_session: MagicMock) -> MagicMock:
 
     client = MagicMock()
     client.start = AsyncMock()
+    client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
     client.stop = AsyncMock(return_value=[])
     client.create_session = _validating("create_session")
     client.resume_session = _validating("resume_session")
@@ -340,6 +348,7 @@ class TestGitHubCopilotAgentLifecycle:
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
@@ -388,6 +397,7 @@ class TestGitHubCopilotAgentLifecycle:
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             mock_client.stop = AsyncMock()
             MockClient.return_value = mock_client
 
@@ -397,11 +407,98 @@ class TestGitHubCopilotAgentLifecycle:
 
             mock_client.stop.assert_called_once()
 
+    @pytest.mark.parametrize("version", ["1.0.85", "1.0.85-3", "1.0.90-0.unstable.abc", "2.0.0"])
+    async def test_start_accepts_supported_cli_version(self, mock_client: MagicMock, version: str) -> None:
+        """Test that start succeeds when the CLI reports the minimum version or newer."""
+        mock_client.get_status = AsyncMock(return_value=MagicMock(version=version))
+        agent = GitHubCopilotAgent(client=mock_client)
+
+        await agent.start()
+
+        assert agent._started is True  # type: ignore
+
+    @pytest.mark.parametrize("version", ["1.0.64", "1.0.84", "0.9.999", "dev", "", None])
+    async def test_start_rejects_old_or_unreadable_cli_version(self, mock_client: MagicMock, version: Any) -> None:
+        """Test that start fails when the CLI is too old or its version can't be read."""
+        mock_client.get_status = AsyncMock(return_value=MagicMock(version=version))
+        agent = GitHubCopilotAgent(client=mock_client)
+
+        with pytest.raises(AgentException, match=r"version 1\.0\.85 or higher is required"):
+            await agent.start()
+
+        assert agent._started is False  # type: ignore
+        mock_client.stop.assert_not_called()
+
+    async def test_start_rejects_when_cli_status_fails(self, mock_client: MagicMock) -> None:
+        """Test that start fails when the CLI version can't be queried."""
+        mock_client.get_status = AsyncMock(side_effect=RuntimeError("status.get not supported"))
+        agent = GitHubCopilotAgent(client=mock_client)
+
+        with pytest.raises(AgentException, match="could not be determined"):
+            await agent.start()
+
+        assert agent._started is False  # type: ignore
+
+    async def test_start_stops_owned_client_on_unsupported_cli_version(self) -> None:
+        """Test that an agent-owned client is stopped when the CLI version is unsupported."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            mock_client.stop = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version="1.0.64"))
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            with pytest.raises(AgentException):
+                await agent.start()
+
+            mock_client.stop.assert_called_once()
+
+    async def test_start_stops_owned_client_when_cancelled_during_version_check(self) -> None:
+        """Test that an agent-owned client is stopped when start is cancelled during the version check."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            mock_client.stop = AsyncMock()
+            mock_client.get_status = AsyncMock(side_effect=asyncio.CancelledError())
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            with pytest.raises(asyncio.CancelledError):
+                await agent.start()
+
+            mock_client.stop.assert_called_once()
+            assert agent._started is False  # type: ignore
+
+    async def test_start_concurrent_calls_check_version_once(self) -> None:
+        """Test that concurrent start calls start the client and check the CLI version only once."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            mock_client.stop = AsyncMock()
+
+            async def get_status() -> MagicMock:
+                await asyncio.sleep(0)
+                return MagicMock(version=SUPPORTED_CLI_VERSION)
+
+            mock_client.get_status = AsyncMock(side_effect=get_status)
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await asyncio.gather(agent.start(), agent.start())
+
+            MockClient.assert_called_once()
+            mock_client.start.assert_called_once()
+            mock_client.get_status.assert_called_once()
+            mock_client.stop.assert_not_called()
+            assert agent._started is True  # type: ignore
+
     async def test_start_creates_client_with_options(self) -> None:
         """Test that start creates client with cli_path and log_level from settings."""
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent(
@@ -418,6 +515,7 @@ class TestGitHubCopilotAgentLifecycle:
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent(default_options=copilot_options({"base_directory": "/custom/copilot/home"}))
@@ -437,6 +535,7 @@ class TestGitHubCopilotAgentLifecycle:
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent(
@@ -459,6 +558,7 @@ class TestGitHubCopilotAgentLifecycle:
         ):
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
@@ -474,6 +574,7 @@ class TestGitHubCopilotAgentLifecycle:
         ):
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
@@ -489,6 +590,7 @@ class TestGitHubCopilotAgentLifecycle:
         ):
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
@@ -501,6 +603,7 @@ class TestGitHubCopilotAgentLifecycle:
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
@@ -517,6 +620,7 @@ class TestGitHubCopilotAgentLifecycle:
         ):
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
@@ -770,6 +874,44 @@ class TestGitHubCopilotAgentRunStreaming:
             "total_token_count": 14,
         }
         assert response.additional_properties["model"] == "gpt-5.1-mini"
+
+    async def test_run_streaming_sums_usage_across_multiple_model_calls(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test streaming sums per-call usage events instead of keeping only the last one."""
+        usage_events = [
+            SessionEvent(
+                data=AssistantUsageData(model="gpt-5.1-mini", input_tokens=n * 100, output_tokens=n * 10),
+                id=uuid4(),
+                timestamp=datetime.now(timezone.utc),
+                type=SessionEventType.ASSISTANT_USAGE,
+            )
+            for n in (1, 2, 3)
+        ]
+        events = [assistant_delta_event, *usage_events, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        stream = agent.run("Hello", stream=True)
+        async for _ in stream:
+            pass
+        response = await stream.get_final_response()
+
+        assert response.usage_details == {
+            "input_token_count": 600,
+            "output_token_count": 60,
+            "total_token_count": 660,
+        }
 
     async def test_run_streaming_with_session(
         self,
@@ -3446,20 +3588,32 @@ class TestNormalizeApproveForSession:
         assert result.approval.extension_name == "my-ext"
         assert result.to_dict()["approval"] == {"kind": "extension-permission-access", "extensionName": "my-ext"}
 
-    async def test_url_request_derives_domain_instead_of_approval(self) -> None:
-        """A URL prompt is scoped by ``domain``; URL prompts have no ``approval``."""
-        from copilot.generated.rpc import PermissionDecisionApproveForSession
+    @pytest.mark.parametrize(
+        "url",
+        [
+            pytest.param("http://example.com/a", id="http"),
+            pytest.param("https://example.com/a", id="https"),
+            pytest.param("http://example.com:80/a", id="http-default-port"),
+            pytest.param("https://example.com:443/a", id="https-default-port"),
+            pytest.param("https://example.com:8443/a", id="https-non-default-port"),
+            pytest.param("http://127.0.0.1/a", id="ipv4"),
+            pytest.param("http://[::1]/a", id="ipv6"),
+            pytest.param("https://xn--bcher-kva.example/a", id="idna"),
+            pytest.param("https://example.com./a", id="trailing-dot"),
+        ],
+    )
+    async def test_url_request_without_explicit_domain_narrows_to_approve_once(self, url: str) -> None:
+        """A URL prompt without an explicit scope must not fabricate a session approval."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
         from copilot.session_events import PermissionRequestUrl
 
-        request = PermissionRequestUrl(intention="fetch", url="https://example.com/some/path?q=1")
+        request = PermissionRequestUrl(intention="fetch", url=url)
         result = await self.normalize(request, PermissionDecisionApproveForSession())
 
-        assert isinstance(result, PermissionDecisionApproveForSession)
-        assert result.domain == "example.com"
-        assert result.approval is None
+        assert isinstance(result, PermissionDecisionApproveOnce)
 
-    async def test_url_request_without_derivable_domain_falls_back_to_approve_once(self) -> None:
-        """A URL with no host cannot be scoped, so the decision narrows to a single approval."""
+    async def test_malformed_url_falls_back_to_approve_once(self) -> None:
+        """A malformed URL must not receive a framework-derived session scope."""
         from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
         from copilot.session_events import PermissionRequestUrl
 
@@ -3478,12 +3632,7 @@ class TestNormalizeApproveForSession:
         ],
     )
     async def test_parser_ambiguous_url_falls_back_to_approve_once(self, url: str) -> None:
-        """A URL whose host Python and the CLI parse differently must not persist a domain.
-
-        The CLI (WHATWG) contacts ``example.com`` for these URLs while ``urlparse`` derives
-        ``evil.com``. Persisting ``evil.com`` would widen approval to an unrelated,
-        attacker-chosen domain, so the decision must narrow to a single-use approval.
-        """
+        """A parser-ambiguous URL must not persist a framework-derived session scope."""
         from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
         from copilot.session_events import PermissionRequestUrl
 
@@ -3492,16 +3641,15 @@ class TestNormalizeApproveForSession:
 
         assert isinstance(result, PermissionDecisionApproveOnce)
 
-    async def test_unambiguous_url_with_userinfo_derives_real_host(self) -> None:
-        """Userinfo without ambiguous characters is safe; the real host is persisted."""
-        from copilot.generated.rpc import PermissionDecisionApproveForSession
+    async def test_url_with_userinfo_falls_back_to_approve_once(self) -> None:
+        """Userinfo must not be discarded while deriving a session scope."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
         from copilot.session_events import PermissionRequestUrl
 
         request = PermissionRequestUrl(intention="fetch", url="https://user:pass@example.com/a")
         result = await self.normalize(request, PermissionDecisionApproveForSession())
 
-        assert isinstance(result, PermissionDecisionApproveForSession)
-        assert result.domain == "example.com"
+        assert isinstance(result, PermissionDecisionApproveOnce)
 
     async def test_shell_request_that_cannot_offer_session_approval_narrows_to_approve_once(self) -> None:
         """Never fabricate a session approval the prompt said it could not offer."""
@@ -3543,17 +3691,18 @@ class TestNormalizeApproveForSession:
 
         assert result is decision
 
-    async def test_explicit_domain_is_passed_through_untouched(self) -> None:
+    @pytest.mark.parametrize("domain", ["contoso.com", "http://example.com", "https://example.com:8443"])
+    async def test_explicit_domain_is_passed_through_untouched(self, domain: str) -> None:
         """A decision scoped by ``domain`` must not be rewritten either."""
         from copilot.generated.rpc import PermissionDecisionApproveForSession
         from copilot.session_events import PermissionRequestUrl
 
-        decision = PermissionDecisionApproveForSession(domain="contoso.com")
+        decision = PermissionDecisionApproveForSession(domain=domain)
         request = PermissionRequestUrl(intention="fetch", url="https://example.com/a")
         result = await self.normalize(request, decision)
 
         assert result is decision
-        assert result.domain == "contoso.com"
+        assert result.domain == domain
 
     @pytest.mark.parametrize("decision_name", ["PermissionDecisionApproveOnce", "PermissionDecisionUserNotAvailable"])
     async def test_other_decision_kinds_are_passed_through_untouched(self, decision_name: str) -> None:
@@ -4454,6 +4603,102 @@ class TestGitHubCopilotAgentContextProviders:
         assert call_kwargs.get("tools") is not None
         tool_names = [t.name for t in call_kwargs["tools"]]
         assert "load_skill" in tool_names
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("resume", [False, True])
+    @pytest.mark.parametrize("agent_type", [GitHubCopilotAgent, RawGitHubCopilotAgent])
+    async def test_provider_function_middleware_rejected_before_sdk_session(
+        self,
+        mock_client: MagicMock,
+        completed_copilot_session: MagicMock,
+        provider_function_middleware: tuple[ContextProvider, FunctionTool, AsyncMock, AsyncMock],
+        stream: bool,
+        resume: bool,
+        agent_type: type[RawGitHubCopilotAgent[GitHubCopilotOptions]],
+    ) -> None:
+        provider, _, tool_body, policy = provider_function_middleware
+        agent = agent_type(client=mock_client, context_providers=[provider])
+        session = agent.create_session()
+        if resume:
+            session.service_session_id = "existing-id"
+
+        with pytest.raises(MiddlewareException, match="does not support function middleware.*context providers"):
+            if stream:
+                await agent.run("Hello", stream=True, session=session).get_final_response()
+            else:
+                await agent.run("Hello", session=session)
+
+        mock_client.create_session.assert_not_called()
+        mock_client.resume_session.assert_not_called()
+        completed_copilot_session.send.assert_not_called()
+        completed_copilot_session.send_and_wait.assert_not_called()
+        tool_body.assert_not_called()
+        policy.assert_not_called()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_provider_function_middleware_checked_on_each_run(
+        self,
+        mock_client: MagicMock,
+        completed_copilot_session: MagicMock,
+        provider_function_middleware: tuple[ContextProvider, FunctionTool, AsyncMock, AsyncMock],
+        stream: bool,
+    ) -> None:
+        provider, provider_tool, tool_body, policy = provider_function_middleware
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[provider])
+        session = agent.create_session()
+        session.state[provider.source_id] = {"include_middleware": False}
+
+        await agent.run("Hello", session=session)
+        sdk_tool = mock_client.create_session.call_args.kwargs["tools"][0]
+        assert sdk_tool.name == provider_tool.name
+        result = await sdk_tool.handler(ToolInvocation(arguments={"value": "test"}))
+        assert result.result_type == "success"
+        tool_body.assert_awaited_once_with("test")
+
+        session.state[provider.source_id]["include_middleware"] = True
+        with pytest.raises(MiddlewareException, match="does not support function middleware.*context providers"):
+            if stream:
+                await agent.run("Hello again", stream=True, session=session).get_final_response()
+            else:
+                await agent.run("Hello again", session=session)
+
+        mock_client.create_session.assert_awaited_once()
+        mock_client.resume_session.assert_not_called()
+        completed_copilot_session.send_and_wait.assert_awaited_once()
+        completed_copilot_session.send.assert_not_called()
+        tool_body.assert_awaited_once_with("test")
+        policy.assert_not_called()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("resume", [False, True])
+    async def test_provider_function_middleware_blocks_tool_with_agent(
+        self,
+        provider_function_middleware: tuple[ContextProvider, FunctionTool, AsyncMock, AsyncMock],
+        tool_calling_chat_client: BaseChatClient[ChatOptions[Any]],
+        stream: bool,
+        resume: bool,
+    ) -> None:
+        provider, _, tool_body, policy = provider_function_middleware
+        agent = Agent(client=tool_calling_chat_client, context_providers=[provider])
+        session = agent.create_session()
+        if resume:
+            session.service_session_id = "existing-id"
+
+        if stream:
+            response = await agent.run("Hello", stream=True, session=session).get_final_response()
+        else:
+            response = await agent.run("Hello", session=session)
+
+        results = [
+            content
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_result"
+        ]
+        assert len(results) == 1
+        assert "Function policy denied the call" in str(results[0].exception)
+        policy.assert_awaited_once()
+        tool_body.assert_not_called()
 
 
 class TestGitHubCopilotAttachments:

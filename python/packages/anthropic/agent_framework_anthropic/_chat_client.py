@@ -9,6 +9,7 @@ import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Final, Generic, Literal, TypeAlias, TypedDict, cast
+from uuid import uuid4
 
 from agent_framework import (
     Annotation,
@@ -106,6 +107,12 @@ _SERVER_TOOL_RESULT_TYPES: Final[frozenset[str]] = frozenset({
     "web_search_tool_result",
 })
 _MAX_PAUSE_TURN_CONTINUATIONS: Final[int] = 10
+# Marks text_reasoning content parsed from a native Anthropic reasoning block; the value is the
+# Anthropic block type. Distinguishes native reasoning items from provider reasoning summaries
+# that carry a Content.id without a protected payload.
+_REASONING_BLOCK_KEY: Final[str] = "reasoning_block"
+_REASONING_BLOCK_THINKING: Final[str] = "thinking"
+_REASONING_BLOCK_REDACTED_THINKING: Final[str] = "redacted_thinking"
 _PAUSE_TURN_REPLAYABLE_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
     "text",
     "text_reasoning",
@@ -835,6 +842,8 @@ class RawAnthropicClient(
 
     def _is_pause_turn_content_replayable(self, content: Content) -> bool:
         """Return whether the Anthropic serializer preserves this paused content item."""
+        if content.type == "text_reasoning" and self._is_redacted_thinking_content(content):
+            return bool(content.protected_data)
         if content.type in _PAUSE_TURN_REPLAYABLE_CONTENT_TYPES:
             return True
         if content.type == "function_call":
@@ -1131,6 +1140,36 @@ class RawAnthropicClient(
         return False
 
     @staticmethod
+    def _generate_reasoning_id() -> str:
+        """Return a fresh identity for one reasoning item.
+
+        Anthropic reasoning blocks have no provider identity of their own, and response
+        aggregation folds adjacent reasoning chunks without ids into one item. Giving each
+        parsed reasoning block its own id keeps consecutive ``thinking`` and
+        ``redacted_thinking`` blocks distinct when a streamed response is finalized.
+        """
+        return f"reasoning-{uuid4().hex}"
+
+    @staticmethod
+    def _native_reasoning_block_type(content: Content) -> Any:
+        """Return the Anthropic native block type recorded on a reasoning item, if any."""
+        return get_namespaced_value(
+            content.additional_properties,
+            _ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE,
+            _REASONING_BLOCK_KEY,
+        )
+
+    @classmethod
+    def _is_redacted_thinking_content(cls, content: Content) -> bool:
+        """Return whether this reasoning item carries an Anthropic redacted-thinking payload."""
+        return cls._native_reasoning_block_type(content) == _REASONING_BLOCK_REDACTED_THINKING
+
+    @classmethod
+    def _is_thinking_content(cls, content: Content) -> bool:
+        """Return whether this reasoning item was parsed from an Anthropic ``thinking`` block."""
+        return cls._native_reasoning_block_type(content) == _REASONING_BLOCK_THINKING
+
+    @staticmethod
     def _server_tool_block(content: Content) -> Mapping[str, Any] | None:
         """Return validated persisted Anthropic server-tool metadata."""
         block = get_namespaced_value(
@@ -1363,6 +1402,11 @@ class RawAnthropicClient(
                         mcp_result["is_error"] = is_error
                     a_content.append(mcp_result)
                 case "text_reasoning":
+                    if self._is_redacted_thinking_content(content):
+                        if not content.protected_data:
+                            raise ContentError("Anthropic redacted thinking content is missing its opaque payload.")
+                        a_content.append({"type": "redacted_thinking", "data": content.protected_data})
+                        continue
                     if content.text is None:
                         if (
                             content.protected_data
@@ -1372,7 +1416,7 @@ class RawAnthropicClient(
                         ):
                             a_content[-1]["signature"] = content.protected_data
                         continue
-                    if content.id and not content.protected_data:
+                    if content.id and not content.protected_data and not self._is_thinking_content(content):
                         a_content.append({"type": "text", "text": content.text})
                         continue
                     thinking_block: dict[str, Any] = {"type": "thinking", "thinking": content.text}
@@ -2081,11 +2125,37 @@ class RawAnthropicClient(
                                 raw_representation=content_block,
                             )
                         )
+                case "redacted_thinking":
+                    # Redacted reasoning is opaque provider state. Anthropic requires it to be replayed
+                    # unchanged while tool use continues, so keep it as its own reasoning item.
+                    contents.append(
+                        Content.from_text_reasoning(
+                            id=self._generate_reasoning_id(),
+                            protected_data=content_block.data,
+                            additional_properties={
+                                _ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE: {
+                                    _REASONING_BLOCK_KEY: _REASONING_BLOCK_REDACTED_THINKING
+                                }
+                            },
+                            merge_mode="replace" if streaming else None,
+                            raw_representation=content_block,
+                        )
+                    )
                 case "thinking" | "thinking_delta":
                     contents.append(
                         Content.from_text_reasoning(
+                            id=self._generate_reasoning_id() if content_block.type == "thinking" else None,
                             text=content_block.thinking,
                             protected_data=getattr(content_block, "signature", None),
+                            additional_properties=(
+                                {
+                                    _ANTHROPIC_ADDITIONAL_PROPS_NAMESPACE: {
+                                        _REASONING_BLOCK_KEY: _REASONING_BLOCK_THINKING
+                                    }
+                                }
+                                if content_block.type == "thinking"
+                                else None
+                            ),
                             merge_mode="append" if streaming else None,
                             raw_representation=content_block,
                         )

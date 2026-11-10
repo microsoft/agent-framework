@@ -15,9 +15,6 @@ var app = builder.Build();
 // The endpoint that live Foundry calls.
 app.MapFoundryResponses();
 
-// Contributor-only: local REPL route shape. Not used in production.
-app.MapDevTemporaryLocalAgentEndpoint();
-
 app.Run();
 ```
 

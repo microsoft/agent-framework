@@ -119,12 +119,12 @@ protected tool after authorization. This keeps function calls paired with result
 conversation without deleting pending calls from unrelated flows. Updating the host prevents new
 unmatched calls; it does not repair conversation history already recorded by an older host.
 
-`FoundryResponsesOptions.OAuthConsentInterruptedToolResult` customizes the result recorded for those
+`FoundryResponsesServerOptions.OAuthConsentInterruptedToolResult` customizes the result recorded for those
 other skipped calls. Phrase it as context for the model, for example that the user must authorize a
 protected tool before related calls can run, rather than as an instruction for the model to perform
 authorization itself.
 
-When `FoundryResponsesOptions.AllowStoredOutputEnabled` permits the agent's inference service to
+When `FoundryResponsesServerOptions.InferenceStoredOutputAllowed` permits the agent's inference service to
 keep a second history, the function loop sends the complete result batch in one final request with
 tool invocation disabled. This keeps the inference-service history aligned with the Hosted Agent
 response before the host emits `oauth_consent_request` and `response.incomplete`.
