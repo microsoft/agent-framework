@@ -34,10 +34,22 @@ from dataclasses import dataclass, is_dataclass
 from functools import partial
 from pathlib import Path
 from types import UnionType
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, Union, cast, get_args, get_origin
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Literal,
+    TypeAlias,
+    TypeVar,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+)
 
 import msgspec
-from typing_extensions import TypedDict, is_typeddict
+import typing_extensions
+from typing_extensions import TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._filesystem import (
@@ -398,7 +410,7 @@ def _restore_union(value: Any, tree: Mapping[Any, Any], annotation: Any, path: s
                     owns_validation_config = (
                         issubclass(candidate_type, BaseModel)
                         or is_dataclass(candidate_type)
-                        or is_typeddict(candidate_type)
+                        or typing_extensions.is_typeddict(candidate_type)
                     )
                 config = None if owns_validation_config else ConfigDict(arbitrary_types_allowed=True)
                 TypeAdapter(candidate, config=config).validate_python(restored)
