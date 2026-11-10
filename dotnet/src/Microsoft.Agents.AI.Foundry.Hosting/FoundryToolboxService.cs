@@ -14,8 +14,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
@@ -26,26 +24,19 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <summary>
 /// An <see cref="IHostedService"/> that eagerly connects to the Foundry Toolboxes MCP proxy at
 /// container startup, discovers tools via <c>tools/list</c>, and caches them so they can be
-/// injected into every <see cref="ChatOptions"/> by <see cref="AgentFrameworkResponseHandler"/>.
+/// injected into every <see cref="ChatOptions"/> by the registered response handler.
 /// </summary>
 /// <remarks>
 /// <para>
 /// The toolbox proxy base URL is derived from the platform-injected
 /// <c>FOUNDRY_PROJECT_ENDPOINT</c> environment variable per <c>tools-integration-spec.md</c>
 /// §2–§3. The per-toolbox proxy URL is constructed as
-/// <c>{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{toolboxName}/mcp?api-version={ApiVersion}</c>.
+/// <c>{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{toolboxName}/mcp?api-version=v1</c>.
 /// </para>
 /// <para>
 /// The endpoint can also come from a configured override or, as a local-development fallback,
 /// <c>AZURE_AI_PROJECT_ENDPOINT</c>. If no endpoint is resolved, startup completes with
 /// toolbox support disabled and the toolbox health check reports <c>Healthy</c>.
-/// </para>
-/// <para>
-/// Startup eagerly connects to every name in <see cref="FoundryToolboxOptions.ToolboxNames"/>.
-/// Beyond those, per-request toolbox markers (see <see cref="HostedMcpToolboxAITool"/>) are
-/// resolved at request time through <see cref="GetToolboxToolsAsync"/>. Unknown toolboxes are
-/// rejected when <see cref="FoundryToolboxOptions.StrictMode"/> is <see langword="true"/> and
-/// lazily connected otherwise.
 /// </para>
 /// <para>
 /// Startup consent requirements and non-cancellation discovery failures do not fail the toolbox
@@ -61,10 +52,9 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// retain their normal invocation behavior.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed partial class FoundryToolboxService : IHostedService, IAsyncDisposable
+internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisposable
 {
-    private readonly FoundryToolboxOptions _options;
+    private readonly FoundryToolboxServiceOptions _options;
     private readonly TokenCredential _credential;
     private readonly ILogger<FoundryToolboxService> _logger;
 
@@ -83,7 +73,7 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
     private string _agentVersion = "1.0.0";
 
     /// <summary>
-    /// Gets the consent link policy built from <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>.
+    /// Gets the consent link policy built from <see cref="FoundryToolboxServiceOptions.AllowedOAuthConsentOrigins"/>.
     /// The response handler applies it before surfacing any consent link from these toolboxes.
     /// </summary>
     internal OAuthConsentLinkPolicy ConsentLinkPolicy { get; }
@@ -139,14 +129,14 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
     /// Initializes a new instance of <see cref="FoundryToolboxService"/>.
     /// </summary>
     public FoundryToolboxService(
-        IOptions<FoundryToolboxOptions> options,
+        FoundryToolboxServiceOptions options,
         TokenCredential credential,
         ILogger<FoundryToolboxService>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(credential);
 
-        this._options = options.Value;
+        this._options = options;
         this._credential = credential;
         this._logger = logger ?? NullLogger<FoundryToolboxService>.Instance;
         this.ConsentLinkPolicy = new OAuthConsentLinkPolicy(this._options.AllowedOAuthConsentOrigins);
@@ -157,7 +147,7 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
     /// delegates to this instead of connecting to the live MCP proxy, so the consent/tools resolution
     /// and request-scoping logic can be unit-tested deterministically. Never set in production.
     /// </summary>
-    internal Func<string, string?, CancellationToken, Task<ToolboxOpenResult>>? ToolboxOpener { get; set; }
+    internal Func<string, CancellationToken, Task<ToolboxOpenResult>>? ToolboxOpener { get; set; }
 
     /// <summary>
     /// Attempts to connect to and enumerate each pre-registered toolbox, caching available tools
@@ -216,7 +206,7 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
 
             try
             {
-                var result = await this.OpenToolboxAsync(toolboxName, version: null, cancellationToken).ConfigureAwait(false);
+                var result = await this.OpenToolboxAsync(toolboxName, cancellationToken).ConfigureAwait(false);
                 if (result.Consents is { } consents)
                 {
                     // The toolbox could not enumerate because a tool source needs user OAuth consent.
@@ -321,7 +311,7 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
 
                 try
                 {
-                    var result = await this.OpenToolboxAsync(toolboxName, version: null, cancellationToken).ConfigureAwait(false);
+                    var result = await this.OpenToolboxAsync(toolboxName, cancellationToken).ConfigureAwait(false);
                     if (result.Consents is { } consents)
                     {
                         // Consent URLs can be user-specific. Keep the refreshed result inside this
@@ -387,7 +377,7 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
 
                 try
                 {
-                    var result = await this.OpenToolboxAsync(toolboxName, version: null, cancellationToken).ConfigureAwait(false);
+                    var result = await this.OpenToolboxAsync(toolboxName, cancellationToken).ConfigureAwait(false);
                     if (result.Consents is { } consents)
                     {
                         // Consent state belongs to this request. A different request must enumerate
@@ -405,97 +395,6 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
                     LogDeferredToolboxRetryFailed(this._logger, toolboxName, ex);
                 }
             }
-        }
-        finally
-        {
-            requestOpenLock.Release();
-        }
-    }
-
-    /// <summary>
-    /// Resolves the tools for a per-request toolbox marker. Returns startup-cached tools or tools
-    /// already opened in the current response; otherwise honors
-    /// <see cref="FoundryToolboxOptions.StrictMode"/> to either reject or lazily open it.
-    /// </summary>
-    /// <param name="toolboxName">The Foundry toolbox name from the marker.</param>
-    /// <param name="version">
-    /// Optional pinned version. Currently reserved for future use — version-specific routing is
-    /// handled server-side by the Foundry proxy. This parameter is accepted for forward compatibility
-    /// but does not affect the proxy URL used to connect to the toolbox.
-    /// </param>
-    /// <param name="cancellationToken">The request cancellation token.</param>
-    /// <returns>
-    /// A request-scoped <see cref="ToolboxResolution"/>: its <see cref="ToolboxResolution.Tools"/>
-    /// carry the resolved tools, or its <see cref="ToolboxResolution.Consents"/> carry the OAuth
-    /// consent requirements the caller must surface for this request. The consent requirement is
-    /// returned to the caller rather than recorded in the container-global pending-consent state, so a
-    /// marker referenced by one request can never inject tools into — or raise a consent prompt on — a
-    /// request that did not reference it. It also does not affect <see cref="StartupStatus"/>.
-    /// </returns>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when the toolbox is not pre-registered and <see cref="FoundryToolboxOptions.StrictMode"/>
-    /// is <see langword="true"/>, or when the toolbox endpoint is not configured.
-    /// </exception>
-    internal async ValueTask<ToolboxResolution> GetToolboxToolsAsync(
-        string toolboxName,
-        string? version,
-        CancellationToken cancellationToken)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(toolboxName);
-        this.EnsureSafeToolboxName(toolboxName);
-
-        if (this._toolboxes.TryGetValue(toolboxName, out var cached))
-        {
-            return new ToolboxResolution(cached.Tools, []);
-        }
-
-        if (this.TryGetCurrentRequestToolbox(toolboxName, out cached))
-        {
-            return new ToolboxResolution(cached.Tools, []);
-        }
-
-        if (this._options.StrictMode && !this._options.ToolboxNames.Contains(toolboxName, StringComparer.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException(
-                $"Toolbox '{toolboxName}' is not pre-registered via AddFoundryToolboxes(...). " +
-                $"Either register it at startup or set {nameof(FoundryToolboxOptions.StrictMode)}=false to allow lazy resolution.");
-        }
-
-        if (string.IsNullOrEmpty(this._resolvedEndpoint))
-        {
-            throw new InvalidOperationException(
-                $"Cannot resolve toolbox '{toolboxName}': FOUNDRY_PROJECT_ENDPOINT is not set.");
-        }
-
-        var requestOpenLock = this.GetCurrentRequestOpenLock();
-        await requestOpenLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            // Double-check after acquiring the lock to avoid duplicate opens under concurrency.
-            if (this._toolboxes.TryGetValue(toolboxName, out cached))
-            {
-                return new ToolboxResolution(cached.Tools, []);
-            }
-
-            if (this.TryGetCurrentRequestToolbox(toolboxName, out cached))
-            {
-                return new ToolboxResolution(cached.Tools, []);
-            }
-
-            var result = await this.OpenToolboxAsync(toolboxName, version, cancellationToken).ConfigureAwait(false);
-            if (result.Consents is { } pendingConsents)
-            {
-                // The toolbox needs user OAuth consent before its tools can be enumerated. Return the
-                // consent requirement to the caller so it surfaces an oauth_consent_request for THIS
-                // request only. Deliberately not recorded in the container-global _pendingConsents
-                // (that set is for pre-registered toolboxes), so it neither flips StartupStatus nor
-                // leaks into other requests.
-                return new ToolboxResolution([], pendingConsents);
-            }
-
-            cached = result.Cached!;
-            this.CacheRequestToolbox(toolboxName, cached);
-            return new ToolboxResolution(cached.Tools, []);
         }
         finally
         {
@@ -700,7 +599,7 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
 
     /// <summary>
     /// Validates that <paramref name="toolboxName"/> resolves to a single, intact path segment in the
-    /// toolbox proxy request URL, so a caller-influenced name cannot change the request target.
+    /// toolbox proxy request URL, so a configured name cannot change the request target.
     /// </summary>
     /// <remarks>
     /// Rather than block-listing characters, this builds the proxy URL exactly as
@@ -729,7 +628,7 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
         }
 
         var baseUri = new Uri(this._resolvedEndpoint, UriKind.Absolute);
-        var candidate = $"{this._resolvedEndpoint}/toolboxes/{toolboxName}/mcp?api-version={this._options.ApiVersion}";
+        var candidate = $"{this._resolvedEndpoint}/toolboxes/{toolboxName}/mcp?api-version={FoundryToolboxServiceOptions.ApiVersion}";
 
         if (Uri.TryCreate(candidate, UriKind.Absolute, out var uri)
             && string.Equals(uri.Scheme, baseUri.Scheme, StringComparison.Ordinal)
@@ -804,11 +703,10 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
 
     private async Task<ToolboxOpenResult> OpenToolboxAsync(
         string toolboxName,
-        string? version,
         CancellationToken cancellationToken)
     {
-        // Defense-in-depth: every open path (startup, lazy per-request, consent retry, deferred
-        // retry) funnels through here, so validate the name at the single point where it is used to
+        // Defense-in-depth: every open path (startup, consent retry, deferred retry) funnels through
+        // here, so validate the name at the single point where it is used to
         // build the request URL. This guarantees a name that is not a safe single path segment can
         // never form the proxy target, independent of the caller.
         this.EnsureSafeToolboxName(toolboxName);
@@ -818,10 +716,10 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
         // exercised without a live toolbox proxy. Never set in production.
         if (this.ToolboxOpener is { } opener)
         {
-            return await opener(toolboxName, version, cancellationToken).ConfigureAwait(false);
+            return await opener(toolboxName, cancellationToken).ConfigureAwait(false);
         }
 
-        var proxyUrl = $"{this._resolvedEndpoint!}/toolboxes/{toolboxName}/mcp?api-version={this._options.ApiVersion}";
+        var proxyUrl = $"{this._resolvedEndpoint!}/toolboxes/{toolboxName}/mcp?api-version={FoundryToolboxServiceOptions.ApiVersion}";
 
         LogConnectingToToolbox(this._logger, toolboxName, proxyUrl);
 
@@ -898,8 +796,6 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
                 ? new ApprovalRequiredAIFunction(function)
                 : function);
         }
-
-        _ = version; // reserved for future version-specific routing; currently handled server-side by the proxy.
 
         return new ToolboxOpenResult(new CachedToolbox(client!, httpClient, wrapped), Consents: null);
     }
@@ -1002,15 +898,6 @@ public sealed partial class FoundryToolboxService : IHostedService, IAsyncDispos
     }
 
     internal sealed record CachedToolbox(McpClient? Client, HttpClient HttpClient, IReadOnlyList<AITool> Tools);
-
-    /// <summary>
-    /// Request-scoped outcome of resolving a per-request toolbox marker via
-    /// <see cref="GetToolboxToolsAsync"/>. Either <see cref="Tools"/> carries the resolved tools, or
-    /// <see cref="Consents"/> carries the OAuth consent requirements the caller must surface for this
-    /// request. Marker resolution never mutates the container-global pending-consent or tool state, so
-    /// a marker referenced by one request can never leak into a request that did not ask for it.
-    /// </summary>
-    internal readonly record struct ToolboxResolution(IReadOnlyList<AITool> Tools, IReadOnlyList<McpConsentInfo> Consents);
 
     /// <summary>
     /// Outcome of an <see cref="OpenToolboxAsync"/> attempt. Exactly one of the two values is set:

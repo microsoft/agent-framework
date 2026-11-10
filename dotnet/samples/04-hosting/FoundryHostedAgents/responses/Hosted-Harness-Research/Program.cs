@@ -68,7 +68,7 @@ AIAgent agent = chatClient.AsHarnessAgent(new HarnessAgentOptions
 });
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent);
+builder.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();

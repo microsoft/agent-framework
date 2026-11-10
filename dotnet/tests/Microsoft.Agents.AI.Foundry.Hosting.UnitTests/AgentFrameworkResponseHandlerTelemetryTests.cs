@@ -23,7 +23,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 /// <summary>
 /// Tests that verify OTel spans are actually emitted and captured through the
 /// <see cref="AgentFrameworkResponseHandler"/> pipeline when
-/// <see cref="FoundryHostingExtensions.ApplyOpenTelemetry"/> wraps the resolved agent.
+/// <see cref="ServiceCollectionExtensions.ApplyOpenTelemetry"/> wraps the resolved agent.
 /// </summary>
 public class AgentFrameworkResponseHandlerTelemetryTests
 {
@@ -45,9 +45,8 @@ public class AgentFrameworkResponseHandlerTelemetryTests
 
         var agent = new TelemetryTestAgent();
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -74,9 +73,8 @@ public class AgentFrameworkResponseHandlerTelemetryTests
 
         var agent = new TelemetryTestAgent();
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddKeyedSingleton<AIAgent>("keyed-agent", agent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -116,9 +114,8 @@ public class AgentFrameworkResponseHandlerTelemetryTests
             .Build();
 
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton(preWrapped);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -148,9 +145,8 @@ public class AgentFrameworkResponseHandlerTelemetryTests
 
         var agent = new TelemetryTestAgent();
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
