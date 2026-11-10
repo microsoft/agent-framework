@@ -411,9 +411,8 @@ internal sealed class InvokeMcpToolExecutor(
         bool foundToolsArray = false;
         if (toolList.Outputs is not null)
         {
-            foreach (TextContent textContent in toolList.Outputs.OfType<TextContent>())
+            foreach (string serialized in toolList.Outputs.OfType<TextContent>().Select(textContent => textContent.Text.TrimStart()))
             {
-                string serialized = textContent.Text.TrimStart();
                 if (serialized.Length == 0 || serialized[0] != '{')
                 {
                     continue;
@@ -427,19 +426,17 @@ internal sealed class InvokeMcpToolExecutor(
                 }
 
                 foundToolsArray = true;
-                foreach (JsonElement tool in tools.EnumerateArray())
+                foreach (JsonElement tool in tools.EnumerateArray().Where(tool =>
+                    tool.TryGetProperty("name", out JsonElement name) &&
+                    name.ValueKind == JsonValueKind.String &&
+                    string.Equals(name.GetString(), toolName, StringComparison.Ordinal)))
                 {
-                    if (tool.TryGetProperty("name", out JsonElement name) &&
-                        name.ValueKind == JsonValueKind.String &&
-                        string.Equals(name.GetString(), toolName, StringComparison.Ordinal))
+                    if (matchingToolFingerprint is not null)
                     {
-                        if (matchingToolFingerprint is not null)
-                        {
-                            throw this.Exception($"The MCP server returned multiple definitions for tool '{toolName}'.");
-                        }
-
-                        matchingToolFingerprint = ComputeToolDefinitionFingerprint(tool);
+                        throw this.Exception($"The MCP server returned multiple definitions for tool '{toolName}'.");
                     }
+
+                    matchingToolFingerprint = ComputeToolDefinitionFingerprint(tool);
                 }
             }
         }
