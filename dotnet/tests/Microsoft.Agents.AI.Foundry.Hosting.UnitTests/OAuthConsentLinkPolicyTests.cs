@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public class OAuthConsentLinkPolicyTests
 {
     [Fact]
-    public void IsAllowed_NullAllowlist_AcceptsAnySafeHttpsOrigin()
+    public void IsAllowed_NullAllowlist_AcceptsAnyValidHttpsOrigin()
     {
         // Arrange
         var policy = new OAuthConsentLinkPolicy(null);
@@ -29,9 +29,9 @@ public class OAuthConsentLinkPolicyTests
     [InlineData("https://external.example/authorize\n")]
     [InlineData("https:\\\\external.example/authorize")]
     [InlineData("/relative/authorize")]
-    public void IsAllowed_NullAllowlist_RejectsUnsafeLinks(string? consentUrl)
+    public void IsAllowed_NullAllowlist_RejectsInvalidLinks(string? consentUrl)
     {
-        // Arrange: an omitted allowlist skips only the origin check, never URL safety.
+        // Arrange: an omitted allowlist skips only the origin restriction, never URL validation.
         var policy = new OAuthConsentLinkPolicy(null);
 
         // Act
@@ -67,8 +67,8 @@ public class OAuthConsentLinkPolicyTests
         // Arrange
         var policy = new OAuthConsentLinkPolicy(
         [
-            "https://auth.example.com",
-            "https://login.partner.example:8443/",
+            new Uri("https://auth.example.com"),
+            new Uri("https://login.partner.example:8443/"),
         ]);
 
         // Act
@@ -86,8 +86,11 @@ public class OAuthConsentLinkPolicyTests
     [InlineData("auth.example.com")]
     public void Constructor_InvalidConfiguredOrigin_Throws(string origin)
     {
+        // Arrange
+        var uri = new Uri(origin, UriKind.RelativeOrAbsolute);
+
         // Act
-        void CreatePolicy() => _ = new OAuthConsentLinkPolicy([origin]);
+        void CreatePolicy() => _ = new OAuthConsentLinkPolicy([uri]);
 
         // Assert
         Assert.Throws<ArgumentException>(CreatePolicy);

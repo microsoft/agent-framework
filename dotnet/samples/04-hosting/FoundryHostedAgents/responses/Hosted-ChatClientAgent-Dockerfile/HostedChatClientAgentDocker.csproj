@@ -30,7 +30,7 @@
     <RootNamespace>HostedChatClientAgentDocker</RootNamespace>
     <AssemblyName>HostedChatClientAgentDocker</AssemblyName>
     <UserSecretsId>7b1c3f04-24a1-4f0e-9a5e-0d2f6b8c1e57</UserSecretsId>
-    <AgentFrameworkVersion>1.22.0-preview.260918.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.27.0-preview.261030.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>
