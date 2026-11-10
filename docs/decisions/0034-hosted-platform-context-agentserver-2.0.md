@@ -12,7 +12,7 @@ informed: []
 Supersedes [ADR-0026](0026-hosted-session-identity-context.md).
 
 > **Update (2026-11-05):** `HostedFoundryMemoryProviderScopes` was removed during pre-stable
-> API cleanup. Hosted memory samples now read `session.GetHostedUserId()` directly when
+> API cleanup. Hosted memory samples now read `session.GetFoundryHostedUserId()` directly when
 > constructing `FoundryMemoryProvider.State`, keeping the trusted identity-to-memory-scope mapping
 > visible without a memory-specific hosting helper.
 >
@@ -22,7 +22,7 @@ Supersedes [ADR-0026](0026-hosted-session-identity-context.md).
 > AgentServer to populate `PlatformContext`.
 >
 > The public `HostedSessionContext` / `GetHostedContext()` surface was replaced by
-> `AgentSession.GetHostedUserId()`. The hosting layer persists the resolved user id as a plain string
+> `AgentSession.GetFoundryHostedUserId()`. The hosting layer persists the resolved user id as a plain string
 > in the session state bag, making clear that it is a user partition and not the Foundry hosted
 > session id.
 

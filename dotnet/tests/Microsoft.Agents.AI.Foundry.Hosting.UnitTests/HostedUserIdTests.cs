@@ -82,7 +82,7 @@ public class HostedUserIdTests
             response.StatusCode == HttpStatusCode.OK,
             $"Expected HTTP 200 but received {(int)response.StatusCode}: {body}");
         Assert.NotNull(capturingAgent.LastSession);
-        Assert.Equal(TestUserId, capturingAgent.LastSession.GetHostedUserId());
+        Assert.Equal(TestUserId, capturingAgent.LastSession.GetFoundryHostedUserId());
     }
 
     [Fact]
@@ -99,7 +99,7 @@ public class HostedUserIdTests
 
         // Assert
         Assert.NotNull(capturingAgent.LastSession);
-        Assert.Equal(TestUserId, capturingAgent.LastSession.GetHostedUserId());
+        Assert.Equal(TestUserId, capturingAgent.LastSession.GetFoundryHostedUserId());
     }
 
     [Fact]
@@ -118,7 +118,7 @@ public class HostedUserIdTests
 
         // Assert: no throw, a session was produced, and it carries no hosted identity context.
         Assert.NotNull(capturingAgent.LastSession);
-        Assert.Null(capturingAgent.LastSession.GetHostedUserId());
+        Assert.Null(capturingAgent.LastSession.GetFoundryHostedUserId());
     }
 
     [Fact]
@@ -154,7 +154,7 @@ public class HostedUserIdTests
 
         // Assert
         Assert.NotNull(capturingAgent.LastSession);
-        Assert.Equal(TestUserId, capturingAgent.LastSession.GetHostedUserId());
+        Assert.Equal(TestUserId, capturingAgent.LastSession.GetFoundryHostedUserId());
     }
 
     [Fact]
@@ -217,7 +217,7 @@ public class HostedUserIdTests
 
         // Assert
         Assert.NotNull(capturingAgent.LastSession);
-        Assert.Equal("alice", capturingAgent.LastSession.GetHostedUserId());
+        Assert.Equal("alice", capturingAgent.LastSession.GetFoundryHostedUserId());
     }
 
     private static AgentFrameworkResponseHandler BuildHandler(
