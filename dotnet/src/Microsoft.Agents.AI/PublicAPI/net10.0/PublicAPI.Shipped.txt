@@ -600,6 +600,10 @@ Microsoft.Extensions.AI.ChatClientExtensions
 [MAAI001]Microsoft.Agents.AI.BackgroundTaskStatus.Running = 0 -> Microsoft.Agents.AI.BackgroundTaskStatus
 [MAAI001]Microsoft.Agents.AI.ChatClientAgentOptions.EnableInvocableFunctionBypassing.get -> bool
 [MAAI001]Microsoft.Agents.AI.ChatClientAgentOptions.EnableInvocableFunctionBypassing.set -> void
+[MAAI001]Microsoft.Agents.AI.ChatClientAgentOptions.PersistPartialMessagesOnCancellation.get -> bool
+[MAAI001]Microsoft.Agents.AI.ChatClientAgentOptions.PersistPartialMessagesOnCancellation.set -> void
+[MAAI001]Microsoft.Agents.AI.ChatClientAgentRunOptions.PersistPartialMessagesOnCancellation.get -> bool?
+[MAAI001]Microsoft.Agents.AI.ChatClientAgentRunOptions.PersistPartialMessagesOnCancellation.set -> void
 [MAAI001]Microsoft.Agents.AI.Compaction.ChatReducerCompactionStrategy
 [MAAI001]Microsoft.Agents.AI.Compaction.ChatReducerCompactionStrategy.ChatReducer.get -> Microsoft.Extensions.AI.IChatReducer!
 [MAAI001]Microsoft.Agents.AI.Compaction.ChatReducerCompactionStrategy.ChatReducerCompactionStrategy(Microsoft.Extensions.AI.IChatReducer! chatReducer, Microsoft.Agents.AI.Compaction.CompactionTrigger! trigger) -> void
@@ -806,6 +810,7 @@ Microsoft.Extensions.AI.ChatClientExtensions
 [MAAI001]const Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluator.DefaultFeedbackMessageTemplate = "You still have {incomplete_task_count} background task(s) running that must finish before you can complete the work:\n{incomplete_tasks}\n\nWait for these tasks to complete, retrieve their results, and incorporate them. Only stop once every background task has finished." -> string!
 [MAAI001]const Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluator.IncompleteTaskCountPlaceholder = "{incomplete_task_count}" -> string!
 [MAAI001]const Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluator.IncompleteTasksPlaceholder = "{incomplete_tasks}" -> string!
+[MAAI001]const Microsoft.Agents.AI.ChatClientAgent.PartialResponseMessageMarkerKey = "agent_framework.partial_response_message" -> string!
 [MAAI001]const Microsoft.Agents.AI.Compaction.ContextWindowCompactionStrategy.DefaultToolEvictionThreshold = 0.5 -> double
 [MAAI001]const Microsoft.Agents.AI.Compaction.ContextWindowCompactionStrategy.DefaultTruncationThreshold = 0.8 -> double
 [MAAI001]const Microsoft.Agents.AI.Compaction.SlidingWindowCompactionStrategy.DefaultMinimumPreserved = 1 -> int
