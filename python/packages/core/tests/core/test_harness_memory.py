@@ -26,6 +26,7 @@ from agent_framework import (
     MemoryStore,
     MemoryTopicRecord,
     Message,
+    SupportsChatGetResponse,
 )
 from agent_framework import _filesystem as filesystem_module
 from agent_framework._harness._memory import _topic_stem
@@ -1327,6 +1328,25 @@ def test_memory_long_topic_writes_and_reloads_within_the_filename_limit(tmp_path
         assert (store._get_topics_directory(session, source_id="src") / f"{entry.slug}.md").exists()
 
 
+def test_memory_topic_is_deletable_by_every_lookup_alias(tmp_path) -> None:
+    """Deletion accepts the same aliases get_topic answers.
+
+    The slug and the persisted stem an index link carries both resolve through
+    get_topic; rejecting them in delete_topic left callers able to read a
+    record by an alias but unable to remove it by the same alias.
+    """
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    record = MemoryTopicRecord(topic="Travel Preferences", summary="s", memories=["window seat"], updated_at="t")
+    for alias in (record.slug, record.storage_stem, "Travel Preferences"):
+        store.write_topic(session, record, source_id="src")
+        store.delete_topic(session, source_id="src", topic=alias)
+        with pytest.raises(FileNotFoundError):
+            store.get_topic(session, source_id="src", topic="Travel Preferences")
+
+
 def test_memory_topic_is_reloadable_by_its_default_slug(tmp_path) -> None:
     """A normally written topic reloads by its default slug, which callers
     holding record.slug rely on."""
@@ -1467,33 +1487,130 @@ async def test_memory_consolidation_does_not_lose_a_write_through_an_index_stem(
     stem = written.storage_stem
 
     original_consolidate = provider._consolidate_topic  # type: ignore[reportPrivateUsage]
-    pending_merge: dict[str, object] = {}
+    pending_merge: asyncio.Task[None] | None = None
 
-    async def consolidate_with_a_write_in_flight(*, client, record, now):  # type: ignore[reportPrivateUsage]
+    async def consolidate_with_a_write_in_flight(
+        *,
+        client: SupportsChatGetResponse[Any] | None,
+        record: MemoryTopicRecord,
+        now: datetime,
+    ) -> tuple[MemoryTopicRecord, bool]:
         # A write arrives through the index stem alias while consolidation is
         # mid call. With one canonical lock identity it waits for the lock and
         # then applies on top of the consolidated record; with alias keyed
         # locks it would complete now and be overwritten by the stale result.
-        import asyncio as _asyncio
-
-        task = _asyncio.create_task(
+        del client
+        nonlocal pending_merge
+        pending_merge = asyncio.create_task(
             provider._merge_memory(session=session, topic=stem, memory="urgent fact", now=now)  # type: ignore[reportPrivateUsage]
         )
-        pending_merge["task"] = task
-        await _asyncio.sleep(0)
-        await _asyncio.sleep(0)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
         return record, True
 
-    provider._consolidate_topic = consolidate_with_a_write_in_flight  # type: ignore[reportPrivateUsage]
+    provider._consolidate_topic = consolidate_with_a_write_in_flight  # type: ignore[method-assign,reportPrivateUsage]
     await provider._run_consolidation(  # type: ignore[reportPrivateUsage]
-        client=_MemoryHarnessClient(), session=session, force=True, now=datetime.now(timezone.utc)
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        session=session,
+        force=True,
+        now=datetime.now(timezone.utc),
     )
-    await pending_merge["task"]  # type: ignore[misc]
+    assert pending_merge is not None
+    await pending_merge
 
     final_record = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Travel Preferences")
     assert "urgent fact" in final_record.memories
     assert "window seat" in final_record.memories
     del original_consolidate
+
+
+class _AliasOnlyDictStore(MemoryStore):
+    """Conforming non-file store resolving get_topic by topic name or slug."""
+
+    def __init__(self) -> None:
+        self.topics: dict[str, MemoryTopicRecord] = {}
+
+    def list_topics(self, session: AgentSession, *, source_id: str) -> list[MemoryTopicRecord]:
+        return list(self.topics.values())
+
+    def get_topic(self, session: AgentSession, *, source_id: str, topic: str) -> MemoryTopicRecord:
+        for record in self.topics.values():
+            if record.topic == topic or record.slug == topic:
+                return record
+        raise FileNotFoundError(topic)
+
+    def write_topic(self, session: AgentSession, record: MemoryTopicRecord, *, source_id: str) -> None:
+        self.topics[record.topic] = record
+
+    def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
+        self.topics.pop(topic, None)
+
+    def rebuild_index(
+        self, session: AgentSession, *, source_id: str, line_limit: int, line_length: int
+    ) -> list[MemoryIndexEntry]:
+        return []
+
+    def get_index_text(
+        self,
+        session: AgentSession,
+        *,
+        source_id: str,
+        line_limit: int,
+        line_length: int,
+        index_entries: Sequence[MemoryIndexEntry] | None = None,
+    ) -> str:
+        return ""
+
+    def get_transcripts_directory(self, session: AgentSession, *, source_id: str) -> Path:
+        return Path(".")
+
+    def search_transcripts(self, session: AgentSession, *, query: str, source_id: str) -> list[dict[str, Any]]:
+        return []
+
+    def read_state(self, session: AgentSession, *, source_id: str) -> dict[str, Any]:
+        return {}
+
+    def write_state(self, session: AgentSession, state: dict[str, Any], *, source_id: str) -> None:
+        pass
+
+
+async def test_memory_consolidation_processes_topics_in_a_conforming_custom_store(tmp_path) -> None:
+    """Consolidation reloads through documented aliases, not file-specific stems.
+
+    A store whose get_topic answers the topic name and slug is the documented
+    contract; reloading by the persisted storage stem skipped every record in
+    such stores, so consolidation silently did nothing.
+    """
+    store = _AliasOnlyDictStore()
+    provider = MemoryContextProvider(store=store)
+    session = AgentSession(session_id="session-1")
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="Notes", summary="s", memories=["m"], updated_at="t"),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+
+    class _DictClient:
+        async def get_response(self, *args: Any, **kwargs: Any) -> ChatResponse[Any]:
+            return ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[json.dumps({"summary": "consolidated", "memories": ["m"]})],
+                    )
+                ]
+            )
+
+    count = await provider._run_consolidation(  # pyright: ignore[reportPrivateUsage]
+        client=_DictClient(),
+        session=session,
+        force=True,
+        now=datetime.now(timezone.utc),
+    )
+
+    assert count == 1
+    reloaded = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Notes")
+    assert reloaded.summary == "consolidated"
 
 
 async def test_memory_consolidation_processes_topics_whose_slug_differs_from_their_name(tmp_path) -> None:

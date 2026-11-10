@@ -200,14 +200,6 @@ def _dedupe_strings(values: Sequence[str]) -> list[str]:
     return deduped
 
 
-def _trim_pointer_line(pointer_line: str, *, max_length: int) -> str:
-    if len(pointer_line) <= max_length:
-        return pointer_line
-    if max_length <= 3:
-        return pointer_line[:max_length]
-    return f"{pointer_line[: max_length - 3].rstrip()}..."
-
-
 def _extract_json_text(text: str) -> str:
     stripped = text.strip()
     if stripped.startswith("```") and stripped.endswith("```"):
@@ -1031,9 +1023,17 @@ class MemoryFileStore(MemoryStore):
             previous_path.unlink(missing_ok=True)
 
     def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
-        """Delete one topic memory file."""
+        """Delete one topic memory file.
+
+        Deletion accepts every alias get_topic answers: the topic name, the
+        readable slug, and the persisted stem an index link carries. The lookup
+        resolution itself rejects an ambiguous slug and validates digest stems,
+        so the file it names is the one record the lookup resolves to; the
+        topic ownership guard stays on the write path, where a resolution can
+        name another topic's file for retirement.
+        """
         topic_path = self._existing_topic_path(session, source_id=source_id, topic=topic)
-        if topic_path is None or not self._path_holds_topic(topic_path, topic):
+        if topic_path is None:
             raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
         topic_path.unlink()
 
@@ -1764,6 +1764,27 @@ class MemoryContextProvider(HistoryProvider):
             self.store.write_topic(session, updated_record, source_id=self.source_id)
             return updated_record
 
+    async def _reload_topic_record(
+        self, session: AgentSession, *, listed: MemoryTopicRecord
+    ) -> MemoryTopicRecord | None:
+        """Reload one listed record through the aliases the store documents.
+
+        The file store answers the persisted stem first: it names this exact
+        record for every shape, including explicit slug records whose topic
+        derived family would miss and records whose slug another topic shares.
+        The topic name and the readable slug follow, both part of the
+        MemoryStore get_topic contract, so a conforming custom store resolves
+        by topic even though its records have no persisted stem. A record no
+        alias can find is skipped, the previous behaviour for a record deleted
+        between listing and lock.
+        """
+        for alias in (listed.storage_stem, listed.topic, listed.slug):
+            try:
+                return self.store.get_topic(session, source_id=self.source_id, topic=alias)
+            except FileNotFoundError:
+                continue
+        return None
+
     async def _run_consolidation(
         self,
         *,
@@ -1789,15 +1810,8 @@ class MemoryContextProvider(HistoryProvider):
         success_count = 0
         for record in topic_records:
             async with self._topic_async_lock(session, record.storage_stem or record.slug):
-                try:
-                    # Reload by the persisted stem: it is the one name that
-                    # resolves this exact file for every record shape,
-                    # including records stored under an explicit slug, whose
-                    # topic-derived filename family would miss them.
-                    current_record = self.store.get_topic(
-                        session, source_id=self.source_id, topic=record.storage_stem or record.topic
-                    )
-                except FileNotFoundError:
+                current_record = await self._reload_topic_record(session, listed=record)
+                if current_record is None:
                     continue
                 consolidated_record, succeeded = await self._consolidate_topic(
                     client=client, record=current_record, now=now
