@@ -343,7 +343,7 @@ static async Task<AIAgent> CreateMemoryAgentAsync(AIProjectClient client, string
 static FoundryMemoryProvider.State CreatePerUserMemoryState(AgentSession? session)
 {
     string userId =
-        session?.GetHostedUserId()
+        session?.GetFoundryHostedUserId()
         ?? throw new InvalidOperationException(
             "Foundry hosted user identity is required to scope memories.");
 
