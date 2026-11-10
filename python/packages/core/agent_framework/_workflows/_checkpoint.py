@@ -205,6 +205,14 @@ class CheckpointStorage(Protocol):
         ...
 
 
+def _parse_checkpoint_timestamp(timestamp: str) -> datetime:
+    """Parse an ISO 8601 timestamp string into a timezone-aware UTC datetime for comparison."""
+    dt = datetime.fromisoformat(timestamp)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def _select_latest_checkpoint(checkpoints: list[WorkflowCheckpoint]) -> WorkflowCheckpoint:
     """Return the latest checkpoint, resolving timestamp ties through the lineage chain.
 
@@ -214,8 +222,8 @@ def _select_latest_checkpoint(checkpoints: list[WorkflowCheckpoint]) -> Workflow
     If several unsuperseded candidates remain, the one with the greatest ``checkpoint_id``
     is returned, so the choice among them is stable too.
     """
-    newest_timestamp = max(datetime.fromisoformat(cp.timestamp) for cp in checkpoints)
-    candidates = [cp for cp in checkpoints if datetime.fromisoformat(cp.timestamp) == newest_timestamp]
+    newest_timestamp = max(_parse_checkpoint_timestamp(cp.timestamp) for cp in checkpoints)
+    candidates = [cp for cp in checkpoints if _parse_checkpoint_timestamp(cp.timestamp) == newest_timestamp]
     superseded_ids = {cp.previous_checkpoint_id for cp in candidates}
     leaves = [cp for cp in candidates if cp.checkpoint_id not in superseded_ids]
     return max(leaves or candidates, key=lambda cp: cp.checkpoint_id)
