@@ -46,6 +46,10 @@ stack traces and inner exceptions. This is separate from the
 outer `FunctionInvokingChatClient` error policy and sensitive-data logging; outer redaction cannot repair
 diagnostics already caught and returned by generated code.
 
+Hyperlight bounds guest execution and supports caller cancellation, but these protections
+do not interrupt runtime initialization or host tool callbacks. Host tools must enforce
+their own limits.
+
 For AG-UI, remember that thread and run IDs are correlation identifiers, not authentication boundaries. The
 application owns authorization, durable snapshots, scaling, and rendering policy.
 
