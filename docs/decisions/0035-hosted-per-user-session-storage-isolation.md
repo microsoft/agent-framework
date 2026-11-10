@@ -110,17 +110,17 @@ Hosting adds the resolved user identity as a named partition before loading or s
 
 ## Update (2026-07-01): local runs no longer fail closed; sample dev provider removed
 
-Superseding the ADR-0026/0030 behavior where a `null` result from `HostedSessionIsolationKeyProvider`
-always became a 500, `AgentFrameworkResponseHandler` now branches on `FoundryEnvironment.IsHosted`:
+Superseding the ADR-0026/0030 behavior where a missing resolved user identity always became a 500,
+`AgentFrameworkResponseHandler` now branches on `FoundryEnvironment.IsHosted`:
 
 - **Hosted** (`IsHosted == true`, production): a `null` identity is still a hard error (500). Isolation
   stays strict; the platform always injects `x-agent-user-id`.
 - **Not hosted** (local `docker run` / `dotnet run`): a `null` identity is tolerated. Per-user isolation
   is simply not triggered — the handler passes `userId == null` to the store (the documented "no user
-  partition", `{root}/a-{agent}/c-{conv}.json`), stamps no `HostedSessionContext`, and runs no
+  partition", `{root}/a-{agent}/c-{conv}.json`), stores no hosted user id, and runs no
   strict-resume check. Contributors can run a hosted image locally with zero extra setup.
 
 Consequently the sample-side `DevTemporaryLocalUserIdProvider` and `AddDevTemporaryLocalContributorSetup`
-were removed. To simulate distinct users locally, send an `x-agent-user-id` request header; the default
-`PlatformHostedSessionIsolationKeyProvider` reads it via `ResponseContext.PlatformContext.UserIdKey`
-(the SDK's `PlatformContext.FromRequest` populates it from the header unconditionally, hosted or not).
+were removed. To simulate distinct users locally, send an `x-agent-user-id` request header; the handler
+reads it from `ResponseContext.PlatformContext.UserIdKey` (the SDK's `PlatformContext.FromRequest`
+populates it from the header unconditionally, hosted or not).

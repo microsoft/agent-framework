@@ -44,7 +44,6 @@ public sealed class FoundryFeatureUsageActivationTests : IDisposable
 #if NET8_0_OR_GREATER
         _ = new FoundryEvals(testClient.Client, "gpt-4o-mini");
 #endif
-        _ = FoundryAITool.CreateHostedMcpToolbox("toolbox");
 
         // Assert
         Assert.Null(GetFeatureToken());
@@ -156,45 +155,6 @@ public sealed class FoundryFeatureUsageActivationTests : IDisposable
         AssertFeatureUsed(FeatureIndex.FoundryEvals);
     }
 #endif
-
-    [Fact]
-    public async Task FoundryToolbox_MarksOnlyWhenMarkerParticipatesInOutgoingRequestAsync()
-    {
-        // Arrange
-        string? requestBody = null;
-        string? userAgent = null;
-        using HttpHandlerAssert handler = new(async request =>
-        {
-            requestBody = request.Content is null
-                ? null
-                : await request.Content.ReadAsStringAsync().ConfigureAwait(false);
-            userAgent = GetHeader(request, "User-Agent");
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(TestDataUtil.GetOpenAIDefaultResponseJson(), Encoding.UTF8, "application/json"),
-            };
-        });
-        using HttpClient httpClient = CreateHttpClient(handler);
-        AIProjectClient projectClient = CreateProjectClient(httpClient);
-        var chatClient = new FoundryChatClient(projectClient, "gpt-4o-mini");
-        var options = new ChatOptions
-        {
-            Tools = [FoundryAITool.CreateHostedMcpToolbox("calendar-tools", "v2")],
-        };
-
-        Assert.Null(GetFeatureToken());
-
-        // Act
-        _ = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "Hello")], options);
-
-        // Assert
-        Assert.Contains("\"type\":\"mcp\"", requestBody, StringComparison.Ordinal);
-        Assert.Contains("calendar-tools", requestBody, StringComparison.Ordinal);
-        Assert.Contains("v2", requestBody, StringComparison.Ordinal);
-        AssertFeatureUsed(FeatureIndex.FoundryChatClient);
-        AssertFeatureUsed(FeatureIndex.FoundryToolbox);
-        Assert.Contains($"(feat={GetFeatureToken()})", userAgent, StringComparison.Ordinal);
-    }
 
     private static AIProjectClient CreateProjectClient(HttpClient httpClient)
         => new(

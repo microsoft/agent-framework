@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -11,8 +9,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// A healthy toolbox check does not guarantee that every pre-registered toolbox is available:
 /// consent requirements and non-cancellation discovery failures are retained for per-request resolution.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public enum FoundryToolboxStartupStatus
+internal enum FoundryToolboxStartupStatus
 {
     /// <summary>
     /// <see cref="FoundryToolboxService.StartAsync"/> has not completed. If checked in this state,

@@ -858,7 +858,6 @@ class DevServer:
                             media_type="text/event-stream",
                             headers={
                                 "Cache-Control": "no-cache",
-                                "Connection": "keep-alive",
                             },
                         )
                     return await openai_executor.execute_sync(request)
@@ -898,7 +897,6 @@ class DevServer:
                         media_type="text/event-stream",
                         headers={
                             "Cache-Control": "no-cache",
-                            "Connection": "keep-alive",
                             "X-Response-ID": response_id,  # Include ID for debugging/tracking
                         },
                     )

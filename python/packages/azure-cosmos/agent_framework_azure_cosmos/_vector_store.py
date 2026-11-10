@@ -648,8 +648,8 @@ def _filter_value_compatible(field: VectorStoreField, value: Any) -> bool:
         field.type_ is None
         or (field.type_ == "str" and isinstance(value, str))
         or (field.type_ == "bool" and type(value) is bool)
-        or (field.type_ == "int" and type(value) is int)
-        or (field.type_ == "float" and type(value) in (int, float))
+        # Cosmos stores every JSON number as a double, so 2 and 2.0 compare equal.
+        or (field.type_ in ("int", "float") and type(value) in (int, float))
     )
 
 
