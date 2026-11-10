@@ -37,4 +37,15 @@ internal interface IResponseExecutor
         CreateResponse request,
         IReadOnlyList<ChatMessage>? conversationHistory = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets a value indicating whether the execution of <paramref name="request"/> uses services owned by the HTTP request
+    /// that creates the response.
+    /// </summary>
+    /// <param name="request">The create response request.</param>
+    /// <returns>
+    /// <see langword="true"/> when the request must not end before the execution completes; <see langword="false"/> when
+    /// the execution owns the services it uses and can outlive the request.
+    /// </returns>
+    bool IsExecutionBoundToRequest(CreateResponse request) => false;
 }
