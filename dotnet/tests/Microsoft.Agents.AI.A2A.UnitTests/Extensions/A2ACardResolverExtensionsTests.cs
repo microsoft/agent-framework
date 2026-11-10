@@ -30,7 +30,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
     }
 
     [Fact]
-    public async Task GetAIAgentAsync_WithValidAgentCard_ReturnsAIAgentAsync()
+    public async Task GetAIAgentAsync_WithValidAgentCard_ReturnsA2AAgentAsync()
     {
         // Arrange
         this._handler.ResponsesToReturn.Enqueue(new AgentCard
@@ -41,7 +41,8 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
         });
 
         // Act
-        var agent = await this._resolver.GetAIAgentAsync();
+        Task<A2AAgent> agentTask = this._resolver.GetAIAgentAsync();
+        A2AAgent agent = await agentTask;
 
         // Assert
         Assert.NotNull(agent);
@@ -132,7 +133,8 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
         };
 
         // Act
-        var agent = await this._resolver.GetAIAgentAsync(agentOptions, httpClient: this._httpClient);
+        Task<A2AAgent> agentTask = this._resolver.GetAIAgentAsync(agentOptions, httpClient: this._httpClient);
+        A2AAgent agent = await agentTask;
 
         // Assert
         Assert.NotNull(agent);
