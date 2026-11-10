@@ -37,7 +37,7 @@
     <RootNamespace>HostedChatClientAgent</RootNamespace>
     <AssemblyName>HostedChatClientAgent</AssemblyName>
     <UserSecretsId>222d2622-da26-4da0-99b4-0507fb8d41b0</UserSecretsId>
-    <AgentFrameworkVersion>1.22.0-preview.260918.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.27.0-preview.261030.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>

@@ -534,6 +534,23 @@ async def test_get_response_rejects_transport_arguments_split_across_options_and
 
 
 @pytest.mark.parametrize("client_type", [RawMistralChatClient, MistralChatClient])
+@pytest.mark.parametrize("server_url", [None, "https://explicit.example"], ids=["env", "explicit"])
+def test_injected_sdk_client_endpoint_wins_over_configured_server_url(
+    client_type: type[RawMistralChatClient],
+    server_url: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An injected SDK client defines the endpoint, so MISTRAL_SERVER_URL or server_url should not change it."""
+    monkeypatch.setenv("MISTRAL_SERVER_URL", "https://env.example")
+    sdk_client = Mistral(api_key="test-key", server_url="https://client.example")
+
+    client = client_type(model="mistral-small-latest", client=sdk_client, server_url=server_url)
+
+    assert client.service_url() == "https://client.example"
+    assert client.client is sdk_client
+
+
+@pytest.mark.parametrize("client_type", [RawMistralChatClient, MistralChatClient])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("configuration", ["server_url", "http_client", "sdk"])
 async def test_get_response_preserves_configured_transport_and_generation_options(

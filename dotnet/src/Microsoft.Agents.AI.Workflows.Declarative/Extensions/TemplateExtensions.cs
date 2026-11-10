@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx;
@@ -26,14 +27,15 @@ internal static class TemplateExtensions
 
         if (segment is ExpressionSegment { Expression: not null } expressionSegment)
         {
+            ParserOptions options = new() { Culture = CultureInfo.InvariantCulture };
             if (expressionSegment.Expression.ExpressionText is not null)
             {
-                return engine.Eval(expressionSegment.Expression.ExpressionText).Format();
+                return engine.Eval(expressionSegment.Expression.ExpressionText, options: options).Format();
             }
 
             if (expressionSegment.Expression.VariableReference is not null)
             {
-                return engine.Eval(expressionSegment.Expression.VariableReference.ToString()).Format();
+                return engine.Eval(expressionSegment.Expression.VariableReference.ToString(), options: options).Format();
             }
         }
 

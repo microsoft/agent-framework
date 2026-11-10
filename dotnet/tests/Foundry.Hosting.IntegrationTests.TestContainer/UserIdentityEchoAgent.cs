@@ -12,7 +12,7 @@ namespace Foundry.Hosting.IntegrationTests.TestContainer;
 /// Minimal agent that echoes the platform user isolation key as <c>USER-ID:&lt;key&gt;</c>.
 /// Does not call a model, so identity ITs do not depend on OpenAI quota or catalog access.
 /// </summary>
-#pragma warning disable MAAI001 // HostedSessionContext / experimental surface
+#pragma warning disable MAAI001 // GetFoundryHostedUserId / experimental surface
 internal sealed class UserIdentityEchoAgent : AIAgent
 {
     public override string Name => "user-identity-agent";
@@ -63,7 +63,7 @@ internal sealed class UserIdentityEchoAgent : AIAgent
 
     private static string BuildReply(AgentSession? session)
     {
-        var userId = session?.GetHostedContext()?.UserId;
+        var userId = session?.GetFoundryHostedUserId();
         var token = string.IsNullOrWhiteSpace(userId) ? "USER-ID:missing" : $"USER-ID:{userId}";
         return $"ready\n{token}";
     }

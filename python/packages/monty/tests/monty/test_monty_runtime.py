@@ -7,9 +7,11 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from agent_framework import FunctionTool
 from pydantic_monty import MontyRuntimeError
 
 from agent_framework_monty import MontyExecuteCodeTool
+from agent_framework_monty._execute_code_tool import _make_tool_callback
 from agent_framework_monty._monty_bridge import InlineCodeBridge
 
 
@@ -60,3 +62,81 @@ async def test_legacy_and_feed_duration_limits_are_rejected_as_ambiguous(legacy_
 
     with pytest.raises(ValueError, match="Specify only one of max_duration_secs and max_feed_duration_secs"):
         await bridge.run("print('must not run')")
+
+
+@pytest.mark.parametrize("recording_host_tool", ["positional_or_keyword", "keyword_only"], indirect=True)
+async def test_positional_tool_call_is_rejected_before_any_host_tool_runs(
+    recording_host_tool: tuple[FunctionTool, list[str | None]],
+) -> None:
+    host_tool, calls = recording_host_tool
+    execute_code = MontyExecuteCodeTool(tools=[host_tool], include_detailed_errors=True)
+
+    contents = await execute_code._run_code(code='await record(label="first")\nawait record("second")')
+
+    assert [content.type for content in contents] == ["error"]
+    assert "positional" in (contents[0].error_details or "").lower()
+    # Type checking fails before execution, so even the valid first call never reaches the host.
+    assert calls == []
+
+
+@pytest.mark.parametrize("recording_host_tool", ["positional_or_keyword", "keyword_only"], indirect=True)
+async def test_positional_tool_call_is_rejected_when_type_checking_is_bypassed(
+    recording_host_tool: tuple[FunctionTool, list[str | None]],
+) -> None:
+    host_tool, calls = recording_host_tool
+    bridge = InlineCodeBridge({"record": _make_tool_callback(host_tool)})
+
+    with pytest.raises(MontyRuntimeError, match="record accepts keyword arguments only"):
+        await bridge.run('await record("second")')
+
+    assert calls == []
+
+
+@pytest.mark.parametrize("recording_host_tool", ["positional_or_keyword", "keyword_only"], indirect=True)
+async def test_keyword_tool_call_runs_and_omitted_parameters_use_defaults(
+    recording_host_tool: tuple[FunctionTool, list[str | None]],
+) -> None:
+    host_tool, calls = recording_host_tool
+    execute_code = MontyExecuteCodeTool(tools=[host_tool])
+
+    contents = await execute_code._run_code(code='await record(label="named")\nawait record()')
+
+    assert not any(content.type == "error" for content in contents)
+    assert calls == ["named", None]
+
+
+@pytest.mark.parametrize(
+    ("unsupplied_parameter_host_tool", "expected_call"),
+    [
+        ("context", "x:FunctionInvocationContext"),
+        ("var_keyword", "x"),
+        ("var_positional", "x"),
+        ("method", "x"),
+    ],
+    indirect=["unsupplied_parameter_host_tool"],
+)
+async def test_typed_call_does_not_require_parameters_that_guest_code_cannot_supply(
+    unsupplied_parameter_host_tool: tuple[FunctionTool, list[str]],
+    expected_call: str,
+) -> None:
+    host_tool, calls = unsupplied_parameter_host_tool
+    execute_code = MontyExecuteCodeTool(tools=[host_tool], include_detailed_errors=True)
+
+    contents = await execute_code._run_code(code='await lookup(query="x")')
+
+    assert not any(content.type == "error" for content in contents)
+    assert calls == [expected_call]
+
+
+@pytest.mark.parametrize("unsupplied_parameter_host_tool", ["var_keyword"], indirect=True)
+async def test_typed_call_with_undeclared_keyword_is_rejected_before_any_host_tool_runs(
+    unsupplied_parameter_host_tool: tuple[FunctionTool, list[str]],
+) -> None:
+    host_tool, calls = unsupplied_parameter_host_tool
+    execute_code = MontyExecuteCodeTool(tools=[host_tool], include_detailed_errors=True)
+
+    contents = await execute_code._run_code(code='await lookup(query="x", extra=1)')
+
+    assert [content.type for content in contents] == ["error"]
+    assert "unknown-argument" in (contents[0].error_details or "")
+    assert calls == []

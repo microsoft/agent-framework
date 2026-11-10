@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
 using Azure.Core;
+using Microsoft.Agents.AI.Hosting;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -16,7 +17,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -38,7 +38,7 @@ public sealed class FoundryToolboxApprovalTests
         }
 
         await using var service = new FoundryToolboxService(
-            Options.Create(new FoundryToolboxOptions()),
+            new FoundryToolboxServiceOptions(),
             Mock.Of<TokenCredential>());
 
         // Act
@@ -147,7 +147,6 @@ public sealed class FoundryToolboxApprovalTests
     }
 
     [Theory]
-    [InlineData("lazy")]
     [InlineData("deferred")]
     [InlineData("consent")]
     public async Task RequestDiscoveredTool_RequiresApprovalAsync(string discoveryPath)
@@ -167,12 +166,12 @@ public sealed class FoundryToolboxApprovalTests
             };
         }
 
-        await using var service = toolbox.CreateService(preRegistered: discoveryPath is not "lazy");
+        await using var service = toolbox.CreateService();
         await service.StartAsync(CancellationToken.None);
         Assert.Empty(service.Tools);
         Assert.Equal(
             discoveryPath is "deferred" ? FoundryToolboxStartupStatus.Degraded :
-            discoveryPath is "consent" ? FoundryToolboxStartupStatus.ConsentRequired : FoundryToolboxStartupStatus.Healthy,
+            FoundryToolboxStartupStatus.ConsentRequired,
             service.StartupStatus);
         toolbox.ListError = null;
         await using var scope = service.CreateRequestScope();
@@ -181,26 +180,17 @@ public sealed class FoundryToolboxApprovalTests
         try
         {
             // Act
-            IReadOnlyList<AITool> tools;
-            if (discoveryPath is "lazy")
+            if (discoveryPath is "deferred")
             {
-                tools = (await service.GetToolboxToolsAsync("weather", version: null, CancellationToken.None)).Tools;
+                await service.RetryDeferredToolboxesAsync(CancellationToken.None);
             }
             else
             {
-                if (discoveryPath is "deferred")
-                {
-                    await service.RetryDeferredToolboxesAsync(CancellationToken.None);
-                }
-                else
-                {
-                    Assert.Empty(await service.ResolvePendingConsentsAsync(CancellationToken.None));
-                }
-
-                tools = service.GetCurrentRequestTools();
+                Assert.Empty(await service.ResolvePendingConsentsAsync(CancellationToken.None));
             }
 
             // Assert
+            IReadOnlyList<AITool> tools = service.GetCurrentRequestTools();
             Assert.NotNull(Assert.IsAssignableFrom<AIFunction>(Assert.Single(tools)).GetService<ApprovalRequiredAIFunction>());
             Assert.Empty(service.Tools);
             Assert.Equal(0, toolbox.InvocationCount);
@@ -372,10 +362,10 @@ public sealed class FoundryToolboxApprovalTests
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton<AIAgent>(new ChatClientAgent(client.Object));
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var handler = new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
+            new FoundryResponsesServerOptions(),
             toolboxService);
         var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
@@ -439,7 +429,6 @@ public sealed class FoundryToolboxApprovalTests
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var handler = new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
             NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -512,7 +501,6 @@ public sealed class FoundryToolboxApprovalTests
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton(agent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var handler = new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
             NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -583,10 +571,10 @@ public sealed class FoundryToolboxApprovalTests
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var handler = new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
+            new FoundryResponsesServerOptions(),
             toolboxService);
         var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
@@ -751,23 +739,19 @@ public sealed class FoundryToolboxApprovalTests
                 ["error"] = error.DeepClone(),
             }, context.RequestAborted);
 
-        internal FoundryToolboxService CreateService(bool preRegistered = true)
+        internal FoundryToolboxService CreateService()
         {
             var credential = new Mock<TokenCredential>();
             credential.Setup(c => c.GetTokenAsync(It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new AccessToken("test-token", DateTimeOffset.UtcNow.AddHours(1)));
-            var options = new FoundryToolboxOptions
+            var options = new FoundryToolboxServiceOptions
             {
                 EndpointOverride = app.Urls.Single(),
-                StrictMode = preRegistered,
             };
-            if (preRegistered)
-            {
-                options.ToolboxNames.Add("weather");
-            }
+            options.ToolboxNames.Add("weather");
 
             return new FoundryToolboxService(
-                Options.Create(options),
+                options,
                 credential.Object,
                 app.Services.GetRequiredService<ILogger<FoundryToolboxService>>());
         }

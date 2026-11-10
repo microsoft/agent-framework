@@ -33,7 +33,7 @@
     <RootNamespace>HostedAgentSkills</RootNamespace>
     <AssemblyName>HostedAgentSkills</AssemblyName>
     <UserSecretsId>3ebf91b7-0ecf-4568-8ab9-841ff2132601</UserSecretsId>
-    <AgentFrameworkVersion>1.22.0-preview.260918.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.27.0-preview.261030.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>

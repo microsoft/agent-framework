@@ -88,6 +88,7 @@ def create_harness_agent(
     loop_should_continue: ShouldContinueCallable | None = None,
     loop_next_message: NextMessageCallable | None = None,
     loop_max_iterations: int | None = DEFAULT_MAX_ITERATIONS,
+    loop_return_final_only: bool = False,
     otel_provider_name: str | None = None,
     context_providers: Sequence[ContextProvider] | None = None,
     middleware: Sequence[MiddlewareTypes] | None = None,

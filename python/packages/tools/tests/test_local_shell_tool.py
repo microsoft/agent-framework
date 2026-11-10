@@ -31,7 +31,7 @@ from agent_framework_tools.shell._executor import _popen_kwargs_for_group, run_s
 from agent_framework_tools.shell._truncate import _OutputBuffer
 from agent_framework_tools.shell._types import ShellMode
 
-_TEST_SHELL = "agent-framework-test-shell"
+_TEST_SHELL = "/opt/agent-framework-test-shell"
 _APPROVED_COMMAND = "printf '%s' approved-value"
 _ALTERNATE_COMMAND = "printf '%s' alternate-value"
 _POWERSHELL = shutil.which("pwsh") or (shutil.which("powershell") if sys.platform == "win32" else None)
@@ -585,7 +585,7 @@ async def test_local_shell_tool_as_function_returns_policy_errors() -> None:
 def test_local_shell_tool_reanchors_powershell_paths() -> None:
     tool = LocalShellTool(
         mode="persistent",
-        shell="pwsh",
+        shell="/usr/bin/pwsh",
         workdir="C:\\repo",
         approval_mode="never_require",
         acknowledge_unsafe=True,

@@ -179,9 +179,8 @@ public sealed class ComputerToolHostingLoopTests
         });
 
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         return new AgentFrameworkResponseHandler(services.BuildServiceProvider(), NullLogger<AgentFrameworkResponseHandler>.Instance);
     }
 

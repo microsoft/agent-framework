@@ -93,7 +93,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
             ConfigureTelemetry = opt =>
             {
                 callbackInvoked = true;
-                opt.EnableSensitiveData = true;
+                opt.DisableEdgeGroupProcess = true;
             }
         };
 
@@ -102,7 +102,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
         WorkflowTelemetryOptions telemetryOptions = new();
         options.ConfigureTelemetry(telemetryOptions);
         Assert.True(callbackInvoked);
-        Assert.True(telemetryOptions.EnableSensitiveData);
+        Assert.True(telemetryOptions.DisableEdgeGroupProcess);
     }
 
     [Fact]
@@ -201,7 +201,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
             ConfigureTelemetry = opt =>
             {
                 configureInvoked = true;
-                opt.EnableSensitiveData = true;
+                opt.DisableEdgeGroupProcess = true;
             },
             LoggerFactory = NullLoggerFactory.Instance
         };
@@ -222,6 +222,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
         Assert.NotEmpty(capturedActivities);
         Assert.Contains(capturedActivities, a => a.OperationName.StartsWith(WorkflowBuildActivityName, StringComparison.Ordinal));
         Assert.Contains(capturedActivities, a => a.OperationName.StartsWith(WorkflowRunActivityName, StringComparison.Ordinal));
+        Assert.DoesNotContain(capturedActivities, a => a.OperationName.StartsWith("edge_group.process", StringComparison.Ordinal));
     }
 
     [Fact]

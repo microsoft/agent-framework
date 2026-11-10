@@ -11,7 +11,7 @@ import tempfile
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_framework import AgentResponseUpdate, Content
@@ -633,6 +633,70 @@ def test_streaming_response_does_not_hardcode_acao_header():
         assert "access-control-allow-origin" not in {k.lower() for k in response.headers}, (
             "Streaming response sets ACAO directly, bypassing CORSMiddleware"
         )
+
+
+def test_streaming_response_omits_connection_specific_header(monkeypatch: pytest.MonkeyPatch):
+    """A streaming /v1/responses must not set a connection-specific Connection header.
+
+    RFC 9113 section 8.2.2 forbids connection-specific header fields such as
+    `Connection: keep-alive` in HTTP/2 and HTTP/3. Persistent connections are the
+    default in HTTP/1.1, and transport-level connection headers are managed by
+    the ASGI server. The endpoint must omit the Connection header while preserving
+    Cache-Control and X-Response-ID.
+    """
+    server = _server_with_mock_agent(auth_token="s3cret")
+    mock_executor = MagicMock()
+    mock_executor.get_entity_info.return_value = MagicMock(name="Mock", type="agent")
+    monkeypatch.setattr(server, "_ensure_executor", AsyncMock(return_value=mock_executor))
+
+    async def _dummy_stream(executor: Any, request: Any, response_id: str) -> AsyncGenerator[str]:
+        yield "data: {}\n\n"
+
+    monkeypatch.setattr(server, "_stream_with_cancellation", _dummy_stream)
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        response = client.post(
+            "/v1/responses",
+            json={"metadata": {"entity_id": "mock"}, "input": "hello", "stream": True},
+            headers={"Authorization": "Bearer s3cret"},
+        )
+
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers.get("content-type", "")
+        assert "connection" not in {k.lower() for k in response.headers}, (
+            "Streaming response includes connection-specific 'Connection' header"
+        )
+        assert response.headers.get("cache-control") == "no-cache"
+        assert "x-response-id" in {k.lower() for k in response.headers}
+
+
+def test_streaming_response_openai_proxy_mode_omits_connection_specific_header(monkeypatch: pytest.MonkeyPatch):
+    """A streaming /v1/responses in OpenAI proxy mode must not set Connection: keep-alive."""
+    server = _server_with_mock_agent(auth_token="s3cret")
+    mock_openai_executor = MagicMock()
+    mock_openai_executor.is_configured = True
+    monkeypatch.setattr(server, "_ensure_openai_executor", AsyncMock(return_value=mock_openai_executor))
+
+    async def _dummy_stream(executor: Any, request: Any) -> AsyncGenerator[str]:
+        yield "data: {}\n\n"
+
+    monkeypatch.setattr(server, "_stream_openai_execution", _dummy_stream)
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        response = client.post(
+            "/v1/responses",
+            json={"metadata": {"entity_id": "mock"}, "input": "hello", "stream": True},
+            headers={"Authorization": "Bearer s3cret", "X-Proxy-Backend": "openai"},
+        )
+
+        assert response.status_code == 200
+        assert "text/event-stream" in response.headers.get("content-type", "")
+        assert "connection" not in {k.lower() for k in response.headers}, (
+            "Streaming response in OpenAI proxy mode includes connection-specific 'Connection' header"
+        )
+        assert response.headers.get("cache-control") == "no-cache"
 
 
 def test_unsupported_conversation_item_content_returns_client_error():

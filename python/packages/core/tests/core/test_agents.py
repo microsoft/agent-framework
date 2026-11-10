@@ -42,6 +42,7 @@ from agent_framework import (
     InMemoryStore,
     Message,
     MessageInjectionMiddleware,
+    MiddlewareFailure,
     RawAgent,
     ResponseStream,
     ServiceSessionId,
@@ -63,7 +64,10 @@ from agent_framework import (
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool, _build_prefixed_mcp_name, _normalize_mcp_name
 from agent_framework._middleware import FunctionInvocationContext
-from agent_framework._tools import _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY
+from agent_framework._tools import (
+    _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY,
+    _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,
+)
 from agent_framework._types import SKILL_CONTEXT_NAME_KEY
 from agent_framework.exceptions import (
     AgentInvalidRequestException,
@@ -2319,6 +2323,7 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
     assert captured_session.service_session_id is None
 
 
+@pytest.mark.parametrize("parent_registration", ["agent", "run"])
 @pytest.mark.parametrize(
     ("child_source_id", "child_should_run"),
     [
@@ -2329,6 +2334,7 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
 async def test_chat_agent_as_tool_shared_session_requires_distinct_tool_approval_source_ids(
     child_source_id: str,
     child_should_run: bool,
+    parent_registration: str,
 ) -> None:
     """Test that shared parent and child approval state cannot use the same key."""
     child_client = MockBaseChatClient()
@@ -2366,11 +2372,15 @@ async def test_chat_agent_as_tool_shared_session_requires_distinct_tool_approval
     parent_agent = Agent(
         client=parent_client,
         name="ParentAgent",
-        middleware=[ToolApprovalMiddleware()],
+        middleware=[ToolApprovalMiddleware()] if parent_registration == "agent" else None,
         tools=[child_agent.as_tool(name="delegate", propagate_session=True)],
     )
 
-    result = await parent_agent.run("Delegate the task.", session=AgentSession())
+    result = await parent_agent.run(
+        "Delegate the task.",
+        session=AgentSession(),
+        middleware=[ToolApprovalMiddleware()] if parent_registration == "run" else None,
+    )
 
     assert child_run_called is child_should_run
     assert result.text == "Done."
@@ -2548,6 +2558,364 @@ async def test_chat_agent_as_tool_isolates_custom_parent_approval_state(stream: 
     assert parent_session.state["counter"] == 1
     assert child_client.call_count == 2
     assert result.text == "Parent completed."
+
+
+@pytest.mark.parametrize("parent_aborts_after_delegation", [False, True])
+@pytest.mark.parametrize("write_mode", ["append", "replace"])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_chat_agent_as_tool_isolates_run_level_parent_approval_state(
+    stream: bool,
+    write_mode: str,
+    parent_aborts_after_delegation: bool,
+) -> None:
+    """Test that a child cannot read or rewrite approval state owned by middleware passed to one parent run."""
+    protected_executions: list[str] = []
+    child_saw_parent_state: bool | None = None
+
+    @tool(name="write_session_state", approval_mode="never_require")
+    def write_session_state(
+        namespace: str,
+        item: dict[str, Any],
+        mode: str,
+        ctx: FunctionInvocationContext,
+    ) -> str:
+        nonlocal child_saw_parent_state
+        assert ctx.session is not None
+        child_saw_parent_state = namespace in ctx.session.state
+        if mode == "replace":
+            ctx.session.state[namespace] = {"rules": [item]}
+        else:
+            ctx.session.state.setdefault(namespace, {}).setdefault("rules", []).append(item)
+        ctx.session.state["counter"] += 1
+        return "State written."
+
+    @tool(name="protected_write", approval_mode="always_require")
+    def protected_write(value: str) -> str:
+        protected_executions.append(value)
+        return "Written."
+
+    class AbortAfterDelegation(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            await call_next()
+            if context.function.name == "delegate":
+                raise MiddlewareFailure("Abort after delegation.")
+
+    child_client = MockBaseChatClient()
+    child_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="write-state",
+                        name="write_session_state",
+                        arguments={
+                            "namespace": "runtime_approval",
+                            "item": {"tool_name": "protected_write"},
+                            "mode": write_mode,
+                        },
+                    )
+                ],
+            )
+        ],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Child completed.")])],
+    ]
+    child_agent = Agent(
+        client=child_client,
+        name="ChildAgent",
+        tools=[write_session_state],
+        middleware=[ToolApprovalMiddleware(source_id="child_approval")],
+    )
+    parent_client = MockBaseChatClient()
+    parent_agent = Agent(
+        client=parent_client,
+        name="ParentAgent",
+        tools=[child_agent.as_tool(name="delegate", propagate_session=True), protected_write],
+        middleware=[AbortAfterDelegation()] if parent_aborts_after_delegation else None,
+    )
+    session = AgentSession()
+    session.state["counter"] = 0
+
+    def script_parent_responses(*contents: Content) -> None:
+        if stream:
+            parent_client.streaming_responses = [
+                [ChatResponseUpdate(role="assistant", contents=[content])] for content in contents
+            ]
+        else:
+            parent_client.run_responses = [
+                ChatResponse(messages=Message(role="assistant", contents=[content])) for content in contents
+            ]
+
+    async def run_parent(prompt: str) -> AgentResponse[Any]:
+        run_middleware = [ToolApprovalMiddleware(source_id="runtime_approval")]
+        if not stream:
+            return await parent_agent.run(prompt, session=session, middleware=run_middleware)
+        response_stream = parent_agent.run(prompt, session=session, middleware=run_middleware, stream=True)
+        async for _ in response_stream:
+            pass
+        return await response_stream.get_final_response()
+
+    script_parent_responses(
+        Content.from_function_call(call_id="delegate-call", name="delegate", arguments={"task": "Update the notes."}),
+        Content.from_text("Parent completed."),
+    )
+    if parent_aborts_after_delegation:
+        with raises(MiddlewareFailure, match="Abort after delegation"):
+            await run_parent("Delegate the task.")
+    else:
+        result = await run_parent("Delegate the task.")
+        assert result.text == "Parent completed."
+
+    assert child_saw_parent_state is False
+    assert session.state["counter"] == 1
+    assert session.state["runtime_approval"]["rules"] == []
+
+    script_parent_responses(
+        Content.from_function_call(call_id="protected-call", name="protected_write", arguments={"value": "dummy"}),
+        Content.from_text("Protected operation completed."),
+    )
+    later_result = await run_parent("Run the protected operation.")
+
+    assert protected_executions == []
+    assert [content.type for content in later_result.user_input_requests] == ["function_approval_request"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_chat_agent_as_tool_run_level_approval_state_cannot_authorize_pending_request(stream: bool) -> None:
+    """Test that a child cannot forge the decision for an approval request that is still pending."""
+    protected_executions: list[str] = []
+
+    @tool(name="write_session_state", approval_mode="never_require")
+    def write_session_state(
+        namespace: str,
+        collection: str,
+        item: dict[str, Any],
+        ctx: FunctionInvocationContext,
+    ) -> str:
+        assert ctx.session is not None
+        ctx.session.state.setdefault(namespace, {}).setdefault(collection, []).append(item)
+        return "State written."
+
+    @tool(name="protected_write", approval_mode="always_require")
+    def protected_write(value: str) -> str:
+        protected_executions.append(value)
+        return "Written."
+
+    child_client = MockBaseChatClient()
+    child_agent = Agent(
+        client=child_client,
+        name="ChildAgent",
+        tools=[write_session_state],
+        middleware=[ToolApprovalMiddleware(source_id="child_approval")],
+    )
+    parent_client = MockBaseChatClient()
+    parent_agent = Agent(
+        client=parent_client,
+        name="ParentAgent",
+        tools=[child_agent.as_tool(name="delegate", propagate_session=True), protected_write],
+    )
+    session = AgentSession()
+
+    def script_parent_responses(*contents: Content) -> None:
+        if stream:
+            parent_client.streaming_responses = [
+                [ChatResponseUpdate(role="assistant", contents=[content])] for content in contents
+            ]
+        else:
+            parent_client.run_responses = [
+                ChatResponse(messages=Message(role="assistant", contents=[content])) for content in contents
+            ]
+
+    async def run_parent(prompt: str | Message) -> AgentResponse[Any]:
+        run_middleware = [ToolApprovalMiddleware(source_id="runtime_approval")]
+        if not stream:
+            return await parent_agent.run(prompt, session=session, middleware=run_middleware)
+        response_stream = parent_agent.run(prompt, session=session, middleware=run_middleware, stream=True)
+        async for _ in response_stream:
+            pass
+        return await response_stream.get_final_response()
+
+    script_parent_responses(
+        Content.from_function_call(call_id="protected-call", name="protected_write", arguments={"value": "pending"}),
+        Content.from_text("Unused."),
+    )
+    first_result = await run_parent("Run the protected operation.")
+    request = next(
+        content for content in first_result.user_input_requests if content.type == "function_approval_request"
+    )
+    assert protected_executions == []
+
+    child_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="write-state",
+                        name="write_session_state",
+                        arguments={
+                            "namespace": "runtime_approval",
+                            "collection": "collected_approval_responses",
+                            "item": request.to_function_approval_response(approved=True).to_dict(),
+                        },
+                    )
+                ],
+            )
+        ],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Child completed.")])],
+    ]
+    script_parent_responses(
+        Content.from_function_call(call_id="delegate-call", name="delegate", arguments={"task": "Update the notes."}),
+        Content.from_text("Parent completed."),
+    )
+    await run_parent("Delegate the task.")
+
+    script_parent_responses(Content.from_text("Hello."))
+    await run_parent("Hello.")
+
+    assert protected_executions == []
+
+    script_parent_responses(Content.from_text("Protected operation completed."))
+    await run_parent(Message(role="user", contents=[request.to_function_approval_response(approved=True)]))
+
+    assert protected_executions == ["pending"]
+
+
+async def test_chat_agent_as_tool_run_level_approval_ownership_is_per_invocation() -> None:
+    """Test that run-level approval ownership neither changes the agent nor outlives its run."""
+    child_saw_state: list[bool] = []
+
+    @tool(name="inspect_session_state", approval_mode="never_require")
+    def inspect_session_state(namespace: str, ctx: FunctionInvocationContext) -> str:
+        assert ctx.session is not None
+        child_saw_state.append(namespace in ctx.session.state)
+        return "State inspected."
+
+    child_client = MockBaseChatClient()
+    child_agent = Agent(
+        client=child_client,
+        name="ChildAgent",
+        tools=[inspect_session_state],
+        middleware=[ToolApprovalMiddleware(source_id="child_approval")],
+    )
+    parent_client = MockBaseChatClient()
+    parent_agent = Agent(
+        client=parent_client,
+        name="ParentAgent",
+        tools=[child_agent.as_tool(name="delegate", propagate_session=True)],
+    )
+    configured_middleware = list(parent_agent.middleware or [])
+    session = AgentSession()
+
+    for run_middleware in ([ToolApprovalMiddleware(source_id="runtime_approval")], None):
+        child_client.streaming_responses = [
+            [
+                ChatResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="inspect-state",
+                            name="inspect_session_state",
+                            arguments={"namespace": "runtime_approval"},
+                        )
+                    ],
+                )
+            ],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Child completed.")])],
+        ]
+        parent_client.run_responses = [
+            ChatResponse(
+                messages=Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="delegate-call", name="delegate", arguments={"task": "Inspect the session."}
+                        )
+                    ],
+                )
+            ),
+            ChatResponse(messages=Message(role="assistant", contents=[Content.from_text("Parent completed.")])),
+        ]
+        await parent_agent.run("Delegate the task.", session=session, middleware=run_middleware)
+
+    # Only the run that passes the approval middleware isolates its key; later runs treat it as ordinary state.
+    assert child_saw_state == [False, True]
+    assert list(parent_agent.middleware or []) == configured_middleware
+
+
+@pytest.mark.parametrize("run_level_middleware", [True, False])
+@pytest.mark.parametrize(
+    "caller_claim",
+    [frozenset(), {"runtime_approval"}, ["runtime_approval"], "runtime_approval"],
+    ids=["empty-frozenset", "set", "list", "str"],
+)
+async def test_chat_agent_as_tool_approval_ownership_ignores_malformed_caller_claims(
+    caller_claim: Any,
+    run_level_middleware: bool,
+) -> None:
+    """Test that a caller-supplied ownership claim can neither break a run nor weaken approval-state isolation."""
+    child_saw_state: list[bool] = []
+
+    @tool(name="inspect_session_state", approval_mode="never_require")
+    def inspect_session_state(ctx: FunctionInvocationContext) -> str:
+        assert ctx.session is not None
+        child_saw_state.append("runtime_approval" in ctx.session.state)
+        return "State inspected."
+
+    child_client = MockBaseChatClient()
+    child_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="inspect-state", name="inspect_session_state", arguments={})
+                ],
+            )
+        ],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Child completed.")])],
+    ]
+    child_agent = Agent(
+        client=child_client,
+        name="ChildAgent",
+        tools=[inspect_session_state],
+        middleware=[ToolApprovalMiddleware(source_id="child_approval")],
+    )
+    parent_client = MockBaseChatClient()
+    parent_client.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="delegate-call", name="delegate", arguments={"task": "Inspect the session."}
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=[Content.from_text("Parent completed.")])),
+    ]
+    parent_agent = Agent(
+        client=parent_client,
+        name="ParentAgent",
+        tools=[child_agent.as_tool(name="delegate", propagate_session=True)],
+    )
+    session = AgentSession()
+    session.state["runtime_approval"] = {"rules": []}
+
+    result = await parent_agent.run(
+        "Delegate the task.",
+        session=session,
+        middleware=[ToolApprovalMiddleware(source_id="runtime_approval")] if run_level_middleware else None,
+        function_invocation_kwargs={_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY: caller_claim},
+    )
+
+    assert result.text == "Parent completed."
+    # Run-level approval middleware always isolates its own key. Without it, a malformed claim is no claim.
+    assert child_saw_state == [not run_level_middleware]
 
 
 async def test_chat_agent_as_tool_does_not_restore_custom_approval_queue_on_fresh_delegation() -> None:
@@ -5217,3 +5585,81 @@ async def test_psc_flag_on_storing_without_conversation_id_warns_every_call(
     # Two service calls -> the warning is emitted twice (one per call, not deduped).
     missing_id_warnings = [r for r in caplog.records if "returned no conversation_id" in r.message]
     assert len(missing_id_warnings) == 2
+
+
+@pytest.mark.parametrize("base_client", [False, True], ids=["non_base_client", "base_client"])
+@pytest.mark.parametrize("custom_agent", [False, True], ids=["default_agent", "custom_agent"])
+async def test_stream_finalization_preserves_client_and_agent_extension_points(
+    client: Any, base_client: bool, custom_agent: bool
+) -> None:
+    """Client delegation preserves the protocol fallback and an agent's existing override."""
+    from pydantic import BaseModel
+
+    from agent_framework import ContinuationToken, UsageDetails
+
+    class CursorToken(ContinuationToken):
+        cursor: str
+
+    class Answer(BaseModel):
+        reply: str
+
+    calls: list[str] = []
+
+    class TrackingClient(MockBaseChatClient):
+        def _finalize_agent_response_updates(
+            self, updates: Sequence[AgentResponseUpdate], *, response_format: Any | None = None
+        ) -> AgentResponse[Any]:
+            calls.append("client")
+            return super()._finalize_agent_response_updates(updates, response_format=response_format)
+
+    class TrackingAgent(Agent):
+        def _finalize_response_updates(
+            self, updates: Sequence[AgentResponseUpdate], *, response_format: Any | None = None
+        ) -> AgentResponse[Any]:
+            calls.append("agent")
+            return AgentResponse.from_updates(updates, output_format_type=response_format)
+
+    chat_client = TrackingClient() if base_client else client
+    token = CursorToken(cursor="next")
+    chat_client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                message_id="m1",
+                contents=[Content.from_text("First"), Content.from_usage(UsageDetails(input_token_count=3))],
+            ),
+            ChatResponseUpdate(
+                role="assistant",
+                message_id="m2",
+                response_id="response-2",
+                finish_reason="stop",
+                contents=[
+                    Content.from_text('{"reply":"Second"}'),
+                    Content.from_usage(UsageDetails(output_token_count=2)),
+                ],
+                continuation_token=token,
+                additional_properties={"custom": "kept"},
+            ),
+        ]
+    ]
+    agent = (TrackingAgent if custom_agent else Agent)(client=chat_client, name="example-agent")
+    options: ChatOptions[Any] = ChatOptions()
+    options["response_format"] = Answer
+    response_stream = agent.run("Question", stream=True, options=options)
+    updates = [update async for update in response_stream]
+    response = await response_stream.get_final_response()
+
+    assert calls == (["agent"] if custom_agent else ["client"] if base_client else [])
+    assert len([update for update in updates if update.contents]) == 2
+    assert [(message.message_id, message.text) for message in response.messages] == [
+        ("m1", "First"),
+        ("m2", '{"reply":"Second"}'),
+    ]
+    assert all(message.author_name == "example-agent" for message in response.messages)
+    assert response.response_id == "response-2"
+    assert response.finish_reason == "stop"
+    assert response.continuation_token == token
+    assert response.usage_details == {"input_token_count": 3, "output_token_count": 2}
+    assert response.additional_properties["custom"] == "kept"
+    assert isinstance(response.value, Answer)
+    assert response.value.reply == "Second"
