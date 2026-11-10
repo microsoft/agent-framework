@@ -42,6 +42,6 @@ internal static class HostedStoredOutputCompatibility
         new(
             new Error(
                 MisconfiguredAgentErrorCode,
-                "The agent should not have server side storage enabled. This produced a new untracked conversation/response in the server while the hosted agent also generated a conversation for the request of the agent. This setting is only allowed when enabling the FoundryResponsesOptions.AllowStoredOutputEnabled flag, which leaves the agent's own storage setting untouched and keeps that second recording on purpose."),
+                "The agent should not have server side storage enabled. This produced a new untracked conversation/response in the server while the hosted agent also generated a conversation for the request of the agent. This setting is only allowed when enabling the FoundryResponsesServerOptions.InferenceStoredOutputAllowed flag, which leaves the agent's own storage setting untouched and keeps that second recording on purpose."),
             MisconfiguredAgentStatusCode);
 }

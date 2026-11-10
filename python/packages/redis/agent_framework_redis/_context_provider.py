@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 
@@ -405,9 +406,13 @@ class RedisContextProvider(ContextProvider):
         await self._ensure_index()
         self._validate_filters()
 
-        q = (text or "").strip()
-        if not q:
+        if not (text or "").strip():
             raise IntegrationInvalidRequestException("text_search() requires non-empty text")
+        # TextQuery escapes each term itself, so a backslash added here gets escaped again
+        # and the char stays bare. Drop the syntax chars its escaper misses instead.
+        q = " ".join(re.sub(r"[|?`]", " ", text).split())
+        if not q:
+            return []
         num_results = max(int(num_results or 10), 1)
 
         combined_filter = self._build_filter_from_dict({

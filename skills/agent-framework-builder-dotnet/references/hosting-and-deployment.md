@@ -39,7 +39,7 @@ application code.
   results are not success, and OAuth authorization does not replace a separate tool-approval decision.
   A `store=true` response can be continued through its stored conversation or `previous_response_id`;
   a `store=false` response is ephemeral, so resend the prompt without using that response as a replay anchor.
-  Use `FoundryResponsesOptions.OAuthConsentInterruptedToolResult` to customize the model-facing result
+  Use `FoundryResponsesServerOptions.OAuthConsentInterruptedToolResult` to customize the model-facing result
   for other calls skipped after consent; describe that the user must authorize access rather than telling
   the model to perform authorization.
   When downstream stored output is explicitly allowed, the host performs a final no-tools inference
