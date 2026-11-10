@@ -54,6 +54,7 @@ from agent_framework import (
     ServiceSessionId,
     SessionStore,
     SupportsAgentRun,
+    UsageDetails,
     WorkflowAgent,
     WorkflowBuilder,
     WorkflowContext,
@@ -995,6 +996,38 @@ async def test_output_item_tracker_replace_usage_is_copied() -> None:
     usage.usage_details["input_token_count"] = 999
 
     assert tracker.usage_details == {"input_token_count": 250, "output_token_count": 25, "total_token_count": 275}
+
+
+async def test_output_item_tracker_scopes_replace_usage_to_its_stream() -> None:
+    stream = ResponseEventStream(response_id="resp_usage")
+    stream.emit_created()
+    stream.emit_in_progress()
+    tracker = _OutputItemTracker(stream)
+
+    def usage_update(author_name: str, response_id: str, input_tokens: int) -> AgentResponseUpdate:
+        return AgentResponseUpdate(
+            contents=[
+                Content.from_usage(
+                    {"input_token_count": input_tokens, "output_token_count": input_tokens // 10},
+                    merge_mode="replace",
+                )
+            ],
+            role="assistant",
+            author_name=author_name,
+            response_id=response_id,
+        )
+
+    for update in (
+        usage_update("agent-a", "resp_a", 400),
+        usage_update("agent-a", "resp_a", 1000),
+        usage_update("agent-b", "resp_b", 50),
+        # The same agent run again is a new response stream, so its usage adds up.
+        usage_update("agent-a", "resp_a2", 20),
+    ):
+        async for _ in tracker.handle_update(update):
+            pass
+
+    assert tracker.usage_details == {"input_token_count": 1070, "output_token_count": 107}
 
 
 async def test_item_to_message_marks_refusal_text() -> None:
@@ -9702,12 +9735,20 @@ def _build_text_workflow_agent(text: str, *, finish_reason: FinishReasonLiteral 
 class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
     """Inner agent that streams one update per text in a single ``run`` call, and tracks ``run_count``."""
 
-    def __init__(self, name: str, texts: Sequence[str], *, gate: asyncio.Event | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        texts: Sequence[str],
+        *,
+        gate: asyncio.Event | None = None,
+        usage_snapshots: Sequence[UsageDetails] = (),
+    ) -> None:
         self.id = str(uuid.uuid4())
         self.name = name
         self.description: str | None = None
         self._texts = list(texts)
         self._gate = gate
+        self._usage_snapshots = list(usage_snapshots)
         self.run_count = 0
         self.started = asyncio.Event()
         self.cancelled = asyncio.Event()
@@ -9754,6 +9795,7 @@ class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
         texts = self._texts
         name = self.name
         gate = self._gate
+        usage_snapshots = self._usage_snapshots
 
         async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
             self.started.set()
@@ -9766,6 +9808,12 @@ class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
             for text in texts:
                 yield AgentResponseUpdate(
                     contents=[Content.from_text(text=text)],
+                    role="assistant",
+                    author_name=name,
+                )
+            for usage in usage_snapshots:
+                yield AgentResponseUpdate(
+                    contents=[Content.from_usage(usage, merge_mode="replace")],
                     role="assistant",
                     author_name=name,
                 )
@@ -9839,6 +9887,33 @@ class TestWorkflowAgentHosting:
     tool-approval round-trip path, which is the primary differentiator
     relative to the regular agent path.
     """
+
+    async def test_replace_usage_from_each_executor_is_summed(self) -> None:
+        agent_a = _MultiUpdateWorkflowAgentMock(
+            "agent-a",
+            ["from a"],
+            usage_snapshots=[
+                UsageDetails(input_token_count=400, output_token_count=40),
+                UsageDetails(input_token_count=1000, output_token_count=100),
+            ],
+        )
+        agent_b = _MultiUpdateWorkflowAgentMock(
+            "agent-b",
+            ["from b"],
+            usage_snapshots=[UsageDetails(input_token_count=50, output_token_count=5)],
+        )
+        workflow = WorkflowBuilder(start_executor=agent_a).add_edge(agent_a, agent_b).build()
+
+        resp = await _post(_make_server(WorkflowAgent(workflow=workflow, name="Usage Workflow Agent")), stream=True)
+
+        assert resp.status_code == 200
+        assert [agent_a.run_count, agent_b.run_count] == [1, 1]
+        completed = _parse_sse_events(resp.text)[-1]["data"]["response"]
+        assert {key: completed["usage"][key] for key in ("input_tokens", "output_tokens", "total_tokens")} == {
+            "input_tokens": 1050,
+            "output_tokens": 105,
+            "total_tokens": 1155,
+        }
 
     async def test_async_factory_creates_workflow_agent_for_each_request(self) -> None:
         created: list[tuple[WorkflowAgent, _MultiUpdateWorkflowAgentMock]] = []

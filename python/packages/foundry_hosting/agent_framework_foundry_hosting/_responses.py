@@ -2546,7 +2546,10 @@ class _OutputItemTracker:
     ) -> None:
         self._stream = stream
         self._allowed_oauth_consent_origins = allowed_oauth_consent_origins
-        self._usage_details: UsageDetails | None = None
+        # Usage per (author_name, response_id) stream. A workflow sends several agents' updates
+        # through one tracker, so a "replace" snapshot may only supersede usage from its own stream.
+        # Usage restored from a checkpoint is kept under the ``None`` key.
+        self._usage_by_stream: dict[tuple[str | None, str | None] | None, UsageDetails] = {}
         persisted_usage = _hosted_internal_metadata(stream).get(_HOSTED_PROVIDER_USAGE_KEY)
         if persisted_usage is not None:
             if not isinstance(persisted_usage, Mapping) or any(
@@ -2554,7 +2557,7 @@ class _OutputItemTracker:
                 for key, value in cast(Mapping[object, object], persisted_usage).items()
             ):
                 raise RuntimeError("The persisted provider usage is invalid.")
-            self._usage_details = cast(UsageDetails, dict(cast(Mapping[str, int | None], persisted_usage)))
+            self._usage_by_stream[None] = cast(UsageDetails, dict(cast(Mapping[str, int | None], persisted_usage)))
         self._active_type: str | None = None
         self._active_id: str | None = None
         # message_id of the update that opened the active text item, used to detect a new
@@ -2636,26 +2639,30 @@ class _OutputItemTracker:
     @property
     def usage_details(self) -> UsageDetails | None:
         """Return usage retained with the provider output checkpoint."""
-        return self._usage_details
+        usage_details: UsageDetails | None = None
+        for stream_usage in self._usage_by_stream.values():
+            usage_details = add_usage_details(usage_details, stream_usage)
+        return usage_details
 
     @property
     def usage(self) -> ResponseUsage | None:
         """Return accumulated usage in the Responses API schema."""
-        if self._usage_details is None:
+        usage_details = self.usage_details
+        if usage_details is None:
             return None
 
-        input_tokens = int(self._usage_details.get("input_token_count") or 0)
-        output_tokens = int(self._usage_details.get("output_token_count") or 0)
-        total_tokens = self._usage_details.get("total_token_count")
+        input_tokens = int(usage_details.get("input_token_count") or 0)
+        output_tokens = int(usage_details.get("output_token_count") or 0)
+        total_tokens = usage_details.get("total_token_count")
         return ResponseUsage(
             input_tokens=input_tokens,
             input_tokens_details=ResponseUsageInputTokensDetails(
-                cached_tokens=int(self._usage_details.get("cache_read_input_token_count") or 0),
-                cache_write_tokens=int(self._usage_details.get("cache_creation_input_token_count") or 0),
+                cached_tokens=int(usage_details.get("cache_read_input_token_count") or 0),
+                cache_write_tokens=int(usage_details.get("cache_creation_input_token_count") or 0),
             ),
             output_tokens=output_tokens,
             output_tokens_details=ResponseUsageOutputTokensDetails(
-                reasoning_tokens=int(self._usage_details.get("reasoning_output_token_count") or 0)
+                reasoning_tokens=int(usage_details.get("reasoning_output_token_count") or 0)
             ),
             total_tokens=int(total_tokens) if total_tokens is not None else input_tokens + output_tokens,
         )
@@ -2725,6 +2732,7 @@ class _OutputItemTracker:
                 message_id=update.message_id,
                 approval_storage=approval_storage,
                 start_new_content_part=complete_message,
+                usage_stream=(update.author_name, update.response_id),
             ):
                 yield event
 
@@ -2735,6 +2743,7 @@ class _OutputItemTracker:
         *,
         approval_storage: FunctionApprovalStore | None = None,
         start_new_content_part: bool = False,
+        usage_stream: tuple[str | None, str | None] = (None, None),
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Process a content item, yielding its events.
 
@@ -2748,6 +2757,8 @@ class _OutputItemTracker:
                 (anything not recognized as a streaming delta type) to save/load approval requests.
             start_new_content_part: Whether text and refusal content start a new independent
                 content part instead of continuing the current streaming occurrence.
+            usage_stream: The ``(author_name, response_id)`` of the update ``content`` came from.
+                A ``replace`` usage snapshot only supersedes earlier usage from the same stream.
         """
         if _is_refusal_text_content(content) and content.text is not None:
             for event in self._ensure_message_content("refusal", message_id, start_new_part=start_new_content_part):
@@ -3052,11 +3063,17 @@ class _OutputItemTracker:
             yield builder.emit_done(oauth_item)
 
         elif content.type == "usage":
-            # A "replace" update is a cumulative snapshot, so it supersedes earlier usage instead of adding to it.
+            # A "replace" update is a cumulative snapshot of its own stream, so it supersedes that
+            # stream's earlier usage instead of adding to it. Other streams keep their usage.
             if content.merge_mode == "replace":
-                self._usage_details = deepcopy(content.usage_details)
+                if content.usage_details is None:
+                    self._usage_by_stream.pop(usage_stream, None)
+                else:
+                    self._usage_by_stream[usage_stream] = deepcopy(content.usage_details)
             else:
-                self._usage_details = add_usage_details(self._usage_details, content.usage_details)
+                self._usage_by_stream[usage_stream] = add_usage_details(
+                    self._usage_by_stream.get(usage_stream), content.usage_details
+                )
 
         else:
             for event in self._close():
