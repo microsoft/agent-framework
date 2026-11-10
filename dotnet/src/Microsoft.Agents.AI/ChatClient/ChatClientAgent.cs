@@ -67,7 +67,7 @@ public sealed partial class ChatClientAgent : AIAgent
     /// <see cref="ChatClientAgentRunOptions.PersistPartialMessagesOnCancellation"/> is enabled. Its value is <see langword="true"/>.
     /// </remarks>
     [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-    public const string PartialResponseMessageMarkerKey = "agent_framework.partial_message_response";
+    public const string PartialResponseMessageMarkerKey = "agent_framework.partial_response_message";
 
     private readonly ChatClientAgentOptions? _agentOptions;
     private readonly HashSet<string> _aiContextProviderStateKeys;
