@@ -6,7 +6,7 @@ import os
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework_foundry_hosting import ResponsesHostServer, ResponsesRequest
 from azure.ai.agentserver.responses import ResponsesServerOptions
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def create_agent() -> Agent:
+def create_agent(*, request: ResponsesRequest) -> Agent:
     return Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],

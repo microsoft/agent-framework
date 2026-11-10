@@ -652,14 +652,14 @@ class TestInit:
             def __init__(self, request: Request, dependency: object) -> None:
                 pass
 
-        with pytest.raises(TypeError, match="agent callable must accept a request argument or no arguments"):
+        with pytest.raises(TypeError, match="agent factory must declare a required named 'request' parameter"):
             InvocationsHostServer(cast(Any, InvalidAgent))
 
     def test_rejects_factory_requiring_multiple_arguments(self) -> None:
         def create_agent(request: Request, name: str) -> _FakeAgent:
             return _make_agent(response_text=name)
 
-        with pytest.raises(TypeError, match="agent callable must accept a request argument or no arguments"):
+        with pytest.raises(TypeError, match="agent factory must declare a required named 'request' parameter"):
             InvocationsHostServer(cast(Any, create_agent))
 
     @pytest.mark.parametrize(
@@ -694,10 +694,10 @@ class TestWorkflowAgentRejection:
     async def test_rejects_factory_result_before_dispatch(self, stream: bool, async_factory: bool) -> None:
         agent = _make_workflow_agent()
 
-        def create() -> WorkflowAgent:
+        def create(*, request: Request) -> WorkflowAgent:
             return agent
 
-        async def create_async() -> WorkflowAgent:
+        async def create_async(*, request: Request) -> WorkflowAgent:
             return agent
 
         server = InvocationsHostServer(create_async if async_factory else create)
@@ -861,7 +861,7 @@ class TestParsedRequests:
         provider = _SessionStoreProvider(_mock_session_store())
         options = {field: value}
 
-        def create_agent() -> _FakeAgent:
+        def create_agent(*, request: Request) -> _FakeAgent:
             factory_calls.append("created")
             return agent
 
@@ -964,7 +964,7 @@ class TestParsedRequests:
     async def test_factory_options_failure_is_framed_before_first_delta(self) -> None:
         provider = _SessionStoreProvider(_mock_session_store())
         server = InvocationsHostServer(
-            lambda: _NoOptionsAgent(),
+            lambda request: _NoOptionsAgent(),
             agent_session_store_provider=provider,
             unsupported_options="error",
         )
@@ -1116,7 +1116,7 @@ class TestSerializedSessions:
         def increment(session: AgentSession) -> None:
             session.state["turn"] = session.state.get("turn", 0) + 1
 
-        def create_agent() -> _FakeAgent:
+        def create_agent(*, request: Request) -> _FakeAgent:
             agent = _make_agent(response_text="ok", stream_texts=["ok"], update_session=increment)
             agents.append(agent)
             return agent
@@ -1231,7 +1231,7 @@ class TestStreamingFailuresAndCompatibility:
         assert persisted.state == {"partial": True}
 
     async def test_factory_failure_before_first_sse_event_is_sanitized(self, caplog: pytest.LogCaptureFixture) -> None:
-        async def unavailable_agent() -> _FakeAgent:
+        async def unavailable_agent(*, request: Request) -> _FakeAgent:
             raise RuntimeError("secret agent initialization failure")
 
         provider = _SessionStoreProvider(_mock_session_store())
@@ -1248,7 +1248,7 @@ class TestStreamingFailuresAndCompatibility:
         assert provider.contexts == []
 
     async def test_http_stream_failure_before_first_delta_is_an_error_event(self) -> None:
-        async def unavailable_agent() -> _FakeAgent:
+        async def unavailable_agent(*, request: Request) -> _FakeAgent:
             raise RuntimeError("private factory details")
 
         server = InvocationsHostServer(unavailable_agent)
@@ -1794,7 +1794,7 @@ class TestHandleInvoke:
     async def test_factory_agent_context_lifetime_non_streaming(self) -> None:
         events: list[str] = []
         response = AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])])
-        server = InvocationsHostServer(lambda: _ContextAgent(events, response=response))
+        server = InvocationsHostServer(lambda request: _ContextAgent(events, response=response))
 
         with _request_context(session_id="sess-1"):
             result = await server._handle_invoke(_make_request({"message": "one"}))  # pyright: ignore[reportPrivateUsage]
@@ -1808,7 +1808,7 @@ class TestHandleInvoke:
             AgentResponseUpdate(contents=[Content.from_text("one")]),
             AgentResponseUpdate(contents=[Content.from_text("two")]),
         ]
-        server = InvocationsHostServer(lambda: _ContextAgent(events, stream_updates=updates))
+        server = InvocationsHostServer(lambda request: _ContextAgent(events, stream_updates=updates))
 
         with _request_context(session_id="sess-1"):
             response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
@@ -1825,7 +1825,7 @@ class TestHandleInvoke:
     async def test_agent_callable_is_resolved_for_each_request(self) -> None:
         agents: list[_FakeAgent] = []
 
-        def create_agent() -> _FakeAgent:
+        def create_agent(*, request: Request) -> _FakeAgent:
             agent = _make_agent(response_text=f"agent-{len(agents) + 1}")
             agents.append(agent)
             return agent
@@ -1849,7 +1849,10 @@ class TestHandleInvoke:
 
     @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize("async_factory", [False, True])
-    async def test_agent_factory_receives_request_after_parsing(self, stream: bool, async_factory: bool) -> None:
+    @pytest.mark.parametrize("configured_factory", [False, True])
+    async def test_agent_factory_receives_request_after_parsing(
+        self, stream: bool, async_factory: bool, configured_factory: bool
+    ) -> None:
         requests: list[Request] = []
         agents: list[_FakeAgent] = []
         payloads: list[dict[str, Any]] = []
@@ -1865,7 +1868,24 @@ class TestHandleInvoke:
             payloads.append(await request.json())
             return create_agent(request)
 
-        server = InvocationsHostServer(create_agent_async if async_factory else create_agent)
+        def configured_agent(model: str = "gpt-4", *, request: Request, temperature: float = 0.7) -> _FakeAgent:
+            assert model == "gpt-4"
+            assert temperature == 0.7
+            return create_agent(request)
+
+        async def configured_agent_async(
+            model: str = "gpt-4", *, request: Request, temperature: float = 0.7
+        ) -> _FakeAgent:
+            assert model == "gpt-4"
+            assert temperature == 0.7
+            return await create_agent_async(request)
+
+        factory = (
+            (configured_agent_async if async_factory else configured_agent)
+            if configured_factory
+            else (create_agent_async if async_factory else create_agent)
+        )
+        server = InvocationsHostServer(factory)
         for text in ("first", "second"):
             request = Request(
                 {
@@ -1895,9 +1915,9 @@ class TestHandleInvoke:
 
     @pytest.mark.parametrize("stream", [False, True])
     async def test_factory_type_error_is_not_retried_without_request(self, stream: bool) -> None:
-        requests: list[Request | None] = []
+        requests: list[Request] = []
 
-        def create_agent(request: Request | None = None) -> _FakeAgent:
+        def create_agent(*, request: Request) -> _FakeAgent:
             requests.append(request)
             raise TypeError("factory construction failed")
 

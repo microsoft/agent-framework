@@ -81,11 +81,14 @@ general-purpose MCP approval policy.
 
 `ResponsesHostServer` and `InvocationsHostServer` accept an agent instance or a callable through the
 `agent` parameter. The callable may be synchronous or asynchronous, must return an object implementing
-`SupportsAgentRun`, and is invoked once for each request. Responses factories can accept a
+`SupportsAgentRun`, and is invoked once for each request as `factory(request=request)`.
+Factories must declare a required parameter named `request`, either keyword-only or positional-or-keyword.
+Additional parameters may have defaults, and the factory may ignore the request.
+Zero-argument factories and factories with only optional configuration parameters are rejected at construction;
+add a required `request` parameter when migrating them. Responses factories receive a
 `ResponsesRequest`, with trusted scope, current-turn input helpers, and translated caller options.
 They run before `prepare_options`; the hook can subsequently replace those options.
-Invocations factories can accept the Starlette `Request` after parsing and option preparation.
-Zero-argument factories remain supported. If a callable accepts either form, the host passes the request.
+Invocations factories receive the Starlette `Request` after parsing and option preparation.
 Factory exceptions are not retried with another call shape.
 
 ```python
@@ -98,7 +101,7 @@ For request-aware construction:
 from agent_framework_foundry_hosting import ResponsesRequest, ResponsesHostServer
 
 
-async def create_agent(request: ResponsesRequest):
+async def create_agent(*, request: ResponsesRequest):
     return await build_agent_for_user(request.scope.user_id)
 
 

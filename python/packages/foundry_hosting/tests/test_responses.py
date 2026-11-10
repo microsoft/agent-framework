@@ -1595,12 +1595,9 @@ class TestResponsesHostServerInit:
         with pytest.raises(TypeError, match="agent must be an agent instance or a callable"):
             ResponsesHostServer(agent)
 
-    async def test_zero_argument_agent_class_is_resolved_as_factory(self) -> None:
-        server = _make_server(cast(Any, _StrictCustomAgent), history_source="agent_managed")
-
-        response = await _post(server)
-
-        assert response.json()["status"] == "completed"
+    def test_zero_argument_agent_class_is_rejected_as_factory(self) -> None:
+        with pytest.raises(TypeError, match="required named 'request' parameter"):
+            _make_server(cast(Any, _StrictCustomAgent), history_source="agent_managed")
 
     def test_init_basic(self) -> None:
         agent = _make_agent(
@@ -2115,7 +2112,7 @@ class TestAgentSessionPersistence:
     async def test_async_agent_factory_reuses_private_service_session_across_requests(self) -> None:
         clients: list[_ServiceStorageRecordingClient] = []
 
-        async def create_agent() -> SupportsAgentRun:
+        async def create_agent(*, request: ResponsesRequest) -> SupportsAgentRun:
             client = _ServiceStorageRecordingClient()
             clients.append(client)
             return Agent(client=client, default_options=OpenAIChatOptions(store=True))
@@ -8498,10 +8495,10 @@ class TestAgentLifecycle:
     async def test_rejects_factory_workflow_agent_before_dispatch(self, stream: bool, async_factory: bool) -> None:
         agent = _WorkflowAgentMock()
 
-        def create() -> WorkflowAgent:
+        def create(*, request: ResponsesRequest) -> WorkflowAgent:
             return agent
 
-        async def create_async() -> WorkflowAgent:
+        async def create_async(*, request: ResponsesRequest) -> WorkflowAgent:
             return agent
 
         server = _make_server(create_async if async_factory else create)
@@ -8514,8 +8511,9 @@ class TestAgentLifecycle:
 
     @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize("async_factory", [False, True])
+    @pytest.mark.parametrize("configured_factory", [False, True])
     async def test_factory_receives_current_request_input_scope_and_options(
-        self, stream: bool, async_factory: bool
+        self, stream: bool, async_factory: bool, configured_factory: bool
     ) -> None:
         requests: list[ResponsesRequest] = []
         input_texts: list[str | None] = []
@@ -8535,8 +8533,25 @@ class TestAgentLifecycle:
             input_texts.append(await request.get_input_text())
             return create_agent(request)
 
+        def configured_agent(model: str = "gpt-4", *, request: ResponsesRequest, temperature: float = 0.7) -> MagicMock:
+            assert model == "gpt-4"
+            assert temperature == 0.7
+            return create_agent(request)
+
+        async def configured_agent_async(
+            model: str = "gpt-4", *, request: ResponsesRequest, temperature: float = 0.7
+        ) -> MagicMock:
+            assert model == "gpt-4"
+            assert temperature == 0.7
+            return await create_agent_async(request)
+
+        factory = (
+            (configured_agent_async if async_factory else configured_agent)
+            if configured_factory
+            else (create_agent_async if async_factory else create_agent)
+        )
         server = _make_server(
-            create_agent_async if async_factory else create_agent,
+            factory,
             prepare_options=lambda request, options: {**options, "temperature": 0.2},
         )
         for text in ("first", "second"):
@@ -8563,9 +8578,9 @@ class TestAgentLifecycle:
 
     @pytest.mark.parametrize("stream", [False, True])
     async def test_request_factory_type_error_is_not_retried_without_request(self, stream: bool) -> None:
-        requests: list[ResponsesRequest | None] = []
+        requests: list[ResponsesRequest] = []
 
-        def create_agent(request: ResponsesRequest | None = None) -> MagicMock:
+        def create_agent(*, request: ResponsesRequest) -> MagicMock:
             requests.append(request)
             raise TypeError("factory construction failed")
 
@@ -8580,7 +8595,7 @@ class TestAgentLifecycle:
     async def test_factory_agent_is_entered_and_exited_for_each_request(self) -> None:
         agents: list[MagicMock] = []
 
-        def create_agent() -> MagicMock:
+        def create_agent(*, request: ResponsesRequest) -> MagicMock:
             agent = _make_agent(
                 response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
             )

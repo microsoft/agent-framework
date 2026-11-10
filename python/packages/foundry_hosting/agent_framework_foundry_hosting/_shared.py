@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Generic, Literal, TypeAlias, TypeGuard, cast
+from typing import Any, Generic, Literal, Protocol, TypeAlias, TypeGuard, cast
 
 from agent_framework import (
     Agent,
@@ -288,13 +288,18 @@ def validate_unsupported_options(mode: str) -> UnsupportedOptions:
 
 
 RequestT = TypeVar("RequestT")
+AgentRequestT = TypeVar("AgentRequestT", contravariant=True)
 
 
-AgentSource: TypeAlias = (
-    SupportsAgentRun
-    | Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]]
-    | Callable[[RequestT], SupportsAgentRun | Awaitable[SupportsAgentRun]]
-)
+class AgentFactory(Protocol[AgentRequestT]):
+    """Create a request-owned agent from the protocol's request context."""
+
+    def __call__(self, *, request: AgentRequestT) -> SupportsAgentRun | Awaitable[SupportsAgentRun]:
+        """Create an agent, optionally using the current request."""
+        ...
+
+
+AgentSource: TypeAlias = SupportsAgentRun | AgentFactory[RequestT]
 
 
 def is_agent(value: object) -> TypeGuard[SupportsAgentRun]:
@@ -307,7 +312,7 @@ def validate_agent_source(source: object) -> None:
         return
     if not callable(source):
         raise TypeError("agent must be an agent instance or a callable that creates one.")
-    _factory_accepts_request(source)
+    _validate_agent_factory(source)
 
 
 def _validate_agent_type(agent: SupportsAgentRun) -> None:
@@ -318,20 +323,26 @@ def _validate_agent_type(agent: SupportsAgentRun) -> None:
         )
 
 
-def _factory_accepts_request(factory: Callable[..., object]) -> bool:
+def _validate_agent_factory(factory: Callable[..., object]) -> None:
+    message = (
+        "agent factory must declare a required named 'request' parameter and accept "
+        "request=request with no other required arguments."
+    )
     try:
         signature = inspect.signature(factory)
     except (TypeError, ValueError) as exc:
-        raise TypeError("agent callable must accept a request argument or no arguments.") from exc
+        raise TypeError(message) from exc
+    parameter = signature.parameters.get("request")
+    if (
+        parameter is None
+        or parameter.kind not in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        or parameter.default is not inspect.Parameter.empty
+    ):
+        raise TypeError(message)
     try:
-        signature.bind(object())
-    except TypeError:
-        try:
-            signature.bind()
-        except TypeError as exc:
-            raise TypeError("agent callable must accept a request argument or no arguments.") from exc
-        return False
-    return True
+        signature.bind(request=object())
+    except TypeError as exc:
+        raise TypeError(message) from exc
 
 
 async def resolve_agent(source: AgentSource[RequestT], request: RequestT) -> SupportsAgentRun:
@@ -340,12 +351,8 @@ async def resolve_agent(source: AgentSource[RequestT], request: RequestT) -> Sup
         _validate_agent_type(source)
         return source
 
-    if _factory_accepts_request(cast(Callable[..., object], source)):
-        factory = cast(Callable[[RequestT], SupportsAgentRun | Awaitable[SupportsAgentRun]], source)
-        result = factory(request)
-    else:
-        zero_argument_factory = cast(Callable[[], SupportsAgentRun | Awaitable[SupportsAgentRun]], source)
-        result = zero_argument_factory()
+    factory = cast(AgentFactory[RequestT], source)
+    result = factory(request=request)
     agent = await result if inspect.isawaitable(result) else result
     if not is_agent(agent):
         raise TypeError("The agent factory must return an object implementing SupportsAgentRun.")

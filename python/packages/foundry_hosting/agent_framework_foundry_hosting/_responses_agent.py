@@ -239,8 +239,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         Args:
             agent: The agent to handle responses for, or a sync/async callable that creates one for each request.
-                Factories may accept a `ResponsesRequest` or no arguments. A callable accepting both forms
-                receives the request. Factories run before `prepare_options`; the request exposes trusted scope,
+                Factories must declare a required parameter named `request`, accepting a `ResponsesRequest`
+                passed by keyword. Extra parameters must have defaults. The factory may ignore the request.
+                Factories run before `prepare_options`; the request exposes trusted scope,
                 this turn's input, and translated caller options before that hook. Use a callable for agents
                 that keep mutable state outside `AgentSession`.
                 `WorkflowAgent` instances and factory results are rejected. Use `ResponsesWorkflowHostServer`
@@ -449,8 +450,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
             except (TypeError, ValueError, RuntimeError) as exc:
                 raise _PublicResponseFailure(exc) from None
-            if self._agent_source is None:
-                raise RuntimeError("The hosted agent source is not configured.")
             try:
                 hosted_request = ResponsesRequest(request, context, scope, response_run_options(request))
             except (TypeError, ValueError) as exc:

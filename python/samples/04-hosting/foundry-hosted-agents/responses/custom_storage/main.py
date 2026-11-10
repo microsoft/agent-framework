@@ -36,7 +36,7 @@ from typing import Any
 
 from agent_framework import Agent, AgentSession, SessionStore
 from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import FoundryRequestScope, ResponsesHostServer, StoreProvider
+from agent_framework_foundry_hosting import FoundryRequestScope, ResponsesHostServer, ResponsesRequest, StoreProvider
 from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext, get_request_context
 from azure.core import MatchConditions
 from azure.cosmos.aio import ContainerProxy, CosmosClient
@@ -220,7 +220,7 @@ class CustomSessionStoreProvider(StoreProvider[SessionStore]):
                 cleanup.push_async_callback(client.close)
 
 
-def create_agent() -> Agent:
+def create_agent(*, request: ResponsesRequest) -> Agent:
     """Create and clean up the request's own Foundry transports and credential."""
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]

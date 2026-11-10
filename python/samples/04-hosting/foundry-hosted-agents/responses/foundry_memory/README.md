@@ -16,7 +16,7 @@ The agent uses `FoundryChatClient` from the Agent Framework to create a Response
 2. **Searches for contextual memories** matching the current user message and injects them into the model context.
 3. **Updates the store** with new facts inferred from the conversation.
 
-The zero-argument `create_agent` factory builds a new agent, credential, project
+The request-aware `create_agent` factory builds a new agent, credential, project
 client and Memory provider **inside each request**. Chat and Memory share that
 request's project client, not a process-wide client. Its headers capture the
 current platform call ID for both Memory and model calls; raw user IDs are not

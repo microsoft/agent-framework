@@ -36,8 +36,9 @@ class InvocationsHostServer(_InvocationsHostServer):
         """Create an agent host with session-backed application turns.
 
         Args:
-            agent: Agent instance or sync/async factory called once per request. Factories may accept the
-                Starlette `Request` or no arguments; a callable accepting both forms receives the request.
+            agent: Agent instance or sync/async factory called once per request. Factories must declare a
+                required parameter named `request`, accepting the Starlette `Request` passed by keyword.
+                Extra parameters must have defaults. The factory may ignore the request.
                 Factories run after request parsing and option preparation. Use a factory when mutable state
                 is not session-scoped. The host enters and closes factory-owned
                 context-managed agents; injected instances remain application-owned. `WorkflowAgent` is

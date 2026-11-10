@@ -26,7 +26,7 @@ from types import TracebackType
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient, FoundryMemoryProvider
-from agent_framework_foundry_hosting import FoundryRequestScope, ResponsesHostServer
+from agent_framework_foundry_hosting import FoundryRequestScope, ResponsesHostServer, ResponsesRequest
 from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext, get_request_context
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
@@ -50,7 +50,7 @@ def memory_scope(config: AgentConfig, context: FoundryAgentRequestContext) -> st
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
-def create_agent() -> Agent:
+def create_agent(*, request: ResponsesRequest) -> Agent:
     """Bind a fresh provider and first-party project client to this request."""
     config, context = AgentConfig.from_env(), get_request_context()
     scope = memory_scope(config, context)

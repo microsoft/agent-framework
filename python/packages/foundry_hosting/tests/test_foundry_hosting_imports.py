@@ -107,6 +107,35 @@ def test_host_signatures_expose_only_the_selected_execution_model(protocol: str)
         assert "store" not in agent_parameters
 
 
+@pytest.mark.parametrize("protocol", ["Responses", "Invocations"])
+@pytest.mark.parametrize(
+    "factory",
+    [
+        pytest.param(lambda: None, id="zero-argument"),
+        pytest.param(lambda model="gpt-4": None, id="optional-configuration"),
+        pytest.param(lambda request=None: None, id="optional-request"),
+        pytest.param(lambda _request: None, id="different-parameter-name"),
+        pytest.param(lambda request, /: None, id="positional-only-request"),
+        pytest.param(lambda *request: None, id="variadic-positional-request"),
+        pytest.param(lambda **request: None, id="variadic-keyword-request"),
+        pytest.param(lambda request, dependency: None, id="required-positional-dependency"),
+        pytest.param(lambda request, *, dependency: None, id="required-keyword-dependency"),
+        pytest.param(dict, id="uninspectable"),
+    ],
+)
+def test_agent_hosts_reject_ambiguous_factories_before_sdk_construction(protocol: str, factory: Any) -> None:
+    host = getattr(hosting, f"{protocol}HostServer")
+    base = (
+        "azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost"
+        if protocol == "Responses"
+        else "azure.ai.agentserver.invocations.InvocationAgentServerHost"
+    )
+    with patch(f"{base}.__init__", return_value=None) as initialize:
+        with pytest.raises(TypeError, match="required named 'request' parameter"):
+            host(agent=factory)
+        initialize.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("protocol", "setting"),
     [

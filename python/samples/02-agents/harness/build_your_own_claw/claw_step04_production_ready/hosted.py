@@ -64,7 +64,7 @@ from agent_framework import (
     agent_middleware,
 )
 from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import FoundryRequestScope, ResponsesHostServer
+from agent_framework_foundry_hosting import FoundryRequestScope, ResponsesHostServer, ResponsesRequest
 from azure.ai.agentserver.core import AgentConfig, get_request_context
 from azure.identity import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
@@ -102,7 +102,7 @@ def _log_environment() -> None:
     )
 
 
-async def create_agent() -> Agent:
+async def create_agent(*, request: ResponsesRequest) -> Agent:
     """Build request-owned tools and scope file memory by trusted user and sandbox."""
     config, context = AgentConfig.from_env(), get_request_context()
     scope = FoundryRequestScope.from_context(config, context, local_session_id="local-development")
