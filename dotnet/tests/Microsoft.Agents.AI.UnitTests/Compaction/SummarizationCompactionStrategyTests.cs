@@ -208,19 +208,24 @@ public class SummarizationCompactionStrategyTests
         CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
             new ChatMessage(ChatRole.User, "Q2"),
         ]);
 
         // Act
         await strategy.CompactAsync(index);
 
-        // Assert — the original messages should be followed by the custom system prompt
+        // Assert — keep the custom system prompt first and request the summary after the history
         Assert.NotNull(capturedMessages);
-        Assert.Equal(2, capturedMessages.Count);
-        Assert.Equal(ChatRole.User, capturedMessages![0].Role);
-        Assert.Equal("Q1", capturedMessages[0].Text);
-        Assert.Equal(ChatRole.System, capturedMessages[1].Role);
-        Assert.Equal(CustomPrompt, capturedMessages[1].Text);
+        Assert.Equal(4, capturedMessages.Count);
+        Assert.Equal(ChatRole.System, capturedMessages![0].Role);
+        Assert.Equal(CustomPrompt, capturedMessages[0].Text);
+        Assert.Equal(ChatRole.User, capturedMessages[1].Role);
+        Assert.Equal("Q1", capturedMessages[1].Text);
+        Assert.Equal(ChatRole.Assistant, capturedMessages[2].Role);
+        Assert.Equal("A1", capturedMessages[2].Text);
+        Assert.Equal(ChatRole.User, capturedMessages[3].Role);
+        Assert.Equal("Summarize the preceding conversation according to the system instructions. Do not continue the conversation.", capturedMessages[3].Text);
     }
 
     [Fact]
