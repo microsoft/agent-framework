@@ -37,6 +37,17 @@ using var provider = new LocalCodeActProvider("/usr/bin/python3", options);
 // Register provider with your AIAgent's context providers.
 ```
 
+On Windows, both constructors require a fully qualified path to an existing Python
+executable. Bare names such as `python.exe`, relative paths, and drive-relative paths
+such as `C:python.exe` are rejected before scripts are extracted or processes are started.
+The same explicit path is used for validation and execution. Other platforms continue
+to accept executable names according to their normal executable-search behavior.
+
+Select an interpreter in a trusted location and keep both the executable and its parent
+directories outside the write access of untrusted code or tools. A fully qualified path
+and an existence check do not verify ownership or prevent replacement of a writable
+executable. External isolation remains required.
+
 ## Error diagnostics
 
 Host tool failures send a generic failed response to generated Python code by
@@ -58,6 +69,7 @@ or returned. Successful results and failure signaling are unchanged.
   their uses are checked, including references in helpers and later loop iterations.
 - **Subprocess execution**: Runs generated code in a child Python process.
 - **Explicit Python path**: the provider and standalone function constructors require a Python executable path (no default).
+  On Windows, this must be fully qualified and point to an existing file; no CWD or PATH search is performed.
 - **Isolated environment**: Does not inherit host environment variables unless
   explicitly provided.
 - **No shell invocation**: Launches Python directly without a shell.

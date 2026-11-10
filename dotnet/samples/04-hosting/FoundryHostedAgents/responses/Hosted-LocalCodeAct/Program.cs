@@ -12,9 +12,9 @@
 // Foundry hosted-agent container.
 //
 // RUNTIME: this sample runs generated Python with a Python interpreter. The
-// hosted dotnet_10 source-deployment runtime provides python3. Local runs use
-// python.exe on Windows and python3 elsewhere; LOCAL_CODEACT_PYTHON overrides
-// that selection when a different executable is required.
+// hosted dotnet_10 source-deployment runtime provides python3. Windows runs
+// require LOCAL_CODEACT_PYTHON to identify an existing, fully qualified Python
+// executable. Other platforms use python3 unless LOCAL_CODEACT_PYTHON is set.
 
 using System.ComponentModel;
 using Azure.AI.Projects;
@@ -42,9 +42,24 @@ var deploymentName = FirstNonBlank(
 
 var agentName = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-local-codeact";
 
-var pythonExecutable = FirstNonBlank(
-    System.Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON"),
-    OperatingSystem.IsWindows() ? "python.exe" : "python3");
+var pythonExecutable = System.Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON");
+if (OperatingSystem.IsWindows())
+{
+    if (string.IsNullOrWhiteSpace(pythonExecutable) || !Path.IsPathFullyQualified(pythonExecutable))
+    {
+        throw new InvalidOperationException(
+            "On Windows, set LOCAL_CODEACT_PYTHON to the fully qualified path of a trusted Python interpreter.");
+    }
+
+    if (!File.Exists(pythonExecutable))
+    {
+        throw new FileNotFoundException("The configured Python executable file was not found.", pythonExecutable);
+    }
+}
+else if (string.IsNullOrWhiteSpace(pythonExecutable))
+{
+    pythonExecutable = "python3";
+}
 
 // ── Sandbox-only tools (model never sees these directly) ─────────────────────
 

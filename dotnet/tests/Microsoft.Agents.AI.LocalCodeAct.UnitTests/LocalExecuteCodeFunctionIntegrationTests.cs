@@ -1086,7 +1086,9 @@ except Exception as exc:
     private static string? FindPython()
     {
         var configured = Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON");
-        if (!string.IsNullOrWhiteSpace(configured) && IsUsablePython(configured))
+        if (!string.IsNullOrWhiteSpace(configured)
+            && (!OperatingSystem.IsWindows() || Path.IsPathFullyQualified(configured))
+            && IsUsablePython(configured))
         {
             return configured;
         }
@@ -1100,7 +1102,8 @@ except Exception as exc:
             var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
             foreach (var dir in path.Split(Path.PathSeparator))
             {
-                if (string.IsNullOrWhiteSpace(dir))
+                if (string.IsNullOrWhiteSpace(dir)
+                    || (OperatingSystem.IsWindows() && !Path.IsPathFullyQualified(dir)))
                 {
                     continue;
                 }

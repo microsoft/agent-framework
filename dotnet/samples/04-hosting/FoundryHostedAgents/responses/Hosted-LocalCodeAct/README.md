@@ -50,6 +50,13 @@ AZURE_TOKEN_CREDENTIALS=dev
 
 > `.env` is gitignored. The `.env.example` template is checked in as a reference.
 
+On Windows, also set `LOCAL_CODEACT_PYTHON` to the fully qualified path of an existing
+Python interpreter, for example `C:/Program Files/Python/python.exe`. Bare names such
+as `python.exe` and relative paths are rejected. Keep the interpreter and its parent
+directories protected from writes by untrusted code or tools. The sample checks this
+configuration at startup, including when it uses an older published LocalCodeAct package.
+Other platforms use `python3` when `LOCAL_CODEACT_PYTHON` is unset or blank.
+
 > `ASPNETCORE_URLS` pins the local run to the port the `Using-Samples` REPLs expect. Recent
 > `Microsoft.Agents.AI.Foundry.Hosting` versions bind that port themselves, so it only matters
 > while this project is pinned to an older published package.

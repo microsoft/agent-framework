@@ -44,11 +44,16 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
     private volatile bool _disposed;
 
     /// <summary>Initializes a new instance of the <see cref="LocalCodeActProvider"/> class.</summary>
-    /// <param name="pythonExecutablePath">Path to the Python interpreter used for execution and validation.</param>
+    /// <param name="pythonExecutablePath">
+    /// Path to the Python interpreter used for execution and validation. On Windows, this must be
+    /// a fully qualified path to an existing file in a trusted location.
+    /// </param>
     /// <param name="options">Optional provider configuration.</param>
+    /// <exception cref="ArgumentException">The interpreter path is empty or is not fully qualified on Windows.</exception>
+    /// <exception cref="System.IO.FileNotFoundException">The interpreter file does not exist on Windows.</exception>
     public LocalCodeActProvider(string pythonExecutablePath, LocalCodeActProviderOptions? options = null)
     {
-        _ = Throw.IfNullOrWhitespace(pythonExecutablePath);
+        PythonExecutablePath.Validate(pythonExecutablePath);
         options ??= new LocalCodeActProviderOptions();
 
         var limits = options.ExecutionLimits ?? new ProcessExecutionLimits();
