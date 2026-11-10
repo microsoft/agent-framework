@@ -5,7 +5,9 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
@@ -17,6 +19,7 @@ using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 using Moq;
+using Moq.Language.Flow;
 using ApprovalSnapshot = Microsoft.Agents.AI.Workflows.Declarative.ObjectModel.InvokeMcpToolExecutor.ApprovalSnapshot;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
@@ -29,6 +32,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     private const string TestServerUrl = "https://mcp.example.com";
     private const string TestServerLabel = "TestMcpServer";
     private const string TestToolName = "test_tool";
+    private const string ListToolsToolName = "tools/list";
 
     #region Step Naming Convention Tests
 
@@ -36,7 +40,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     public void InvokeMcpToolThrowsWhenModelInvalid()
     {
         // Arrange
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         MockAgentProvider mockAgentProvider = new();
 
         // Act & Assert
@@ -561,7 +565,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         Assert.True(additionalProperties is null || additionalProperties.Count == 0);
 
         // Defense in depth: the credential value must not appear anywhere in the serialized approval content.
-        string serializedApproval = System.Text.Json.JsonSerializer.Serialize(capturedRequest.AgentResponse);
+        string serializedApproval = JsonSerializer.Serialize(capturedRequest.AgentResponse);
         Assert.DoesNotContain("Authorization", serializedApproval);
         Assert.DoesNotContain("super-secret-token", serializedApproval);
 
@@ -589,7 +593,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             headerValue: HeaderValue);
 
         IDictionary<string, string>? capturedHeaders = null;
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider
             .Setup(provider => provider.InvokeToolAsync(
                 It.IsAny<string>(),
@@ -632,7 +636,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             headerValue: HeaderValue);
 
         IDictionary<string, string>? capturedHeaders = null;
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider
             .Setup(provider => provider.InvokeToolAsync(
                 It.IsAny<string>(),
@@ -888,7 +892,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(true)),
         };
         InvokeMcpTool model = AssignParent<InvokeMcpTool>(builder);
-        Mock<IMcpToolHandler> mockProvider = new();
+        MockMcpToolProvider mockProvider = new();
         MockAgentProvider mockAgentProvider = new();
         InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
         List<ExternalInputRequest> emittedRequests = [];
@@ -910,7 +914,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         mockProvider.Verify(provider => provider.InvokeToolAsync(
             It.IsAny<string>(),
             It.IsAny<string?>(),
-            It.IsAny<string>(),
+            It.Is<string>(toolName => !string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal)),
             It.IsAny<IDictionary<string, object?>?>(),
             It.IsAny<IDictionary<string, string>?>(),
             It.IsAny<string?>(),
@@ -1126,6 +1130,128 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     #region Approval Snapshot Security Tests
 
     [Fact]
+    public async Task InvokeMcpToolRejectsApprovalWhenToolDefinitionChangesAsync()
+    {
+        // Arrange
+        int definitionVersion = 1;
+        int invocationCount = 0;
+        this.State.InitializeSystem();
+        InvokeMcpTool model = this.CreateModel(
+            displayName: nameof(InvokeMcpToolRejectsApprovalWhenToolDefinitionChangesAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            requireApproval: true);
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, toolName, _, _, _, _) =>
+                {
+                    if (string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal))
+                    {
+                        string description = definitionVersion == 1 ? "Read-only tool" : "Updated tool";
+                        return Task.FromResult(new McpServerToolResultContent("list-tools")
+                        {
+                            Outputs = [new TextContent(
+                                $"{{\"tools\":[{{\"name\":\"{TestToolName}\",\"description\":\"{description}\",\"inputSchema\":{{\"type\":\"object\"}}}}]}}")]
+                        });
+                    }
+
+                    invocationCount++;
+                    return Task.FromResult(new McpServerToolResultContent("tool-call")
+                    {
+                        Outputs = [new TextContent("result")]
+                    });
+                });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+        List<ExternalInputRequest> requests = [];
+        Dictionary<string, object?> stateStore = [];
+        Mock<IWorkflowContext> context = CreateMockWorkflowContextWithStateStore(requests, stateStore);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None);
+        await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", context.Object, CancellationToken.None);
+        action = new InvokeMcpToolExecutor(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+        await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", context.Object, CancellationToken.None);
+        definitionVersion = 2;
+
+        // Act
+        await action.CaptureResponseAsync(
+            context.Object,
+            CreateApprovalResponseFor(requests, approved: true),
+            CancellationToken.None);
+
+        // Assert
+        Assert.Equal(0, invocationCount);
+        Assert.Equal(2, requests.Count);
+        ToolApprovalRequestContent firstRequest = Assert.Single(
+            requests[0].AgentResponse.Messages.SelectMany(message => message.Contents).OfType<ToolApprovalRequestContent>());
+        ToolApprovalRequestContent refreshedRequest = Assert.Single(
+            requests[1].AgentResponse.Messages.SelectMany(message => message.Contents).OfType<ToolApprovalRequestContent>());
+        Assert.NotEqual(firstRequest.RequestId, refreshedRequest.RequestId);
+        Assert.Contains(
+            requests[1].AgentResponse.Messages.SelectMany(message => message.Contents).OfType<TextContent>(),
+            text => text.Text.Contains("definition changed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task InvokeMcpToolRejectsApprovalWhenToolDefinitionIsUnavailableAsync()
+    {
+        // Arrange
+        int invocationCount = 0;
+        this.State.InitializeSystem();
+        InvokeMcpTool model = this.CreateModel(
+            displayName: nameof(InvokeMcpToolRejectsApprovalWhenToolDefinitionIsUnavailableAsync),
+            serverUrl: TestServerUrl,
+            toolName: TestToolName,
+            requireApproval: true);
+        Mock<IMcpToolHandler> mockProvider = new();
+        mockProvider.Setup(provider => provider.InvokeToolAsync(
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<IDictionary<string, object?>?>(),
+                It.IsAny<IDictionary<string, string>?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
+                (_, _, toolName, _, _, _, _) =>
+                {
+                    if (string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal))
+                    {
+                        return Task.FromResult(new McpServerToolResultContent("list-tools")
+                        {
+                            Outputs = [new TextContent("Tool metadata is unavailable.")]
+                        });
+                    }
+
+                    invocationCount++;
+                    return Task.FromResult(new McpServerToolResultContent("tool-call"));
+                });
+        MockAgentProvider mockAgentProvider = new();
+        InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
+        List<ExternalInputRequest> requests = [];
+        Mock<IWorkflowContext> context = CreateMockWorkflowContext(requests);
+
+        // Act
+        Task ExecuteAsync() => action.HandleAsync(
+            new ActionExecutorResult(action.Id),
+            context.Object,
+            CancellationToken.None).AsTask();
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("valid tool list", exception.Message);
+        Assert.Empty(requests);
+        Assert.Equal(0, invocationCount);
+    }
+
+    [Fact]
     public async Task InvokeMcpToolCaptureResponseUsesApprovedHeadersNotMutatedAsync()
     {
         // Arrange
@@ -1144,7 +1270,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             variableName: "HeaderValue");
 
         IDictionary<string, string>? capturedHeaders = null;
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(provider => provider.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -1202,7 +1328,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             variableName: "HeaderValue");
 
         IDictionary<string, string>? capturedHeaders = null;
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(provider => provider.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -1259,7 +1385,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             ("X-First", "FirstHeader"));
 
         IDictionary<string, string>? capturedHeaders = null;
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(provider => provider.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -1314,7 +1440,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             variableName: "HeaderValue");
 
         List<string> capturedHeaderValues = [];
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(provider => provider.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -1324,7 +1450,13 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
                 It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
-                (_, _, _, _, headers, _, _) => capturedHeaderValues.Add(headers!["X-Test-Header"]))
+                (_, _, toolName, _, headers, _, _) =>
+                {
+                    if (!string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal))
+                    {
+                        capturedHeaderValues.Add(headers!["X-Test-Header"]);
+                    }
+                })
             .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
             {
                 Outputs = [new TextContent("result")]
@@ -1378,7 +1510,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         InvokeMcpTool model = AssignParent<InvokeMcpTool>(builder);
 
         List<string> capturedHeaderValues = [];
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(provider => provider.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -1388,7 +1520,13 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
                 It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
-                (_, _, _, _, headers, _, _) => capturedHeaderValues.Add(headers!["Authorization"]))
+                (_, _, toolName, _, headers, _, _) =>
+                {
+                    if (!string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal))
+                    {
+                        capturedHeaderValues.Add(headers!["Authorization"]);
+                    }
+                })
             .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
             {
                 Outputs = [new TextContent("result")]
@@ -1407,7 +1545,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         ExternalInputResponse staleResponse = CreateApprovalResponseForRequest(emittedRequests[0], approved: true);
 
         await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", mockContext.Object, CancellationToken.None);
-        string serializedCheckpoint = System.Text.Json.JsonSerializer.Serialize(stateStore);
+        string serializedCheckpoint = JsonSerializer.Serialize(stateStore);
         Assert.DoesNotContain("Authorization", serializedCheckpoint);
         Assert.DoesNotContain(BeforeRestoreHeader, serializedCheckpoint);
 
@@ -1438,7 +1576,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             .RequestId;
         Assert.NotEqual(staleRequestId, freshRequestId);
 
-        string serializedFreshApproval = System.Text.Json.JsonSerializer.Serialize(emittedRequests[1].AgentResponse);
+        string serializedFreshApproval = JsonSerializer.Serialize(emittedRequests[1].AgentResponse);
         Assert.DoesNotContain("Authorization", serializedFreshApproval);
         Assert.DoesNotContain(AfterRestoreHeader, serializedFreshApproval);
 
@@ -1471,7 +1609,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(true)),
         };
         InvokeMcpTool model = AssignParent<InvokeMcpTool>(builder);
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         MockAgentProvider mockAgentProvider = new();
         InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
         List<ExternalInputRequest> emittedRequests = [];
@@ -1509,7 +1647,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         mockProvider.Verify(provider => provider.InvokeToolAsync(
             It.IsAny<string>(),
             It.IsAny<string?>(),
-            It.IsAny<string>(),
+            It.Is<string>(toolName => !string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal)),
             It.IsAny<IDictionary<string, object?>?>(),
             It.IsAny<IDictionary<string, string>?>(),
             It.IsAny<string?>(),
@@ -1544,7 +1682,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         };
         InvokeMcpTool model = AssignParent<InvokeMcpTool>(builder);
         string? capturedConnectionName = null;
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(provider => provider.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -1604,7 +1742,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         mockProvider.Verify(provider => provider.InvokeToolAsync(
             It.IsAny<string>(),
             It.IsAny<string?>(),
-            It.IsAny<string>(),
+            It.Is<string>(toolName => !string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal)),
             It.IsAny<IDictionary<string, object?>?>(),
             It.IsAny<IDictionary<string, string>?>(),
             It.IsAny<string?>(),
@@ -1692,7 +1830,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
                 """);
 
         List<string> capturedHeaderValues = [];
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(provider => provider.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -1702,7 +1840,13 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
                 It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
-                (_, _, _, _, headers, _, _) => capturedHeaderValues.Add(headers!["X-Test-Header"]))
+                (_, _, toolName, _, headers, _, _) =>
+                {
+                    if (!string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal))
+                    {
+                        capturedHeaderValues.Add(headers!["X-Test-Header"]);
+                    }
+                })
             .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
             {
                 Outputs = [new TextContent("result")]
@@ -1843,7 +1987,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             variableName: "TargetTool");
 
         string? capturedToolName = null;
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(provider => provider.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -1904,7 +2048,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             variableName: "SqlQuery");
 
         IDictionary<string, object?>? capturedArguments = null;
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(provider => provider.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -1963,7 +2107,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             toolName: TestToolName);
 
         string? capturedServerUrl = null;
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(provider => provider.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -2022,7 +2166,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             variableName: "TargetTool");
 
         string? capturedToolName = null;
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(provider => provider.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -2086,7 +2230,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             displayName: nameof(InvokeMcpToolEmitsUniqueRequestIdPerInvocationAsync),
             serverUrl: TestServerUrl,
             toolName: TestToolName);
-        Mock<IMcpToolHandler> mockProvider = new();
+        MockMcpToolProvider mockProvider = new();
         MockAgentProvider mockAgentProvider = new();
         InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
 
@@ -2132,7 +2276,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             toolName: ToolB);
 
         List<string?> capturedToolNames = [];
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(p => p.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -2142,7 +2286,13 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
                 It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
-                (_, _, toolName, _, _, _, _) => capturedToolNames.Add(toolName))
+                (_, _, toolName, _, _, _, _) =>
+                {
+                    if (!string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal))
+                    {
+                        capturedToolNames.Add(toolName);
+                    }
+                })
             .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
             {
                 Outputs = [new TextContent("ok")]
@@ -2183,7 +2333,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             displayName: nameof(InvokeMcpToolMissingSnapshotAssignsErrorAsync),
             serverUrl: TestServerUrl,
             toolName: TestToolName);
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         MockAgentProvider mockAgentProvider = new();
         InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
 
@@ -2209,9 +2359,8 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     }
 
     /// <summary>
-    /// A snapshot persisted at the legacy <c>"_approvalSnapshot"</c> key must be migrated
-    /// under <c>this.Id</c> after restore so an approval response carrying
-    /// <c>RequestId == this.Id</c> resumes with the snapshot's tool name.
+    /// A snapshot persisted at the legacy <c>"_approvalSnapshot"</c> key is migrated after
+    /// restore, but cannot authorize invocation without a persisted tool definition fingerprint.
     /// </summary>
     [Fact]
     public async Task InvokeMcpToolLegacySingleSnapshotCheckpointIsMigratedAsync()
@@ -2227,7 +2376,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             toolName: TestToolName);
 
         string? capturedToolName = null;
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(p => p.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -2251,7 +2400,8 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             ["_approvalSnapshot"] = new ApprovalSnapshot(
                 TestServerUrl, null, LegacyApprovedToolName, new Dictionary<string, object?>(), null),
         };
-        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStoreSeeded(stateStore);
+        List<ExternalInputRequest> requests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStoreSeeded(stateStore, requests);
 
         // Act - restore migrates the legacy snapshot under this.Id.
         await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", mockContext.Object, CancellationToken.None);
@@ -2269,8 +2419,17 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
         await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
 
-        // Assert - the MCP tool was invoked with the snapshot's tool name.
-        Assert.Equal(LegacyApprovedToolName, capturedToolName);
+        // Assert - legacy snapshots require a fresh approval before invocation.
+        Assert.Null(capturedToolName);
+        ExternalInputRequest refreshedRequest = Assert.Single(requests);
+        ToolApprovalRequestContent approvalRequest = Assert.Single(
+            refreshedRequest.AgentResponse.Messages.SelectMany(message => message.Contents).OfType<ToolApprovalRequestContent>());
+        Assert.NotEqual(action.Id, approvalRequest.RequestId);
+        McpServerToolCallContent refreshedToolCall = Assert.IsType<McpServerToolCallContent>(approvalRequest.ToolCall);
+        Assert.Equal(LegacyApprovedToolName, refreshedToolCall.Name);
+        Assert.Contains(
+            refreshedRequest.AgentResponse.Messages.SelectMany(message => message.Contents).OfType<TextContent>(),
+            text => text.Text.Contains("did not include", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -2287,7 +2446,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             displayName: nameof(InvokeMcpToolLegacyKeyIsClearedAfterMigrationAsync),
             serverUrl: TestServerUrl,
             toolName: TestToolName);
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         MockAgentProvider mockAgentProvider = new();
         InvokeMcpToolExecutor action = new(model, mockProvider.Object, mockAgentProvider.Object, this.State);
 
@@ -2309,7 +2468,9 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     /// Variant of CreateMockWorkflowContextWithStateStore that accepts a pre-seeded state
     /// store and supports the read/write operations exercised by the legacy-migration path.
     /// </summary>
-    private static Mock<IWorkflowContext> CreateMockWorkflowContextWithStateStoreSeeded(Dictionary<string, object?> stateStore)
+    private static Mock<IWorkflowContext> CreateMockWorkflowContextWithStateStoreSeeded(
+        Dictionary<string, object?> stateStore,
+        List<ExternalInputRequest>? emittedRequests = null)
     {
         Mock<IWorkflowContext> mockContext = new();
         mockContext.Setup(c => c.AddEventAsync(It.IsAny<WorkflowEvent>(), It.IsAny<CancellationToken>()))
@@ -2335,6 +2496,15 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
                 new ValueTask<ApprovalSnapshot?>(stateStore.TryGetValue(key, out object? val) ? val as ApprovalSnapshot : null));
         mockContext.Setup(c => c.ReadStateKeysAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HashSet<string>());
+        mockContext.Setup(c => c.SendMessageAsync(It.IsAny<object>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<object, string?, CancellationToken>((message, _, _) =>
+            {
+                if (emittedRequests is not null && message is ExternalInputRequest request)
+                {
+                    emittedRequests.Add(request);
+                }
+            })
+            .Returns(default(ValueTask));
         return mockContext;
     }
 
@@ -2359,7 +2529,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             variableName: "TargetTool");
 
         string? capturedToolName = null;
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(p => p.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -2424,7 +2594,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
             variableName: "TargetTool");
 
         List<string?> capturedToolNames = [];
-        Mock<IMcpToolHandler> mockProvider = new();
+        MetadataAwareMockMcpToolHandler mockProvider = new();
         mockProvider.Setup(p => p.InvokeToolAsync(
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
@@ -2434,7 +2604,13 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
                 It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .Callback<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
-                (_, _, toolName, _, _, _, _) => capturedToolNames.Add(toolName))
+                (_, _, toolName, _, _, _, _) =>
+                {
+                    if (!string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal))
+                    {
+                        capturedToolNames.Add(toolName);
+                    }
+                })
             .ReturnsAsync(new McpServerToolResultContent("capture-call-id")
             {
                 Outputs = [new TextContent("ok")]
@@ -2839,6 +3015,53 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
     #region Mock MCP Tool Provider
 
+    private sealed class MetadataAwareMockMcpToolHandler : Mock<IMcpToolHandler>
+    {
+        private static readonly string[] s_toolNames =
+        [
+            TestToolName,
+            "safe_readonly_query",
+            "tool_alpha",
+            "tool_beta",
+            "legacy_approved_tool",
+            "approved_tool",
+        ];
+
+        public MetadataAwareMockMcpToolHandler()
+        {
+            this.SetupToolList();
+        }
+
+        public ISetup<IMcpToolHandler, Task<McpServerToolResultContent>> Setup(
+            Expression<Func<IMcpToolHandler, Task<McpServerToolResultContent>>> expression)
+        {
+            ISetup<IMcpToolHandler, Task<McpServerToolResultContent>> setup = base.Setup(expression);
+            this.SetupToolList();
+            return setup;
+        }
+
+        private void SetupToolList()
+        {
+            string definitions = string.Join(
+                ",",
+                s_toolNames.Select(name => $"{{\"name\":{JsonSerializer.Serialize(name)},\"description\":\"Test tool\"}}"));
+            string toolList = $"{{\"tools\":[{definitions}]}}";
+
+            base.Setup(provider => provider.InvokeToolAsync(
+                    It.IsAny<string>(),
+                    It.IsAny<string?>(),
+                    It.Is<string>(name => string.Equals(name, ListToolsToolName, StringComparison.Ordinal)),
+                    It.IsAny<IDictionary<string, object?>?>(),
+                    It.IsAny<IDictionary<string, string>?>(),
+                    It.IsAny<string?>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new McpServerToolResultContent("mock-list-tools")
+                {
+                    Outputs = [new TextContent(toolList)]
+                });
+        }
+    }
+
     /// <summary>
     /// Mock implementation of <see cref="IMcpToolHandler"/> for unit testing purposes.
     /// </summary>
@@ -2862,11 +3085,19 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
                     It.IsAny<string?>(),
                     It.IsAny<CancellationToken>()))
                 .Returns<string, string?, string, IDictionary<string, object?>?, IDictionary<string, string>?, string?, CancellationToken>(
-                    (_, _, _, _, _, _, _) =>
+                    (_, _, toolName, _, _, _, _) =>
                     {
                         McpServerToolResultContent result = new("mock-call-id");
 
-                        if (returnNullOutput)
+                        if (string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal))
+                        {
+                            result.Outputs =
+                            [
+                                new TextContent(
+                                    $"{{\"tools\":[{{\"name\":{JsonSerializer.Serialize(TestToolName)},\"description\":\"Test tool\"}}]}}")
+                            ];
+                        }
+                        else if (returnNullOutput)
                         {
                             result.Outputs = null;
                         }
