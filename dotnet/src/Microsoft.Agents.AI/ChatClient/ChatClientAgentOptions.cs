@@ -326,7 +326,7 @@ public sealed class ChatClientAgentOptions
     /// builds a response from the updates received so far, removes the tool calls that have not been settled (a
     /// <see cref="FunctionCallContent"/> without a matching <see cref="FunctionResultContent"/>) while keeping all other
     /// content, marks each persisted response message with
-    /// <see cref="ChatClientAgent.PartialResponseMarkerKey"/> in <see cref="ChatMessage.AdditionalProperties"/>,
+    /// <see cref="ChatClientAgent.PartialResponseMessageMarkerKey"/> in <see cref="ChatMessage.AdditionalProperties"/>,
     /// and notifies the <see cref="ChatHistoryProvider"/> and the <see cref="ChatClientAgent.AIContextProviders"/>
     /// as for a successful invocation. The original <see cref="System.OperationCanceledException"/> is always rethrown,
     /// and failures while persisting the partial interaction are logged and swallowed.

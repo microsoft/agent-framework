@@ -67,7 +67,7 @@ public sealed partial class ChatClientAgent : AIAgent
     /// <see cref="ChatClientAgentRunOptions.PersistPartialMessagesOnCancellation"/> is enabled. Its value is <see langword="true"/>.
     /// </remarks>
     [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-    public const string PartialResponseMarkerKey = "agent_framework.partial_response";
+    public const string PartialResponseMessageMarkerKey = "agent_framework.partial_message_response";
 
     private readonly ChatClientAgentOptions? _agentOptions;
     private readonly HashSet<string> _aiContextProviderStateKeys;
@@ -1086,7 +1086,7 @@ public sealed partial class ChatClientAgent : AIAgent
     /// Tool calls are only matched within the partial response, because the request messages are expected
     /// to contain settled history only, so the response never contains results for tool calls from the request.
     /// Messages left without content after removing their unsettled tool calls are dropped, and every remaining
-    /// message is marked with <see cref="PartialResponseMarkerKey"/>.
+    /// message is marked with <see cref="PartialResponseMessageMarkerKey"/>.
     /// </remarks>
     internal static List<ChatMessage> CreatePartialResponseMessages(IEnumerable<ChatResponseUpdate> responseUpdates)
     {
@@ -1112,7 +1112,7 @@ public sealed partial class ChatClientAgent : AIAgent
 
             message.Contents = contents;
             message.AdditionalProperties ??= new();
-            message.AdditionalProperties[PartialResponseMarkerKey] = true;
+            message.AdditionalProperties[PartialResponseMessageMarkerKey] = true;
             partialMessages.Add(message);
         }
 

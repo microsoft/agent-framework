@@ -626,7 +626,7 @@ public class ChatClientAgent_PartialPersistenceOnCancellationTests
         Assert.IsType<InMemoryChatHistoryProvider>(agent.ChatHistoryProvider).GetMessages(session).ToList();
 
     private static bool IsMarkedAsPartial(ChatMessage message) =>
-        message.AdditionalProperties?.TryGetValue(ChatClientAgent.PartialResponseMarkerKey, out var value) is true && value is true;
+        message.AdditionalProperties?.TryGetValue(ChatClientAgent.PartialResponseMessageMarkerKey, out var value) is true && value is true;
 
     private static ChatResponseUpdate TextUpdate(string text, string messageId) =>
         new(ChatRole.Assistant, text) { MessageId = messageId };
