@@ -279,7 +279,7 @@ public static class ServiceCollectionExtensions
     /// <para>
     /// The endpoint can also come from a configured override or the
     /// <c>AZURE_AI_PROJECT_ENDPOINT</c> local-development fallback. If no endpoint is resolved,
-    /// startup completes with toolbox support disabled and the toolbox health check reports <c>Healthy</c>.
+    /// startup completes with toolbox support disabled.
     /// A toolbox name that would not resolve to a single path segment of the proxy URL fails startup.
     /// </para>
     /// <para>
@@ -289,9 +289,8 @@ public static class ServiceCollectionExtensions
     /// toolbox that cannot be opened is skipped for that response.
     /// </para>
     /// <para>
-    /// The <c>foundry-toolbox</c> health check reports its registration's failure status
-    /// (<c>Unhealthy</c> by default) while startup is pending, and <c>Healthy</c> after normal startup.
-    /// This does not mean that a toolbox is reachable or that other readiness checks pass.
+    /// This method does not register a toolbox health check. Toolbox connectivity is evaluated
+    /// when each response opens its connections, not by readiness probes.
     /// </para>
     /// <para>
     /// Example:
@@ -314,7 +313,7 @@ public static class ServiceCollectionExtensions
     /// Registers the Foundry Toolbox service with optional behavior configuration.
     /// </summary>
     /// <remarks>
-    /// Toolbox readiness follows the same startup and per-response connection behavior as
+    /// Toolbox startup and per-response connection behavior follow
     /// <see cref="AddFoundryToolboxService(IServiceCollection, TokenCredential, string[])"/>.
     /// </remarks>
     /// <param name="services">The service collection.</param>
@@ -350,31 +349,6 @@ public static class ServiceCollectionExtensions
             credential: credential,
             sp.GetService<ILogger<FoundryToolboxService>>()));
         services.AddHostedService(sp => sp.GetRequiredService<FoundryToolboxService>());
-
-        // Register the toolbox health check on the same /readiness pipeline that
-        // MapFoundryResponses maps. This gates the Foundry hosted runtime's readiness
-        // probe (per container-image-spec.md §3.1) on FoundryToolboxService.StartAsync
-        // having resolved the toolbox configuration.
-        // AddCheck<T>(name, ...) does NOT dedupe by name, so guard against a host that
-        // already registered a health check with this name.
-        const string HealthCheckName = "foundry-toolbox";
-        services.AddHealthChecks();
-        services.Configure<HealthCheckServiceOptions>(opts =>
-        {
-            foreach (var existing in opts.Registrations)
-            {
-                if (string.Equals(existing.Name, HealthCheckName, StringComparison.Ordinal))
-                {
-                    return;
-                }
-            }
-
-            opts.Registrations.Add(new HealthCheckRegistration(
-                name: HealthCheckName,
-                factory: sp => ActivatorUtilities.CreateInstance<FoundryToolboxHealthCheck>(sp),
-                failureStatus: HealthStatus.Unhealthy,
-                tags: ["foundry", "toolbox", "readiness"]));
-        });
 
         MarkFeatureUsed(FeatureIndex.FoundryToolbox);
         return services;

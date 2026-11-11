@@ -76,7 +76,6 @@ public class FoundryToolboxServiceTests
             var resolution = await scope.ResolveAsync(CancellationToken.None);
 
             // Assert
-            Assert.Equal(FoundryToolboxStartupStatus.NoEndpoint, service.StartupStatus);
             Assert.Empty(service.ToolboxNames);
             Assert.Empty(resolution.Tools);
             Assert.Empty(resolution.Consents);
@@ -148,9 +147,9 @@ public class FoundryToolboxServiceTests
     }
 
     [Fact]
-    public async Task StartAsync_WithEndpointAndNoToolboxes_ReportsHealthyAsync()
+    public async Task StartAsync_WithEndpointAndNoToolboxes_CompletesAsync()
     {
-        // Arrange: no pre-registered toolboxes is a legitimate setup; readiness passes.
+        // Arrange
         var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "http://127.0.0.1:1/unused",
@@ -162,7 +161,6 @@ public class FoundryToolboxServiceTests
         await service.StartAsync(CancellationToken.None);
 
         // Assert
-        Assert.Equal(FoundryToolboxStartupStatus.Healthy, service.StartupStatus);
         Assert.Empty(service.ToolboxNames);
     }
 
@@ -231,7 +229,6 @@ public class FoundryToolboxServiceTests
         // Assert: startup fails before the container serves traffic, and nothing is opened.
         Assert.IsType<InvalidOperationException>(exception);
         Assert.Contains(unsafeName, exception.Message, StringComparison.Ordinal);
-        Assert.Equal(FoundryToolboxStartupStatus.Pending, service.StartupStatus);
         Assert.Equal(0, openCount);
     }
 
@@ -288,7 +285,6 @@ public class FoundryToolboxServiceTests
         await service.StartAsync(CancellationToken.None);
 
         // Assert: startup has no caller, so it opens nothing that a caller could later share.
-        Assert.Equal(FoundryToolboxStartupStatus.Healthy, service.StartupStatus);
         Assert.Equal(0, openCount);
     }
 

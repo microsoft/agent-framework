@@ -33,7 +33,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <para>
 /// The endpoint can also come from a configured override or, as a local-development fallback,
 /// <c>AZURE_AI_PROJECT_ENDPOINT</c>. If no endpoint is resolved, startup completes with
-/// toolbox support disabled and the toolbox health check reports <c>Healthy</c>.
+/// toolbox support disabled.
 /// </para>
 /// <para>
 /// The proxy identifies the caller only by the platform per-request call id
@@ -75,18 +75,6 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
     /// The response handler applies it before surfacing any consent link from these toolboxes.
     /// </summary>
     internal OAuthConsentLinkPolicy ConsentLinkPolicy { get; }
-
-    /// <summary>
-    /// Gets the startup status of the service. Remains <see cref="FoundryToolboxStartupStatus.Pending"/>
-    /// until <see cref="StartAsync"/> completes.
-    /// </summary>
-    /// <remarks>
-    /// The toolbox health check reports its registration's failure status while startup is pending
-    /// (<c>Unhealthy</c> by default). Normal startup completes with <see cref="FoundryToolboxStartupStatus.Healthy"/>
-    /// or <see cref="FoundryToolboxStartupStatus.NoEndpoint"/>, both of which report <c>Healthy</c>. A healthy check
-    /// does not mean a toolbox is reachable: toolboxes are opened only for responses.
-    /// </remarks>
-    public FoundryToolboxStartupStatus StartupStatus { get; private set; } = FoundryToolboxStartupStatus.Pending;
 
     /// <summary>
     /// Gets the distinct toolbox names each response opens, in configured order. Empty until startup
@@ -146,7 +134,6 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
         if (string.IsNullOrEmpty(projectEndpoint))
         {
             LogToolboxSupportDisabled(this._logger);
-            this.StartupStatus = FoundryToolboxStartupStatus.NoEndpoint;
             return Task.CompletedTask;
         }
 
@@ -182,7 +169,6 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
         }
 
         this.ToolboxNames = names;
-        this.StartupStatus = FoundryToolboxStartupStatus.Healthy;
         return Task.CompletedTask;
     }
 
