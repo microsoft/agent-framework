@@ -142,6 +142,12 @@ class _DeferredOutput:
         default_factory=lambda: list[ResponseStreamEvent | ResponseCheckpointEvent]()
     )
 
+    def defer(self, event: ResponseStreamEvent | ResponseCheckpointEvent) -> bool:
+        if self.snapshot is None:
+            return False
+        self.events.append(event)
+        return True
+
 
 def _validate_agent_defaults(agent: SupportsAgentRun, *, provider_background: bool, allow_agent_store: bool) -> None:
     validate_agent_background_options(agent, provider_background=provider_background)
@@ -1149,10 +1155,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 async for event in tracker.handle_update(
                     update, approval_storage=approval_storage, complete_message=complete_message
                 ):
-                    if deferred.snapshot is None:
+                    if not deferred.defer(event):
                         yield event
-                    else:
-                        deferred.events.append(event)
 
             inner_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] | None = None
             updates: _SignalledIterator[AgentResponseUpdate] | None = None
@@ -1184,19 +1188,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         if context.shutdown.is_set() or cancellation_signal.is_set():
                             continue
                         for event in tracker.close():
-                            if deferred.snapshot is None:
+                            if not deferred.defer(event):
                                 yield event
-                            else:
-                                deferred.events.append(event)
                         private_metadata = _hosted_internal_metadata(response_event_stream)
                         private_metadata[_HOSTED_PROVIDER_OUTPUT_COUNT_KEY] = output_count
                         private_metadata[_HOSTED_PROVIDER_USAGE_KEY] = tracker.usage_details
                         if self._resilient_background:
                             checkpoint = response_event_stream.checkpoint()
-                            if deferred.snapshot is None:
+                            if not deferred.defer(checkpoint):
                                 yield checkpoint
-                            else:
-                                deferred.events.append(checkpoint)
             else:
                 inner_stream = agent.run(stream=True, **run_kwargs)  # type: ignore[reportUnknownMemberType]
                 updates = _SignalledIterator(inner_stream, context.shutdown, cancellation_signal)
