@@ -371,6 +371,44 @@ An omitted allowlist preserves existing behavior and does not restrict the HTTPS
 the gate, so an empty sequence rejects every consent link. Entries are normalized as origins, so paths and query strings
 belong on the emitted consent link, not in the configuration.
 
+### Invocation-time OAuth consent
+
+When a Foundry Toolbox MCP `tools/call` reports that the user must give OAuth consent, the Responses agent host
+does not end the run with an opaque error. The response has status `incomplete`, and its output contains:
+
+- the `function_call` for the protected tool;
+- a `function_call_output` for that call, whose text says that OAuth consent is required;
+- an `oauth_consent_request` item with `consent_link` and `server_label`.
+
+The host emits a consent request for one `(consent_link, server_label)` pair only once in a response. Non-streaming
+calls return these items in the final response. Streaming calls give the same items. The host buffers them and
+publishes them only after it saves the approval authority and the session snapshots.
+
+Other tool calls in the same run behave as follows:
+
+- Tool calls that completed before the consent error keep their real results.
+- The host does not run later protected Toolbox calls in the same run. Each one gets a
+  "not executed because another tool requires OAuth consent" output.
+- Each `function_call` gets exactly one terminal output.
+
+To continue, the user opens `consent_link` and gives consent. The client then sends a new request with
+`previous_response_id`, and the agent tries the tool again.
+
+Failure boundaries:
+
+- The response fails if a consent link is not a safe absolute HTTPS URL or is outside the configured origin
+  allowlist. The host does not expose that URL.
+- The response fails with "OAuth consent continuation requires store=true." if the request has `store=false`. The host
+  exposes no consent or approval output for that request.
+- Consent at connection time (`tools/list`) behaves as before.
+
+Limits:
+
+- The host does not cancel sibling tool calls that are already running.
+- Only Toolbox tools are blocked. Other tools continue to run.
+- The host must activate the request scope, so this behavior needs the hosted runtime.
+- Core can log the consent exception.
+
 ## Computer use
 
 The Responses host emits native `computer_call` and `computer_call_output` items, including ordered `actions`,

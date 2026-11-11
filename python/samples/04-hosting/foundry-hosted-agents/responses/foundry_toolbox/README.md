@@ -119,6 +119,9 @@ PAT-backed tools act as the configured external account; user-identity tools
 require the appropriate pass-through connection and the current call ID. A fresh
 Python object does not by itself grant external permissions. GitHub PAT/OAuth
 connections, project roles and consent are separate setup, not offline coverage.
+If a Toolbox tool call needs OAuth consent, the response is `incomplete` and
+contains an `oauth_consent_request`. Continuation needs `store=true`. See
+[Invocation-time OAuth consent](../../../../../packages/foundry_hosting/README.md#invocation-time-oauth-consent).
 Native code-interpreter file citations are a separate tracked behavior
 (microsoft/agent-framework#7916), not implemented by this lifecycle change.
 
