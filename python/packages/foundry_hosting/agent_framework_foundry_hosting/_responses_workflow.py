@@ -37,6 +37,7 @@ from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import CreateResponse, ResponseObject, ResponseStreamEvent
+from azure.ai.agentserver.responses.models._helpers import get_input_expanded
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from pydantic import BaseModel
 from starlette.requests import Request
@@ -45,7 +46,6 @@ from starlette.routing import Route
 from starlette.types import Send
 
 from ._feature_usage import FeatureIndex
-from ._responses_preflight import bind_approval_preflight, has_unresolved_input, preflight_workflow_approvals
 from ._responses_shared import (
     _HOSTED_PROVIDER_USAGE_KEY,  # pyright: ignore[reportPrivateUsage]
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
@@ -164,8 +164,8 @@ def _snapshot(stream: ResponseEventStream) -> dict[str, Any]:
 async def _load_replies(request: ResponsesRequest, run: HostedWorkflowRun) -> dict[str, Any]:
     items = await request.get_input_items()
     if not run.pending_requests or not items:
-        raise _WorkflowRequestError("Workflow replies require an exact pending stored checkpoint.")
-    if has_unresolved_input(request.request, items):
+        raise _WorkflowRequestError("Workflow replies require a pending stored checkpoint.")
+    if len(get_input_expanded(cast(CreateResponse, request.request))) != len(items):
         raise _WorkflowRequestError("Pending workflow replies cannot include unresolved input references.")
     replies: dict[str, Any] = {}
     for input_item in items:
@@ -176,12 +176,11 @@ async def _load_replies(request: ResponsesRequest, run: HostedWorkflowRun) -> di
                 raise _WorkflowRequestError("An approval reply requires its exact ID and a boolean decision.")
             request_id = run.approvals.get(wire_id)
             pending = run.pending_requests.get(request_id) if request_id is not None else None
-            if (
-                pending is None
-                or not isinstance(pending.data, Content)
-                or pending.data.type != "function_approval_request"
-            ):
-                raise _WorkflowRequestError("The approval is unavailable in this exact pending checkpoint.")
+            if request_id is None or pending is None:
+                logger.warning("Ignoring an approval reply that is not pending in this workflow checkpoint.")
+                continue
+            if not isinstance(pending.data, Content) or pending.data.type != "function_approval_request":
+                raise _WorkflowRequestError("An approval reply cannot answer a non-approval workflow request.")
             response = pending.data.to_function_approval_response(decision)
         elif item.get("type") in ("function_call_output", "computer_call_output"):
             call_id = item.get("call_id")
@@ -189,7 +188,8 @@ async def _load_replies(request: ResponsesRequest, run: HostedWorkflowRun) -> di
                 raise _WorkflowRequestError("A workflow reply requires its pending call ID.")
             request_id = run.approvals.get(call_id)
             if request_id is None or request_id not in run.pending_requests:
-                raise _WorkflowRequestError("A reply must match its wire ID in the exact pending workflow checkpoint.")
+                logger.warning("Ignoring a workflow reply that is not pending in this workflow checkpoint.")
+                continue
             pending = run.pending_requests[request_id]
             if isinstance(pending.data, Content) and pending.data.type == "function_approval_request":
                 raise _WorkflowRequestError("An approval cannot be replaced by a function result.")
@@ -220,11 +220,9 @@ async def _load_replies(request: ResponsesRequest, run: HostedWorkflowRun) -> di
                         raise _WorkflowRequestError("A typed workflow reply must contain valid JSON.") from exc
         else:
             raise _WorkflowRequestError("Pending workflow replies cannot be mixed with new input.")
-        if request_id is None or request_id in replies:
+        if request_id in replies:
             raise _WorkflowRequestError("Duplicate workflow replies are not allowed.")
         replies[request_id] = response
-    if set(replies) != set(run.pending_requests):
-        raise _WorkflowRequestError("Answer exactly the complete pending workflow request batch.")
     validated = run.validate_turn(WorkflowTurn(responses=replies))
     return dict(validated.responses or {})
 
@@ -412,11 +410,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
         self._prepare_options = prepare_options
         self._resilient_background = enable_background_recovery
         self._allowed_origins = allowed_origins
-        bind_approval_preflight(
-            self,
-            prefix=prefix,
-            preflight=lambda request, context, platform: preflight_workflow_approvals(request, context, platform, self),
-        )
         self._bind_streaming_route(
             prefix=prefix,
             keep_alive=bool(
@@ -646,6 +639,18 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
                 await abort()
                 return
             phase = "final output persistence"
+            if run.stored and not run.has_completed_output:
+                # Core does not re-emit requests left unanswered by a partial reply; project them under new wire IDs.
+                checkpoint = await run.get_checkpoint(run.checkpoint_id)
+                projected = set(aliases.values()) | {
+                    event.request_id for event in buffered if event.type == "request_info"
+                }
+                if checkpoint is not None:
+                    buffered.extend(
+                        event
+                        for request_id, event in checkpoint.pending_request_info_events.items()
+                        if request_id not in projected
+                    )
             if buffered:
                 for event in await flush(run.checkpoint_id):
                     yield wire(event)

@@ -35,7 +35,7 @@ from agent_framework import (
 )
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
-from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
+from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
     ResponseContext,
     ResponseProviderProtocol,
@@ -51,14 +51,8 @@ from azure.ai.agentserver.responses.models import (
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 
-from ._approvals import SessionApprovalState, _InvalidApproval  # pyright: ignore[reportPrivateUsage]
+from ._approvals import SessionApprovalState
 from ._feature_usage import FeatureIndex
-from ._responses_preflight import (
-    _InvalidApprovalInput,  # pyright: ignore[reportPrivateUsage]
-    approval_controls,
-    bind_approval_preflight,
-    has_unresolved_input,
-)
 from ._responses_shared import (
     _HOSTED_CONVERSATION_CLAIM_KEY,  # pyright: ignore[reportPrivateUsage]
     _HOSTED_CONVERSATION_COMMITTED_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -280,8 +274,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             prefix: The URL prefix for the server.
             response_store: Optional response store for caller-facing persistence and history.
             agent_session_store_provider: Optional provider for MAF agent session storage.
-                If not provided, a default `AgentSessionStoreProvider` will be used. Approval continuations require
-                atomic create-only and revision-conditional writes in this store.
+                If not provided, a default `AgentSessionStoreProvider` will be used. MCP approval
+                continuations use the same saved `AgentSession`.
             allowed_oauth_consent_origins: Optional exact HTTPS origins allowed for OAuth consent links.
                 When omitted, hosting retains its existing safe-HTTPS validation without restricting the
                 destination origin. When provided, every link must match an entry; an empty sequence rejects
@@ -414,7 +408,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self._session_storage_provider = (
             AgentSessionStoreProvider() if agent_session_store_provider is None else agent_session_store_provider
         )
-        bind_approval_preflight(self, prefix=prefix, preflight=self._preflight_approvals)
 
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
@@ -427,38 +420,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self.response_handler(self._handle_response)
 
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
-
-    async def _preflight_approvals(
-        self,
-        request: CreateResponse,
-        context: ResponseContext,
-        platform_context: FoundryAgentRequestContext,
-    ) -> None:
-        items = [cast(Mapping[str, Any], item) for item in await context.get_input_items()]
-        ids = approval_controls(items)
-        previous = request.get("previous_response_id")
-        previous = previous if isinstance(previous, str) and previous else None
-        session_id = context.conversation_id or previous
-        if session_id is None:
-            if ids:
-                raise _InvalidApprovalInput("The approval has no pending agent session.")
-            return
-        storage = self._session_storage_provider.get_store(config=self.config, platform_context=platform_context)
-        session = await storage.get(session_id)
-        if session is None:
-            if ids:
-                raise _InvalidApprovalInput("The approval is unavailable in this agent session.")
-            return
-        state = SessionApprovalState(session, storage)
-        try:
-            claim = await state.preflight(ids)
-        except _InvalidApproval as exc:
-            raise _InvalidApprovalInput(str(exc)) from exc
-        if claim is not None:
-            if request.get("store") is False:
-                raise _InvalidApprovalInput("Approval continuation requires store=true.")
-            if len(items) != len(ids) or has_unresolved_input(request, items):
-                raise _InvalidApprovalInput("Pending MCP approvals cannot be mixed with other input.")
 
     async def _ensure_agent_ready(self) -> None:
         """Lazily enter the agent's async context exactly once.
@@ -800,7 +761,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         async def _load_input() -> list[Message]:
             input_items = await context.get_input_items()
             resolved_storage = await approval_ready if approval_ready is not None else approval_storage
-            return await _items_to_messages(input_items, approval_storage=resolved_storage)
+            messages = await _items_to_messages(input_items, approval_storage=resolved_storage)
+            if (
+                input_items
+                and not messages
+                and all(cast(Mapping[str, Any], item).get("type") == "mcp_approval_response" for item in input_items)
+            ):
+                # Do not run the model, or consume a single-use parent, when every reply was dropped.
+                raise _PublicResponseFailure(ValueError("No approval reply matches a request in this session."))
+            return messages
 
         async def _load_history() -> list[Message]:
             if not uses_agent_server_history:
@@ -926,6 +895,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if stored or session_load_id is not None
                 else None
             )
+            # Reads start before the session loads; wire-ID translation waits for the session's approval map.
             approval_ready: asyncio.Future[SessionApprovalState] = asyncio.get_running_loop().create_future()
             request_messages_task = asyncio.ensure_future(
                 self._load_request_messages(
@@ -953,19 +923,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         )
                     )
                 session = agent.create_session()
-            approval_session = stored_session or session
-            approval_storage = SessionApprovalState(approval_session, session_storage, response_id=context.response_id)
-            input_items = [cast(Mapping[str, Any], item) for item in await context.get_input_items()]
-            try:
-                approval_ids = approval_controls(input_items)
-                approval_claim = await approval_storage.preflight(approval_ids)
-                if approval_claim is not None:
-                    if not stored:
-                        raise _InvalidApprovalInput("Approval continuation requires store=true.")
-                    if len(input_items) != len(approval_ids) or has_unresolved_input(request, input_items):
-                        raise _InvalidApprovalInput("Pending MCP approvals cannot be mixed with other input.")
-            except (_InvalidApproval, _InvalidApprovalInput) as exc:
-                raise _PublicResponseFailure(exc) from None
+            # Core's session approval tracking binds and consumes replies; this map only translates wire IDs.
+            approval_storage = SessionApprovalState(session)
             approval_ready.set_result(approval_storage)
             provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
             if context.conversation_id is not None:
@@ -1121,9 +1080,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 finally:
                     session.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
 
-            if approval_claim is not None:
-                await approval_storage.claim(approval_claim, response_id=context.response_id)
-
             consent_scope = _activate_toolbox_consent_scope(allowed_origins=self._allowed_oauth_consent_origins)
 
             async def track_update(
@@ -1270,13 +1226,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     cancellation_signal.is_set() and not context.client_cancelled and not context.shutdown.is_set()
                 )
                 if stored and session_storage is not None and not stored_output_violation and final_provider_state:
-                    if (
-                        request_failure is None
-                        and not request_interrupted
-                        and not context.shutdown.is_set()
-                        and not cancellation_signal.is_set()
-                    ):
-                        await approval_storage.seal()
                     if context.conversation_id is not None:
                         session.state[_HOSTED_SOURCE_CONVERSATION_KEY] = context.conversation_id
                     await _set_agent_session(session_storage, context.response_id, session)

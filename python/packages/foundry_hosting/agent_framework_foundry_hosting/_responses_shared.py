@@ -92,16 +92,16 @@ from azure.ai.agentserver.responses.streaming._builders import (
 )
 from mcp import MCPError
 
-from ._approvals import SessionApprovalState
+from ._approvals import SessionApprovalState, _InvalidApproval  # pyright: ignore[reportPrivateUsage]
 
 logger = logging.getLogger(__name__)
 
 
 class _ApprovalRecorder(Protocol):
-    """Approval-request recorder used by the output tracker before an approval item is yielded.
+    """Records the wire ID of each approval item before the output tracker yields it.
 
-    Implementations may only stage the mapping; the host must keep the yielded events buffered until the staged
-    approval batch is durable.
+    The mapping only translates IDs. The host must buffer the yielded events until the state that holds the
+    mapping is saved.
     """
 
     async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
@@ -1114,8 +1114,8 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
                 logical message and forces the previous output item closed, rather than being
                 merged into it.
             approval_storage: Recorder that receives each ``function_approval_request`` under its generated
-                public ID before the approval item event is yielded. Recording may only stage the mapping; the
-                host must buffer yielded approval events until the staged batch is durable.
+                public ID before the approval item event is yielded. The host must buffer yielded approval
+                events until the state that holds the mapping is saved.
             start_new_content_part: Whether text and refusal content start a new independent
                 content part instead of continuing the current streaming occurrence.
         """
@@ -1694,7 +1694,10 @@ async def _items_to_messages(  # pyright: ignore[reportUnusedFunction]
     """
     messages: list[Message] = []
     for item in input_items:
-        messages.append(await _item_to_message(item, approval_storage=approval_storage))
+        try:
+            messages.append(await _item_to_message(item, approval_storage=approval_storage))
+        except _InvalidApproval as exc:
+            _log_dropped_approval(exc)
     return messages
 
 
@@ -1786,6 +1789,17 @@ def _shell_command_output_to_content(output: Mapping[str, Any]) -> Content:
     )
 
 
+async def _load_approval_request(approval_storage: SessionApprovalState | None, wire_id: str) -> Content:
+    if approval_storage is None:
+        raise ValueError("ApprovalStorage is required to load approval request.")
+    return await approval_storage.load_approval_request(wire_id)
+
+
+def _log_dropped_approval(exc: _InvalidApproval) -> None:
+    # Core authorizes approvals against the session's pending requests; an unknown wire ID is dropped.
+    logger.warning("Ignoring an MCP approval item: %s", exc)
+
+
 async def _item_to_message(
     item: Item,
     *,
@@ -1805,6 +1819,7 @@ async def _item_to_message(
 
     Raises:
         ValueError: If the Item type is not supported.
+        _InvalidApproval: If an MCP approval item's wire ID is not in the session.
     """
     if item["type"] == "message":
         if isinstance(item["content"], str):
@@ -1881,32 +1896,12 @@ async def _item_to_message(
         )
 
     if item["type"] == "mcp_approval_request":
-        if approval_storage is not None:
-            try:
-                function_approval_request_content = await approval_storage.load_approval_request(item["id"])
-            except (KeyError, ValueError) as exc:
-                raise _PublicResponseFailure(exc) from None
-        else:
-            raise ValueError("ApprovalStorage is required to load approval request.")
-        return Message(
-            role="assistant",
-            contents=[function_approval_request_content],
-        )
+        request_content = await _load_approval_request(approval_storage, item["id"])
+        return Message(role="assistant", contents=[request_content])
 
     if item["type"] == "mcp_approval_response":
-        if approval_storage is not None:
-            try:
-                function_approval_request_content = await approval_storage.load_approval_request(
-                    item["approval_request_id"]
-                )
-            except (KeyError, ValueError) as exc:
-                raise _PublicResponseFailure(exc) from None
-        else:
-            raise ValueError("ApprovalStorage is required to load approval request.")
-        return Message(
-            role="user",
-            contents=[function_approval_request_content.to_function_approval_response(item["approve"])],
-        )
+        request_content = await _load_approval_request(approval_storage, item["approval_request_id"])
+        return Message(role="user", contents=[request_content.to_function_approval_response(item["approve"])])
 
     if item["type"] == "code_interpreter_call":
         return Message(
@@ -2107,7 +2102,10 @@ async def _output_items_to_messages(  # pyright: ignore[reportUnusedFunction]
     """
     messages: list[Message] = []
     for item in history:
-        messages.append(await _output_item_to_message(item, approval_storage=approval_storage))
+        try:
+            messages.append(await _output_item_to_message(item, approval_storage=approval_storage))
+        except _InvalidApproval as exc:
+            _log_dropped_approval(exc)
     return messages
 
 
@@ -2124,6 +2122,7 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Session
 
     Raises:
         ValueError: If the OutputItem type is not supported.
+        _InvalidApproval: If an MCP approval item's wire ID is not in the session.
     """
     if item["type"] == "oauth_consent_request":
         item_data = cast("Mapping[str, Any]", item)

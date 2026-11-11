@@ -25,7 +25,6 @@ from agent_framework_foundry_hosting._responses_shared import (
     _items_to_messages,
     _output_items_to_messages,
     _OutputItemTracker,
-    _PublicResponseFailure,
 )
 
 from .approval_helpers import (  # pyrefly: ignore[missing-import] - pytest's importlib namespace
@@ -105,7 +104,7 @@ async def test_history_and_input_conversions_only_read_approval_state(tmp_path: 
         assert stored.to_dict() == expected
 
 
-async def test_unknown_input_conversion_does_not_mutate_session(tmp_path: Path) -> None:
+async def test_unknown_input_approval_is_dropped_without_mutating_session(tmp_path: Path) -> None:
     store = SqliteSessionStore(tmp_path / "sessions.db")
     session = await pending_session(store)
     state = SessionApprovalState(session)
@@ -116,9 +115,10 @@ async def test_unknown_input_conversion_does_not_mutate_session(tmp_path: Path) 
         MCPApprovalResponse({"type": "mcp_approval_response", "approval_request_id": "missing", "approve": False}),
     ]
 
-    with pytest.raises(_PublicResponseFailure, match="not in this session"):
-        await _items_to_messages(items, approval_storage=state)
+    messages = await _items_to_messages(items, approval_storage=state)
 
+    assert len(messages) == 1
+    assert messages[0].contents[0].id == "approval-0"
     assert session.to_dict() == session_before
     assert store.write_count == writes_before
 
@@ -142,11 +142,10 @@ async def test_unknown_input_conversion_does_not_mutate_session(tmp_path: Path) 
     ],
     ids=["request", "response"],
 )
-async def test_history_conversion_rejects_unknown_approval_ids(item: OutputItem) -> None:
+async def test_history_conversion_drops_unknown_approval_ids(item: OutputItem) -> None:
     state = SessionApprovalState(AgentSession())
 
-    with pytest.raises(_PublicResponseFailure, match="not in this session"):
-        await _output_items_to_messages([item], approval_storage=state)
+    assert await _output_items_to_messages([item], approval_storage=state) == []
 
 
 @pytest.mark.parametrize(

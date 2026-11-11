@@ -462,7 +462,7 @@ The Responses agent response has status `incomplete`, and its output contains:
 
 The host emits a consent request for one `(consent_link, server_label)` pair only once in a response. Non-streaming
 calls return these items in the final response. Streaming calls give the same items. The host buffers them and
-publishes them only after it saves the approval authority and the session snapshots.
+publishes them only after it saves the session snapshots.
 
 Other tool calls in the same run behave as follows:
 
@@ -531,9 +531,8 @@ encoding of the store name. For example:
 - Responses agent sessions: `YWdlbnRfc2Vzc2lvbnM.json`
 - Workflow checkpoints: one file per context, encoded from `checkpoints/<context_id>`
 
-The file-based fallback supports ordinary session and checkpoint persistence, but cannot atomically
-publish or claim agent approvals across processes. Local approval flows require a custom conditional
-session store; see [Function approvals](#function-approvals).
+The file-based fallback supports ordinary session and checkpoint persistence, including pending agent
+approvals. It coordinates writers within one process only.
 
 > Read more about the Foundry durable state store in the [developer guide](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/agentserver/azure-ai-agentserver-core/docs/state-store-guide.md).
 
@@ -608,7 +607,7 @@ The committed head also records its completing outer response ID. If a crash occ
 outer completion, that response can recover its saved final output without reclaiming or rewriting the head.
 A different in-flight claim or completing response is not accepted as ownership.
 When continuing by `previous_response_id`, the prior response is claimed with a conditional write **after**
-the input is validated, so an invalid approval response does not consume a usable parent. A second branch
+the input is validated, so invalid input does not consume a usable parent. A second branch
 cannot reuse the same downstream service thread; attempting to fork a named service conversation is also rejected.
 New hosted keys are created only if absent. Custom store providers must provide equivalent scoped conditional
 writes for concurrent turns, including the pre-dispatch claim. Local callers can still upsert directly without
@@ -677,80 +676,39 @@ locally. Stored checkpoints are scoped under `checkpoints`.
 
 ### Function approvals
 
-`ResponsesHostServer` persists agent approval state through the same configured
-`agent_session_store_provider` used for `AgentSession` snapshots. Approval authority belongs to
-one pending response in the same trusted user/sandbox scope. Response and conversation snapshots
-retain history and a link to that authority; they are not independent sources of permission.
-Native workflow pending replies remain checkpoint-owned, not agent-session approvals.
+`ResponsesHostServer` uses the framework's built-in approval handling. Core records each pending
+`function_approval_request` in the `AgentSession`, and the host saves that session with the configured
+`agent_session_store_provider`. When a reply arrives, the host loads the same session and translates each
+`mcp_approval_response` to a `function_approval_response`. Core binds the reply to its recorded request,
+rebuilds the call from that request, and consumes it. A reply that matches no pending request is not executed.
+
+The SDK generates the wire ID of each `mcp_approval_request` item. The host keeps a map from that wire ID to
+the original request in the same session state. The map only translates IDs; it does not authorize execution.
+Custom session stores need only the ordinary `SessionStore` operations.
+
+- Approvals and rejections may be mixed in one reply.
+- A partial reply is allowed. Core holds the batch until every request has a reply, and the response emits the
+  unanswered requests again under new wire IDs. Reply to those new IDs.
+- The host drops a reply with an unknown wire ID and logs a warning. A turn whose input contains only dropped
+  replies fails.
+- Invalid replies are not rejected before the response starts. They produce a failed response instead of an
+  HTTP 400.
+- `store=false` cannot persist or resume pending approvals.
+- Concurrent replies, forks, and retries have the same guarantees as any agent run that shares a session.
+  Approval handling does not provide exactly-once tool side effects.
+
+Native workflows keep pending replies in their `request_info` requests and checkpoint, not in an agent session.
+`ResponsesWorkflowHostServer` maps wire IDs to request IDs in the checkpoint binding. A partial reply runs the
+answered requests, and the response emits the unanswered requests again under new wire IDs. A reply that the
+workflow runtime rejects before its first superstep, such as an unknown request ID or a mismatched reply type,
+fails the turn and leaves the lineage head unchanged, so a valid reply can be retried. A failure after a
+superstep starts blocks that lineage.
 
 **Migration/reset:** pending approvals from the old separate function-approval store are not
 migrated. Start a fresh conversation without an old `previous_response_id` or conversation ID and
 obtain fresh approvals. Do not copy legacy approval records into session state.
 The public `FunctionApprovalStore`, `FoundryFunctionApprovalStore`, and `FunctionApprovalStoreProvider`
 exports and the `function_approval_store_provider=` constructor setting are removed.
-Missing or expired authority fails closed, even when a snapshot still contains the historical
-request. Retained approval history does not authorize another tool execution.
-
-#### Custom conditional session stores
-
-A custom store used for agent approvals must implement ordinary `SessionStore` operations and
-these additional async methods. This is a structural capability; no extra public protocol or
-private framework import is required.
-
-- `get_with_revision(session_id)` returns an independent `AgentSession` snapshot and its exact,
-  nonempty, opaque revision, or exactly `(None, None)` when absent.
-- `compare_and_set(session_id, session, *, expected_revision)` returns the nonempty revision of the
-  persisted version. `expected_revision=None` means atomic **create only**; a nonempty revision
-  means replace only that exact existing version.
-
-Revisions must identify exact persisted versions and must never be reused after writes. A read's
-revision belongs to that read, not to mutable per-request ETag state shared by multiple reads.
-Conflicts raise `RuntimeError` or a subtype; never retry as an unconditional upsert. Storage I/O
-errors and cancellation propagate. A write acknowledgement without a revision is a failure, even
-if the backend stored the value.
-
-Storage lookup keys need not equal the snapshot's inner `AgentSession.session_id`. Support opaque
-keys, including keys containing `/`, and preserve the inner session ID. Ordinary response or
-conversation alias cleanup must not delete approval authority. Custom providers own retention:
-alias and authority lifetimes are independent, and authority is never recreated from an alias
-after it expires.
-
-The default hosted Foundry store uses server-side create-only and ETag-conditional writes.
-The default non-hosted store rejects approval writes with an explicit error requiring
-`get_with_revision` and `compare_and_set`. A single-process development store can coordinate only
-its own process; production and multi-worker stores must coordinate all writers through the
-backend. A process-local lock is not cross-process CAS.
-
-#### Approval batches and failure boundaries
-
-Reply to the complete pending approval batch. Approvals and rejections may be mixed, but omitted,
-duplicate, stale, or foreign controls are invalid. Publishing pending authority requires
-`store=true`; `store=false` cannot publish or resume host-managed approvals.
-
-Both Responses hosts perform a read-only MCP approval preflight. Invalid or incomplete batches return
-HTTP 400 before headers, `response.created`, parsing, or protected execution, without consuming usable
-authority. A conversation with pending approvals also rejects a plain new turn; finish its pending batch
-instead. Unsupported state formats, missing conditional-store capability, and storage failures are not
-classified as invalid approval controls.
-
-The handler independently revalidates the batch and claims it only after other input/options checks and
-reservations. A competing request can win between preflight and claim: the losing request can therefore
-fail after streaming starts, but does not dispatch protected work.
-Supplying a duplicate response ID through `x-agent-response-id` or body `response_id` does not bypass
-preflight. After a successful claim, repeating the complete approval continuation is rejected with HTTP 400,
-not replayed as another execution. Non-approval redelivery still delegates to AgentServer; this is not a
-general idempotency guarantee.
-
-Claiming a batch is an irreversible conditional transition before protected execution. It does
-not provide exactly-once tool side effects: a crash after a successful claim can lose work.
-A failed or cancelled claim write may already have committed. Do not reopen the batch or
-automatically dispatch the protected work after an uncertain result.
-Reconcile any external effects before deciding what to retry; start a fresh conversation and obtain fresh
-approvals for new work rather than reusing consumed or uncertain authority.
-
-Approval history is bounded to 1,024 requests and 1 MiB of serialized approval-content JSON.
-Exceeding either bound fails explicitly and requires a fresh conversation; history is not silently
-pruned.
 
 ## Native Invocations workflows
 
@@ -802,10 +760,11 @@ caller JSON cannot assert factory ownership.
 The workflow uses one fixed Invocations lineage inside the trusted user and
 platform sandbox scope. Later turns restore the **exact** committed checkpoint,
 not a workflow name's unrelated latest checkpoint. Graph changes, stale writers,
-forged/cross-scope/replayed decisions and duplicate authority fail before
-executor/response-handler dispatch. Reply with the complete pending batch:
-partial, unallowlisted, or invalid batches do not claim or consume any usable
-authority, so the complete valid batch can be retried. Native factories
+cross-scope and replayed replies fail before executor/response-handler dispatch.
+A partial reply runs the answered requests; the rest stay pending under their
+request IDs. Unallowlisted batches are rejected before the turn is claimed. A
+reply that the workflow runtime rejects before its first superstep fails the turn
+and leaves the head unchanged, so a valid reply can be retried. Native factories
 and explicit `client_kwargs`/`function_invocation_kwargs` keep their existing
 purposes; they do not introduce arbitrary entry-state or per-executor run-option
 APIs. Host-controlled identity, storage and execution controls cannot be supplied
@@ -824,8 +783,8 @@ then `done` with the **sandbox** `session_id`. Live output is provisional until
 is conditionally committed. Snapshot retention is bounded by both event count and
 encoded bytes; exceeding either limit fails the turn without `done`. A conflict,
 encoding failure, execution failure or
-interruption cannot emit successful completion. Failed claimed turns are blocked
-to avoid replaying uncertain effects; start a new sandbox instead of blindly
+interruption cannot emit successful completion. Turns that fail after their first
+superstep starts are blocked to avoid replaying uncertain effects; start a new sandbox instead of blindly
 retrying non-idempotent work. Checkpoints do not provide exactly-once tool effects.
 If a connection drops after commit, retrying the same trusted user/sandbox/call ID
 replays that response's complete stored snapshot without executing the workflow or

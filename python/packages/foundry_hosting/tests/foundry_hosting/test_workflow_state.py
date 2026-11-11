@@ -30,6 +30,7 @@ from agent_framework import (
     response_handler,
 )
 from agent_framework._workflows._const import RESOLVED_WORKFLOW_RUN_KWARGS_KEY
+from agent_framework.exceptions import AgentInvalidResponseException
 from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
 from azure.ai.agentserver.core.storage import FoundryStorageConflictError, FoundryStoragePreconditionError
 
@@ -112,6 +113,25 @@ class _Approval(Executor):
     @response_handler
     async def decide(self, request: Content, response: Content, ctx: WorkflowContext[str, str]) -> None:
         await ctx.yield_output("approved" if response.approved else "rejected")
+
+
+class _Computer(Executor):
+    def __init__(self) -> None:
+        super().__init__("computer")
+
+    @handler
+    async def start(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+        call = Content.from_computer_tool_call(
+            id="item-1",
+            call_id="computer-1",
+            actions=[{"type": "screenshot"}],
+            pending_safety_checks=[{"id": "check-1", "code": "risk", "message": message}],
+        )
+        await ctx.request_info(call, Content, request_id="computer-1")
+
+    @response_handler
+    async def done(self, request: Content, response: Content, ctx: WorkflowContext[str, str]) -> None:
+        await ctx.yield_output(f"computer:{response.call_id}")
 
 
 class _Loop(Executor):
@@ -546,42 +566,70 @@ async def test_graph_and_name_mismatch(changed: Workflow) -> None:
         await _prepare("two", workflow=changed, lineage_id="invocations")
 
 
-async def test_partial_and_invalid_replies_do_not_claim_or_consume() -> None:
+async def test_invalid_replies_fail_before_superstep_and_release_the_head() -> None:
     first = await _prepare("one", workflow=_workflow(_Review()))
     await _finish(first, WorkflowTurn(input="review"))
-    second = await _prepare("two", workflow=_workflow(_Review()), previous_response_id="one")
-    for replies in ({"first": True}, {"first": True, "forged": False}, {"first": {}, "second": True}):
+    for index, replies in enumerate(({"first": True, "forged": False}, {"first": {}, "second": True})):
+        attempt = await _prepare(f"bad-{index}", workflow=_workflow(_Review()), previous_response_id="one")
+        turn = attempt.validate_turn(WorkflowTurn(responses=replies))
+        await attempt.claim()
         with pytest.raises(ValueError):
-            second.validate_turn(WorkflowTurn(responses=replies))
-        head, _ = await second.store.get_head("one", None)
-        assert head is not None and head.response_id is None
-    assert await _finish(second, WorkflowTurn(responses={"first": True, "second": False})) == [
-        "review:True",
-        "review:False",
-    ]
+            async for _ in attempt.events(turn):
+                pass
+        await attempt.abort()
+        head, _ = await attempt.store.get_head("one", None)
+        assert head is not None and head.response_id is None and not head.blocked
+        assert await attempt.store.get_response(f"bad-{index}") == (None, None)
+
+    partial = await _prepare("partial", workflow=_workflow(_Review()), previous_response_id="one")
+    assert await _finish(partial, WorkflowTurn(responses={"first": True})) == ["review:True"]
+    rest = await _prepare("rest", workflow=_workflow(_Review()), previous_response_id="partial")
+    assert set(rest.pending_requests) == {"second"}
+    assert await _finish(rest, WorkflowTurn(responses={"second": False})) == ["review:False"]
     with pytest.raises(WorkflowConflictError, match="stale or forked"):
         await _prepare("replay", workflow=_workflow(_Review()), previous_response_id="one")
 
 
-async def test_forged_embedded_approval_is_rejected_before_consumption() -> None:
-    first = await _prepare("one", workflow=_workflow(_Approval()))
-    await _finish(first, WorkflowTurn(input="/safe"))
-    second = await _prepare("two", workflow=_workflow(_Approval()), previous_response_id="one")
-    pending = second.pending_requests["approval-1"].data
-    forged = Content.from_function_call("call-1", "delete", arguments={"path": "/forged"}, id="approval-1")
-    with pytest.raises(ValueError, match="exact pending"):
-        second.validate_turn(
-            WorkflowTurn(
-                responses={
-                    "approval-1": Content.from_function_approval_response(True, "approval-1", forged),
-                }
-            )
-        )
-    decision = pending.to_function_approval_response(True)
-    assert await _finish(second, WorkflowTurn(responses={"approval-1": decision})) == ["approved"]
+async def test_unacknowledged_computer_result_releases_the_head_for_a_valid_retry() -> None:
+    first = await _prepare("one", workflow=_workflow(_Computer()))
+    await _finish(first, WorkflowTurn(input="review"))
+    unacknowledged = Content.from_computer_tool_result(call_id="computer-1")
+    attempt = await _prepare("bad", workflow=_workflow(_Computer()), previous_response_id="one")
+    turn = attempt.validate_turn(WorkflowTurn(responses={"computer-1": unacknowledged}))
+    await attempt.claim()
+    with pytest.raises(AgentInvalidResponseException, match="safety checks"):
+        async for _ in attempt.events(turn):
+            pass
+    await attempt.abort()
+    head, _ = await attempt.store.get_head("one", None)
+    assert head is not None and head.response_id is None and not head.blocked
+
+    acknowledged = Content.from_computer_tool_result(
+        call_id="computer-1", acknowledged_safety_checks=[{"id": "check-1", "code": "risk", "message": "review"}]
+    )
+    retry = await _prepare("retry", workflow=_workflow(_Computer()), previous_response_id="one")
+    assert await _finish(retry, WorkflowTurn(responses={"computer-1": acknowledged})) == ["computer:computer-1"]
 
 
-async def test_racing_claims_consume_authority_once() -> None:
+async def test_failure_after_first_superstep_still_blocks_the_lineage() -> None:
+    first = await _prepare("one", workflow=_workflow(_Review()))
+    await _finish(first, WorkflowTurn(input="review"))
+    attempt = await _prepare("bad", workflow=_workflow(_Review()), previous_response_id="one")
+    turn = attempt.validate_turn(WorkflowTurn(responses={"first": True, "second": False}))
+    await attempt.claim()
+    events = attempt.events(turn)
+    async for event in events:
+        if event.type == "superstep_started":
+            break
+    await events.aclose()
+    await attempt.abort()
+    head, _ = await attempt.store.get_head("one", None)
+    assert head is not None and head.blocked
+    with pytest.raises(WorkflowBlockedError):
+        await _prepare("retry", workflow=_workflow(_Review()), previous_response_id="one")
+
+
+async def test_racing_claims_admit_one_and_pre_superstep_abort_releases() -> None:
     first = await _prepare("one")
     await _finish(first, WorkflowTurn(input=1))
     left = await _prepare("left", previous_response_id="one")
@@ -592,8 +640,8 @@ async def test_racing_claims_consume_authority_once() -> None:
     with pytest.raises(RuntimeError, match="Another request"):
         await right.claim()
     await left.abort()
-    with pytest.raises(RuntimeError, match="fresh workflow lineage"):
-        await _prepare("retry", previous_response_id="one")
+    retry = await _prepare("retry", previous_response_id="one")
+    assert await _finish(retry, WorkflowTurn(input=1)) == [2]
 
 
 @pytest.mark.parametrize("error", [FoundryStorageConflictError, FoundryStoragePreconditionError])

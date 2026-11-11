@@ -57,8 +57,8 @@ remain experimental. Separate classes do not require separate distribution packa
 ### Request adaptation and construction
 
 Use `parse_input` for custom input adaptation across both protocols. Agent parsers return `InvocationRun`;
-workflow parsers return `WorkflowTurn` containing either typed start input or complete pending replies.
-Parsing does not replace the host's checkpoint and pending-authority validation.
+workflow parsers return `WorkflowTurn` containing either typed start input or pending replies.
+Parsing does not replace the host's checkpoint binding or the workflow runtime's reply validation.
 Use `ResponsesRequest` for the Responses wrapper, including factory and option-hook inputs.
 Do not retain aliases for the former parser keywords or request-type name.
 
@@ -91,7 +91,7 @@ not request-owned instance fields.
 ### Persistence and history ownership
 
 Regular agents continue through agent-session storage. Native workflows continue through their exact
-scoped checkpoints, including pending-reply authority. Neither execution model converts the other's state.
+scoped checkpoints, including pending `request_info` requests. Neither execution model converts the other's state.
 Native workflow agents use checkpoint-owned history, not private inference-service continuation.
 
 Keep three storage decisions distinct:
@@ -151,28 +151,29 @@ or other request-option precedence.
 
 ### Approvals and consent
 
-Use session-backed authority for regular-agent approvals rather than a separate public approval-store API.
-Native workflow pending authority remains checkpoint-owned. Keep one canonical pending batch in the configured
-session store; response and conversation aliases retain history and a link, not independent permission.
-Require structural `get_with_revision` and `compare_and_set` methods with create-only and exact-revision
-semantics. Foundry-managed storage uses AgentServer's create-only and conditional-write primitives without
-assumptions about its underlying topology. Custom providers must coordinate all writers; a process-local
-lock does not provide cross-process approval authority. Old separate-store approvals require a fresh
-conversation, not a silent migration.
+Use the framework's built-in approval handling and do not add a host approval authority.
+Regular agents keep pending approval requests in the same `AgentSession` that the host loads and saves through
+the configured session store. Core binds each approval response to a recorded pending request, rebuilds the call
+from that request, and consumes it. The host stores only a translation map from the SDK-generated wire item ID to
+the original request in that session's state. This map does not authorize execution. Native workflows use
+`request_info` and their exact checkpoint; the host translates wire IDs to request IDs in its checkpoint binding.
+There is no separate public approval-store API, no conditional-write capability for custom session stores, and no
+silent migration of old separate-store approvals.
 
-Reject incomplete hosted MCP approval sets with HTTP 400 before streaming, response headers,
-`response.created`, or protected dispatch, without consuming pending authority.
-A complete batch may mix approvals and rejections.
-Revalidate and claim authority after other reservations and before protected dispatch. A race after preflight
-can still fail after streaming starts. A consumed or uncertain claim is not reopened automatically, including
-when the client repeats the same response ID. Non-approval redelivery retains the SDK's behavior.
-No claim provides exactly-once external side effects.
+Do not preflight approval replies before the response starts. The host drops a reply with an unknown wire ID
+with a warning, and the framework does not execute a reply that matches no pending request. A turn whose input
+contains only dropped replies fails. Partial batches follow the framework: an agent holds the batch until every
+request has a reply, and a workflow runs the answered requests. Responses hosts emit requests that are still
+pending again under new wire IDs; Invocations workflows keep their request IDs. A batch may mix approvals and rejections. A workflow reply that the runtime rejects before its first superstep releases the
+lineage head unchanged; a failure after a superstep starts blocks that lineage. Concurrent replies, forks, and
+retries have the same guarantees as any agent run with a shared session or any workflow checkpoint resume.
+No path provides exactly-once external side effects.
 
 Represent invocation-time OAuth consent as structured consent with incomplete response status.
 Pair each emitted function call with one terminal result, preserve completed sibling results, and stop
 later protected calls. Require `store=true` so continuation can retain the required state;
 do not support ephemeral consent under `store=false`.
-Buffer authority-bearing output until authority and snapshots are saved. Invocation-time consent with
+Buffer consent and approval output until the session snapshots are saved. Invocation-time consent with
 inference-service history is unsupported and fails explicitly; connection-time consent remains separate.
 A consent failure after execution starts is a failed response, not a pre-header HTTP 400.
 
