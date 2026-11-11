@@ -9,9 +9,14 @@ import pytest
 from agent_framework import AgentSession, Content, WorkflowCheckpoint, WorkflowCheckpointException
 from agent_framework._workflows._checkpoint_encoding import encode_checkpoint_value
 from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
-from azure.ai.agentserver.core.storage import FoundryStateStore, FoundryStorageConflictError
+from azure.ai.agentserver.core.storage import (
+    FoundryStateStore,
+    FoundryStorageConflictError,
+    FoundryStoragePreconditionError,
+)
 
 from agent_framework_foundry_hosting import ContextScopedStoreProvider, StoreProvider
+from agent_framework_foundry_hosting._scope import FoundryRequestScope
 from agent_framework_foundry_hosting._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
@@ -19,6 +24,7 @@ from agent_framework_foundry_hosting._state_store import (
     FoundryCheckpointStore,
     FoundryFunctionApprovalStore,
     FunctionApprovalStoreProvider,
+    _SessionStoreConflict,
 )
 
 
@@ -574,6 +580,117 @@ async def test_get_missing_agent_session_returns_none() -> None:
         result = await FoundryAgentSessionStore(_platform_context()).get("missing")
 
     assert result is None
+
+
+async def test_revision_reads_do_not_share_the_mutable_etag_cache() -> None:
+    store = _store()
+    session = AgentSession()
+    store.get_item = AsyncMock(return_value=SimpleNamespace(value=session.to_dict(), etag="exact-read"))
+    storage = FoundryAgentSessionStore(_platform_context())
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ):
+        loaded, revision = await storage.get_with_revision("canonical")
+    assert loaded is not None and loaded.to_dict() == session.to_dict()
+    assert revision == "exact-read"
+    assert storage._etags == {}
+
+
+async def test_revision_read_returns_none_only_for_absent_entry() -> None:
+    store = _store()
+    store.get_item = AsyncMock(return_value=None)
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ):
+        assert await FoundryAgentSessionStore(_platform_context()).get_with_revision("missing") == (None, None)
+
+
+@pytest.mark.parametrize("expected_revision", [None, "exact-read"])
+async def test_hosted_conditional_write_uses_explicit_revision_not_cached_token(
+    monkeypatch: pytest.MonkeyPatch, expected_revision: str | None
+) -> None:
+    monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "hosted")
+    store = _store()
+    session = AgentSession()
+    scope = FoundryRequestScope.from_context(_config(is_hosted=True), _platform_context())
+    storage = FoundryAgentSessionStore(_platform_context(), scope=scope)
+    storage._etags["canonical"] = "unrelated-cached-token"
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ):
+        revision = await storage.compare_and_set("canonical", session, expected_revision=expected_revision)
+    if expected_revision is None:
+        store.create_item.assert_awaited_once_with("canonical", session.to_dict(), call_id="call-1")
+        store.set_item.assert_not_awaited()
+        assert revision == "etag-1"
+    else:
+        store.set_item.assert_awaited_once_with(
+            "canonical", session.to_dict(), if_match=expected_revision, call_id="call-1"
+        )
+        store.create_item.assert_not_awaited()
+        assert revision == "etag-2"
+    assert storage._etags["canonical"] == "unrelated-cached-token"
+
+
+@pytest.mark.parametrize("conflict", [FoundryStorageConflictError, FoundryStoragePreconditionError])
+async def test_conditional_conflict_preserves_cause_and_never_retries(
+    monkeypatch: pytest.MonkeyPatch, conflict: type[Exception]
+) -> None:
+    monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "hosted")
+    store = _store()
+    error = conflict("conflict")
+    store.set_item = AsyncMock(side_effect=error)
+    scope = FoundryRequestScope.from_context(_config(is_hosted=True), _platform_context())
+    with (
+        patch(
+            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            new=AsyncMock(return_value=store),
+        ),
+        pytest.raises(_SessionStoreConflict) as raised,
+    ):
+        await FoundryAgentSessionStore(_platform_context(), scope=scope).compare_and_set(
+            "canonical", AgentSession(), expected_revision="read-revision"
+        )
+    assert raised.value.__cause__ is error
+    store.set_item.assert_awaited_once()
+    store.create_item.assert_not_awaited()
+
+
+@pytest.mark.parametrize("expected_revision", [None, "read-revision"])
+async def test_conditional_write_without_acknowledged_revision_fails_closed(
+    monkeypatch: pytest.MonkeyPatch, expected_revision: str | None
+) -> None:
+    monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "hosted")
+    store = _store()
+    store.set_item = AsyncMock(return_value=SimpleNamespace(etag=None))
+    store.create_item = AsyncMock(return_value=SimpleNamespace(etag=None))
+    scope = FoundryRequestScope.from_context(_config(is_hosted=True), _platform_context())
+    with (
+        patch(
+            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            new=AsyncMock(return_value=store),
+        ),
+        pytest.raises(RuntimeError, match="did not return an ETag"),
+    ):
+        await FoundryAgentSessionStore(_platform_context(), scope=scope).compare_and_set(
+            "canonical", AgentSession(), expected_revision=expected_revision
+        )
+
+
+async def test_default_nonhosted_approval_cas_fails_before_backend_access() -> None:
+    with (
+        patch(
+            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create", new=AsyncMock()
+        ) as backend,
+        pytest.raises(RuntimeError, match="custom session store implementing get_with_revision and compare_and_set"),
+    ):
+        await FoundryAgentSessionStore(_platform_context()).compare_and_set(
+            "canonical", AgentSession(), expected_revision=None
+        )
+    backend.assert_not_awaited()
 
 
 async def test_delete_agent_session_is_idempotent() -> None:
