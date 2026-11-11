@@ -324,6 +324,7 @@ async def test_chat_client_observability_accepts_model_in_client_kwargs(
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
+    assert span.attributes is not None  # ensure attributes dict exists for type checkers
     assert span.attributes[OtelAttr.REQUEST_MODEL] == "override-model"
 
 
