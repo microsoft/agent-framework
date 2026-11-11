@@ -54,12 +54,14 @@ newer snapshot. An absent delete is idempotent. Missing ETags and mismatched
 stored scope fail closed; other Cosmos failures propagate without a local
 fallback.
 
-Local runs use isolated in-memory snapshots with the same conditional behavior,
-but only inside **one process and event loop**. The local store gives no
-guarantee across workers or processes. Snapshots are lost when the process
-exits and are **single-user development only**:
-local headers/session selectors are not a trusted platform authentication
-boundary. Explicit local sessions have separate namespaces.
+For local runs, each `CustomSessionStoreProvider` owns its in-memory snapshots.
+Only the stores from that provider in **one process and event loop** coordinate
+their conditional writes. Separate provider instances do not share snapshots,
+even in the same process. Use one provider and one worker for local development.
+Snapshots are lost when the provider and its stores are discarded or the
+process exits. They are **single-user development only**: local headers and
+session selectors are not a trusted platform authentication boundary. Explicit
+local sessions have separate namespaces.
 
 ## Approval state and revisioned writes
 
@@ -96,9 +98,9 @@ private hosting type. The sample stores follow these rules:
   not happen.
 
 The local store implements the same methods for development. Its conditional
-write is atomic only inside one process and event loop. Use a store with
-server-side conditional writes, such as Cosmos, when more than one worker or
-process can serve the same conversation.
+write is atomic only among stores from the same provider in one event loop.
+Use a store with server-side conditional writes, such as Cosmos, when separate
+providers, workers, or processes can serve the same conversation.
 
 Without these methods, the host can still use the store for ordinary session
 history. A non-hosted request that needs approval state fails with a

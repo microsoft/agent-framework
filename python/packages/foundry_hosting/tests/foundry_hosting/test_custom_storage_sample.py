@@ -10,8 +10,10 @@ import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
 from azure.core import MatchConditions
 from azure.cosmos.exceptions import CosmosHttpResponseError
 
@@ -163,6 +165,25 @@ async def test_local_store_scopes_are_isolated(sample: ModuleType) -> None:
     second = local_store(sample, snapshots, "scope-b")
     await first.compare_and_set(_APPROVAL_KEY, make_session("a"), expected_revision=None)
     assert await second.get_with_revision(_APPROVAL_KEY) == (None, None)
+
+
+async def test_local_snapshots_are_shared_only_within_one_provider(sample: ModuleType) -> None:
+    config = MagicMock(spec=AgentConfig)
+    config.is_hosted = False
+    context = FoundryAgentRequestContext()
+    provider = sample.CustomSessionStoreProvider()
+    other_provider = sample.CustomSessionStoreProvider()
+    first = provider.get_store(config=config, platform_context=context)
+    same_provider = provider.get_store(config=config, platform_context=context)
+    other = other_provider.get_store(config=config, platform_context=context)
+
+    revision = await first.compare_and_set(_APPROVAL_KEY, make_session("one"), expected_revision=None)
+
+    assert first is not same_provider
+    stored, stored_revision = await same_provider.get_with_revision(_APPROVAL_KEY)
+    assert stored is not None and stored.state["value"] == "one"
+    assert stored_revision == revision
+    assert await other.get_with_revision(_APPROVAL_KEY) == (None, None)
 
 
 async def test_cosmos_uses_server_conditions(sample: ModuleType) -> None:

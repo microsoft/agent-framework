@@ -20,8 +20,9 @@ Hosted runs use an existing Cosmos DB container partitioned by /scope_key and
 authenticate with managed identity. Both stores also expose the structural
 ``get_with_revision``/``compare_and_set`` capability that hosted agent approvals
 require. Cosmos uses server-side create-only writes and exact ETag matches. Local
-runs use process-local snapshots: their conditional writes are atomic only within
-one process, and they are not a multi-user authentication boundary.
+runs use snapshots owned by one provider: their conditional writes are atomic
+only within one process and event loop, and they are not a multi-user
+authentication boundary.
 """
 
 from __future__ import annotations
@@ -166,8 +167,8 @@ class CosmosSessionStore(SessionStore):
 class LocalSessionStore(SessionStore):
     """Request-local concurrency tokens over scoped, process-local snapshots.
 
-    Conditional writes are atomic only inside this single process and event loop.
-    They do not coordinate other workers or processes.
+    Conditional writes coordinate only stores sharing the same snapshots in one
+    event loop. Separate providers, workers, and processes do not share them.
     """
 
     def __init__(self, snapshots: dict[tuple[str, str], tuple[str, dict[str, Any]]], *, scope_key: str) -> None:
@@ -222,7 +223,7 @@ class LocalSessionStore(SessionStore):
 
 
 class CustomSessionStoreProvider(StoreProvider[SessionStore]):
-    """Reuse only the backend; each request gets an isolated ETag/working-copy view."""
+    """Share one backend across request-specific ETag and working-copy views."""
 
     def __init__(self) -> None:
         self._local_snapshots: dict[tuple[str, str], tuple[str, dict[str, Any]]] = {}
