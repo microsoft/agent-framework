@@ -15,7 +15,6 @@ using Azure.Core;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -42,18 +41,17 @@ public sealed class FoundryToolboxResponseScopeTests
         var chatCallCount = 0;
         var openCount = 0;
 
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
-            StrictMode = false,
             EndpointOverride = "https://proj.example/api/projects/proj",
         };
         options.ToolboxNames.Add("shared-toolbox");
 
         await using var toolboxService = new FoundryToolboxService(
-            Options.Create(options),
+            options,
             Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = async (_, _, cancellationToken) =>
+            ToolboxOpener = async (_, cancellationToken) =>
             {
                 var scopeId = GetToolboxCacheScopeId();
                 if (scopeId is null)
@@ -107,17 +105,17 @@ public sealed class FoundryToolboxResponseScopeTests
 
         var agent = new ChatClientAgent(chatClient.Object);
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton<AIAgent>(agent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var handler = new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
+            new FoundryResponsesServerOptions(),
             toolboxService);
 
         // Act: two responses deliberately share the same public response id. Their internally
-        // generated cache scopes must still be independent, while each response reuses its one
-        // deferred open when the same toolbox also appears as a request marker.
+        // generated cache scopes must still be independent while each response resolves its
+        // deferred pre-registered toolbox.
         var first = RunAsync(handler, CreateRequest(), CreateContext(callId: "call-a"));
         var second = RunAsync(handler, CreateRequest(), CreateContext(callId: "call-b"));
         await Task.WhenAll(first, second);
@@ -166,10 +164,6 @@ public sealed class FoundryToolboxResponseScopeTests
                 role = "user",
                 content = new[] { new { type = "input_text", text = "Hello" } },
             },
-        });
-        request.Tools.Add(new MCPTool("shared-toolbox")
-        {
-            ServerUrl = new Uri("foundry-toolbox://shared-toolbox"),
         });
         return request;
     }

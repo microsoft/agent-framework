@@ -31,6 +31,7 @@ class InvocationsHostServer(_InvocationsHostServer):
         prepare_options: InvocationOptionsHook | None = None,
         unsupported_options: UnsupportedOptions = "warn",
         legacy_wire_format: bool = False,
+        sse_keep_alive_interval_seconds: int | None = None,
         **kwargs: Any,
     ) -> None:
         """Create an agent host with session-backed application turns.
@@ -51,13 +52,23 @@ class InvocationsHostServer(_InvocationsHostServer):
             parse_input: Sync or async parser returning `InvocationRun`. Without a parser, accept JSON
                 `message`, optional `options`, and `stream`.
             prepare_options: Sync or async hook receiving the request and a copy of caller generation
-                options. Return the replacement mapping; hosting validates it before agent dispatch.
+                options, for streaming and non-streaming requests. Return the replacement mapping.
+                Hosting validates protected fields after the hook and before resolving the factory,
+                unlike Responses factories which run before the hook. Removing a caller ``model``
+                retains the agent/client inference default. Defaults are not mutated.
             unsupported_options: Policy for agents without runtime options: `"warn"`, `"ignore"`, or `"error"`.
             legacy_wire_format: Deprecated agent-only plain-text and raw-stream compatibility format.
+                Heartbeats are disabled in this format to avoid inserting SSE comments into raw text.
+            sse_keep_alive_interval_seconds: Positive streaming heartbeat interval. If omitted, use a positive
+                `SSE_KEEPALIVE_INTERVAL`, otherwise disable heartbeats. Not a request/model timeout.
+                An explicit interval cannot be combined with `legacy_wire_format=True`.
             **kwargs: Additional AgentServer host settings forwarded to the SDK.
 
         Raises:
-            TypeError: If the agent source or parser/hook is invalid, or native workflow settings are supplied.
+            TypeError: If the agent source, parser/hook, or heartbeat type is invalid, or removed,
+                Responses-only, or native workflow settings are supplied.
+            ValueError: If the heartbeat interval is nonpositive, raw legacy output requests heartbeats,
+                or an injected agent has unsupported background or transport defaults.
         """
         if {"workflow", "checkpoint_store_provider"}.intersection(kwargs):
             raise TypeError("Use InvocationsWorkflowHostServer for native workflows and checkpoint storage.")
@@ -69,5 +80,6 @@ class InvocationsHostServer(_InvocationsHostServer):
             prepare_options=prepare_options,
             unsupported_options=unsupported_options,
             legacy_wire_format=legacy_wire_format,
+            sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
             **kwargs,
         )

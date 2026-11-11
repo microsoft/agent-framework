@@ -28,7 +28,6 @@ from agent_framework import (
     WorkflowInvocationKwargs,
     handler,
     response_handler,
-    tool,
 )
 from agent_framework._workflows._const import RESOLVED_WORKFLOW_RUN_KWARGS_KEY
 from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
@@ -42,6 +41,15 @@ from agent_framework_foundry_hosting._workflow_state import (
     WorkflowBlockedError,
     WorkflowConflictError,
     WorkflowHead,
+)
+
+from .workflow_tool_helpers import (
+    MutableToolOwner,
+    UnusedClient,
+    mutable_function_tool,
+    shared_async_function,
+    shared_function,
+    workflow_with_tools,
 )
 
 
@@ -263,28 +271,63 @@ async def test_request_aware_async_factory() -> None:
     assert requests == [one, two]
 
 
-@pytest.mark.parametrize("mcp", [False, True])
-async def test_resolver_rejects_reused_local_and_mcp_tools(mcp: bool) -> None:
-    class _UnusedClient(BaseChatClient):
-        async def _inner_get_response(self, **kwargs: Any) -> Any:
-            raise AssertionError("Ownership validation must not call the model.")
+@pytest.mark.parametrize("shared", [shared_function, shared_async_function])
+async def test_resolver_allows_reused_stateless_function_tools(shared: Any) -> None:
+    resolver: WorkflowResolver[object] = WorkflowResolver(lambda request: workflow_with_tools([shared]))
+    first, second = await resolver.resolve(object()), await resolver.resolve(object())
+    assert first is not second
+    for workflow in (first, second):
+        executor = workflow.get_start_executor()
+        assert isinstance(executor, AgentExecutor)
+        assert isinstance(executor.agent, RawAgent)
+        assert executor.agent.default_options["tools"][0] is shared
 
-    @tool
-    def local_tool(value: str) -> str:
-        """Return a value without accessing external services."""
-        return value
 
-    shared = MCPStreamableHTTPTool(name="shared", url="https://unused.example.test/mcp") if mcp else local_tool
-
-    def create(request: object) -> Workflow:
-        agent = Agent(client=_UnusedClient(), name="agent", tools=[shared])
-        return _workflow(AgentExecutor(agent, id="agent"))
-
-    resolver: WorkflowResolver[object] = WorkflowResolver(create)
+async def test_resolver_rejects_reused_mcp_tools() -> None:
+    shared = MCPStreamableHTTPTool(name="shared", url="https://unused.example.test/mcp")
+    resolver: WorkflowResolver[object] = WorkflowResolver(
+        lambda request: workflow_with_tools([shared_function, shared])
+    )
     first = await resolver.resolve(object())
     with pytest.raises(RuntimeError, match="cannot share"):
         await resolver.resolve(object())
     assert first.get_start_executor().id == "agent"
+
+
+@pytest.mark.parametrize(
+    "kind", ["bound", "closure", "subclass", "parser", "max_invocations", "max_invocation_exceptions"]
+)
+async def test_resolver_rejects_reused_mutable_tools_but_allows_fresh_ones(kind: str) -> None:
+    shared = mutable_function_tool(kind)
+    resolver: WorkflowResolver[object] = WorkflowResolver(
+        lambda request: workflow_with_tools([shared_function, shared])
+    )
+    await resolver.resolve(object())
+    with pytest.raises(RuntimeError, match="mutable tools"):
+        await resolver.resolve(object())
+    fresh: WorkflowResolver[object] = WorkflowResolver(
+        lambda request: workflow_with_tools([shared_function, mutable_function_tool(kind)])
+    )
+    await fresh.resolve(object())
+    await fresh.resolve(object())
+
+
+async def test_resolver_rejects_reused_owner_even_with_fresh_bound_tool_wrappers() -> None:
+    owner = MutableToolOwner()
+    resolver: WorkflowResolver[object] = WorkflowResolver(lambda request: workflow_with_tools([owner.count]))
+    await resolver.resolve(object())
+    with pytest.raises(RuntimeError, match="cannot share"):
+        await resolver.resolve(object())
+
+
+async def test_resolver_rejects_reused_client_with_stateless_tools() -> None:
+    client = UnusedClient()
+    resolver: WorkflowResolver[object] = WorkflowResolver(
+        lambda request: workflow_with_tools([shared_function], client=client)
+    )
+    await resolver.resolve(object())
+    with pytest.raises(RuntimeError, match="cannot share"):
+        await resolver.resolve(object())
 
 
 async def test_resolver_rejects_reused_registry_backed_agent_resources() -> None:

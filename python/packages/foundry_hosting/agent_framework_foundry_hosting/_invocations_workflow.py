@@ -25,6 +25,7 @@ class InvocationsWorkflowHostServer(_InvocationsHostServer):
         parse_input: Callable[[Request], WorkflowTurn[Any] | Awaitable[WorkflowTurn[Any]]],
         openapi_spec: dict[str, Any] | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
+        sse_keep_alive_interval_seconds: int | None = None,
         **kwargs: Any,
     ) -> None:
         """Create a native workflow host with explicit parsing and checkpoint ownership.
@@ -41,12 +42,15 @@ class InvocationsWorkflowHostServer(_InvocationsHostServer):
             openapi_spec: Application OpenAPI specification forwarded to AgentServer.
             checkpoint_store_provider: Scoped checkpoint storage. Defaults to `CheckpointStoreProvider`.
                 Native workflow history and pending replies are checkpoint-owned, not agent-session-owned.
+            sse_keep_alive_interval_seconds: Positive streaming heartbeat interval. If omitted, use a positive
+                `SSE_KEEPALIVE_INTERVAL`, otherwise disable heartbeats. Not a request/model timeout.
             **kwargs: Additional AgentServer host settings forwarded to the SDK. Agent option hooks and
                 legacy wire format are not supported. Output uses JSON or framed SSE workflow events.
 
         Raises:
-            TypeError: If the workflow is not a request-aware factory, the parser is invalid, or an agent-only
-                setting is supplied.
+            TypeError: If the workflow is not a request-aware factory, the parser or heartbeat type is invalid,
+                or a removed, Responses-only, or agent-only setting is supplied.
+            ValueError: If the heartbeat interval is nonpositive.
         """
         forbidden = {
             "agent",
@@ -64,5 +68,6 @@ class InvocationsWorkflowHostServer(_InvocationsHostServer):
             parse_input=parse_input,
             openapi_spec=openapi_spec,
             checkpoint_store_provider=checkpoint_store_provider,
+            sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
             **kwargs,
         )

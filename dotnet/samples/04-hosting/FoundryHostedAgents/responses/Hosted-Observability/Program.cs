@@ -70,7 +70,7 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredentia
 
 // Host the agent using the Responses protocol.
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent);
+builder.AddFoundryResponses(agent);
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource.AddAttributes([new("microsoft.agent-framework", "True")]));
 

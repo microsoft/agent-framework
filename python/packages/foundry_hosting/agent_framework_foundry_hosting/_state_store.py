@@ -1,17 +1,18 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
 
 import hashlib
 import json
+import os
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from agent_framework import (
     AgentSession,
     CheckpointID,
     CheckpointStorage,
-    Content,
     SessionStore,
     WorkflowCheckpoint,
     WorkflowCheckpointException,
@@ -333,80 +334,36 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
 
 # endregion Checkpoint persistence
 
-# region Function approval persistence
+# region Agent session persistence
 
 
-class FunctionApprovalStore(Protocol):
-    """Store for saving function approval requests."""
-
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
-        """Save a function approval request under the given ID."""
-        ...
-
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        """Load a function approval request by its ID."""
-        ...
+class _SessionStoreConflict(RuntimeError):
+    """Signal a lost conditional session write without retrying it."""
 
 
-class FoundryFunctionApprovalStore:
-    """Function approval store backed by the `FoundryStateStore`."""
+@runtime_checkable
+class _ConditionalSessionStore(Protocol):
+    """Require revision-bound writes from stores supporting hosted approvals.
 
-    DEFAULT_ROOT_SCOPE = "function_approvals"
-
-    def __init__(
-        self,
-        platform_context: FoundryAgentRequestContext,
-        *,
-        scope: FoundryRequestScope | None = None,
-    ) -> None:
-        self.platform_context = platform_context
-        self._scope = scope
-
-    async def _get_store(self) -> FoundryStateStore:
-        return await FoundryStateStore.get_or_create(
-            _store_name(self.DEFAULT_ROOT_SCOPE, self._scope),
-            user_isolation=True,
-        )
-
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
-        store = await self._get_store()
-        async with store:
-            try:
-                await store.create_item(approval_request_id, request.to_dict(), call_id=self.platform_context.call_id)
-            except FoundryStorageConflictError as ex:
-                raise ValueError(f"Approval request with ID '{approval_request_id}' already exists.") from ex
-
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        store = await self._get_store()
-        async with store:
-            item = await store.get_item(approval_request_id, call_id=self.platform_context.call_id)
-        if item is None:
-            raise KeyError(f"Approval request with ID '{approval_request_id}' does not exist.")
-        return Content.from_dict(item.value)
-
-
-class FunctionApprovalStoreProvider(StoreProvider[FunctionApprovalStore]):
-    """Provide function approval store for the active hosting environment.
-
-    This defaults to using the `FoundryFunctionApprovalStore` in all environments.
+    Implementations must coordinate every writer to a key, including writers in
+    separate processes. Ordinary ``get``/``set`` and process-local locking do not
+    establish this capability. Missing entries return ``(None, None)``; existing
+    entries and successful writes return a non-empty, opaque revision.
+    Revisions identify one persisted version and must not be reused after writes.
     """
 
-    def get_store(
-        self,
-        *,
-        config: AgentConfig,
-        platform_context: FoundryAgentRequestContext,
-    ) -> FunctionApprovalStore:
-        """Get function approval store for the requested hosting environment."""
-        return FoundryFunctionApprovalStore(
-            platform_context,
-            scope=_store_scope(config, platform_context),
-        )
+    async def get_with_revision(self, session_id: str) -> tuple[AgentSession | None, str | None]:
+        """Read an independent snapshot and its exact persisted revision."""
+        ...
 
+    async def compare_and_set(self, session_id: str, session: AgentSession, *, expected_revision: str | None) -> str:
+        """Create only for ``None``, otherwise replace only the exact revision.
 
-# endregion Function approval persistence
-
-# region Agent session persistence
+        Raise ``RuntimeError`` on conflict; never retry as an unconditional write.
+        A failed or cancelled write may have committed. Callers must fail closed
+        rather than assume that retrying protected work is safe.
+        """
+        ...
 
 
 class FoundryAgentSessionStore(SessionStore):
@@ -442,16 +399,76 @@ class FoundryAgentSessionStore(SessionStore):
         )
 
     async def get(self, session_id: str) -> AgentSession | None:
+        session, revision = await self.get_with_revision(session_id)
+        self._etags[session_id] = revision
+        return session
+
+    async def get_with_revision(self, session_id: str) -> tuple[AgentSession | None, str | None]:
+        """Read a session and its storage revision without a cached-write token.
+
+        A revision belongs to this particular read, not to this store instance.
+        Approval claims pass it explicitly to ``compare_and_set``.
+        """
+        SessionStore.validate_session_id(session_id)
         store = await self._get_store()
         async with store:
             item = await store.get_item(session_id, call_id=self.platform_context.call_id)
         if item is None:
-            self._etags[session_id] = None
-            return None
+            return None, None
         if not item.etag:
             raise RuntimeError("Foundry agent session storage returned a loaded session without an ETag.")
-        self._etags[session_id] = item.etag
-        return AgentSession.from_dict(item.value)
+        return AgentSession.from_dict(item.value), item.etag
+
+    async def compare_and_set(self, session_id: str, session: AgentSession, *, expected_revision: str | None) -> str:
+        """Persist a create-only or exact-revision session transition.
+
+        ``None`` requires an absent entry; a non-empty revision requires that
+        exact existing entry. Wildcard and list revisions are rejected.
+        Conflicts never fall back to an upsert. An
+        acknowledgement without a revision is a failure, even if storage wrote
+        the value. The caller must not dispatch protected work in that case.
+
+        Raises:
+            ValueError: If the key or expected revision is invalid.
+            RuntimeError: If the write conflicts or storage acknowledges a write
+                without an ETag. Local Foundry storage is unsupported: supply a
+                custom conditional store.
+        """
+        SessionStore.validate_session_id(session_id)
+        if expected_revision is not None and (
+            not isinstance(expected_revision, str)
+            or not expected_revision
+            or expected_revision.strip() == "*"
+            or "," in expected_revision
+        ):
+            raise ValueError("expected_revision must be None or one exact non-wildcard revision.")
+        if self._scope is None or not os.environ.get("FOUNDRY_HOSTING_ENVIRONMENT"):
+            raise RuntimeError(
+                "The default non-hosted Foundry session store cannot atomically claim approvals across processes. "
+                "Supply a custom session store implementing get_with_revision and compare_and_set "
+                "with atomic create-only and exact-revision writes."
+            )
+        store = await self._get_store()
+        async with store:
+            try:
+                if expected_revision is None:
+                    result = await store.create_item(
+                        session_id, session.to_dict(), call_id=self.platform_context.call_id
+                    )
+                else:
+                    result = await store.set_item(
+                        session_id,
+                        session.to_dict(),
+                        if_match=expected_revision,
+                        call_id=self.platform_context.call_id,
+                    )
+            except (FoundryStorageConflictError, FoundryStoragePreconditionError) as exc:
+                raise _SessionStoreConflict(
+                    "Another request advanced this agent session; reload before writing."
+                ) from exc
+        if not result.etag:
+            raise RuntimeError("Foundry agent session storage did not return an ETag after saving.")
+        return result.etag
 
     async def set(self, session_id: str, session: AgentSession) -> None:
         store = await self._get_store()

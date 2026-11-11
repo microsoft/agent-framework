@@ -7,6 +7,7 @@ import contextlib
 import inspect
 import json
 import logging
+import re
 import sys
 import warnings
 import weakref
@@ -187,6 +188,36 @@ async def _resolve_function_approval(
 
 
 logger = logging.getLogger("agent_framework.github_copilot")
+
+# Minimum supported Copilot CLI runtime version.
+_MIN_COPILOT_CLI_VERSION = (1, 0, 85)
+_VERSION_PREFIX = re.compile(r"^\s*v?(\d+)\.(\d+)\.(\d+)")
+
+
+def _parse_cli_version(version: object) -> tuple[int, int, int] | None:
+    """Parse the leading ``major.minor.patch`` of a CLI version, ignoring any suffix."""
+    if not isinstance(version, str):
+        return None
+    match = _VERSION_PREFIX.match(version)
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+async def _ensure_supported_cli_version(client: CopilotClient) -> None:
+    """Raise ``AgentException`` unless the connected Copilot CLI meets the minimum version."""
+    minimum = ".".join(str(part) for part in _MIN_COPILOT_CLI_VERSION)
+    try:
+        version: object = (await client.get_status()).version
+    except Exception as ex:
+        raise AgentException(
+            f"GitHub Copilot CLI version {minimum} or higher is required, but the version could not be determined."
+        ) from ex
+    parsed = _parse_cli_version(version)
+    if parsed is None or parsed < _MIN_COPILOT_CLI_VERSION:
+        raise AgentException(
+            f"GitHub Copilot CLI version {minimum} or higher is required, but version '{version}' was detected."
+        )
 
 
 def _provider_service_session_state_keys(agent: object, client: object | None) -> frozenset[str]:
@@ -713,6 +744,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # are forwarded verbatim to the Copilot SDK by _build_session_kwargs.
         self._default_options = opts
         self._started = False
+        self._start_lock = asyncio.Lock()
         self._file_hooks_warning_emitted = False
 
     async def __aenter__(self) -> Self:
@@ -732,35 +764,51 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         agent as an async context manager.
 
         Raises:
-            AgentException: If the client fails to start.
+            AgentException: If the client fails to start or the Copilot CLI is older than the
+                minimum supported version.
         """
         if self._started:
             return
 
-        if self._client is None:
-            cli_path = self._settings.get("cli_path") or None
-            log_level = self._settings.get("log_level") or None
-            base_directory = self._settings.get("base_directory") or None
-            telemetry = self._settings.get("telemetry") or None
-            if isinstance(telemetry, str):
-                telemetry = _parse_telemetry_config(telemetry)
+        # Only one start may run at a time, so a failed check can't stop a client that another
+        # concurrent start has already accepted.
+        async with self._start_lock:
+            if self._started:
+                return
 
-            client_kwargs: dict[str, Any] = {}
-            if cli_path:
-                client_kwargs["connection"] = RuntimeConnection.for_stdio(path=cli_path)
-            if log_level:
-                client_kwargs["log_level"] = log_level
-            if base_directory:
-                client_kwargs["base_directory"] = base_directory
-            if telemetry:
-                client_kwargs["telemetry"] = telemetry
-            self._client = CopilotClient(**client_kwargs)
+            if self._client is None:
+                cli_path = self._settings.get("cli_path") or None
+                log_level = self._settings.get("log_level") or None
+                base_directory = self._settings.get("base_directory") or None
+                telemetry = self._settings.get("telemetry") or None
+                if isinstance(telemetry, str):
+                    telemetry = _parse_telemetry_config(telemetry)
 
-        try:
-            await self._client.start()
+                client_kwargs: dict[str, Any] = {}
+                if cli_path:
+                    client_kwargs["connection"] = RuntimeConnection.for_stdio(path=cli_path)
+                if log_level:
+                    client_kwargs["log_level"] = log_level
+                if base_directory:
+                    client_kwargs["base_directory"] = base_directory
+                if telemetry:
+                    client_kwargs["telemetry"] = telemetry
+                self._client = CopilotClient(**client_kwargs)
+
+            try:
+                await self._client.start()
+            except Exception as ex:
+                raise AgentException(f"Failed to start GitHub Copilot client: {ex}") from ex
+
+            try:
+                await _ensure_supported_cli_version(self._client)
+            except BaseException:
+                if self._owns_client:
+                    with contextlib.suppress(Exception):
+                        await self._client.stop()
+                raise
+
             self._started = True
-        except Exception as ex:
-            raise AgentException(f"Failed to start GitHub Copilot client: {ex}") from ex
 
     async def stop(self) -> None:
         """Stop the Copilot client and clean up resources.

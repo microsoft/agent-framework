@@ -1,5 +1,5 @@
 ---
-name: release-notes
+name: draft-release-notes
 description: >
   Create or rewrite Agent Framework release notes from a generated GitHub release
   log. Use when preparing Python or .NET release notes, filtering mixed-language
@@ -8,7 +8,7 @@ description: >
   to provide the generated GitHub log, language, and release version before work begins.
 ---
 
-# Release Notes
+# Draft Release Notes
 
 ## Required Inputs
 

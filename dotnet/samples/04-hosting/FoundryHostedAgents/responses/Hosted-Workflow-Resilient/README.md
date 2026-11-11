@@ -13,7 +13,7 @@ needed.
 ```csharp
 builder.AddFoundryResponses(
     agent,
-    configure: options => options.ResilientBackground = true);
+    options: new FoundryResponsesServerOptions { ResilientBackground = true });
 ```
 
 Each workflow agent has a fixed `Id` and `Name`. A restarted process must reconstruct the same
@@ -24,8 +24,8 @@ executor identities for a stored workflow checkpoint to match.
 | State | Owner |
 | --- | --- |
 | Background task, response events, and selected response snapshots | AgentServer |
-| AgentSession and workflow checkpoint reference | `FoundryAgentSessionStore` |
-| Workflow execution checkpoints | `FoundryJsonCheckpointStore` |
+| AgentSession and workflow checkpoint reference | Foundry state-store-backed session storage |
+| Workflow execution checkpoints | Foundry state-store-backed checkpoint storage |
 
 At each completed workflow superstep, the hosting adapter saves the AgentSession, records the
 workflow checkpoint ID in AgentServer internal response metadata, and calls

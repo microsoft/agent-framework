@@ -21,8 +21,9 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import suppress
-from dataclasses import asdict, dataclass, is_dataclass
-from typing import Any, Generic, Literal, TypeGuard, TypeVar, cast
+from contextvars import ContextVar
+from dataclasses import asdict, dataclass, field, is_dataclass
+from typing import Any, Generic, Literal, Protocol, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
 from agent_framework import (
@@ -94,11 +95,32 @@ from azure.ai.agentserver.responses.streaming._builders import (
 )
 from mcp import MCPError
 
-from ._state_store import (
-    FunctionApprovalStore,
-)
-
 logger = logging.getLogger(__name__)
+
+
+class _ApprovalLookup(Protocol):
+    """Read-only approval-request lookup used when converting stored history back to messages.
+
+    Implementations must not consume, claim, or otherwise change approval authority; the host validates and claims
+    approval batches separately before protected execution.
+    """
+
+    async def load_approval_request(self, approval_request_id: str) -> Content:
+        """Return the original ``function_approval_request`` content for a public approval request ID."""
+        ...
+
+
+class _ApprovalRecorder(Protocol):
+    """Approval-request recorder used by the output tracker before an approval item is yielded.
+
+    Implementations may only stage the mapping; the host must keep the yielded events buffered until the staged
+    approval batch is durable.
+    """
+
+    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
+        """Record the original ``function_approval_request`` content under its generated public ID."""
+        ...
+
 
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
@@ -786,6 +808,103 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     return None
 
 
+_REMOTE_ERROR_PREFIX = "Request failed (remote): "
+
+OAUTH_CONSENT_REQUIRED_RESULT = (
+    "Error: OAuth consent is required. This tool invocation did not complete. The user must authorize access "
+    "before this tool can be invoked in a later request."
+)
+OAUTH_CONSENT_NOT_EXECUTED_RESULT = (
+    "Error: This tool invocation was not executed because another tool requires OAuth consent. The user must "
+    "authorize access before protected tools can be invoked in a later request."
+)
+
+
+def tool_call_consent_url_from_error(exc: BaseException) -> str | None:
+    """Return the consent URL from a Foundry Toolbox ``tools/call`` consent error, if ``exc`` wraps one.
+
+    The gateway reports invocation-time consent as MCP error ``-32006``. The URL is read from a string
+    ``error.data["detail"]``; when ``detail`` is absent, the error message is used after removing the
+    ``"Request failed (remote): "`` prefix. A ``detail`` value that is present but not a string yields an empty
+    URL so the caller fails closed. The ``tools/list`` JSON ``errors`` shape is also accepted.
+
+    Args:
+        exc: The exception to inspect. ``exc`` itself or one of its ``args`` must be the ``MCPError``.
+
+    Returns:
+        The raw consent URL (not yet validated), an empty string when the payload is malformed, or ``None`` when
+        ``exc`` is not a consent error.
+    """
+    inner_exception = (
+        exc if isinstance(exc, MCPError) else next((arg for arg in exc.args if isinstance(arg, MCPError)), None)
+    )
+    if inner_exception is None or inner_exception.code != CONSENT_ERROR_CODE:
+        return None
+    data = inner_exception.error.data
+    if isinstance(data, Mapping) and "detail" in data:
+        detail = cast(Mapping[str, Any], data)["detail"]
+        return detail.strip() if isinstance(detail, str) else ""
+    message = inner_exception.error.message or ""
+    if "{" in message:
+        listed = consent_url_from_error(Exception(inner_exception))
+        return listed[0].consent_url if listed else ""
+    message = message.removeprefix(_REMOTE_ERROR_PREFIX)
+    return message.strip()
+
+
+@dataclass
+class _ToolboxConsentScope:
+    """Request-wide invocation-time OAuth consent state shared by all tool-call tasks of one hosted request.
+
+    The scope is a mutable object so state recorded in a copied task context remains visible to the host and to
+    later tool calls. Hosts must create a fresh scope for every request.
+    """
+
+    allowed_origins: frozenset[str] | None = None
+    consents: list[ConsentError] = field(default_factory=lambda: [])
+    consent_rejected: bool = False
+
+    @property
+    def consent_required(self) -> bool:
+        """Whether a protected tool in this request requires OAuth consent."""
+        return bool(self.consents)
+
+    @property
+    def blocks_toolbox_calls(self) -> bool:
+        """Whether later Foundry Toolbox calls in this request must not contact the gateway."""
+        return self.consent_required or self.consent_rejected
+
+
+_toolbox_consent_scope: ContextVar[_ToolboxConsentScope | None] = ContextVar(
+    "_foundry_toolbox_consent_scope", default=None
+)
+
+
+def _activate_toolbox_consent_scope(  # pyright: ignore[reportUnusedFunction]
+    *, allowed_origins: frozenset[str] | None = None
+) -> _ToolboxConsentScope:
+    """Activate a fresh invocation-time OAuth consent scope in the current context.
+
+    Call this in the request task before the agent run starts and before the first stream item is pulled, so all
+    tool-call tasks inherit the scope. The scope is intentionally not reset: async generator finalization may run
+    in a different context, and a fresh scope replaces it for the next request.
+
+    Args:
+        allowed_origins: Normalized consent origin allowlist from ``_normalize_allowed_oauth_consent_origins``.
+
+    Returns:
+        The active scope.
+    """
+    scope = _ToolboxConsentScope(allowed_origins=allowed_origins)
+    _toolbox_consent_scope.set(scope)
+    return scope
+
+
+def _current_toolbox_consent_scope() -> _ToolboxConsentScope | None:  # pyright: ignore[reportUnusedFunction]
+    """Return the active invocation-time OAuth consent scope, if a host activated one."""
+    return _toolbox_consent_scope.get()
+
+
 # endregion Foundry Toolbox Auth integration
 
 
@@ -983,7 +1102,7 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
         self,
         update: AgentResponseUpdate,
         *,
-        approval_storage: FunctionApprovalStore | None = None,
+        approval_storage: _ApprovalRecorder | None = None,
         complete_message: bool = False,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Process one agent update: note its finish reason, then handle each of its contents.
@@ -1008,7 +1127,7 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
         content: Content,
         message_id: str | None = None,
         *,
-        approval_storage: FunctionApprovalStore | None = None,
+        approval_storage: _ApprovalRecorder | None = None,
         start_new_content_part: bool = False,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Process a content item, yielding its events.
@@ -1019,8 +1138,9 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
                 change in ``message_id`` across otherwise same-typed text content marks a new
                 logical message and forces the previous output item closed, rather than being
                 merged into it.
-            approval_storage: Used for content types that fall back to one-shot emission
-                (anything not recognized as a streaming delta type) to save/load approval requests.
+            approval_storage: Recorder that receives each ``function_approval_request`` under its generated
+                public ID before the approval item event is yielded. Recording may only stage the mapping; the
+                host must buffer yielded approval events until the staged batch is durable.
             start_new_content_part: Whether text and refusal content start a new independent
                 content part instead of continuing the current streaming occurrence.
         """
@@ -1281,15 +1401,14 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
                         if isinstance(item, Mapping)
                         else getattr(item, "id", None)
                     )
-                    if isinstance(approval_request_id, str):
-                        await approval_storage.save_approval_request(approval_request_id, content)
-                        request_saved = True
+                    if not isinstance(approval_request_id, str) or not approval_request_id:
+                        raise RuntimeError(
+                            "The approval request ID could not be extracted from the stream event, "
+                            "so the approval request could not be recorded."
+                        )
+                    await approval_storage.save_approval_request(approval_request_id, content)
+                    request_saved = True
                 yield event
-            if approval_storage is not None and not request_saved:
-                logger.warning(
-                    "Approval request was not saved to approval storage because the approval request ID "
-                    "could not be extracted from the stream event."
-                )
 
         elif content.type == "oauth_consent_request":
             for event in self._close():
@@ -1586,13 +1705,13 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
 
 
 async def _items_to_messages(  # pyright: ignore[reportUnusedFunction]
-    input_items: Sequence[Item], *, approval_storage: FunctionApprovalStore | None = None
+    input_items: Sequence[Item], *, approval_storage: _ApprovalLookup | None = None
 ) -> list[Message]:
     """Converts a sequence of input items to a list of Messages, one per item.
 
     Args:
         input_items: The input items to convert.
-        approval_storage: An optional ApprovalStorage instance used to look up
+        approval_storage: An optional read-only approval lookup used to look up
             approval requests when converting MCP approval response items.
 
     Returns:
@@ -1695,14 +1814,14 @@ def _shell_command_output_to_content(output: Mapping[str, Any]) -> Content:
 async def _item_to_message(
     item: Item,
     *,
-    approval_storage: FunctionApprovalStore | None = None,
+    approval_storage: _ApprovalLookup | None = None,
     _item_type_name: Literal["Item", "OutputItem"] = "Item",
 ) -> Message:
     """Converts an Item to a Message.
 
     Args:
         item: The Item to convert.
-        approval_storage: An optional ApprovalStorage instance used to look up
+        approval_storage: An optional read-only approval lookup used to look up
             approval requests when converting MCP approval response items.
         _item_type_name: The item type name to include in unsupported-type errors.
 
@@ -1999,13 +2118,13 @@ async def _item_to_message(
 async def _output_items_to_messages(  # pyright: ignore[reportUnusedFunction]
     history: Sequence[OutputItem],
     *,
-    approval_storage: FunctionApprovalStore | None = None,
+    approval_storage: _ApprovalLookup | None = None,
 ) -> list[Message]:
     """Converts a sequence of OutputItem objects to a list of Message objects.
 
     Args:
         history (Sequence[OutputItem]): The sequence of OutputItem objects to convert.
-        approval_storage (ApprovalStorage | None, optional): The approval storage to use for
+        approval_storage (_ApprovalLookup | None, optional): The approval storage to use for
             resolving MCP approval requests. Defaults to None.
 
     Returns:
@@ -2017,14 +2136,12 @@ async def _output_items_to_messages(  # pyright: ignore[reportUnusedFunction]
     return messages
 
 
-async def _output_item_to_message(
-    item: OutputItem, *, approval_storage: FunctionApprovalStore | None = None
-) -> Message:
+async def _output_item_to_message(item: OutputItem, *, approval_storage: _ApprovalLookup | None = None) -> Message:
     """Converts an OutputItem to a Message.
 
     Args:
         item (OutputItem): The OutputItem to convert.
-        approval_storage (ApprovalStorage | None, optional): The approval storage to use for
+        approval_storage (_ApprovalLookup | None, optional): The approval storage to use for
             resolving MCP approval requests. Defaults to None.
 
     Returns:

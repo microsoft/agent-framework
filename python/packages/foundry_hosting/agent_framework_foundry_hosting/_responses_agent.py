@@ -75,7 +75,6 @@ from ._responses_shared import (
     _reject_busy_conversation,  # pyright: ignore[reportPrivateUsage]
     _set_agent_session,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
-    _validate_response_server_options,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
 from ._scope import FoundryRequestScope
@@ -84,10 +83,13 @@ from ._shared import (
     OptionsHook,
     ResponsesRequest,
     UnsupportedOptions,
+    build_response_server_options,
     is_agent,
     prepare_response_options,
+    reject_removed_host_settings,
     resolve_agent,
     response_run_options,
+    validate_agent_background_options,
     validate_agent_source,
     validate_default_transport_options,
     validate_request_options,
@@ -125,6 +127,14 @@ class _AgentConfiguration:
     agent_server_history: bool
     client_stores_by_default: bool
     hosted_history: bool
+
+
+def _validate_agent_defaults(
+    agent: SupportsAgentRun, *, provider_background: bool, allow_agent_store: bool
+) -> None:
+    validate_agent_background_options(agent, provider_background=provider_background)
+    if isinstance(agent, RawAgent):
+        validate_default_transport_options(agent.default_options, allow_agent_store=allow_agent_store)
 
 
 def _validate_agent_configuration(
@@ -224,13 +234,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent: AgentSource[ResponsesRequest],
         *,
         prefix: str = "",
-        options: ResponsesServerOptions | None = None,
         response_store: ResponseProviderProtocol | None = None,
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
         function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
         allowed_oauth_consent_origins: Sequence[str] | None = None,
         history_source: Literal["host_managed", "agent_managed", "inference_service"] = "host_managed",
         background_source: Literal["host_managed", "inference_service"] = "host_managed",
+        max_history_items: int | None = None,
+        sse_keep_alive_interval_seconds: int | None = None,
+        shutdown_grace_period_seconds: int = 10,
+        enable_background_recovery: bool = False,
         prepare_options: OptionsHook | None = None,
         unsupported_options: UnsupportedOptions = "warn",
         **kwargs: Any,
@@ -247,7 +260,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 `WorkflowAgent` instances and factory results are rejected. Use `ResponsesWorkflowHostServer`
                 with a native workflow factory instead.
             prefix: The URL prefix for the server.
-            options: Optional server options.
             response_store: Optional response store for caller-facing persistence and history.
             agent_session_store_provider: Optional provider for MAF agent session storage.
                 If not provided, a default `AgentSessionStoreProvider` will be used.
@@ -284,6 +296,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 client into provider background polling and requires `history_source="inference_service"`.
                 Each poll retains the caller's run options and `background=True`; local tools must be
                 idempotent because a crash before the next private token is saved can replay them.
+            max_history_items: Positive outer history limit for host-managed history. `None` leaves the
+                installed SDK default unchanged; it does not mean unlimited.
+            sse_keep_alive_interval_seconds: Positive streaming heartbeat interval. If omitted, the SDK
+                uses a positive `SSE_KEEPALIVE_INTERVAL` environment value, or disables heartbeats.
+            shutdown_grace_period_seconds: Positive shutdown wait. The SDK also uses this duration when
+                DELETE waits for response persistence. Defaults to 10 seconds.
+            enable_background_recovery: Allow eligible provider-background work to recover after shutdown.
+                Defaults to `False`; it does not enable background execution or guarantee exactly-once effects.
             prepare_options: Developer hook to remove or replace caller model options for an agent.
             unsupported_options: `"warn"` (default), `"error"`, or `"ignore"` when a custom agent
                 cannot accept runtime model options.
@@ -306,14 +326,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             3. The server owns the supplied agent instance and may add hosting-specific providers.
                Do not reuse the same agent with another host or invoke it directly after construction.
                An agent returned by a callable belongs to that request.
-            4. `resilient_background=True` supports regular agents configured with
+            4. `enable_background_recovery=True` supports regular agents configured with
                `history_source="inference_service", background_source="inference_service"`.
                For provider background, only a saved private continuation token can be polled after a crash;
                a crash before the token is saved cannot be replayed safely.
                Other regular-agent runs are not crash-recoverable.
-            5. Steering is temporarily unavailable for all agents. `steerable_conversations=True` fails
-               at construction, before starting a host or enabling the process-wide TaskManager. The current
-               AgentServer SDK retains futures for rejected turns after the steering queue fills.
+            5. Steering is unavailable. The upstream `options` bag and steering settings are not host parameters.
             6. A stored, named `"inference_service"` or `"agent_managed"` conversation is claimed in the scoped
                session store before the agent runs. Conditional writes prevent a concurrent turn from mutating the same
                provider thread. If the turn fails or is cancelled, start a new conversation instead of
@@ -322,26 +340,34 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         Raises:
             TypeError: If the agent is a `WorkflowAgent`, or native workflow settings are supplied.
             ValueError: If the history, background, or unsupported-options policy is invalid.
-            RuntimeError: If the agent configuration conflicts with the selected history source,
-                `resilient_background=True` is requested for a regular agent without provider background, or
-                `steerable_conversations=True` is requested while steering is unavailable.
+            RuntimeError: If the agent configuration conflicts with the selected history or background source.
         """
+        reject_removed_host_settings(kwargs)
         if "store" in kwargs:
             raise TypeError("The constructor store= alias was removed; use response_store= instead.")
-        _validate_response_server_options(options)
-        if history_source not in ("host_managed", "agent_managed", "inference_service"):
-            raise ValueError("history_source must be 'host_managed', 'agent_managed', or 'inference_service'.")
-        if background_source not in ("host_managed", "inference_service"):
-            raise ValueError("background_source must be 'host_managed' or 'inference_service'.")
-        if background_source == "inference_service" and history_source != "inference_service":
-            raise ValueError("Provider background requires history_source='inference_service'.")
-        if background_source == "inference_service" and options and options.steerable_conversations:
-            raise ValueError("Provider background and steerable_conversations cannot be combined.")
         if {"workflow", "parse_input", "parse_response", "checkpoint_store_provider"}.intersection(kwargs):
             raise TypeError("Use ResponsesWorkflowHostServer for native workflows and checkpoint storage.")
         validate_agent_source(agent)
+        if prepare_options is not None and not callable(prepare_options):
+            raise TypeError("prepare_options must be a callable.")
+        unsupported_options = validate_unsupported_options(unsupported_options)
+        options = build_response_server_options(
+            is_workflow=False,
+            history_source=history_source,
+            background_source=background_source,
+            max_history_items=max_history_items,
+            sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
+            shutdown_grace_period_seconds=shutdown_grace_period_seconds,
+            enable_background_recovery=enable_background_recovery,
+        )
 
         resolved_agent = agent if is_agent(agent) else None
+        if resolved_agent is not None:
+            _validate_agent_defaults(
+                resolved_agent,
+                provider_background=background_source == "inference_service",
+                allow_agent_store=history_source == "agent_managed",
+            )
         configuration = (
             _validate_agent_configuration(resolved_agent, history_source, options, background_source=background_source)
             if resolved_agent is not None
@@ -356,23 +382,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             store=response_store,
             **kwargs,
         )
-        if options and options.steerable_conversations:
-            from azure.ai.agentserver.core.tasks import set_resilient_tasks_enabled
-
-            set_resilient_tasks_enabled(True)
-
         self._agent_source = agent
         self._agent = resolved_agent
         self._configuration = configuration
         self._history_source: _HistorySource = history_source
         self._background_source: Literal["host_managed", "inference_service"] = background_source
         self._prepare_options = prepare_options
-        self._unsupported_options = validate_unsupported_options(unsupported_options)
+        self._unsupported_options = unsupported_options
         self._host_options = options
         self._uses_agent_server_history = (
             configuration.agent_server_history if configuration is not None else history_source == "host_managed"
         )
-        self._resilient_background = bool(options and options.resilient_background)
+        self._resilient_background = enable_background_recovery
         if resolved_agent is not None and configuration is not None:
             _initialize_agent_history(resolved_agent, configuration)
 
@@ -456,6 +477,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 raise _PublicResponseFailure(exc) from None
             agent = await resolve_agent(self._agent_source, hosted_request)
             try:
+                provider_background = (
+                    self._background_source == "inference_service" and request.get("background") is True
+                )
+                _validate_agent_defaults(
+                    agent,
+                    provider_background=provider_background,
+                    allow_agent_store=self._history_source == "agent_managed" and request.get("store") is not False,
+                )
                 configuration = self._configuration or _validate_agent_configuration(
                     agent, self._history_source, self._host_options, background_source=self._background_source
                 )
@@ -466,6 +495,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             await prepare_response_options(hosted_request, self._prepare_options)
             try:
                 validate_request_options(hosted_request.options)
+                _validate_agent_defaults(
+                    agent,
+                    provider_background=provider_background,
+                    allow_agent_store=self._history_source == "agent_managed" and request.get("store") is not False,
+                )
             except (TypeError, ValueError) as exc:
                 raise _PublicResponseFailure(exc) from None
         except Exception as exc:
@@ -963,8 +997,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "messages": messages,
                 "session": session,
             }
-            chat_options = cast(ChatOptions[Any], dict(hosted_request.options))
+            chat_options = dict(hosted_request.options)
             are_options_set = bool(chat_options)
+            if self._background_source == "inference_service":
+                chat_options["background"] = provider_background
             if configuration.agent_server_history:
                 if configuration.client_stores_by_default:
                     # The response provider already owns the transcript used for this run. Keep a
@@ -1045,7 +1081,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     messages=messages,
                     session=session,
                     session_storage=session_storage,
-                    options=chat_options,
+                    options=cast(ChatOptions[Any], chat_options),
                     context=context,
                     cancellation_signal=cancellation_signal,
                     emitted_output_count=output_count,

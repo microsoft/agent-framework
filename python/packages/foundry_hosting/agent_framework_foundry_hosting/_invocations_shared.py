@@ -27,6 +27,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     CheckpointStorage,
+    RawAgent,
     ResponseStream,
     SessionStore,
     SupportsAgentRun,
@@ -57,10 +58,15 @@ from ._shared import (
     WorkflowResolver,
     WorkflowSource,
     WorkflowTurn,
+    foreground_agent_run_kwargs,
     is_agent,
+    reject_removed_host_settings,
     resolve_agent,
+    validate_agent_background_options,
     validate_agent_source,
+    validate_default_transport_options,
     validate_request_options,
+    validate_sse_keep_alive_interval,
     validate_unsupported_options,
     workflow_agents,
 )
@@ -335,9 +341,23 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
         prepare_options: InvocationOptionsHook | None = None,
         unsupported_options: UnsupportedOptions = "warn",
         legacy_wire_format: bool = False,
+        sse_keep_alive_interval_seconds: int | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize shared protocol plumbing after the public host selects its execution model."""
+        reject_removed_host_settings(kwargs)
+        if forbidden := {
+            "max_history_items",
+            "history_source",
+            "background_source",
+            "enable_background_recovery",
+            "shutdown_grace_period_seconds",
+        }.intersection(kwargs):
+            raise TypeError(
+                f"Responses-only settings are not supported by Invocations: {', '.join(sorted(forbidden))}."
+            )
+        validate_sse_keep_alive_interval(sse_keep_alive_interval_seconds)
+        unsupported_options = validate_unsupported_options(unsupported_options)
         if "parse_request" in kwargs:
             raise TypeError("parse_request was renamed to parse_input.")
         if agent is not None and workflow is not None:
@@ -357,6 +377,10 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
             raise TypeError("prepare_options must be a callable.")
         if not isinstance(legacy_wire_format, bool):
             raise TypeError("legacy_wire_format must be a boolean.")
+        if legacy_wire_format and sse_keep_alive_interval_seconds is not None:
+            raise ValueError("SSE heartbeats require framed SSE; disable legacy_wire_format.")
+        if is_agent(agent):
+            self._validate_agent_options(agent)
         if workflow is not None:
             if legacy_wire_format:
                 raise ValueError("legacy_wire_format=True is incompatible with native workflows.")
@@ -370,11 +394,15 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
             WorkflowResolver(workflow) if workflow is not None else None
         )
         super().__init__(openapi_spec=openapi_spec, **kwargs)
+        if legacy_wire_format:
+            self.config.sse_keepalive_interval = 0
+        elif sse_keep_alive_interval_seconds is not None:
+            self.config.sse_keepalive_interval = sse_keep_alive_interval_seconds
         self._agent = agent
         self._owns_request_agent = agent is not None and not is_agent(agent)
         self._parse_input = parse_input
         self._prepare_options = prepare_options
-        self._unsupported_options = validate_unsupported_options(unsupported_options)
+        self._unsupported_options = unsupported_options
         self._legacy_wire_format = legacy_wire_format
         self._session_store_provider = (
             AgentSessionStoreProvider(store_name="invocation_sessions")
@@ -468,10 +496,17 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
         if self._agent is None:
             raise RuntimeError("No agent is configured for Invocations.")
         agent = await resolve_agent(self._agent, request)
+        self._validate_agent_options(agent)
         async with AsyncExitStack() as resources:
             if self._owns_request_agent and isinstance(agent, AbstractAsyncContextManager):
                 await resources.enter_async_context(agent)
             yield agent
+
+    @staticmethod
+    def _validate_agent_options(agent: SupportsAgentRun) -> None:
+        validate_agent_background_options(agent, provider_background=False)
+        if isinstance(agent, RawAgent):
+            validate_default_transport_options(agent.default_options, allow_agent_store=True)
 
     @asynccontextmanager
     async def _request_session(
@@ -549,10 +584,10 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
             if not isinstance(result, Mapping) or any(not isinstance(key, str) for key in result):
                 raise TypeError("prepare_options must return a mapping of MAF run options with string keys.")
             options = deepcopy(dict(result))
-        validate_request_options(options)
         reserved = _AGENT_CONTROLLED_FIELDS.intersection(options)
         if reserved:
             raise ValueError(f"Invocations options cannot set agent-controlled fields: {', '.join(sorted(reserved))}.")
+        validate_request_options(options)
         return options
 
     def _agent_kwargs(self, agent: SupportsAgentRun, options: dict[str, Any]) -> dict[str, Any]:
@@ -615,7 +650,7 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
                 try:
                     lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
                     async with lock, self._request_agent(request) as agent:
-                        run_kwargs = self._agent_kwargs(agent, options)
+                        run_kwargs = {**self._agent_kwargs(agent, options), **foreground_agent_run_kwargs(agent)}
                         async with self._request_session(partition_key, context, hosted_scope=hosted_scope) as session:
                             stream = agent.run(parsed.messages, session=session, stream=True, **run_kwargs)
                             completed = False
@@ -674,7 +709,7 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
         try:
             lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
             async with lock, self._request_agent(request) as agent:
-                run_kwargs = self._agent_kwargs(agent, options)
+                run_kwargs = {**self._agent_kwargs(agent, options), **foreground_agent_run_kwargs(agent)}
                 async with self._request_session(partition_key, context, hosted_scope=hosted_scope) as session:
                     response = await agent.run(parsed.messages, session=session, **run_kwargs)
             if self._legacy_wire_format:

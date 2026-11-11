@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -23,7 +24,7 @@ public sealed class LocalCodeActProviderTests
     [Fact]
     public async Task ProvideAIContextAsync_ReturnsExecuteCodeToolAndInstructionsAsync()
     {
-        using var provider = new LocalCodeActProvider("/usr/bin/python3", Options());
+        using var provider = new LocalCodeActProvider(Environment.ProcessPath!, Options());
 
         var context = await provider.InvokingAsync(NewInvokingContext());
 
@@ -39,7 +40,7 @@ public sealed class LocalCodeActProviderTests
     [Fact]
     public void AddAndRemoveTools_RoundTrips()
     {
-        using var provider = new LocalCodeActProvider("/usr/bin/python3", Options());
+        using var provider = new LocalCodeActProvider(Environment.ProcessPath!, Options());
 
         var tool = new TestTool("ping");
         provider.AddTools(tool);
@@ -53,7 +54,7 @@ public sealed class LocalCodeActProviderTests
     [Fact]
     public void AddAndRemoveFileMounts_RoundTrips()
     {
-        using var provider = new LocalCodeActProvider("/usr/bin/python3", Options());
+        using var provider = new LocalCodeActProvider(Environment.ProcessPath!, Options());
 
         var tempDir = System.IO.Directory.CreateTempSubdirectory("localcodeact-test-").FullName;
         try
@@ -75,7 +76,7 @@ public sealed class LocalCodeActProviderTests
     [Fact]
     public void ClearMethods_EmptyState()
     {
-        using var provider = new LocalCodeActProvider("/usr/bin/python3", Options());
+        using var provider = new LocalCodeActProvider(Environment.ProcessPath!, Options());
 
         var tempDir1 = System.IO.Directory.CreateTempSubdirectory("localcodeact-test-").FullName;
         var tempDir2 = System.IO.Directory.CreateTempSubdirectory("localcodeact-test-").FullName;

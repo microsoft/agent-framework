@@ -41,13 +41,20 @@ _taskkill_path: str | None = None
 
 
 def _resolve_taskkill() -> str:
-    """Absolute path to taskkill.exe to defeat PATH poisoning."""
+    """Absolute path to taskkill.exe to defeat PATH poisoning.
+
+    Raises:
+        FileNotFoundError: If taskkill.exe is not in the system directory. The bare name is never used
+            as a fallback, because Windows would search the current directory for it first.
+    """
     global _taskkill_path
     if _taskkill_path is not None:
         return _taskkill_path
     system_root = os.environ.get("SystemRoot") or os.environ.get("SYSTEMROOT") or r"C:\Windows"  # ruff:ignore[uncapitalized-environment-variables]
     candidate = os.path.join(system_root, "System32", "taskkill.exe")
-    _taskkill_path = candidate if os.path.isfile(candidate) else "taskkill"
+    if not os.path.isfile(candidate):
+        raise FileNotFoundError(f"taskkill.exe was not found at {candidate}")
+    _taskkill_path = candidate
     return _taskkill_path
 
 

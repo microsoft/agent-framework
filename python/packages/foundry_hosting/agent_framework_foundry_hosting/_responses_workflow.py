@@ -32,7 +32,7 @@ from agent_framework import (
 from agent_framework._telemetry import mark_feature_used
 from anyio import CancelScope
 from azure.ai.agentserver.core import get_request_context
-from azure.ai.agentserver.responses import ResponseContext, ResponseProviderProtocol, ResponsesServerOptions
+from azure.ai.agentserver.responses import ResponseContext, ResponseProviderProtocol
 from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
@@ -54,7 +54,6 @@ from ._responses_shared import (
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _request_without_reserved_metadata,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
-    _validate_response_server_options,  # pyright: ignore[reportPrivateUsage]
 )
 from ._scope import FoundryRequestScope
 from ._shared import (
@@ -63,8 +62,10 @@ from ._shared import (
     WorkflowResolver,
     WorkflowSource,
     WorkflowTurn,
+    build_response_server_options,
     prepare_response_options,
     prepare_workflow_kwargs,
+    reject_removed_host_settings,
     response_run_options,
     validate_request_options,
     validate_workflow_source,
@@ -337,11 +338,13 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
         *,
         parse_input: Callable[[ResponsesRequest], WorkflowTurn[Any] | Awaitable[WorkflowTurn[Any]]],
         prefix: str = "",
-        options: ResponsesServerOptions | None = None,
         response_store: ResponseProviderProtocol | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         prepare_options: OptionsHook | None = None,
         allowed_oauth_consent_origins: Sequence[str] | None = None,
+        sse_keep_alive_interval_seconds: int | None = None,
+        shutdown_grace_period_seconds: int = 10,
+        enable_background_recovery: bool = False,
         **kwargs: Any,
     ) -> None:
         """Create a native workflow host with explicit parsing and checkpoint ownership.
@@ -356,8 +359,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
             parse_input: Sync or async parser of this turn's `ResponsesRequest`. Return a typed
                 `WorkflowTurn(input=...)` or a complete batch of validated pending `responses`.
             prefix: URL prefix for Responses routes.
-            options: AgentServer options, including outer background recovery. Steering remains disabled.
-                Outer background execution does not enable provider background on workflow agents.
             response_store: Backend for caller-facing Responses persistence, not the wire-level `store` flag.
             checkpoint_store_provider: Scoped checkpoint storage. Defaults to `CheckpointStoreProvider`.
                 Native workflow history and pending replies are checkpoint-owned, not agent-session-owned.
@@ -366,13 +367,20 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
                 This does not enable inner provider background or service-owned history.
             allowed_oauth_consent_origins: Optional exact HTTPS origins for consent links. Omission retains
                 safe-HTTPS validation; an empty sequence rejects all origins.
+            sse_keep_alive_interval_seconds: Positive streaming heartbeat interval. If omitted, the SDK
+                uses a positive `SSE_KEEPALIVE_INTERVAL` environment value, or disables heartbeats.
+            shutdown_grace_period_seconds: Positive shutdown wait, also used by the SDK when DELETE waits
+                for response persistence. Defaults to 10 seconds.
+            enable_background_recovery: Allow checkpoint-backed outer workflow recovery. Defaults to `False`.
+                Outer background execution does not enable provider background on workflow agents.
             **kwargs: Additional AgentServer host settings forwarded to the SDK.
 
         Raises:
             TypeError: If the workflow is not a request-aware factory, the parser is not callable, or an
                 agent-only setting is supplied.
-            RuntimeError: If steering is requested while unavailable.
+            ValueError: If a supported setting has an invalid value.
         """
+        reject_removed_host_settings(kwargs)
         if "parse_response" in kwargs:
             raise TypeError("parse_response was renamed to parse_input.")
         forbidden = {
@@ -382,6 +390,7 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
             "history_source",
             "background_source",
             "unsupported_options",
+            "max_history_items",
             "store",
         }.intersection(kwargs)
         if forbidden:
@@ -391,8 +400,13 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
             raise TypeError("parse_input must be a callable.")
         if prepare_options is not None and not callable(prepare_options):
             raise TypeError("prepare_options must be a callable.")
-        _validate_response_server_options(options)
         allowed_origins = _normalize_allowed_oauth_consent_origins(allowed_oauth_consent_origins)
+        options = build_response_server_options(
+            is_workflow=True,
+            sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
+            shutdown_grace_period_seconds=shutdown_grace_period_seconds,
+            enable_background_recovery=enable_background_recovery,
+        )
         super().__init__(prefix=prefix, options=options, store=response_store, **kwargs)
         self._resolver = WorkflowResolver(workflow)
         self._parse_input = parse_input
@@ -400,7 +414,7 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
             CheckpointStoreProvider() if checkpoint_store_provider is None else checkpoint_store_provider
         )
         self._prepare_options = prepare_options
-        self._resilient_background = bool(options and options.resilient_background)
+        self._resilient_background = enable_background_recovery
         self._allowed_origins = allowed_origins
         self._bind_streaming_route(
             prefix=prefix,
@@ -413,7 +427,10 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
 
     def _bind_streaming_route(self, *, prefix: str, keep_alive: bool) -> None:
         """Adapt only the native POST route's public StreamingResponse cleanup lifetime."""
-        path = f"/{prefix.strip('/')}/responses" if prefix.strip("/") else "/responses"
+        normalized_prefix = prefix.strip()
+        if normalized_prefix and not normalized_prefix.startswith("/"):
+            normalized_prefix = f"/{normalized_prefix}"
+        path = f"{normalized_prefix.rstrip('/')}/responses"
         for index, route in enumerate(self.router.routes):
             if not isinstance(route, Route) or route.path != path or "POST" not in (route.methods or ()):
                 continue
