@@ -45,22 +45,12 @@ class InvocationsWorkflowHostServer(_InvocationsHostServer):
             sse_keep_alive_interval_seconds: Positive streaming heartbeat interval. If omitted, use a positive
                 `SSE_KEEPALIVE_INTERVAL`, otherwise disable heartbeats. Not a request/model timeout.
             **agent_server_kwargs: Additional AgentServer SDK constructor arguments, such as
-                `asyncapi_spec_json` and `asyncapi_spec_yaml`. Responses-only and agent-only settings are
-                rejected. Output uses JSON or framed SSE workflow events.
+                `asyncapi_spec_json` and `asyncapi_spec_yaml`. Output uses JSON or framed SSE workflow events.
 
         Raises:
-            TypeError: If the workflow is not a request-aware factory, the parser or heartbeat type is invalid,
-                or a Responses-only or agent-only setting is supplied.
+            TypeError: If the workflow is not a request-aware factory, or the parser or heartbeat type is invalid.
             ValueError: If the heartbeat interval is nonpositive.
         """
-        forbidden = {
-            "agent",
-            "agent_session_store_provider",
-            "prepare_options",
-            "unsupported_options",
-        }.intersection(agent_server_kwargs)
-        if forbidden:
-            raise TypeError(f"Unsupported native workflow host settings: {', '.join(sorted(forbidden))}.")
         if not callable(parse_input):
             raise TypeError("parse_input must be a callable.")
         super().__init__(

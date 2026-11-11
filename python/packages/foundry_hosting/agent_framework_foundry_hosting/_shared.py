@@ -333,9 +333,9 @@ async def prepare_response_options(request: ResponsesRequest, hook: OptionsHook 
 
 
 async def response_input_messages(request: ResponsesRequest) -> list[Message]:
-    """Convert only this Responses turn's input items to the legacy workflow message contract.
+    """Convert only this Responses turn's input items to `list[Message]` workflow input.
 
-    This explicit migration helper does not load outer history, restore checkpoints,
+    This explicit helper does not load outer history, restore checkpoints,
     or decode pending native workflow replies. Native workflows should prefer typed
     application inputs and use ``request.get_workflow_responses()`` for resumable pauses.
     """

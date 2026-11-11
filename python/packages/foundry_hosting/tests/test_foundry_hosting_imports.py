@@ -146,10 +146,6 @@ def test_agent_hosts_reject_ambiguous_factories_before_sdk_construction(protocol
         ("Responses", "background_source"),
         ("Responses", "unsupported_options"),
         ("Responses", "store"),
-        ("Invocations", "agent"),
-        ("Invocations", "agent_session_store_provider"),
-        ("Invocations", "prepare_options"),
-        ("Invocations", "unsupported_options"),
     ],
 )
 def test_workflow_hosts_reject_agent_settings_before_sdk_construction(protocol: str, setting: str) -> None:

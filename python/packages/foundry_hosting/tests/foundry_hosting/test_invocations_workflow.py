@@ -55,7 +55,6 @@ from starlette.responses import Response, StreamingResponse
 from agent_framework_foundry_hosting import (
     CheckpointStoreProvider,
     FoundryRequestScope,
-    InvocationsHostServer,
     InvocationsWorkflowHostServer,
     WorkflowSource,
     WorkflowTurn,
@@ -438,11 +437,6 @@ class TestNativeWorkflowConfiguration:
         def create(_request: Request) -> Workflow:
             return WorkflowBuilder(name="tickets", start_executor=_TicketExecutor([])).build()
 
-        invalid_agent: Any = object()
-        with pytest.raises(TypeError, match="InvocationsWorkflowHostServer"):
-            InvocationsHostServer(agent=invalid_agent, workflow=create)
-        with pytest.raises(TypeError, match="InvocationsWorkflowHostServer"):
-            InvocationsHostServer(agent=invalid_agent, checkpoint_store_provider=lambda _context: None)
         with pytest.raises(TypeError, match="parse_input"):
             cast(Any, InvocationsWorkflowHostServer)(workflow=create)
 

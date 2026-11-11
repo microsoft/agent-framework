@@ -341,16 +341,6 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
         **agent_server_kwargs: Any,
     ) -> None:
         """Initialize shared protocol plumbing after the public host selects its execution model."""
-        if forbidden := {
-            "max_history_items",
-            "history_source",
-            "background_source",
-            "enable_background_recovery",
-            "shutdown_grace_period_seconds",
-        }.intersection(agent_server_kwargs):
-            raise TypeError(
-                f"Responses-only settings are not supported by Invocations: {', '.join(sorted(forbidden))}."
-            )
         validate_sse_keep_alive_interval(sse_keep_alive_interval_seconds)
         unsupported_options = validate_unsupported_options(unsupported_options)
         if agent is not None and workflow is not None:

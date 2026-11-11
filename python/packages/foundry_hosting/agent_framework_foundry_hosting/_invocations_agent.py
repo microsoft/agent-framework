@@ -63,16 +63,12 @@ class InvocationsHostServer(_InvocationsHostServer):
                 `asyncapi_spec_json` and `asyncapi_spec_yaml`. The host settings listed above (`agent`,
                 `openapi_spec`, `agent_session_store_provider`, `parse_input`, `prepare_options`,
                 `unsupported_options`, and `sse_keep_alive_interval_seconds`) are handled directly by this host.
-                Use `InvocationsWorkflowHostServer` for native workflow settings.
 
         Raises:
-            TypeError: If the agent source, parser/hook, or heartbeat type is invalid, or Responses-only
-                or native workflow settings are supplied.
+            TypeError: If the agent source, parser/hook, or heartbeat type is invalid.
             ValueError: If the heartbeat interval is nonpositive or an injected agent has unsupported
                 background or transport defaults.
         """
-        if {"workflow", "checkpoint_store_provider"}.intersection(agent_server_kwargs):
-            raise TypeError("Use InvocationsWorkflowHostServer for native workflows and checkpoint storage.")
         super().__init__(
             agent=agent,
             openapi_spec=openapi_spec,

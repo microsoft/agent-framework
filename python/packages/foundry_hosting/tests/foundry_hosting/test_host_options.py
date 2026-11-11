@@ -92,26 +92,6 @@ def test_recovery_and_workflow_history_eligibility() -> None:
         build_response_server_options(is_workflow=True, background_source="inference_service")
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "max_history_items",
-        "history_source",
-        "background_source",
-        "enable_background_recovery",
-        "shutdown_grace_period_seconds",
-    ],
-)
-def test_invocations_rejects_responses_only_settings_before_sdk(name: str) -> None:
-    settings: dict[str, Any] = {name: None}
-    with (
-        patch("agent_framework_foundry_hosting._invocations_shared.InvocationAgentServerHost.__init__") as sdk,
-        pytest.raises(TypeError, match="Responses-only"),
-    ):
-        InvocationsHostServer(Agent(client=OptionsClient()), **settings)
-    sdk.assert_not_called()
-
-
 @pytest.mark.parametrize("env", [None, "0", "-2", "3"])
 @pytest.mark.parametrize("explicit", [None, 5])
 def test_invocations_heartbeat_precedence_and_per_host_isolation(
