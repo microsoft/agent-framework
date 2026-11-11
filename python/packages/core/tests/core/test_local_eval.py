@@ -1037,11 +1037,11 @@ class TestToolChecksUseConversationSplit:
         conversation = two_turn_conversation
         expected = [ExpectedToolCall("get_weather", {"location": "NYC"})]
 
-        def call_on_response_side(conv: list[Message]) -> tuple[list[Message], list[Message]]:
-            return conv[:1], conv[1:]
+        def call_on_response_side(conversation: list[Message]) -> tuple[list[Message], list[Message]]:
+            return conversation[:1], conversation[1:]
 
-        def call_on_query_side(conv: list[Message]) -> tuple[list[Message], list[Message]]:
-            return conv[:4], conv[4:]
+        def call_on_query_side(conversation: list[Message]) -> tuple[list[Message], list[Message]]:
+            return conversation[:4], conversation[4:]
 
         on_response = EvalItem(
             conversation=conversation, expected_tool_calls=expected, split_strategy=call_on_response_side
