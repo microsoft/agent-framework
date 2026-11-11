@@ -9,6 +9,7 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
@@ -44,7 +45,11 @@ from agent_framework_foundry_hosting._toolbox import (
     _ToolboxAuth,
 )
 
+from .foundry_hosting.approval_helpers import (  # pyrefly: ignore[missing-import] - pytest's importlib namespace
+    SqliteSessionStore,
+)
 from .foundry_hosting.toolbox_approval_helpers import (  # pyrefly: ignore[missing-import] - pytest's importlib namespace
+    FixedSessionStoreProvider,
     ToolboxApprovalClient,
     ToolboxApprovalServer,
     toolbox_connection,
@@ -1494,12 +1499,15 @@ async def test_metadata_approval_pauses_and_resumes_once(stream: bool, approved:
 
 
 @pytest.mark.parametrize("stream", [False, True])
-async def test_responses_host_returns_metadata_approval_before_tool_execution(stream: bool) -> None:
+async def test_responses_host_returns_metadata_approval_before_tool_execution(stream: bool, tmp_path: Path) -> None:
     mcp_server = ToolboxApprovalServer()
     mcp_server.tools = [toolbox_tool()]
     model = ToolboxApprovalClient("learn___microsoft_docs_search")
     async with toolbox_connection(mcp_server) as toolbox:
-        host = ResponsesHostServer(agent=Agent(client=model, tools=toolbox))
+        host = ResponsesHostServer(
+            agent=Agent(client=model, tools=toolbox),
+            agent_session_store_provider=FixedSessionStoreProvider(SqliteSessionStore(tmp_path / "sessions.db")),
+        )
         async with host_httpx.AsyncClient(
             transport=host_httpx.ASGITransport(app=host), base_url="http://test"
         ) as client:

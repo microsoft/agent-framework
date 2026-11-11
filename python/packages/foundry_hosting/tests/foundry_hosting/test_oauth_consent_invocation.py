@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
-from agent_framework import Agent, Content, Message, UserInputRequiredException
+from agent_framework import Agent, ChatOptions, Content, Message, UserInputRequiredException
 from agent_framework.exceptions import ToolExecutionException
 from azure.ai.agentserver.responses.aio import ResponseEventStream
 from mcp import MCPError
@@ -73,6 +73,7 @@ async def test_consent_scope_is_shared_with_copied_task_contexts() -> None:
 
         def mark() -> None:
             current = _current_toolbox_consent_scope()
+            assert current is not None
             assert current is scope
             current.consent_rejected = True
 
@@ -225,7 +226,7 @@ async def test_sequential_function_loop_returns_consent_and_blocks_later_calls(s
     server.require_consent("secure")
     async with consent_toolbox(server) as toolbox:
         client = BatchToolCallClient([function.name for function in toolbox.functions])
-        agent = Agent(client=client, tools=toolbox, default_options={"allow_multiple_tool_calls": True})
+        agent = Agent(client=client, tools=toolbox, default_options=ChatOptions(allow_multiple_tool_calls=True))
 
         async def run() -> list[Message]:
             client.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[index]
@@ -258,7 +259,7 @@ async def test_parallel_function_loop_preserves_completed_siblings(stream: bool)
     server.require_consent("secure")
     async with consent_toolbox(server) as toolbox:
         client = BatchToolCallClient([function.name for function in toolbox.functions])
-        agent = Agent(client=client, tools=toolbox, default_options={"allow_multiple_tool_calls": True})
+        agent = Agent(client=client, tools=toolbox, default_options=ChatOptions(allow_multiple_tool_calls=True))
 
         async def run() -> list[Message]:
             if stream:

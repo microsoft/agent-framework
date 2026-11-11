@@ -45,6 +45,7 @@ from starlette.routing import Route
 from starlette.types import Send
 
 from ._feature_usage import FeatureIndex
+from ._responses_preflight import bind_approval_preflight, has_unresolved_input, preflight_workflow_approvals
 from ._responses_shared import (
     _HOSTED_PROVIDER_USAGE_KEY,  # pyright: ignore[reportPrivateUsage]
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
@@ -164,6 +165,8 @@ async def _load_replies(request: ResponsesRequest, run: HostedWorkflowRun) -> di
     items = await request.get_input_items()
     if not run.pending_requests or not items:
         raise _WorkflowRequestError("Workflow replies require an exact pending stored checkpoint.")
+    if has_unresolved_input(request.request, items):
+        raise _WorkflowRequestError("Pending workflow replies cannot include unresolved input references.")
     replies: dict[str, Any] = {}
     for input_item in items:
         item = cast(Mapping[str, Any], input_item)
@@ -416,6 +419,11 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
         self._prepare_options = prepare_options
         self._resilient_background = enable_background_recovery
         self._allowed_origins = allowed_origins
+        bind_approval_preflight(
+            self,
+            prefix=prefix,
+            preflight=lambda request, context, platform: preflight_workflow_approvals(request, context, platform, self),
+        )
         self._bind_streaming_route(
             prefix=prefix,
             keep_alive=bool(

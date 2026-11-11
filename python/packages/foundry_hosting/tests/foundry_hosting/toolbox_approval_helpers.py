@@ -18,10 +18,22 @@ from agent_framework import (
     FunctionInvocationLayer,
     Message,
     ResponseStream,
+    SessionStore,
 )
+from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
 from azure.core.credentials import AccessToken
 
-from agent_framework_foundry_hosting import FoundryToolbox
+from agent_framework_foundry_hosting import FoundryToolbox, StoreProvider
+
+
+class FixedSessionStoreProvider(StoreProvider[SessionStore]):
+    """Return one application-owned session store for every request."""
+
+    def __init__(self, store: SessionStore) -> None:
+        self.store = store
+
+    def get_store(self, *, config: AgentConfig, platform_context: FoundryAgentRequestContext) -> SessionStore:
+        return self.store
 
 
 class ToolboxCredential:
