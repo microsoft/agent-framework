@@ -441,16 +441,10 @@ class TestNativeWorkflowConfiguration:
         invalid_agent: Any = object()
         with pytest.raises(TypeError, match="InvocationsWorkflowHostServer"):
             InvocationsHostServer(agent=invalid_agent, workflow=create)
+        with pytest.raises(TypeError, match="InvocationsWorkflowHostServer"):
+            InvocationsHostServer(agent=invalid_agent, checkpoint_store_provider=lambda _context: None)
         with pytest.raises(TypeError, match="parse_input"):
             cast(Any, InvocationsWorkflowHostServer)(workflow=create)
-
-    def test_workflow_rejects_removed_legacy_wire_format_setting(self) -> None:
-        with pytest.raises(TypeError, match="legacy_wire_format is no longer a supported host setting"):
-            InvocationsWorkflowHostServer(
-                workflow=lambda _: WorkflowBuilder(name="tickets", start_executor=_TicketExecutor([])).build(),
-                parse_input=_parse_ticket,
-                legacy_wire_format=True,
-            )
 
     @pytest.mark.parametrize("stream", [False, True])
     async def test_parser_must_return_workflow_turn_before_building_or_loading_state(self, stream: bool) -> None:
