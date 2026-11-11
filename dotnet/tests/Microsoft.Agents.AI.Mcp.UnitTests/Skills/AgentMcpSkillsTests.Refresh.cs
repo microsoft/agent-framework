@@ -1338,7 +1338,6 @@ public sealed partial class AgentMcpSkillsTests
         // Act
         GC.Collect();
         GC.WaitForPendingFinalizers();
-        GC.Collect();
 
         // Assert
         Assert.False(catalog.TryGetTarget(out _));
