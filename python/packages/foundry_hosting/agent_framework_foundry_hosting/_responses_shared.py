@@ -46,7 +46,10 @@ from agent_framework import (
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._types import _get_annotation_text_span_regions  # pyright: ignore[reportPrivateUsage]
 from agent_framework.observability import OBSERVABILITY_SETTINGS
-from azure.ai.agentserver.responses import ResponseContext
+from azure.ai.agentserver.responses import (
+    ResponseContext,
+    ResponsesServerOptions,
+)
 from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.models import (
@@ -903,6 +906,18 @@ def _current_toolbox_consent_scope() -> _ToolboxConsentScope | None:  # pyright:
 
 
 # endregion Foundry Toolbox Auth integration
+
+
+def _validate_response_server_options(  # pyright: ignore[reportUnusedFunction]
+    options: ResponsesServerOptions | None,
+) -> None:
+    if options and options.steerable_conversations:
+        # TODO(foundry-hosting): Remove after Azure/azure-sdk-for-python#49233 ships and queue overflow is verified.
+        raise RuntimeError(
+            "steerable_conversations=True is temporarily unavailable: the current AgentServer SDK "
+            "retains futures for rejected steering turns. Wait for the official fix in "
+            "Azure/azure-sdk-for-python#49233, then update the dependency and verify queue overflow."
+        )
 
 
 # region Active Builder State
