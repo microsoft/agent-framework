@@ -20,6 +20,10 @@ _MAX_HISTORY_REQUESTS = 1024
 _MAX_HISTORY_BYTES = 1024 * 1024
 
 
+class _InvalidApproval(ValueError):
+    """Reject invalid approval controls without classifying backend failures."""
+
+
 @dataclass(frozen=True)
 class _ApprovalClaim:
     authority_id: str
@@ -138,7 +142,7 @@ class SessionApprovalState:
         history = _requests(self._state["history"])
         value = history.get(approval_request_id)
         if value is None:
-            raise ValueError("Approval request is not in this session's history; start a fresh approval turn.")
+            raise _InvalidApproval("Approval request is not in this session's history; start a fresh approval turn.")
         return _decode_request(value)
 
     async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
@@ -215,22 +219,24 @@ class SessionApprovalState:
         new user turn with no decisions; reset by starting a fresh conversation.
         Approval and rejection both count as decisions. The host validates their
         boolean values and rejects conflicting input-control kinds separately.
+        Deliberate invalid controls raise ``_InvalidApproval``; storage failures
+        propagate unchanged, including backend ``ValueError`` exceptions.
         """
         pending = self._pending()
         if pending is None:
             if approval_ids:
-                raise ValueError("No pending approval batch in this session; start a fresh approval turn.")
+                raise _InvalidApproval("No pending approval batch in this session; start a fresh approval turn.")
             return None
         if (
             any(not isinstance(item, str) or not item for item in approval_ids)
             or len(set(approval_ids)) != len(approval_ids)
             or set(approval_ids) != set(pending["wire_ids"])
         ):
-            raise ValueError("Answer exactly the complete pending MCP approval batch without duplicates.")
+            raise _InvalidApproval("Answer exactly the complete pending MCP approval batch without duplicates.")
         storage = _conditional_store(self._storage)
         authority, revision = await storage.get_with_revision(pending["authority_id"])
         if authority is None:
-            raise ValueError("Pending approval authority is missing or expired; start a fresh conversation.")
+            raise _InvalidApproval("Pending approval authority is missing or expired; start a fresh conversation.")
         if not isinstance(revision, str) or not revision:
             raise RuntimeError("Session storage returned approval authority without a revision.")
         record = _mapping(
@@ -246,9 +252,9 @@ class SessionApprovalState:
             or set(requests) != set(pending["wire_ids"])
             or any(_requests(self._state["history"]).get(key) != value for key, value in requests.items())
         ):
-            raise ValueError("Pending approval authority does not match this session and response.")
+            raise _InvalidApproval("Pending approval authority does not match this session and response.")
         if record.get("phase") == "claimed":
-            raise ValueError("Pending approval batch was already claimed; start a fresh approval turn.")
+            raise _InvalidApproval("Pending approval batch was already claimed; start a fresh approval turn.")
         if record.get("phase") != "pending" or "claimed_by" not in record or record["claimed_by"] is not None:
             raise RuntimeError("Unsupported canonical approval phase; start a fresh conversation.")
         for value in requests.values():
@@ -279,7 +285,7 @@ class SessionApprovalState:
             or token.owner_response_id != pending["response_id"]
             or set(dict(token.requests)) != set(pending["wire_ids"])
         ):
-            raise ValueError("Approval preflight token does not match the current session.")
+            raise _InvalidApproval("Approval preflight token does not match the current session.")
         authority = AgentSession(session_id=token.session_id)
         authority.state[_APPROVAL_STATE_KEY] = {
             "version": 1,

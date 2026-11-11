@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from unittest.mock import AsyncMock
 
 import pytest
 from agent_framework import AgentSession, SessionStore
 
-from agent_framework_foundry_hosting._approvals import _APPROVAL_STATE_KEY, SessionApprovalState
+from agent_framework_foundry_hosting._approvals import _APPROVAL_STATE_KEY, SessionApprovalState, _InvalidApproval
 
 from .approval_helpers import (  # pyrefly: ignore[missing-import] - pytest's importlib namespace
     SqliteSessionStore,
@@ -53,7 +54,7 @@ async def test_invalid_batch_never_mutates_authority_and_complete_retry_succeeds
     session = await pending_session(store)
     state = SessionApprovalState(session, store)
     before = store.write_count
-    with pytest.raises(ValueError, match="complete pending MCP approval batch"):
+    with pytest.raises(_InvalidApproval, match="complete pending MCP approval batch"):
         await state.preflight(ids)
     assert store.write_count == before
     token = await state.preflight(["wire-1", "wire-0"])
@@ -77,7 +78,7 @@ async def test_response_and_conversation_aliases_share_one_irreversible_authorit
     await first.claim(token1, response_id="first")
     with pytest.raises(RuntimeError, match="revision conflict"):
         await second.claim(token2, response_id="second")
-    with pytest.raises(ValueError, match="already claimed"):
+    with pytest.raises(_InvalidApproval, match="already claimed"):
         await second.preflight(["wire-0", "wire-1"])
     assert await second.load_approval_request("wire-0") == approval_request()
     assert await first.preflight([]) is None
@@ -96,7 +97,7 @@ async def test_expired_canonical_is_not_recreated_from_snapshot(tmp_path) -> Non
     await store.delete(key)
     before = store.write_count
     state = SessionApprovalState(session, store)
-    with pytest.raises(ValueError, match="missing or expired"):
+    with pytest.raises(_InvalidApproval, match="missing or expired"):
         await state.preflight(["wire-0", "wire-1"])
     assert store.write_count == before
     assert await state.load_approval_request("wire-0") == approval_request()
@@ -112,9 +113,9 @@ async def test_unstored_and_nonconditional_stores_cannot_record_approvals(storag
 async def test_empty_fresh_session_has_no_pending_authority() -> None:
     state = SessionApprovalState(AgentSession(), None)
     assert await state.preflight([]) is None
-    with pytest.raises(ValueError, match="No pending approval"):
+    with pytest.raises(_InvalidApproval, match="No pending approval"):
         await state.preflight(["wire"])
-    with pytest.raises(ValueError, match="not in this session"):
+    with pytest.raises(_InvalidApproval, match="not in this session"):
         await state.load_approval_request("wire")
 
 
@@ -131,7 +132,7 @@ async def test_other_session_cannot_claim_copied_pending_link(tmp_path) -> None:
     session = await pending_session(store)
     other = AgentSession(session_id="other-session")
     other.state.update(session.state)
-    with pytest.raises(ValueError, match="does not match"):
+    with pytest.raises(_InvalidApproval, match="does not match"):
         await SessionApprovalState(other, store).preflight(["wire-0", "wire-1"])
 
 
@@ -168,7 +169,7 @@ async def test_postclaim_failure_does_not_reopen_authority_on_reload(tmp_path) -
     # No final session snapshot is saved: a restarted process sees the old alias.
     restarted = await SqliteSessionStore(store.path).get("response-alias")
     assert restarted is not None
-    with pytest.raises(ValueError, match="already claimed"):
+    with pytest.raises(_InvalidApproval, match="already claimed"):
         await SessionApprovalState(restarted, store).preflight(["wire-0", "wire-1"])
 
 
@@ -214,7 +215,7 @@ async def test_lost_claim_acknowledgement_never_reopens_persisted_authority(tmp_
     restarted_store = SqliteSessionStore(store.path)
     restarted = await restarted_store.get("response-alias")
     assert restarted is not None
-    with pytest.raises(ValueError, match="already claimed"):
+    with pytest.raises(_InvalidApproval, match="already claimed"):
         await SessionApprovalState(restarted, restarted_store).preflight(["wire-0", "wire-1"])
 
 
@@ -247,6 +248,47 @@ async def test_history_tampering_does_not_authorize_a_different_call(tmp_path) -
     session = await pending_session(store)
     session.state[_APPROVAL_STATE_KEY]["history"]["wire-0"] = json.dumps(approval_request(9).to_dict())
     before = store.write_count
-    with pytest.raises(ValueError, match="does not match"):
+    with pytest.raises(_InvalidApproval, match="does not match"):
         await SessionApprovalState(session, store).preflight(["wire-0", "wire-1"])
+    assert store.write_count == before
+
+
+async def test_preflight_preserves_backend_value_error_without_classifying_invalid_input(tmp_path, monkeypatch) -> None:
+    store = SqliteSessionStore(tmp_path / "sessions.db")
+    session = await pending_session(store)
+    state = SessionApprovalState(session, store)
+    error = ValueError("backend decoding failed")
+    monkeypatch.setattr(store, "get_with_revision", AsyncMock(side_effect=error))
+    before = store.write_count
+    with pytest.raises(ValueError) as caught:
+        await state.preflight(["wire-0", "wire-1"])
+    assert caught.value is error
+    assert not isinstance(caught.value, _InvalidApproval)
+    assert store.write_count == before
+
+
+async def test_claim_preserves_backend_value_error_without_classifying_invalid_input(tmp_path, monkeypatch) -> None:
+    store = SqliteSessionStore(tmp_path / "sessions.db")
+    session = await pending_session(store)
+    state = SessionApprovalState(session, store)
+    token = await state.preflight(["wire-0", "wire-1"])
+    assert token is not None
+    error = ValueError("backend encoding failed")
+    monkeypatch.setattr(store, "compare_and_set", AsyncMock(side_effect=error))
+    with pytest.raises(ValueError) as caught:
+        await state.claim(token, response_id="resume")
+    assert caught.value is error
+    assert not isinstance(caught.value, _InvalidApproval)
+    assert session.state[_APPROVAL_STATE_KEY]["pending"] is not None
+
+
+async def test_claim_rejects_mismatched_token_as_invalid_approval_without_writing(tmp_path) -> None:
+    store = SqliteSessionStore(tmp_path / "sessions.db")
+    session = await pending_session(store)
+    state = SessionApprovalState(session, store)
+    token = await state.preflight(["wire-0", "wire-1"])
+    assert token is not None
+    before = store.write_count
+    with pytest.raises(_InvalidApproval, match="token does not match"):
+        await state.claim(replace(token, session_id="other"), response_id="resume")
     assert store.write_count == before
