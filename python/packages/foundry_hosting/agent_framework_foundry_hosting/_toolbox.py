@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 import httpx2 as httpx
 from agent_framework import (
     CachingSkillsSource,
+    Content,
     DeduplicatingSkillsSource,
     MCPSkillsSource,
     MCPStreamableHTTPTool,
@@ -23,7 +24,7 @@ from agent_framework import (
     SkillsSourceContext,
 )
 from agent_framework._telemetry import mark_feature_used
-from agent_framework.exceptions import ToolExecutionException
+from agent_framework.exceptions import ToolExecutionException, UserInputRequiredException
 from azure.ai.agentserver.core import get_request_context
 from mcp.types import Tool
 from typing_extensions import override
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
     from datetime import timedelta
 
-    from agent_framework import Content, Skill
+    from agent_framework import Skill
     from agent_framework._mcp import MCPSpecificApproval
     from azure.core.credentials import AccessToken, TokenCredential
     from azure.core.credentials_async import AsyncTokenCredential
@@ -412,9 +413,51 @@ class FoundryToolbox(MCPStreamableHTTPTool):
 
     @override
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
+        """Call a Toolbox tool and translate invocation-time OAuth consent when a hosted request scope is active.
+
+        Inside a Foundry Responses host request, a gateway ``-32006`` consent error with an allowed HTTPS consent
+        link raises ``UserInputRequiredException`` carrying a terminal ``function_result`` and an
+        ``oauth_consent_request``. Later Toolbox calls in the same request return a not-executed result without
+        contacting the gateway. A rejected consent link raises a sanitized ``ToolExecutionException`` and marks the
+        request scope so the host fails the response. Outside a hosted request scope, errors propagate unchanged.
+        """
+        from ._responses_shared import (
+            OAUTH_CONSENT_NOT_EXECUTED_RESULT,
+            OAUTH_CONSENT_REQUIRED_RESULT,
+            ConsentError,
+            _current_toolbox_consent_scope,  # pyright: ignore[reportPrivateUsage]
+            _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
+            tool_call_consent_url_from_error,
+        )
+
+        scope = _current_toolbox_consent_scope()
+        if scope is not None and scope.blocks_toolbox_calls:
+            return OAUTH_CONSENT_NOT_EXECUTED_RESULT
         token = _strict_toolbox_header_provider.set(True)
         try:
             return await super().call_tool(tool_name, **kwargs)
+        except ToolExecutionException as exc:
+            if scope is None:
+                raise
+            consent_link = tool_call_consent_url_from_error(exc)
+            if consent_link is None:
+                raise
+            if not _is_allowed_oauth_consent_link(consent_link, scope.allowed_origins):
+                scope.consent_rejected = True
+                raise ToolExecutionException(
+                    f"Toolbox '{self.name}' returned an OAuth consent link that is not allowed."
+                ) from None
+            scope.consents.append(ConsentError(name=self.name, consent_url=consent_link))
+            raise UserInputRequiredException(
+                contents=[
+                    Content.from_function_result(call_id="", result=OAUTH_CONSENT_REQUIRED_RESULT),
+                    Content.from_oauth_consent_request(
+                        consent_link,
+                        additional_properties={"server_label": self.name},
+                    ),
+                ],
+                message="Foundry Toolbox OAuth consent is required.",
+            ) from exc
         finally:
             _strict_toolbox_header_provider.reset(token)
 
