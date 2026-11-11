@@ -14,6 +14,7 @@ from types import MappingProxyType
 from typing import Any, Generic, Literal, Protocol, TypeAlias, TypeGuard, cast
 
 from agent_framework import (
+    SKIP_PARSING,
     Agent,
     AgentContext,
     AgentExecutor,
@@ -21,6 +22,7 @@ from agent_framework import (
     AgentResponse,
     AgentRunInputs,
     Content,
+    FunctionTool,
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
@@ -423,7 +425,7 @@ class AgentFactory(Protocol[AgentRequestT]):
 
     def __call__(self, *, request: AgentRequestT) -> SupportsAgentRun | Awaitable[SupportsAgentRun]:
         """Create an agent, optionally using the current request."""
-        ...
+        raise NotImplementedError
 
 
 AgentSource: TypeAlias = SupportsAgentRun | AgentFactory[RequestT]
@@ -774,12 +776,31 @@ def validate_workflow_source(source: object) -> None:
         raise TypeError("A workflow factory must accept one request argument.") from exc
 
 
+def _is_stateless_function_tool(value: object) -> bool:
+    if type(value) is not FunctionTool:
+        return False
+    return (
+        inspect.isfunction(value.func)
+        and value.func.__closure__ is None
+        and value._instance is None  # pyright: ignore[reportPrivateUsage]
+        and value.max_invocations is None
+        and value.max_invocation_exceptions is None
+        and (
+            value.result_parser is None
+            or value.result_parser is SKIP_PARSING
+            or (inspect.isfunction(value.result_parser) and value.result_parser.__closure__ is None)
+        )
+    )
+
+
 class WorkflowResolver(Generic[RequestT]):
     """Reject reuse of mutable graphs and known request-bound resources.
 
     This is an ownership guard, not a clone operation or a proof that arbitrary
-    application globals are stateless. Factories must allocate their resources
-    without performing workflow or tool side effects.
+    application globals, function attributes, or default arguments are stateless.
+    Plain function tools without bound instances, closures, or lifetime limits may
+    be shared. Applications must keep those functions stateless. Factories must
+    allocate mutable resources without performing workflow or tool side effects.
     """
 
     def __init__(self, source: WorkflowSource[RequestT]) -> None:
@@ -824,13 +845,19 @@ class WorkflowResolver(Generic[RequestT]):
                 resources.extend(agent.mcp_tools)
                 tools = agent.default_options.get("tools", ())
                 if isinstance(tools, Sequence):
-                    resources.extend(tool for tool in cast(Sequence[object], tools) if not isinstance(tool, Mapping))
+                    for tool in cast(Sequence[object], tools):
+                        if isinstance(tool, Mapping) or _is_stateless_function_tool(tool):
+                            continue
+                        resources.append(tool)
+                        if isinstance(tool, FunctionTool) and tool._instance is not None:  # pyright: ignore[reportPrivateUsage]
+                            resources.append(tool._instance)  # pyright: ignore[reportPrivateUsage]
         unique_resources = {id(resource): resource for resource in resources}
         for identifier, resource in unique_resources.items():
             previous = self._owned.get(id(resource))
             if (previous is not None and previous() is resource) or self._strong_owned.get(identifier) is resource:
                 raise RuntimeError(
-                    "Native workflow requests cannot share workflows, executors, agents, clients, or providers. "
+                    "Native workflow requests cannot share workflows, executors, agents, clients, providers, "
+                    "or mutable tools. "
                     "Use a request-aware factory that creates fresh instances."
                 )
         for identifier, resource in unique_resources.items():
