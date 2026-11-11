@@ -44,8 +44,8 @@ class InvocationsWorkflowHostServer(_InvocationsHostServer):
                 Native workflow history and pending replies are checkpoint-owned, not agent-session-owned.
             sse_keep_alive_interval_seconds: Positive streaming heartbeat interval. If omitted, use a positive
                 `SSE_KEEPALIVE_INTERVAL`, otherwise disable heartbeats. Not a request/model timeout.
-            **kwargs: Additional AgentServer host settings forwarded to the SDK. Agent option hooks and
-                legacy wire format are not supported. Output uses JSON or framed SSE workflow events.
+            **kwargs: Additional AgentServer host settings forwarded to the SDK. Output uses JSON or framed
+                SSE workflow events.
 
         Raises:
             TypeError: If the workflow is not a request-aware factory, the parser or heartbeat type is invalid,
@@ -57,7 +57,6 @@ class InvocationsWorkflowHostServer(_InvocationsHostServer):
             "agent_session_store_provider",
             "prepare_options",
             "unsupported_options",
-            "legacy_wire_format",
         }.intersection(kwargs)
         if forbidden:
             raise TypeError(f"Unsupported native workflow host settings: {', '.join(sorted(forbidden))}.")

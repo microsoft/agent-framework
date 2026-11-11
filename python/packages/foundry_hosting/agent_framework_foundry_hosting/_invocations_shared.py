@@ -11,7 +11,6 @@ import logging
 import math
 import sys
 import uuid
-import warnings
 import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
@@ -340,7 +339,6 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
         parse_input: InvocationParser | None = None,
         prepare_options: InvocationOptionsHook | None = None,
         unsupported_options: UnsupportedOptions = "warn",
-        legacy_wire_format: bool = False,
         sse_keep_alive_interval_seconds: int | None = None,
         **kwargs: Any,
     ) -> None:
@@ -375,15 +373,9 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
             raise TypeError("parse_input must be a callable.")
         if prepare_options is not None and not callable(prepare_options):
             raise TypeError("prepare_options must be a callable.")
-        if not isinstance(legacy_wire_format, bool):
-            raise TypeError("legacy_wire_format must be a boolean.")
-        if legacy_wire_format and sse_keep_alive_interval_seconds is not None:
-            raise ValueError("SSE heartbeats require framed SSE; disable legacy_wire_format.")
         if is_agent(agent):
             self._validate_agent_options(agent)
         if workflow is not None:
-            if legacy_wire_format:
-                raise ValueError("legacy_wire_format=True is incompatible with native workflows.")
             if prepare_options is not None:
                 raise ValueError("prepare_options is agent-only; use the workflow parser's explicit client_kwargs.")
             if agent_session_store_provider is not None:
@@ -394,16 +386,13 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
             WorkflowResolver(workflow) if workflow is not None else None
         )
         super().__init__(openapi_spec=openapi_spec, **kwargs)
-        if legacy_wire_format:
-            self.config.sse_keepalive_interval = 0
-        elif sse_keep_alive_interval_seconds is not None:
+        if sse_keep_alive_interval_seconds is not None:
             self.config.sse_keepalive_interval = sse_keep_alive_interval_seconds
         self._agent = agent
         self._owns_request_agent = agent is not None and not is_agent(agent)
         self._parse_input = parse_input
         self._prepare_options = prepare_options
         self._unsupported_options = unsupported_options
-        self._legacy_wire_format = legacy_wire_format
         self._session_store_provider = (
             AgentSessionStoreProvider(store_name="invocation_sessions")
             if agent_session_store_provider is None
@@ -415,13 +404,6 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
         self._session_locks: weakref.WeakValueDictionary[str | tuple[str, str], asyncio.Lock] = (
             weakref.WeakValueDictionary()
         )
-        if legacy_wire_format:
-            message = (
-                "legacy_wire_format=True is deprecated; migrate Invocations clients to JSON responses "
-                "and framed SSE events before removing this compatibility mode."
-            )
-            warnings.warn(message, DeprecationWarning, stacklevel=3)
-            logger.warning("DEPRECATION: %s", message)
         self.invoke_handler(self._handle_invoke)
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
 
@@ -657,15 +639,10 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
                             try:
                                 async for update in stream:
                                     if update.text:
-                                        frame = (
-                                            update.text
-                                            if self._legacy_wire_format
-                                            else _sse("delta", {"text": update.text})
-                                        )
                                         # The SDK may close a suspended generator from another task.
                                         reset_request_context(token)
                                         token = None
-                                        yield frame
+                                        yield _sse("delta", {"text": update.text})
                                         token = set_request_context(context)
                                 if isinstance(stream, ResponseStream):
                                     await stream.get_final_response()
@@ -678,23 +655,18 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
                                         await self._close_interrupted_stream(stream)
                                     except Exception:
                                         logger.exception("Failed to close interrupted Invocations agent stream")
-                    if not self._legacy_wire_format:
-                        session_id = partition_key[0] if isinstance(partition_key, tuple) else partition_key
-                        if token is not None:
-                            reset_request_context(token)
-                            token = None
-                        yield _sse("done", {"session_id": session_id})
+                    session_id = partition_key[0] if isinstance(partition_key, tuple) else partition_key
+                    if token is not None:
+                        reset_request_context(token)
+                        token = None
+                    yield _sse("done", {"session_id": session_id})
                 except _UnsupportedAgentOptions as exc:
-                    if self._legacy_wire_format:
-                        raise
                     if token is not None:
                         reset_request_context(token)
                         token = None
                     yield _sse("error", {"message": str(exc), "code": "unsupported_options", "status": 400})
                 except Exception as exc:
                     logger.exception("Invocations agent stream failed")
-                    if self._legacy_wire_format:
-                        raise
                     message, status, code = _invocation_failure(exc)
                     if token is not None:
                         reset_request_context(token)
@@ -712,8 +684,6 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
                 run_kwargs = {**self._agent_kwargs(agent, options), **foreground_agent_run_kwargs(agent)}
                 async with self._request_session(partition_key, context, hosted_scope=hosted_scope) as session:
                     response = await agent.run(parsed.messages, session=session, **run_kwargs)
-            if self._legacy_wire_format:
-                return Response(content=response.text)
             return JSONResponse({"response": response.text})
         except _UnsupportedAgentOptions as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)

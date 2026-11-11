@@ -30,7 +30,6 @@ class InvocationsHostServer(_InvocationsHostServer):
         parse_input: Callable[[Request], InvocationRun | Awaitable[InvocationRun]] | None = None,
         prepare_options: InvocationOptionsHook | None = None,
         unsupported_options: UnsupportedOptions = "warn",
-        legacy_wire_format: bool = False,
         sse_keep_alive_interval_seconds: int | None = None,
         **kwargs: Any,
     ) -> None:
@@ -57,11 +56,8 @@ class InvocationsHostServer(_InvocationsHostServer):
                 unlike Responses factories which run before the hook. Removing a caller ``model``
                 retains the agent/client inference default. Defaults are not mutated.
             unsupported_options: Policy for agents without runtime options: `"warn"`, `"ignore"`, or `"error"`.
-            legacy_wire_format: Deprecated agent-only plain-text and raw-stream compatibility format.
-                Heartbeats are disabled in this format to avoid inserting SSE comments into raw text.
             sse_keep_alive_interval_seconds: Positive streaming heartbeat interval. If omitted, use a positive
                 `SSE_KEEPALIVE_INTERVAL`, otherwise disable heartbeats. Not a request/model timeout.
-                An explicit interval cannot be combined with `legacy_wire_format=True`.
             **kwargs: Additional AgentServer host settings forwarded to the SDK.
 
         Raises:
@@ -79,7 +75,6 @@ class InvocationsHostServer(_InvocationsHostServer):
             parse_input=parse_input,
             prepare_options=prepare_options,
             unsupported_options=unsupported_options,
-            legacy_wire_format=legacy_wire_format,
             sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
             **kwargs,
         )

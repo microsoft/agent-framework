@@ -148,15 +148,6 @@ def test_invocations_heartbeat_precedence_and_per_host_isolation(
     assert first.config is not second.config
 
 
-def test_legacy_raw_stream_does_not_inherit_heartbeats(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SSE_KEEPALIVE_INTERVAL", "3")
-    with pytest.warns(DeprecationWarning):
-        server = InvocationsHostServer(Agent(client=OptionsClient()), legacy_wire_format=True)
-    assert server.config.sse_keepalive_interval == 0
-    with pytest.raises(ValueError, match="framed SSE"):
-        InvocationsHostServer(Agent(client=OptionsClient()), legacy_wire_format=True, sse_keep_alive_interval_seconds=1)
-
-
 @pytest.mark.parametrize("provider_background", [False, True])
 @pytest.mark.parametrize("background", [None, False, True, "true", 1])
 def test_agent_background_defaults_are_validated_without_mutation(provider_background: bool, background: Any) -> None:
