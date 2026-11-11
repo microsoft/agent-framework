@@ -62,6 +62,7 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
 
     private string? _resolvedEndpoint;
     private string? _featuresHeader;
+    private HttpMessageHandler? _primaryHandler;
     private string _agentName = "hosted-agent";
     private string _agentVersion = "1.0.0";
 
@@ -114,6 +115,12 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
     internal Func<string, CancellationToken, Task<ToolboxOpenResult>>? ToolboxOpener { get; set; }
 
     /// <summary>
+    /// Test-only seam that supplies the primary HTTP handler shared by every toolbox connection.
+    /// Never set in production, where <see cref="CreateToolboxPrimaryHttpMessageHandler"/> is used.
+    /// </summary>
+    internal Func<HttpMessageHandler>? PrimaryHttpMessageHandlerFactory { get; set; }
+
+    /// <summary>
     /// Resolves the proxy endpoint and validates the configured toolbox names. No connection is opened.
     /// </summary>
     /// <param name="cancellationToken">Not used; startup performs no I/O.</param>
@@ -162,6 +169,10 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
         }
         else
         {
+            // One connection pool serves every toolbox connection. Each response still opens its own
+            // MCP session over it, so pooled sockets carry no caller identity between responses.
+            this._primaryHandler = this.PrimaryHttpMessageHandlerFactory?.Invoke()
+                ?? CreateToolboxPrimaryHttpMessageHandler();
             LogToolboxesConfigured(this._logger, names.Count);
         }
 
@@ -305,13 +316,18 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
 
         // Build the endpoint URI before allocating the HttpClient so a malformed URL cannot leak it.
         var endpoint = new Uri(proxyUrl);
+        var primaryHandler = Volatile.Read(ref this._primaryHandler)
+            ?? throw new ObjectDisposedException(nameof(FoundryToolboxService));
 
+        // The connection's own handlers wrap the shared primary handler without owning it, so disposing
+        // this connection's HttpClient leaves the pool to the service.
         var httpClient = new HttpClient(
             CreateToolboxHttpMessageHandler(
                 endpoint,
                 this._credential,
                 this._options.TokenScope,
-                this._featuresHeader));
+                this._featuresHeader,
+                new SharedHttpMessageHandler(primaryHandler)));
 
         var transportOptions = CreateToolboxTransportOptions(endpoint, toolboxName);
         var transport = new HttpClientTransport(transportOptions, httpClient);
@@ -439,10 +455,41 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     /// <summary>
-    /// Releases the service. Toolbox connections belong to the response scope that opened them, so the
-    /// service holds none.
+    /// Releases the primary HTTP handler shared by toolbox connections. Toolbox connections themselves belong to
+    /// the response scope that opened them.
     /// </summary>
-    public ValueTask DisposeAsync() => default;
+    public ValueTask DisposeAsync()
+    {
+        Interlocked.Exchange(ref this._primaryHandler, null)?.Dispose();
+        return default;
+    }
+
+    /// <summary>
+    /// Forwards requests to a shared handler without taking ownership of it, so disposing a connection's
+    /// <see cref="HttpClient"/> does not dispose the service's connection pool.
+    /// </summary>
+    private sealed class SharedHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly HttpMessageInvoker _invoker;
+
+        internal SharedHttpMessageHandler(HttpMessageHandler sharedHandler)
+        {
+            this._invoker = new HttpMessageInvoker(sharedHandler, disposeHandler: false);
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            this._invoker.SendAsync(request, cancellationToken);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                this._invoker.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+    }
 
     /// <summary>
     /// Owns the toolbox connections opened for one response and ends them when the response completes.

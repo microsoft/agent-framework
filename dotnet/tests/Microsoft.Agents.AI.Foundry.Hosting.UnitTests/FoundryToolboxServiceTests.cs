@@ -531,6 +531,44 @@ public class FoundryToolboxServiceTests
     }
 
     [Fact]
+    public async Task ResolveAsync_ResponsesShareOnePrimaryHttpHandlerAsync()
+    {
+        // Arrange: per-response connections must reuse the service's connection pool, not create one each.
+        await using var server = await ToolboxLoopbackServer.StartAsync();
+        var options = new FoundryToolboxServiceOptions { EndpointOverride = server.Endpoint };
+        options.ToolboxNames.Add("weather");
+        var created = new ConcurrentBag<CountingHttpMessageHandler>();
+        var service = new FoundryToolboxService(options, CreateCredential())
+        {
+            PrimaryHttpMessageHandlerFactory = () =>
+            {
+                var handler = new CountingHttpMessageHandler(FoundryToolboxService.CreateToolboxPrimaryHttpMessageHandler());
+                created.Add(handler);
+                return handler;
+            },
+        };
+        await service.StartAsync(CancellationToken.None);
+
+        // Act
+        for (var response = 0; response < 2; response++)
+        {
+            await using var scope = service.CreateRequestScope();
+            Assert.Single((await scope.ResolveAsync(CancellationToken.None)).Tools);
+        }
+
+        var primary = Assert.Single(created);
+        var disposedWithResponses = primary.IsDisposed;
+        await service.DisposeAsync();
+
+        // Assert: both responses sent through the one primary handler, which outlives their connections
+        // and is released with the service.
+        Assert.Equal(2, server.RequestsFor("initialize").Count);
+        Assert.True(primary.SendCount >= 4);
+        Assert.False(disposedWithResponses);
+        Assert.True(primary.IsDisposed);
+    }
+
+    [Fact]
     public async Task ResolveAsync_InactiveScope_ReturnsNoToolsAsync()
     {
         // Arrange
@@ -566,6 +604,27 @@ public class FoundryToolboxServiceTests
     {
         var property = Assert.Single(properties, property => property.Key == name);
         Assert.Equal(expectedValue, property.Value);
+    }
+
+    private sealed class CountingHttpMessageHandler(HttpMessageHandler inner) : DelegatingHandler(inner)
+    {
+        private int _sendCount;
+
+        internal int SendCount => Volatile.Read(ref this._sendCount);
+
+        internal bool IsDisposed { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref this._sendCount);
+            return base.SendAsync(request, cancellationToken);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            this.IsDisposed = true;
+            base.Dispose(disposing);
+        }
     }
 
     private sealed class TrackingAsyncDisposable(bool throwOnDispose = false) : IAsyncDisposable
