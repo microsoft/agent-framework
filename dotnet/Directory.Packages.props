@@ -21,7 +21,7 @@
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
-    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.6.0" />
+    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.6.1" />
     <PackageVersion Include="MessagePack" Version="3.1.12" /> <!-- Transitive dependency of Aspire pinned to newer version due to vulnerability in 2.5.192 -->
     <!-- Azure.* -->
     <PackageVersion Include="Azure.AI.AgentServer.Core" Version="1.0.0-beta.30" />
@@ -128,8 +128,8 @@
     <PackageVersion Include="ModelContextProtocol" Version="2.2.0" />
     <PackageVersion Include="ModelContextProtocol.Extensions.Tasks" Version="2.2.0" />
     <!-- Hyperlight -->
-    <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.6.0" />
-    <PackageVersion Include="Hyperlight.HyperlightSandbox.Guest.Python" Version="0.6.0" />
+    <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.9.0" />
+    <PackageVersion Include="Hyperlight.HyperlightSandbox.Guest.Python" Version="0.9.0" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Dapr.AI.Microsoft.Extensions" Version="1.18.5" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.15.2" />

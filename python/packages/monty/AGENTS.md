@@ -75,8 +75,11 @@ Tool-management methods on both classes: `add_tools`, `get_tools`,
   written to `read-write` mounts as `Content.from_data` items.
 - **`_monty_bridge.py`** — `InlineCodeBridge` and `generate_type_stubs`,
   adapted from the reference Monty CodeAct repo. Pauses on `FunctionSnapshot`
-  to dispatch host calls, then resumes; supports direct typed tool calls,
-  the `call_tool` fallback, `asyncio.gather` fan-out, and forwards
+  to dispatch host calls, then resumes; supports direct typed tool calls
+  (keyword arguments only; the generated stubs are keyword-only, omit parameters
+  guest code cannot supply such as an injected context, `self`, `*args` and
+  `**kwargs`, and the bridge rejects positional arguments), the `call_tool`
+  fallback, `asyncio.gather` fan-out, and forwards
   ``limits`` / type-check options via `pool.checkout(...)`, and ``mount`` /
   ``print_callback`` via `session.feed_start(...)`.
 - **`_instructions.py`** — dynamic instruction / tool-description builders
