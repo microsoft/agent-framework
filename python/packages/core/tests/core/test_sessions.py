@@ -2042,6 +2042,81 @@ class TestFileSessionStore:
         assert item.last_message.text == "persisted"
         assert item.data == {"type": "message", "note": "plain data"}
 
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    @pytest.mark.parametrize(
+        "container_kind", ["mapping_list", "mapping_mapping", "sequence_tuple", "mapping_tuple_list"]
+    )
+    async def test_round_trips_nested_container_annotations(
+        self,
+        tmp_path: Path,
+        serialization_format: Literal["json", "msgpack"],
+        container_kind: str,
+    ) -> None:
+        from pydantic import BaseModel, ConfigDict, Field
+
+        class Item(BaseModel):
+            model_config = ConfigDict(
+                arbitrary_types_allowed=True,
+                serialize_by_alias=True,
+                loc_by_alias=False,
+            )
+
+            last_message: Message = Field(alias="lastMessage")
+            data: dict[str, Any]
+
+        item = Item(
+            lastMessage=Message(role="user", contents=["persisted"]),
+            data={"type": "message", "note": "plain data"},
+        )
+        value: BaseModel
+        if container_kind == "mapping_list":
+
+            class MappingListState(BaseModel):
+                child: dict[str, list[Item]]
+
+            value = MappingListState(child={"first": [item]})
+        elif container_kind == "mapping_mapping":
+
+            class MappingMappingState(BaseModel):
+                child: dict[str, dict[str, Item]]
+
+            value = MappingMappingState(child={"first": {"second": item}})
+        elif container_kind == "sequence_tuple":
+
+            class SequenceTupleState(BaseModel):
+                child: list[tuple[int, Item]]
+
+            value = SequenceTupleState(child=[(7, item)])
+        else:
+
+            class MappingTupleListState(BaseModel):
+                child: dict[str, tuple[int, list[Item]]]
+
+            value = MappingTupleListState(child={"first": (7, [item])})
+
+        register_state_type(type(value), type_id=f"pydantic_nested_{container_kind}_{serialization_format}_test")
+        session = AgentSession(session_id=f"nested-{container_kind}-{serialization_format}")
+        session.state["value"] = value
+        await FileSessionStore(tmp_path, serialization_format=serialization_format).set("nested-annotation", session)
+        restored = await FileSessionStore(tmp_path, serialization_format=serialization_format).get("nested-annotation")
+
+        assert restored is not None
+        child = restored.state["value"].child
+        if container_kind == "mapping_list":
+            restored_item = child["first"][0]
+        elif container_kind == "mapping_mapping":
+            restored_item = child["first"]["second"]
+        elif container_kind == "sequence_tuple":
+            assert child[0][0] == 7
+            restored_item = child[0][1]
+        else:
+            assert child["first"][0] == 7
+            restored_item = child["first"][1][0]
+        assert isinstance(restored_item, Item)
+        assert isinstance(restored_item.last_message, Message)
+        assert restored_item.last_message.text == "persisted"
+        assert restored_item.data == {"type": "message", "note": "plain data"}
+
     async def test_round_trips_binary_messagepack_session(self, tmp_path: Path) -> None:
         store = FileSessionStore(tmp_path, serialization_format="msgpack")
         session = AgentSession(session_id="binary-session")

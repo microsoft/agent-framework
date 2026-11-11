@@ -313,12 +313,12 @@ def _union_branch_label(annotation: Any) -> str:
 
 
 def _descend_classes(annotation: Any) -> tuple[Any | None, Any | None]:
-    """Return the model class and item annotation for the next location level.
+    """Return the model class and annotation for the current location.
 
     A nullable union with one non-None alternative unwraps to that alternative.
     Other union annotations stay intact until a synthetic branch label identifies
-    the branch. Mappings defer to their value annotation, while fixed tuples keep
-    their complete annotation so a list index can select the element type.
+    the branch. Containers keep their complete annotation until a key or index
+    consumes that level, including when a list's element is itself a tuple.
     """
     annotation_origin = getattr(annotation, "__origin__", None)
     if getattr(annotation, "__metadata__", None) is not None and annotation_origin is not None:
@@ -329,24 +329,19 @@ def _descend_classes(annotation: Any) -> tuple[Any | None, Any | None]:
         if len(non_none_args) == 1:
             return _descend_classes(non_none_args[0])
         return annotation, annotation
-    if origin in (dict, Mapping):
-        args = get_args(annotation)
-        return None, args[1] if len(args) == 2 else None
-    if origin is tuple:
-        return None, annotation
     if origin is not None:
-        args = get_args(annotation)
-        return None, args[0] if args else None
+        return None, annotation
     if annotation is Any or annotation in (str, bytes) or not isinstance(annotation, type):
         return None, None
     return annotation, annotation
 
 
 def _list_item_annotation(annotation: Any, index: int) -> Any:
-    """Select a fixed tuple's element annotation, or the variadic item type."""
-    if get_origin(annotation) is not tuple:
-        return annotation
+    """Select the annotation consumed by one sequence index."""
+    origin = get_origin(annotation)
     args = get_args(annotation)
+    if origin is not tuple:
+        return args[0] if origin is not None and args else annotation
     if len(args) == 2 and args[1] is Ellipsis:
         return args[0]
     return args[index] if index < len(args) else None
@@ -459,6 +454,8 @@ def _restore_mapping(
     path: str,
 ) -> tuple[Any, bool]:
     fields = _model_fields(keyed_cls)
+    args = get_args(item_annotation)
+    value_annotation = args[1] if get_origin(item_annotation) in (dict, Mapping) and len(args) == 2 else item_annotation
     out = dict(value)
     changed = False
     for segment, sub in tree.items():
@@ -480,11 +477,7 @@ def _restore_mapping(
         restored, key_changed = _restore_at_loc_tree(
             out[raw_key],
             sub,
-            classes=(
-                _descend_classes(getattr(field, "annotation", None))
-                if field is not None
-                else (item_annotation, item_annotation)
-            ),
+            classes=_descend_classes(getattr(field, "annotation", None) if field is not None else value_annotation),
             path=f"{path}.{raw_key}",
         )
         if key_changed:
