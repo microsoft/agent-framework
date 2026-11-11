@@ -56,10 +56,11 @@ from agent_framework_foundry_hosting import (
     CheckpointStoreProvider,
     FoundryRequestScope,
     InvocationsHostServer,
+    InvocationsWorkflowHostServer,
     WorkflowSource,
     WorkflowTurn,
 )
-from agent_framework_foundry_hosting._invocations import _workflow_output, _WorkflowOutputError
+from agent_framework_foundry_hosting._invocations_shared import _workflow_output, _WorkflowOutputError
 from agent_framework_foundry_hosting._state_store import FoundryCheckpointStore
 from agent_framework_foundry_hosting._workflow_state import FoundryWorkflowBindingStore, WorkflowHead
 
@@ -301,10 +302,10 @@ def _host(
     *,
     parser: Any = _parse_ticket,
     checkpoints: CheckpointStoreProvider | None = None,
-) -> InvocationsHostServer:
-    return InvocationsHostServer(
+) -> InvocationsWorkflowHostServer:
+    return InvocationsWorkflowHostServer(
         workflow=factory,
-        parse_request=parser,
+        parse_input=parser,
         checkpoint_store_provider=checkpoints
         or CheckpointStoreProvider(
             allowed_checkpoint_types=[
@@ -339,7 +340,7 @@ async def _events(response: Response) -> list[dict[str, Any]]:
 
 
 async def _invoke(
-    server: InvocationsHostServer,
+    server: InvocationsWorkflowHostServer,
     payload: Any,
     *,
     session_id: str = "session",
@@ -438,16 +439,16 @@ class TestNativeWorkflowConfiguration:
             return WorkflowBuilder(name="tickets", start_executor=_TicketExecutor([])).build()
 
         invalid_agent: Any = object()
-        with pytest.raises(TypeError, match="exactly one"):
-            InvocationsHostServer(agent=invalid_agent, workflow=create, parse_request=_parse_ticket)
-        with pytest.raises(TypeError, match="parse_request is required"):
-            InvocationsHostServer(workflow=create)
+        with pytest.raises(TypeError, match="InvocationsWorkflowHostServer"):
+            InvocationsHostServer(agent=invalid_agent, workflow=create)
+        with pytest.raises(TypeError, match="parse_input"):
+            cast(Any, InvocationsWorkflowHostServer)(workflow=create)
 
     def test_workflow_rejects_agent_legacy_wire_format(self) -> None:
-        with pytest.raises(ValueError, match="legacy_wire_format.*native"):
-            InvocationsHostServer(
+        with pytest.raises(TypeError, match="legacy_wire_format"):
+            InvocationsWorkflowHostServer(
                 workflow=lambda _: WorkflowBuilder(name="tickets", start_executor=_TicketExecutor([])).build(),
-                parse_request=_parse_ticket,
+                parse_input=_parse_ticket,
                 legacy_wire_format=True,
             )
 
@@ -488,27 +489,36 @@ class TestNativeWorkflowConfiguration:
         assert len(created) == 1
         assert calls == []
 
-    @pytest.mark.parametrize("stream", [False, True])
-    async def test_built_workflow_allows_one_shot_output_but_rejects_pauses_without_state(self, stream: bool) -> None:
+    def test_built_workflow_is_rejected_before_execution_or_state_access(self) -> None:
         calls: list[tuple[Ticket, str | None]] = []
         one_shot = WorkflowBuilder(name="one-shot", start_executor=_TicketExecutor(calls)).build()
-        response, events = await _invoke(_host(one_shot), {"ticket_id": "T-1", "stream": stream})
-        assert response.status_code == 200
-        assert [event["event"] for event in events if event["event"] == "output"] == ["output"]
-        assert calls == [(Ticket("T-1", "Help"), None)]
-        store = FoundryWorkflowBindingStore(FoundryRequestScope("session", None, None, False))
-        assert await store.get_head("invocations", None) == (None, None)
-
-        pausing = WorkflowBuilder(name="pausing", start_executor=_ReviewExecutor([])).build()
-        response, events = await _invoke(_host(pausing), {"ticket_id": "T-2", "stream": stream})
-        assert response.status_code == (200 if stream else 400)
-        assert [event["event"] for event in events] == ["error"]
-        message = events[0].get("message") or events[0].get("error")
-        assert isinstance(message, str) and "request-aware factory" in message
-        assert await store.get_head("invocations", None) == (None, None)
+        with pytest.raises(TypeError, match="request-aware factory"):
+            _host(cast(Any, one_shot))
+        assert calls == []
 
 
 class TestNativeWorkflowTurns:
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_new_wrappers_from_shared_builder_fail_before_second_dispatch(self, stream: bool) -> None:
+        calls: list[tuple[Ticket, str | None]] = []
+        builder = WorkflowBuilder(name="shared-builder", start_executor=_TicketExecutor(calls))
+        graphs: list[Workflow] = []
+
+        def create(request: Request) -> Workflow:
+            graph = builder.build()
+            graphs.append(graph)
+            return graph
+
+        server = _host(create)
+        first, _ = await _invoke(server, {"ticket_id": "T-1", "stream": stream})
+        second, events = await _invoke(server, {"ticket_id": "T-2", "stream": stream})
+        assert first.status_code == 200
+        assert second.status_code == (200 if stream else 500)
+        assert [event["event"] for event in events] == ["error"]
+        assert len(calls) == 1
+        assert graphs[0] is not graphs[1]
+        assert graphs[0].get_start_executor() is graphs[1].get_start_executor()
+
     async def test_checkpoint_allowlist_failure_happens_before_claim_and_dispatch(self) -> None:
         calls: list[tuple[Ticket, str | None]] = []
 
@@ -1098,18 +1108,17 @@ class TestNativeWorkflowAgentExecutors:
         assert response.status_code == 400
         assert calls == resources == []
 
-    async def test_borrowed_raw_workflow_cannot_forge_fresh_factory_authority(self) -> None:
+    def test_borrowed_raw_workflow_is_rejected_at_construction(self) -> None:
         calls: list[dict[str, Any]] = []
         resources: list[tuple[str, str | None]] = []
         options: ChatOptions = {"store": False, "temperature": 0.7}
         agent = RawAgent(client=_ContextClient(calls, resources), name="raw", default_options=options)
         workflow = WorkflowBuilder(name="raw-agent", start_executor=AgentExecutor(agent, id="responder")).build()
-        server = _host(
-            workflow,
-            parser=lambda _: WorkflowTurn(input="hello", client_kwargs={"options": {"temperature": 0.7}}),
-        )
-        response, _ = await _invoke(server, {"fresh_factory": True})
-        assert response.status_code == 400
+        with pytest.raises(TypeError, match="request-aware factory"):
+            _host(
+                cast(Any, workflow),
+                parser=lambda _: WorkflowTurn(input="hello", client_kwargs={"options": {"temperature": 0.7}}),
+            )
         assert calls == resources == []
 
     @pytest.mark.parametrize("bare_raw", [False, True])
@@ -1264,11 +1273,11 @@ class TestNativeWorkflowStreamingLifecycle:
         byte_limit = 4096 if limit_kind == "events" else 128
         with (
             patch(
-                "agent_framework_foundry_hosting._invocations._MAX_WORKFLOW_SNAPSHOT_EVENTS",
+                "agent_framework_foundry_hosting._invocations_shared._MAX_WORKFLOW_SNAPSHOT_EVENTS",
                 event_limit,
             ),
             patch(
-                "agent_framework_foundry_hosting._invocations._MAX_WORKFLOW_SNAPSHOT_BYTES",
+                "agent_framework_foundry_hosting._invocations_shared._MAX_WORKFLOW_SNAPSHOT_BYTES",
                 byte_limit,
             ),
         ):
@@ -1344,7 +1353,7 @@ class TestNativeWorkflowStreamingLifecycle:
         store = FoundryWorkflowBindingStore(trusted_scope)
         before, before_etag = await store.get_head("invocations", None)
 
-        def hosted() -> InvocationsHostServer:
+        def hosted() -> InvocationsWorkflowHostServer:
             replacement = _host(factory)
             replacement.config.is_hosted = True
             replacement.config.session_id = ""

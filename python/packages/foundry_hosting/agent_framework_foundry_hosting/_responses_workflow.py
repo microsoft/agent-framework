@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Native Responses workflow projection, with durable output preceding publication."""
+"""Host native workflows through Responses, with durable output preceding publication."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import inspect
 import json
 import logging
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
@@ -29,39 +29,48 @@ from agent_framework import (
     WorkflowCheckpointException,
     WorkflowEvent,
 )
+from agent_framework._telemetry import mark_feature_used
 from anyio import CancelScope
-from azure.ai.agentserver.core import AgentConfig, get_request_context
-from azure.ai.agentserver.responses import ResponseContext
+from azure.ai.agentserver.core import get_request_context
+from azure.ai.agentserver.responses import ResponseContext, ResponseProviderProtocol, ResponsesServerOptions
 from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
+from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import CreateResponse, ResponseObject, ResponseStreamEvent
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
-from starlette.routing import Route, Router
+from starlette.routing import Route
 from starlette.types import Send
 
-from ._request import (
-    HostedResponseRequest,
-    OptionsHook,
-    WorkflowTurn,
-    prepare_response_options,
-    response_run_options,
-    validate_request_options,
-)
-from ._responses import (
+from ._feature_usage import FeatureIndex
+from ._responses_shared import (
     _HOSTED_PROVIDER_USAGE_KEY,  # pyright: ignore[reportPrivateUsage]
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
     _hosted_internal_metadata,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _normalize_allowed_oauth_consent_origins,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _request_without_reserved_metadata,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
+    _validate_response_server_options,  # pyright: ignore[reportPrivateUsage]
 )
 from ._scope import FoundryRequestScope
+from ._shared import (
+    OptionsHook,
+    ResponsesRequest,
+    WorkflowResolver,
+    WorkflowSource,
+    WorkflowTurn,
+    prepare_response_options,
+    prepare_workflow_kwargs,
+    response_run_options,
+    validate_request_options,
+    validate_workflow_source,
+    workflow_agents,
+)
 from ._state_store import CheckpointStoreProvider, ContextScopedStoreProvider
-from ._workflow_source import WorkflowResolver, WorkflowSource, prepare_workflow_kwargs, workflow_agents
 from ._workflow_state import HostedWorkflowRun, WorkflowConflictError
 
 logger = logging.getLogger(__name__)
@@ -150,7 +159,7 @@ def _snapshot(stream: ResponseEventStream) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(json.dumps(_wire_value(stream.response), allow_nan=False)))
 
 
-async def _load_replies(request: HostedResponseRequest, run: HostedWorkflowRun) -> dict[str, Any]:
+async def _load_replies(request: ResponsesRequest, run: HostedWorkflowRun) -> dict[str, Any]:
     items = await request.get_input_items()
     if not run.pending_requests or not items:
         raise _WorkflowRequestError("Workflow replies require an exact pending stored checkpoint.")
@@ -319,32 +328,93 @@ async def _project(
     return events
 
 
-class NativeResponsesWorkflow:
-    """The native-only adapter; ordinary agents and legacy wrapper machinery remain separate."""
+class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
+    """Host a native, checkpoint-owned workflow through the Responses protocol."""
 
     def __init__(
         self,
-        source: WorkflowSource[HostedResponseRequest],
-        parser: Callable[[HostedResponseRequest], WorkflowTurn[Any] | Awaitable[WorkflowTurn[Any]]],
+        workflow: WorkflowSource[ResponsesRequest],
         *,
-        config: AgentConfig,
-        checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage],
-        prepare_options: OptionsHook | None,
-        resilient_background: bool,
-        allowed_oauth_consent_origins: frozenset[str] | None,
+        parse_input: Callable[[ResponsesRequest], WorkflowTurn[Any] | Awaitable[WorkflowTurn[Any]]],
+        prefix: str = "",
+        options: ResponsesServerOptions | None = None,
+        response_store: ResponseProviderProtocol | None = None,
+        checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
+        prepare_options: OptionsHook | None = None,
+        allowed_oauth_consent_origins: Sequence[str] | None = None,
+        **kwargs: Any,
     ) -> None:
-        self.resolver = WorkflowResolver(source)
-        self.parser = parser
-        self.config = config
-        self.checkpoint_store_provider = checkpoint_store_provider
-        self.options_hook = prepare_options
-        self.resilient_background = resilient_background
-        self.allowed_origins = allowed_oauth_consent_origins
+        """Create a native workflow host with explicit parsing and checkpoint ownership.
 
-    def bind_streaming_route(self, router: Router, *, prefix: str, keep_alive: bool) -> None:
+        Args:
+            workflow: Sync or async request-aware factory, called once per request (including recovery).
+                Build fresh workflows, executors, agents, clients, providers, and mutable tools inside the
+                factory. Keep workflow and executor IDs stable for checkpoint restoration. The host closes
+                context-managed agents returned by the factory; applications own other resource cleanup.
+
+        Keyword Args:
+            parse_input: Sync or async parser of this turn's `ResponsesRequest`. Return a typed
+                `WorkflowTurn(input=...)` or a complete batch of validated pending `responses`.
+            prefix: URL prefix for Responses routes.
+            options: AgentServer options, including outer background recovery. Steering remains disabled.
+                Outer background execution does not enable provider background on workflow agents.
+            response_store: Backend for caller-facing Responses persistence, not the wire-level `store` flag.
+            checkpoint_store_provider: Scoped checkpoint storage. Defaults to `CheckpointStoreProvider`.
+                Native workflow history and pending replies are checkpoint-owned, not agent-session-owned.
+            prepare_options: Sync or async hook receiving the hosted request and a copy of caller model
+                options before parsing/execution. Return the replacement mapping; hosting validates it.
+                This does not enable inner provider background or service-owned history.
+            allowed_oauth_consent_origins: Optional exact HTTPS origins for consent links. Omission retains
+                safe-HTTPS validation; an empty sequence rejects all origins.
+            **kwargs: Additional AgentServer host settings forwarded to the SDK.
+
+        Raises:
+            TypeError: If the workflow is not a request-aware factory, the parser is not callable, or an
+                agent-only setting is supplied.
+            RuntimeError: If steering is requested while unavailable.
+        """
+        if "parse_response" in kwargs:
+            raise TypeError("parse_response was renamed to parse_input.")
+        forbidden = {
+            "agent",
+            "agent_session_store_provider",
+            "function_approval_store_provider",
+            "history_source",
+            "background_source",
+            "unsupported_options",
+            "store",
+        }.intersection(kwargs)
+        if forbidden:
+            raise TypeError(f"Unsupported native workflow host settings: {', '.join(sorted(forbidden))}.")
+        validate_workflow_source(workflow)
+        if not callable(parse_input):
+            raise TypeError("parse_input must be a callable.")
+        if prepare_options is not None and not callable(prepare_options):
+            raise TypeError("prepare_options must be a callable.")
+        _validate_response_server_options(options)
+        allowed_origins = _normalize_allowed_oauth_consent_origins(allowed_oauth_consent_origins)
+        super().__init__(prefix=prefix, options=options, store=response_store, **kwargs)
+        self._resolver = WorkflowResolver(workflow)
+        self._parse_input = parse_input
+        self._checkpoint_store_provider = (
+            CheckpointStoreProvider() if checkpoint_store_provider is None else checkpoint_store_provider
+        )
+        self._prepare_options = prepare_options
+        self._resilient_background = bool(options and options.resilient_background)
+        self._allowed_origins = allowed_origins
+        self._bind_streaming_route(
+            prefix=prefix,
+            keep_alive=bool(
+                (options and options.sse_keep_alive_interval_seconds) or self.config.sse_keepalive_interval
+            ),
+        )
+        self.response_handler(self._handle_response)
+        mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
+
+    def _bind_streaming_route(self, *, prefix: str, keep_alive: bool) -> None:
         """Adapt only the native POST route's public StreamingResponse cleanup lifetime."""
         path = f"/{prefix.strip('/')}/responses" if prefix.strip("/") else "/responses"
-        for index, route in enumerate(router.routes):
+        for index, route in enumerate(self.router.routes):
             if not isinstance(route, Route) or route.path != path or "POST" not in (route.methods or ()):
                 continue
             endpoint = cast(Callable[[Request], Awaitable[Response]], route.endpoint)
@@ -357,7 +427,7 @@ class NativeResponsesWorkflow:
                     return _NativeWorkflowStreamingResponse(response, keep_alive=keep_alive)
                 return response
 
-            router.routes[index] = Route(
+            self.router.routes[index] = Route(
                 route.path,
                 endpoint=native_endpoint,
                 methods=list(route.methods or ()),
@@ -367,7 +437,7 @@ class NativeResponsesWorkflow:
             return
         raise RuntimeError("The native Responses streaming route is unavailable.")
 
-    async def response_events(
+    async def _handle_response(
         self,
         request: CreateResponse,
         context: ResponseContext,
@@ -375,7 +445,7 @@ class NativeResponsesWorkflow:
     ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Keep factory, resources, and native generator cleanup in one persistent task."""
         lifetime = _NATIVE_STREAM_LIFETIME.get()
-        inner = self.handle_response(request, context, cancellation_signal)
+        inner = self._run_workflow(request, context, cancellation_signal)
         if lifetime is None or request.get("background") is True:
             async with aclosing(inner):
                 async for event in inner:
@@ -387,7 +457,7 @@ class NativeResponsesWorkflow:
             async for event in events:
                 yield event
 
-    async def handle_response(
+    async def _run_workflow(
         self,
         request: CreateResponse,
         context: ResponseContext,
@@ -427,26 +497,20 @@ class NativeResponsesWorkflow:
             scope = FoundryRequestScope.from_context(
                 self.config, platform_context, local_session_id=context.response_id
             )
-            hosted = HostedResponseRequest(request, context, scope, response_run_options(request))
-            await prepare_response_options(hosted, self.options_hook)
+            hosted = ResponsesRequest(request, context, scope, response_run_options(request))
+            await prepare_response_options(hosted, self._prepare_options)
             validate_request_options(hosted.options)
-            workflow = await self.resolver.resolve(hosted)
+            workflow = await self._resolver.resolve(hosted)
             resources = AsyncExitStack()
             await resources.__aenter__()
             for agent in workflow_agents(workflow):
                 if isinstance(agent, AbstractAsyncContextManager):
                     await resources.enter_async_context(agent)
             resilient = (
-                self.resilient_background and request.get("background") is True and request.get("store") is not False
+                self._resilient_background and request.get("background") is True and request.get("store") is not False
             )
             if context.is_recovery and not resilient:
                 raise _WorkflowRequestError("Native workflow recovery requires a stored resilient background response.")
-            if not self.resolver.is_factory and (
-                context.is_recovery
-                or context.conversation_id is not None
-                or request.get("previous_response_id") is not None
-            ):
-                raise _WorkflowRequestError("Native workflow continuation requires a fresh request-aware factory.")
             phase = "scoped continuation"
             run = await HostedWorkflowRun.prepare(
                 workflow,
@@ -454,12 +518,12 @@ class NativeResponsesWorkflow:
                 response_id=context.response_id,
                 config=self.config,
                 platform_context=platform_context,
-                checkpoint_store_provider=self.checkpoint_store_provider,
+                checkpoint_store_provider=self._checkpoint_store_provider,
                 previous_response_id=request.get("previous_response_id"),
                 conversation_id=context.conversation_id,
                 stored=request.get("store") is not False,
                 recovery=context.is_recovery,
-                fresh_factory=self.resolver.is_factory,
+                fresh_factory=True,
             )
             if context.is_recovery and run.snapshot is not None:
                 if run.snapshot.get("id") != context.response_id:
@@ -471,7 +535,7 @@ class NativeResponsesWorkflow:
             yield wire(stream.emit_in_progress())
             hosted._set_workflow_responses(lambda: _load_replies(hosted, run))  # pyright: ignore[reportPrivateUsage]
             phase = "input parsing"
-            turn = run.recovery_turn() if context.is_recovery else self.parser(hosted)
+            turn = run.recovery_turn() if context.is_recovery else self._parse_input(hosted)
             if inspect.isawaitable(turn):
                 turn = await turn
             phase = "input validation"
@@ -479,10 +543,10 @@ class NativeResponsesWorkflow:
             if (
                 run.stored
                 and turn.input is not None
-                and isinstance(self.checkpoint_store_provider, CheckpointStoreProvider)
+                and isinstance(self._checkpoint_store_provider, CheckpointStoreProvider)
             ):
                 try:
-                    self.checkpoint_store_provider.validate_checkpoint_value(turn.input)
+                    self._checkpoint_store_provider.validate_checkpoint_value(turn.input)
                 except WorkflowCheckpointException as exc:
                     raise _WorkflowRequestError(
                         "Stored native workflow input uses an application type that is not checkpoint-allowlisted. "
@@ -494,7 +558,7 @@ class NativeResponsesWorkflow:
                 scope,
                 options=hosted.options,
                 stored=run.stored,
-                fresh_factory=self.resolver.is_factory,
+                fresh_factory=True,
             )
             if cancellation_signal.is_set():
                 return
@@ -502,7 +566,7 @@ class NativeResponsesWorkflow:
             aliases = dict(run.approvals) if context.is_recovery else {}
             represented_pending: set[str] = set(run.pending_requests) if context.is_recovery else set()
             buffered: list[WorkflowEvent[Any]] = []
-            tracker = _OutputItemTracker(stream, self.allowed_origins)
+            tracker = _OutputItemTracker(stream, self._allowed_origins)
 
             async def flush(checkpoint_id: str | None) -> list[ResponseStreamEvent]:
                 nonlocal stream, tracker, aliases
@@ -514,7 +578,7 @@ class NativeResponsesWorkflow:
                 )
                 draft.emit_created()
                 draft.emit_in_progress()
-                next_tracker = _OutputItemTracker(draft, self.allowed_origins)
+                next_tracker = _OutputItemTracker(draft, self._allowed_origins)
                 approval_projection = _CheckpointApprovals(checkpoint, next_aliases)
                 events: list[ResponseStreamEvent] = []
                 for event in buffered:
@@ -539,13 +603,9 @@ class NativeResponsesWorkflow:
                 )
                 async with aclosing(iterator):
                     async for event in iterator:
-                        if event.type == "request_info" and event.request_id not in represented_pending:
-                            if not self.resolver.is_factory:
-                                raise _WorkflowRequestError(
-                                    "A pausing native workflow requires a fresh request-aware factory."
-                                )
-                            buffered.append(event)
-                        elif event.type in ("output", "intermediate", "data"):
+                        if (
+                            event.type == "request_info" and event.request_id not in represented_pending
+                        ) or event.type in ("output", "intermediate", "data"):
                             buffered.append(event)
                         elif event.type == "superstep_started" and run.stored and run.snapshot is None:
                             await run.stage(_snapshot(stream), checkpoint_id=iterator.stamp)

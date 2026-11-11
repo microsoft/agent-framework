@@ -66,7 +66,8 @@ Gather these:
 ## Phase 0 — Understand the sample
 
 A responses/invocations sample folder typically contains:
-`main.py` (entry point + `ResponsesHostServer`/`InvocationsHostServer`),
+`main.py` (entry point + agent `ResponsesHostServer`/`InvocationsHostServer`, or native
+`ResponsesWorkflowHostServer`/`InvocationsWorkflowHostServer` with a request-aware factory and parser),
 `agent.manifest.yaml` (used by `azd ai agent init`), `agent.yaml` (the deployed
 agent definition), `requirements.txt`, `Dockerfile`, `.env.example`.
 

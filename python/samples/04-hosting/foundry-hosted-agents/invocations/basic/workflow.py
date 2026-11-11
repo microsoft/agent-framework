@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent_framework import Executor, Workflow, WorkflowBuilder, WorkflowContext, handler, response_handler
-from agent_framework_foundry_hosting import CheckpointStoreProvider, InvocationsHostServer, WorkflowTurn
+from agent_framework_foundry_hosting import CheckpointStoreProvider, InvocationsWorkflowHostServer, WorkflowTurn
 from starlette.requests import Request
 
 """Host typed tickets and durable review replies as a native Invocations workflow.
@@ -103,7 +103,7 @@ def unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return values
 
 
-async def parse_request(request: Request) -> WorkflowTurn[Ticket]:
+async def parse_input(request: Request) -> WorkflowTurn[Ticket]:
     payload: Any = json.loads(await request.body(), object_pairs_hook=unique_json_object)
     if not isinstance(payload, dict):
         raise ValueError("The request must be a JSON object.")
@@ -150,9 +150,9 @@ def main() -> None:
             for value in (Ticket, TicketState, TicketReview, TicketDecision, TicketResult)
         ]
     )
-    InvocationsHostServer(
+    InvocationsWorkflowHostServer(
         workflow=build_workflow,
-        parse_request=parse_request,
+        parse_input=parse_input,
         checkpoint_store_provider=checkpoints,
     ).run()
 

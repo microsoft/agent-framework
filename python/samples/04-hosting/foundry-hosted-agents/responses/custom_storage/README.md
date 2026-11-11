@@ -87,7 +87,7 @@ curl -X POST http://localhost:8088/responses \
   -d '{"input":"Hi"}'
 ```
 
-The host uses `history_source="agent_server"` and a request-owned agent/client
+The host uses `history_source="host_managed"` and a request-owned agent/client
 factory. It reconstructs history from the outer transcript rather than retaining
 it on Python instances or enabling inner model storage. Outer `store=false`
 does not access/write this custom session store.

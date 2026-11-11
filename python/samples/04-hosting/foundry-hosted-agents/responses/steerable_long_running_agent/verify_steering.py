@@ -9,11 +9,11 @@ Expected output: Steering is temporarily unavailable; no agent or host was start
 """
 
 from agent_framework import SupportsAgentRun
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework_foundry_hosting import ResponsesHostServer, ResponsesRequest
 from azure.ai.agentserver.responses import ResponsesServerOptions
 
 
-def _agent_factory() -> SupportsAgentRun:
+def _agent_factory(*, request: ResponsesRequest) -> SupportsAgentRun:
     raise AssertionError("A guarded steering host must not create an agent.")
 
 

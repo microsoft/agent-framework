@@ -11,15 +11,15 @@ import pytest
 from azure.ai.agentserver.responses import ResponseContext
 from azure.ai.agentserver.responses.models import CreateResponse
 
-from agent_framework_foundry_hosting import HostedResponseRequest, InvocationRun, response_input_messages
-from agent_framework_foundry_hosting._request import (
+from agent_framework_foundry_hosting import InvocationRun, ResponsesRequest, response_input_messages
+from agent_framework_foundry_hosting._scope import FoundryRequestScope
+from agent_framework_foundry_hosting._shared import (
     prepare_response_options,
     response_run_options,
     validate_default_transport_options,
     validate_request_options,
     validate_unsupported_options,
 )
-from agent_framework_foundry_hosting._scope import FoundryRequestScope
 
 
 def test_native_options_are_translated_before_flattened_extra_body() -> None:
@@ -82,10 +82,10 @@ async def test_hook_uses_a_request_copy_and_does_not_mutate_defaults() -> None:
     context.conversation_id = None
     context.get_input_text = AsyncMock(return_value="hello")
     scope = FoundryRequestScope(session_id="sandbox", user_id="user", call_id="call", is_hosted=True)
-    request = HostedResponseRequest(payload, context, scope, {"temperature": 0.8})
+    request = ResponsesRequest(payload, context, scope, {"temperature": 0.8})
     original = {"temperature": 0.8}
 
-    async def remove_temperature(view: HostedResponseRequest, options: dict[str, Any]) -> dict[str, Any]:
+    async def remove_temperature(view: ResponsesRequest, options: dict[str, Any]) -> dict[str, Any]:
         assert view.scope is scope
         assert view.response_id == "outer-id"
         assert await view.get_input_text() == "hello"
@@ -105,7 +105,7 @@ async def test_explicit_message_migration_helper_converts_only_current_turn() ->
     context.conversation_id = None
     items = [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "current"}]}]
     context.get_input_items = AsyncMock(return_value=items)
-    request = HostedResponseRequest(
+    request = ResponsesRequest(
         cast(CreateResponse, {"input": "current"}),
         context,
         FoundryRequestScope("sandbox", "user", "call", True),
@@ -113,7 +113,7 @@ async def test_explicit_message_migration_helper_converts_only_current_turn() ->
     )
     converted = [MagicMock()]
     with patch(
-        "agent_framework_foundry_hosting._responses._items_to_messages",
+        "agent_framework_foundry_hosting._responses_shared._items_to_messages",
         new=AsyncMock(return_value=converted),
     ) as converter:
         result = await response_input_messages(request)
@@ -127,7 +127,7 @@ async def test_hook_rejects_reserved_fields_and_non_mapping_result() -> None:
     context.response_id = "outer-id"
     context.conversation_id = None
     scope = FoundryRequestScope(session_id="sandbox", user_id=None, call_id=None, is_hosted=False)
-    request = HostedResponseRequest(cast(CreateResponse, {"input": "hello"}), context, scope, {})
+    request = ResponsesRequest(cast(CreateResponse, {"input": "hello"}), context, scope, {})
 
     await prepare_response_options(request, lambda _view, _options: {"store": True, "session_id": "forged"})
     with pytest.raises(ValueError, match="session_id, store"):

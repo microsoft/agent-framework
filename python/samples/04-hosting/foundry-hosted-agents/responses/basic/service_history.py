@@ -23,7 +23,7 @@ def main() -> None:
         instructions="Be concise.",
         default_options={"store": True},
     )
-    ResponsesHostServer(agent=agent, history_source="service").run()
+    ResponsesHostServer(agent=agent, history_source="inference_service").run()
 
 
 if __name__ == "__main__":

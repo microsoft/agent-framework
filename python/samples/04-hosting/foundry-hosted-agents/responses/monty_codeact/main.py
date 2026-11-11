@@ -25,7 +25,7 @@ from typing import Annotated, Any, Literal
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.monty import MontyCodeActProvider
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework_foundry_hosting import ResponsesHostServer, ResponsesRequest
 from azure.ai.agentserver.core import AgentConfig, get_request_context
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
@@ -70,7 +70,7 @@ def fetch_data(
     return data.get(table, [])
 
 
-def create_agent() -> Agent:
+def create_agent(*, request: ResponsesRequest) -> Agent:
     """Create a new interpreter provider and client for the current request."""
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
@@ -122,7 +122,7 @@ def create_agent() -> Agent:
 def main() -> None:
     """Host a Monty CodeAct agent over the Responses protocol."""
     load_dotenv()
-    server = ResponsesHostServer(agent=create_agent, history_source="agent_server")
+    server = ResponsesHostServer(agent=create_agent, history_source="host_managed")
     server.run()
 
 
