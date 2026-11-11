@@ -2926,6 +2926,38 @@ class TestGitHubCopilotAgentToolConversion:
         assert result.result_type == "success"
         assert result.text_result_for_llm == "no args result"
 
+    @pytest.mark.parametrize(
+        "tool_return",
+        [None, "", Content.from_data(data=b"\x89PNG\r\n\x1a\n", media_type="image/png")],
+        ids=["none", "empty_string", "image_only"],
+    )
+    async def test_tool_handler_returns_empty_text_when_tool_returns_no_text(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        tool_return: Any,
+    ) -> None:
+        """Test that a tool result without text reaches the model as an empty string, not as a Python repr."""
+
+        def no_text_tool() -> Any:
+            """A tool that returns no text."""
+            return tool_return
+
+        agent = GitHubCopilotAgent(client=mock_client, tools=[no_text_tool])
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args.kwargs
+        copilot_tool = config["tools"][0]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={}))
+
+        assert isinstance(result, ToolResult)
+        assert result.result_type == "success"
+        assert result.text_result_for_llm == ""
+
     async def test_run_forwards_function_invocation_kwargs_to_tools(
         self,
         mock_client: MagicMock,
