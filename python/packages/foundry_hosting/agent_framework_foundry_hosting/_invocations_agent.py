@@ -64,11 +64,13 @@ class InvocationsHostServer(_InvocationsHostServer):
                 Use `InvocationsWorkflowHostServer` for native workflow settings.
 
         Raises:
-            TypeError: If the agent source, parser/hook, or heartbeat type is invalid, or removed,
-                Responses-only, or native workflow settings are supplied.
-            ValueError: If the heartbeat interval is nonpositive or an injected agent has unsupported background
-                or transport defaults.
+            TypeError: If the agent source, parser/hook, or heartbeat type is invalid, or Responses-only
+                or native workflow settings are supplied.
+            ValueError: If the heartbeat interval is nonpositive or an injected agent has unsupported
+                background or transport defaults.
         """
+        if {"workflow", "checkpoint_store_provider"}.intersection(agent_server_kwargs):
+            raise TypeError("Use InvocationsWorkflowHostServer for native workflows and checkpoint storage.")
         super().__init__(
             agent=agent,
             openapi_spec=openapi_spec,
