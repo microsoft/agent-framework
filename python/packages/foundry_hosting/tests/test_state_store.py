@@ -588,6 +588,24 @@ async def test_conditional_write_without_acknowledged_revision_fails_closed(
         )
 
 
+@pytest.mark.parametrize("expected_revision", ["*", " * ", '"a", "b"'])
+async def test_conditional_write_rejects_wildcard_or_list_revision_before_backend_access(
+    monkeypatch: pytest.MonkeyPatch, expected_revision: str
+) -> None:
+    monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "hosted")
+    scope = FoundryRequestScope.from_context(_config(is_hosted=True), _platform_context())
+    with (
+        patch(
+            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create", new=AsyncMock()
+        ) as backend,
+        pytest.raises(ValueError, match="exact non-wildcard revision"),
+    ):
+        await FoundryAgentSessionStore(_platform_context(), scope=scope).compare_and_set(
+            "canonical", AgentSession(), expected_revision=expected_revision
+        )
+    backend.assert_not_awaited()
+
+
 async def test_default_nonhosted_approval_cas_fails_before_backend_access() -> None:
     with (
         patch(

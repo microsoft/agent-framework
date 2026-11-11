@@ -423,7 +423,8 @@ class FoundryAgentSessionStore(SessionStore):
         """Persist a create-only or exact-revision session transition.
 
         ``None`` requires an absent entry; a non-empty revision requires that
-        exact existing entry. Conflicts never fall back to an upsert. An
+        exact existing entry. Wildcard and list revisions are rejected.
+        Conflicts never fall back to an upsert. An
         acknowledgement without a revision is a failure, even if storage wrote
         the value. The caller must not dispatch protected work in that case.
 
@@ -434,8 +435,13 @@ class FoundryAgentSessionStore(SessionStore):
                 custom conditional store.
         """
         SessionStore.validate_session_id(session_id)
-        if expected_revision is not None and (not isinstance(expected_revision, str) or not expected_revision):
-            raise ValueError("expected_revision must be None or a non-empty string.")
+        if expected_revision is not None and (
+            not isinstance(expected_revision, str)
+            or not expected_revision
+            or expected_revision.strip() == "*"
+            or "," in expected_revision
+        ):
+            raise ValueError("expected_revision must be None or one exact non-wildcard revision.")
         if self._scope is None or not os.environ.get("FOUNDRY_HOSTING_ENVIRONMENT"):
             raise RuntimeError(
                 "The default non-hosted Foundry session store cannot atomically claim approvals across processes. "
