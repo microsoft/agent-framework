@@ -45,16 +45,14 @@ from .approval_translation_helpers import (  # pyrefly: ignore[missing-import] -
 async def test_history_and_input_conversions_only_read_approval_state(tmp_path: Path, approved: bool) -> None:
     store = SqliteSessionStore(tmp_path / "sessions.db")
     session = await pending_session(store)
-    state = SessionApprovalState(session, store)
-    token = await state.preflight(["wire-0", "wire-1"])
-    assert token is not None
+    state = SessionApprovalState(session)
     session_before = deepcopy(session.to_dict())
     writes_before = store.write_count
-    stored_before: dict[str, tuple[dict[str, Any], str | None]] = {}
-    for key in ("response-alias", "conversation-alias", token.authority_id):
-        stored, revision = await store.get_with_revision(key)
+    stored_before: dict[str, dict[str, Any]] = {}
+    for key in ("response-alias", "conversation-alias"):
+        stored = await store.get(key)
         assert stored is not None
-        stored_before[key] = (stored.to_dict(), revision)
+        stored_before[key] = stored.to_dict()
 
     output_items: list[OutputItem] = [
         OutputItemMcpApprovalRequest({
@@ -101,19 +99,16 @@ async def test_history_and_input_conversions_only_read_approval_state(tmp_path: 
 
     assert session.to_dict() == session_before
     assert store.write_count == writes_before
-    assert await state.preflight(["wire-0", "wire-1"]) == token
     for key, expected in stored_before.items():
-        stored, revision = await store.get_with_revision(key)
+        stored = await store.get(key)
         assert stored is not None
-        assert (stored.to_dict(), revision) == expected
+        assert stored.to_dict() == expected
 
 
-async def test_partial_input_conversion_does_not_consume_pending_approvals(tmp_path: Path) -> None:
+async def test_unknown_input_conversion_does_not_mutate_session(tmp_path: Path) -> None:
     store = SqliteSessionStore(tmp_path / "sessions.db")
     session = await pending_session(store)
-    state = SessionApprovalState(session, store)
-    token = await state.preflight(["wire-0", "wire-1"])
-    assert token is not None
+    state = SessionApprovalState(session)
     session_before = deepcopy(session.to_dict())
     writes_before = store.write_count
     items: list[Item] = [
@@ -121,12 +116,11 @@ async def test_partial_input_conversion_does_not_consume_pending_approvals(tmp_p
         MCPApprovalResponse({"type": "mcp_approval_response", "approval_request_id": "missing", "approve": False}),
     ]
 
-    with pytest.raises(_PublicResponseFailure, match="not in this session's history"):
+    with pytest.raises(_PublicResponseFailure, match="not in this session"):
         await _items_to_messages(items, approval_storage=state)
 
     assert session.to_dict() == session_before
     assert store.write_count == writes_before
-    assert await state.preflight(["wire-0", "wire-1"]) == token
 
 
 @pytest.mark.parametrize(
@@ -149,9 +143,9 @@ async def test_partial_input_conversion_does_not_consume_pending_approvals(tmp_p
     ids=["request", "response"],
 )
 async def test_history_conversion_rejects_unknown_approval_ids(item: OutputItem) -> None:
-    state = SessionApprovalState(AgentSession(), None)
+    state = SessionApprovalState(AgentSession())
 
-    with pytest.raises(_PublicResponseFailure, match="not in this session's history"):
+    with pytest.raises(_PublicResponseFailure, match="not in this session"):
         await _output_items_to_messages([item], approval_storage=state)
 
 
