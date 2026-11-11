@@ -18,7 +18,7 @@ on:
 
 env:
   COVERAGE_THRESHOLD: 80
-  COVERAGE_FRAMEWORK: net10.0 # framework target for which we run/report code coverage
+  COVERAGE_FRAMEWORK: net11.0 # framework target for which we run/report code coverage
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -184,7 +184,6 @@ jobs:
       matrix:
         include:
           - { targetFramework: "net11.0", os: "ubuntu-latest", configuration: Release, integration-tests: false }
-          - { targetFramework: "net10.0", os: "ubuntu-latest", configuration: Release, integration-tests: false }
           - { targetFramework: "net472", os: "windows-latest", configuration: Release, integration-tests: false }
 
     runs-on: ${{ matrix.os }}
@@ -510,7 +509,6 @@ jobs:
       matrix:
         include:
           - { targetFramework: "net11.0", os: "ubuntu-latest", configuration: Release, integration-tests: true }
-          - { targetFramework: "net10.0", os: "ubuntu-latest", configuration: Release, integration-tests: true }
           - { targetFramework: "net472", os: "windows-latest", configuration: Release, integration-tests: true }
     runs-on: ${{ matrix.os }}
     environment: integration

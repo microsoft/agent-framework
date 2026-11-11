@@ -1,6 +1,6 @@
 #
 # Dedicated .NET integration tests workflow, called from the manual integration test orchestrator.
-# Only runs integration test matrix entries (net11.0, net10.0 and net472).
+# Only runs integration test matrix entries (net11.0 and net472).
 #
 
 name: dotnet-integration-tests
@@ -38,7 +38,6 @@ jobs:
       matrix:
         include:
           - { targetFramework: "net11.0", os: "ubuntu-latest", configuration: Release }
-          - { targetFramework: "net10.0", os: "ubuntu-latest", configuration: Release }
           - { targetFramework: "net472", os: "windows-latest", configuration: Release }
     runs-on: ${{ matrix.os }}
     environment: integration
