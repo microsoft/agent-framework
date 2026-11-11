@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// control characters, or backslashes. This check always runs.
 /// </para>
 /// <para>
-/// When the host configures <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>, the link's
+/// When the host configures <see cref="FoundryToolboxServiceOptions.AllowedOAuthConsentOrigins"/>, the link's
 /// normalized origin (scheme, host, and port) must also match one of the configured origins. A
 /// <see langword="null"/> configuration skips only this origin check; an empty configuration rejects
 /// every link.
@@ -26,18 +26,18 @@ internal sealed class OAuthConsentLinkPolicy
     private readonly HashSet<string>? _allowedOrigins;
 
     /// <summary>
-    /// Gets the policy that accepts any safe absolute HTTPS consent link without restricting its origin.
+    /// Gets the policy that validates absolute HTTPS consent links without restricting their origin.
     /// </summary>
-    internal static OAuthConsentLinkPolicy AnySafeOrigin { get; } = new(null);
+    internal static OAuthConsentLinkPolicy UnrestrictedOrigin { get; } = new(null);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="OAuthConsentLinkPolicy"/> class.
     /// </summary>
     /// <param name="allowedOrigins">
-    /// The exact HTTPS origins allowed for consent links, or <see langword="null"/> to allow any safe origin.
+    /// The exact HTTPS origins allowed for consent links, or <see langword="null"/> to skip the origin restriction.
     /// </param>
     /// <exception cref="ArgumentException">An entry is not an absolute HTTPS origin.</exception>
-    internal OAuthConsentLinkPolicy(IEnumerable<string>? allowedOrigins)
+    internal OAuthConsentLinkPolicy(IEnumerable<Uri>? allowedOrigins)
     {
         if (allowedOrigins is null)
         {
@@ -45,12 +45,12 @@ internal sealed class OAuthConsentLinkPolicy
         }
 
         this._allowedOrigins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (string origin in allowedOrigins)
+        foreach (Uri? origin in allowedOrigins)
         {
             if (!TryNormalizeOrigin(origin, requireOriginOnly: true, out string? normalizedOrigin))
             {
                 throw new ArgumentException(
-                    $"OAuth consent allowlist entry '{origin}' must be an absolute HTTPS origin without a path, query, or fragment.",
+                    $"OAuth consent allowlist entry '{origin?.OriginalString}' must be an absolute HTTPS origin without a path, query, or fragment.",
                     nameof(allowedOrigins));
             }
 
@@ -63,7 +63,7 @@ internal sealed class OAuthConsentLinkPolicy
     /// </summary>
     internal bool IsAllowed(string? consentUrl)
     {
-        // URL safety is enforced before the optional origin gate so that an omitted allowlist still
+        // URL validation is enforced before the optional origin gate so that an omitted allowlist still
         // rejects non-HTTPS schemes such as javascript: or http:.
         if (!TryNormalizeOrigin(consentUrl, requireOriginOnly: false, out string? normalizedOrigin))
         {
@@ -85,17 +85,30 @@ internal sealed class OAuthConsentLinkPolicy
             return false;
         }
 
-        foreach (char character in value)
+        // Backslashes are rejected because Uri normalizes them to forward slashes, which would let
+        // the validated URL differ from the raw string that clients receive and parse.
+        if (ContainsDisallowedCharacters(value))
         {
-            // Backslashes are rejected because Uri normalizes them to forward slashes, which would let
-            // the validated URL differ from the raw string that clients receive and parse.
-            if (char.IsWhiteSpace(character) || char.IsControl(character) || character == '\\')
-            {
-                return false;
-            }
+            return false;
         }
 
-        if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? uri)
+        if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? uri))
+        {
+            return false;
+        }
+
+        return TryNormalizeOrigin(uri, requireOriginOnly, out normalizedOrigin);
+    }
+
+    private static bool TryNormalizeOrigin(
+        Uri? uri,
+        bool requireOriginOnly,
+        [NotNullWhen(true)] out string? normalizedOrigin)
+    {
+        normalizedOrigin = null;
+
+        if (uri?.IsAbsoluteUri != true
+            || ContainsDisallowedCharacters(uri.OriginalString)
             || !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
             || !string.IsNullOrEmpty(uri.UserInfo)
             || uri.HostNameType == UriHostNameType.Unknown
@@ -112,5 +125,18 @@ internal sealed class OAuthConsentLinkPolicy
 
         normalizedOrigin = uri.GetLeftPart(UriPartial.Authority);
         return true;
+    }
+
+    private static bool ContainsDisallowedCharacters(string value)
+    {
+        foreach (char character in value)
+        {
+            if (char.IsWhiteSpace(character) || char.IsControl(character) || character == '\\')
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

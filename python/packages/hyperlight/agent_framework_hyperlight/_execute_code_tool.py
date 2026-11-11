@@ -112,6 +112,7 @@ class _RunConfig:
     max_output_files: int = DEFAULT_MAX_OUTPUT_FILES
     max_output_file_bytes: int = DEFAULT_MAX_OUTPUT_FILE_BYTES
     max_output_total_bytes: int = DEFAULT_MAX_OUTPUT_TOTAL_BYTES
+    include_detailed_errors: bool = False
 
     @property
     def mounted_paths(self) -> tuple[str, ...]:
@@ -135,6 +136,7 @@ class _RunConfig:
             self.max_output_files,
             self.max_output_file_bytes,
             self.max_output_total_bytes,
+            self.include_detailed_errors,
         )
 
 
@@ -173,7 +175,8 @@ class _SandboxWorker:
     are dropped on the wrong thread and PyO3 panics. To prevent this, every
     exception raised inside a worker closure is caught on the worker, the
     traceback is dropped while still on the worker thread, and a sanitized
-    copy (preserving message and exception type) is re-raised on the caller.
+    copy is re-raised on the caller. Ordinary failures expose their original
+    type and message only when detailed errors are enabled.
     """
 
     __slots__ = ("_executor", "_initialized", "_reusable", "_sandbox", "_snapshot")
@@ -186,20 +189,23 @@ class _SandboxWorker:
         self._initialized = False
         self._reusable = True
 
-    def _run_on_worker(self, fn: Callable[[], _T]) -> _T:
+    def _run_on_worker(self, fn: Callable[[], _T], *, include_detailed_errors: bool = False) -> _T:
         """Run ``fn`` on the worker thread; sanitize any exception's traceback there.
 
         If ``fn`` raises, the exception's ``__traceback__`` is dropped on the worker
         thread (so any PyO3 unsendable locals captured in frame locals are released
-        on the owner thread) and a fresh exception of the same type is raised on
-        the caller's thread carrying only the original message.
+        on the owner thread). Ordinary failures are replaced with a generic
+        exception unless detailed errors are enabled. Cancellation and other
+        system signals retain their type.
         """
 
         def _wrapped() -> tuple[bool, Any]:
             try:
                 return True, fn()
             except BaseException as exc:
-                exc_type = type(exc)
+                self._reusable = False
+                exc_type: type[BaseException]
+                exc_args: tuple[str, ...]
                 # Capture args (usually (message,)) so the re-raised exception keeps the
                 # original shape for types whose constructor doesn't accept a single str.
                 # Coerce each arg to ``str`` on the worker thread: if a caller-supplied
@@ -207,7 +213,12 @@ class _SandboxWorker:
                 # unsendable object in args, forwarding it as-is would re-introduce the
                 # same cross-thread Drop hazard the traceback nulling avoids. Strings
                 # are always sendable. Fall back to the str() form if args is empty.
-                exc_args: tuple[str, ...] = tuple(str(a) for a in exc.args) if exc.args else (str(exc),)
+                if isinstance(exc, Exception) and not include_detailed_errors:
+                    exc_type = RuntimeError
+                    exc_args = ("Code execution failed.",)
+                else:
+                    exc_type = type(exc)
+                    exc_args = tuple(str(a) for a in exc.args) if exc.args else (str(exc),)
                 # Drop the traceback on the worker thread so frame locals (which
                 # may include PyO3 unsendable objects) are released here, not on
                 # the caller thread that will receive the wrapped exception.
@@ -224,11 +235,12 @@ class _SandboxWorker:
         # If the exception type's constructor rejects the captured args (rare), fall
         # back to a RuntimeError carrying the string form so we never lose the signal.
         try:
-            raise exc_type(*exc_args)
+            error = exc_type(*exc_args)
         except TypeError:
             raise RuntimeError(f"{exc_type.__name__}: {exc_args}") from None
+        raise error
 
-    def initialize(self, build_fn: Callable[[], tuple[Any, Any]]) -> None:
+    def initialize(self, build_fn: Callable[[], tuple[Any, Any]], *, include_detailed_errors: bool = False) -> None:
         """Build and install the sandbox+snapshot on the worker thread.
 
         ``build_fn`` is invoked with no arguments on the worker thread. It must
@@ -244,7 +256,7 @@ class _SandboxWorker:
             # Locals fall out of scope on the worker thread; the worker-local
             # attributes hold the only strong refs from now on.
 
-        self._run_on_worker(_init_on_worker)
+        self._run_on_worker(_init_on_worker, include_detailed_errors=include_detailed_errors)
 
     def execute(
         self,
@@ -255,6 +267,7 @@ class _SandboxWorker:
         max_output_files: int,
         max_output_file_bytes: int,
         max_output_total_bytes: int,
+        include_detailed_errors: bool = False,
     ) -> list[Content]:
         """Restore + run + build sendable contents — all on the worker thread.
 
@@ -290,6 +303,7 @@ class _SandboxWorker:
                         max_output_files=max_output_files,
                         max_output_file_bytes=max_output_file_bytes,
                         max_output_total_bytes=max_output_total_bytes,
+                        include_detailed_errors=include_detailed_errors,
                     )
                     if output_dir is not None and not any(item.type == "data" for item in contents):
                         # Isolate any file that becomes visible after the finite discovery window
@@ -313,7 +327,7 @@ class _SandboxWorker:
                     if contents is not None and not any(item.type == "error" for item in contents):
                         contents.append(_output_cleanup_error_content(exc))
 
-        return self._run_on_worker(_on_worker)
+        return self._run_on_worker(_on_worker, include_detailed_errors=include_detailed_errors)
 
     def is_reusable(self) -> bool:
         return self._reusable
@@ -1209,6 +1223,7 @@ def _build_execution_contents(
     max_output_files: int,
     max_output_file_bytes: int,
     max_output_total_bytes: int,
+    include_detailed_errors: bool = False,
 ) -> list[Content]:
     success = bool(getattr(result, "success", False))
     stdout = str(getattr(result, "stdout", "") or "").replace("\r\n", "\n") or None
@@ -1246,7 +1261,7 @@ def _build_execution_contents(
             outputs.append(Content.from_text("Code executed successfully without output."))
         return outputs
 
-    error_details = stderr or "Unknown sandbox error"
+    error_details = (stderr or "Unknown sandbox error") if include_detailed_errors else None
     outputs.append(
         Content.from_error(
             message="Execution error",
@@ -1257,7 +1272,7 @@ def _build_execution_contents(
     return outputs
 
 
-def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
+def _make_sandbox_callback(tool_obj: FunctionTool, *, include_detailed_errors: bool = False) -> Callable[..., Any]:
     sandbox_tool = copy(tool_obj)
 
     def _callback(**kwargs: Any) -> Any:
@@ -1282,6 +1297,8 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
         worker.start()
         worker.join()
         if error_box:
+            if not include_detailed_errors and isinstance(error_box[0], Exception):
+                raise RuntimeError("Host tool execution failed.") from None
             raise error_box[0]
         # Return the raw value. The Hyperlight FFI marshals primitives (dict, list,
         # str, int, float, bool, None) natively into the guest, and falls back to
@@ -1418,6 +1435,7 @@ class _SandboxRegistry(SandboxRuntime):
                 max_output_files=config.max_output_files,
                 max_output_file_bytes=config.max_output_file_bytes,
                 max_output_total_bytes=config.max_output_total_bytes,
+                include_detailed_errors=config.include_detailed_errors,
             )
         finally:
             if not entry.worker.is_reusable():
@@ -1487,7 +1505,10 @@ class _SandboxRegistry(SandboxRuntime):
 
         def _configure_sandbox(*, sandbox: Any, expand_missing_scheme: bool) -> None:
             for tool_obj in config.tools:
-                sandbox.register_tool(tool_obj.name, _make_sandbox_callback(tool_obj))
+                sandbox.register_tool(
+                    tool_obj.name,
+                    _make_sandbox_callback(tool_obj, include_detailed_errors=config.include_detailed_errors),
+                )
 
             for allowed_domain in config.allowed_domains:
                 for target in _allowed_domain_registration_targets(
@@ -1518,7 +1539,7 @@ class _SandboxRegistry(SandboxRuntime):
 
         worker = _SandboxWorker()
         try:
-            worker.initialize(_build_sandbox)
+            worker.initialize(_build_sandbox, include_detailed_errors=config.include_detailed_errors)
         except BaseException:
             worker.dispose()
             raise
@@ -1531,6 +1552,40 @@ class _SandboxRegistry(SandboxRuntime):
         )
 
 
+def _fides_metadata_snapshot(tool_obj: FunctionTool) -> dict[str, str]:
+    """Capture FIDES metadata for compatibility-warning deduplication."""
+    properties = tool_obj.additional_properties or {}
+    return {key: repr(value) for key, value in properties.items() if key in _FIDES_TOOL_PROPERTY_KEYS}
+
+
+def _warn_unsupported_fides_tools(
+    tools: Sequence[FunctionTool],
+    warned_metadata: list[tuple[FunctionTool, dict[str, str]]],
+) -> None:
+    """Warn when newly registered or changed FIDES metadata is observed."""
+    for tool_obj in tools:
+        snapshot = _fides_metadata_snapshot(tool_obj)
+        previous = next(
+            (metadata for registered, metadata in warned_metadata if registered is tool_obj),
+            None,
+        )
+
+        if snapshot and snapshot != previous:
+            logger.warning(
+                "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
+                "through function middleware for calls made inside generated code. "
+                "Keep FIDES-dependent tools as direct agent tools.",
+                tool_obj.name,
+            )
+
+        warned_metadata[:] = [
+            (registered, metadata) for registered, metadata in warned_metadata if registered is not tool_obj
+        ]
+
+        if snapshot:
+            warned_metadata.append((tool_obj, snapshot))
+
+
 class HyperlightExecuteCodeTool(FunctionTool):
     """Execute Python code inside a Hyperlight sandbox.
 
@@ -1539,6 +1594,8 @@ class HyperlightExecuteCodeTool(FunctionTool):
             or ``"json"``, globally or mapped by exact, case-sensitive tool name. Missing names use
             compact format. Schemas that cannot be represented faithfully in compact form use JSON Schema.
             Mappings are copied, including entries for tools registered later.
+        include_detailed_errors: Expose host exception and execution diagnostics only for a trusted
+            channel. Defaults to ``False`` and is independent of outer-client error/logging settings.
     """
 
     def __init__(
@@ -1546,6 +1603,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
         tool_description_format: _ToolDescriptionFormat = "compact",
+        include_detailed_errors: bool = False,
         approval_mode: ApprovalMode | None = None,
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
@@ -1557,7 +1615,10 @@ class HyperlightExecuteCodeTool(FunctionTool):
         module: str | None = DEFAULT_HYPERLIGHT_MODULE,
         module_path: str | None = None,
         _registry: SandboxRuntime | None = None,
+        _fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] | None = None,
     ) -> None:
+        if not isinstance(include_detailed_errors, bool):
+            raise TypeError("include_detailed_errors must be a bool.")
         normalized_description_format = _normalize_tool_description_format(tool_description_format)
         max_output_files = _validate_positive_integer(name="max_output_files", value=max_output_files)
         max_output_file_bytes = _validate_positive_integer(name="max_output_file_bytes", value=max_output_file_bytes)
@@ -1573,6 +1634,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         self._tool_description_format: _NormalizedToolDescriptionFormat = normalized_description_format
         self._registry = _registry or _SandboxRegistry()
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
+        self._include_detailed_errors = include_detailed_errors
         self._workspace_root = _resolve_workspace_root(workspace_root)
         self._backend: str = backend
         self._module: str | None = module
@@ -1581,6 +1643,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         self._max_output_file_bytes = max_output_file_bytes
         self._max_output_total_bytes = max_output_total_bytes
         self._managed_tools: list[FunctionTool] = []
+        self._fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] = list(_fides_warned_metadata or [])
         self._file_mounts: dict[str, FileMount] = {}
         self._allowed_domains: dict[str, AllowedDomain] = {}
 
@@ -1623,16 +1686,12 @@ class HyperlightExecuteCodeTool(FunctionTool):
             new_tools = _collect_tools(tools)
             combined_tools = _collect_tools(self._managed_tools, new_tools)
             self._managed_tools = combined_tools
-            for tool_obj in new_tools:
-                if tool_obj.additional_properties and not _FIDES_TOOL_PROPERTY_KEYS.isdisjoint(
-                    tool_obj.additional_properties
-                ):
-                    logger.warning(
-                        "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
-                        "through function middleware for calls made inside generated code. "
-                        "Keep FIDES-dependent tools as direct agent tools.",
-                        tool_obj.name,
-                    )
+            self._fides_warned_metadata[:] = [
+                (registered, metadata)
+                for registered, metadata in self._fides_warned_metadata
+                if any(registered is current for current in self._managed_tools)
+            ]
+            _warn_unsupported_fides_tools(new_tools, self._fides_warned_metadata)
             self._refresh_approval_mode()
 
     def get_tools(self) -> list[FunctionTool]:
@@ -1647,12 +1706,18 @@ class HyperlightExecuteCodeTool(FunctionTool):
             if len(remaining_tools) == len(self._managed_tools):
                 raise KeyError(f"No managed tool named {name!r} is registered.")
             self._managed_tools = remaining_tools
+            self._fides_warned_metadata[:] = [
+                (registered, metadata)
+                for registered, metadata in self._fides_warned_metadata
+                if any(registered is current for current in remaining_tools)
+            ]
             self._refresh_approval_mode()
 
     def clear_tools(self) -> None:
         """Remove all managed sandbox tools."""
         with self._state_lock:
             self._managed_tools = []
+            self._fides_warned_metadata.clear()
             self._refresh_approval_mode()
 
     def add_file_mounts(self, file_mounts: FileMountInput | Sequence[FileMountInput]) -> None:
@@ -1735,13 +1800,19 @@ class HyperlightExecuteCodeTool(FunctionTool):
 
     def create_run_tool(self) -> HyperlightExecuteCodeTool:
         """Create a run-scoped snapshot of this execute_code surface."""
-        file_mounts = self.get_file_mounts()
-        allowed_domains = self.get_allowed_domains()
+        with self._state_lock:
+            tools = list(self._managed_tools)
+            _warn_unsupported_fides_tools(tools, self._fides_warned_metadata)
+            warned_metadata = list(self._fides_warned_metadata)
+            file_mounts = self.get_file_mounts()
+            allowed_domains = self.get_allowed_domains()
 
         return HyperlightExecuteCodeTool(
-            tools=self.get_tools(),
+            _fides_warned_metadata=warned_metadata,
+            tools=tools,
             tool_description_format=self._tool_description_format,
             approval_mode=self._default_approval_mode,
+            include_detailed_errors=self._include_detailed_errors,
             workspace_root=self._workspace_root,
             file_mounts=file_mounts or None,
             allowed_domains=allowed_domains or None,
@@ -1762,6 +1833,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             "module": config.module,
             "module_path": config.module_path,
             "approval_mode": config.approval_mode,
+            "include_detailed_errors": config.include_detailed_errors,
             "max_output_files": config.max_output_files,
             "max_output_file_bytes": config.max_output_file_bytes,
             "max_output_total_bytes": config.max_output_total_bytes,
@@ -1809,6 +1881,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             max_output_files = self._max_output_files
             max_output_file_bytes = self._max_output_file_bytes
             max_output_total_bytes = self._max_output_total_bytes
+            include_detailed_errors = self._include_detailed_errors
             approval_mode = _resolve_execute_code_approval_mode(
                 base_approval_mode=self._default_approval_mode,
                 tools=managed_tools,
@@ -1837,8 +1910,15 @@ class HyperlightExecuteCodeTool(FunctionTool):
             max_output_files=max_output_files,
             max_output_file_bytes=max_output_file_bytes,
             max_output_total_bytes=max_output_total_bytes,
+            include_detailed_errors=include_detailed_errors,
         )
 
     async def _run_code(self, *, code: str) -> list[Content]:
-        config = self._build_run_config()
-        return await asyncio.to_thread(self._registry.execute, config=config, code=code)
+        include_detailed_errors = self._include_detailed_errors
+        try:
+            config = self._build_run_config()
+            return await asyncio.to_thread(self._registry.execute, config=config, code=code)
+        except Exception:
+            if include_detailed_errors:
+                raise
+            raise RuntimeError("Code execution failed.") from None

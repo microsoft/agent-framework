@@ -3,10 +3,9 @@
 import uuid
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, Never, assert_type, cast, overload
 
 import pytest
-from typing_extensions import Never, assert_type
 
 from agent_framework import (
     AgentExecutorRequest,
@@ -377,6 +376,31 @@ class TestWorkflowAgent:
         assert deserialized_args.request_event.type == "request_info"
         assert deserialized_args.request_event.data == HandoffRequest(target_agent="helper", reason="overflow")
         assert deserialized_args.request_event.response_type is str
+
+    def test_request_info_arguments_roundtrip_none_request_data(self) -> None:
+        """A request without payload and with a ``None`` response type survives the envelope round trip.
+
+        ``type(None)`` serializes as ``builtins.NoneType``, a name the ``builtins`` module does not
+        bind, so rebuilding the arguments used to raise AttributeError for these requests.
+        """
+        executor = SimpleExecutor(id="executor1", response_text="Response")
+        workflow = WorkflowBuilder(start_executor=executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="None Request Agent")
+        event = WorkflowEvent.request_info(
+            request_id="request_123",
+            source_executor_id="executor1",
+            request_data=None,
+            response_type=type(None),
+        )
+
+        request_function_call = agent._process_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
+
+        assert isinstance(request_function_call.arguments, dict)
+        deserialized_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(request_function_call.arguments)
+        assert deserialized_args.request_id == "request_123"
+        assert deserialized_args.request_event.data is None
+        assert deserialized_args.request_event.request_type is type(None)
+        assert deserialized_args.request_event.response_type is type(None)
 
     def test_request_info_function_args_from_dict_accepts_explicit_allowed_types(self) -> None:
         """Envelope reconstruction forwards exact trusted custom types."""
@@ -3150,9 +3174,7 @@ class TestWorkflowAsAgentFilteringRound8:
             ctx: WorkflowContext[Never, AgentResponseUpdate],  # type: ignore[valid-type]
         ) -> None:
             await ctx.yield_output(
-                AgentResponseUpdate(
-                    contents=[Content.from_text("user said hi")], role="user", message_id="m-user"
-                )
+                AgentResponseUpdate(contents=[Content.from_text("user said hi")], role="user", message_id="m-user")
             )
             await ctx.yield_output(
                 AgentResponseUpdate(contents=[Content.from_text("assistant answer")], message_id="m-answer")

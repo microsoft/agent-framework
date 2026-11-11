@@ -11,8 +11,7 @@ import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import SecretString, SupportsGetEmbeddings
 from agent_framework._telemetry import get_feature_token
-from agent_framework.exceptions import SettingNotFoundError
-from agent_framework.exceptions import IntegrationInvalidResponseException
+from agent_framework.exceptions import IntegrationInvalidResponseException, SettingNotFoundError
 from openai.types import CreateEmbeddingResponse
 from openai.types import Embedding as OpenAIEmbedding
 from openai.types.create_embedding_response import Usage

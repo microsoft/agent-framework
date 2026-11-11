@@ -25,12 +25,8 @@ Supported Platforms:
 - Python: 3.11–3.15
 - OS: Windows, macOS, Linux
 
-Python 3.10 is no longer supported because it has reached upstream end of life.
-Package metadata still permits Python 3.10 installation, but CI no longer runs
-unit or integration tests on it and compatibility is not guaranteed. Use
-Python 3.11–3.15 for supported environments, subject to
-[integration-specific limits](../../README.md#python-315-limitations). Raising
-the installation minimum will be handled separately.
+Python 3.11 or later is required. Supported environments are subject to
+[integration-specific limits](../../README.md#python-315-limitations).
 
 ## 1. Setup API Keys
 
@@ -70,6 +66,14 @@ carry a documented feature-usage token.
   token while retaining the package/version User-Agent.
 - `AGENT_FRAMEWORK_USER_AGENT_DISABLED=true` disables the entire Agent Framework
   User-Agent contribution, including the feature token.
+
+OpenTelemetry providers configured through `configure_otel_providers()` share a
+resource containing `"microsoft.agent-framework": "True"` (a string) by default. This
+resource attribute applies to logs, traces, and metrics, including other
+instrumentation using those providers. Existing environment and explicit resource
+attribute overrides retain their precedence. If you configure providers yourself,
+use `agent_framework.observability.create_resource()` for each provider or add the
+attribute to your own shared resource.
 
 See the following [getting started samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/01-get-started) for more information.
 
@@ -189,6 +193,34 @@ configuration and response-cookie handling and must be closed by the caller. Sco
 cookie-bearing clients and MCP tool sessions to one authenticated principal; do not
 share a user-specific cookie jar across users. Rejecting cookies does not partition
 MCP protocol sessions or other server-side state between principals.
+
+### MCP HTTP concurrency and timeouts
+
+`MCPStreamableHTTPTool` and `FoundryToolbox` attach a separate header snapshot to each
+outgoing HTTP request. Calls with identical effective static and dynamic headers can
+overlap on one MCP session. A different identity waits for active operations before
+reconnecting and refreshing discovery. Discovery, reset, close, and recovery are
+exclusive against active network attempts on framework-owned MCP connections, with
+or without a header provider. Same-identity Agent run preparation does not drain
+active calls. Direct prompt calls resolve current headers rather than reusing an
+inherited invocation snapshot; generated prompts resolve host runtime kwargs
+separately from model arguments. Calls still share server-side session state;
+applications must order state-dependent operations themselves.
+
+Resource reads wait for replacement initialization before requiring the connection.
+Catalog discovery restarts the complete snapshot once after a connection replacement,
+without reusing old pages or cursors. A second replacement fails explicitly.
+
+`request_timeout` bounds header admission and session reconciliation together, and
+connection recovery separately from the RPC timeout. These are separate budgets,
+not an end-to-end deadline. `None` disables these budgets. An admission timeout does
+not cancel another caller's active operation. Cleanup may continue after a timeout
+or cancellation so the lifecycle owner can finish releasing resources safely.
+Caller-owned MCP clients retain their own RPC timeout policy and are not recreated.
+
+Concurrent failures of the same connection share its replacement. Calling `close()`
+interrupts older recovery so it cannot reopen the connection or retry the failed
+operation after shutdown. A later explicit `connect()` remains supported.
 
 ## 5. Multi-Agent Orchestration
 

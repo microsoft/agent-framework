@@ -3,10 +3,9 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Never
 
 import pytest
-from typing_extensions import Never
 
 from agent_framework import (
     Executor,

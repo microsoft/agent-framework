@@ -47,7 +47,6 @@ import inspect
 import json
 import logging
 import math
-import sys
 import typing
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextvars import Context, ContextVar
@@ -556,24 +555,11 @@ def get_run_context() -> RunContext | None:
 # ---------------------------------------------------------------------------
 
 
-if sys.version_info >= (3, 11):
-
-    class _WorkflowInterruptedBase(asyncio.CancelledError):
-        pass
-
-else:
-
-    class _WorkflowInterruptedBase(BaseException):
-        pass
-
-
-class WorkflowInterrupted(_WorkflowInterruptedBase):
+class WorkflowInterrupted(asyncio.CancelledError):
     """Internal: raised when request_info() is called during initial execution.
 
-    On Python 3.11+, the signal is cancellation-shaped so ``TaskGroup`` does
-    not cancel sibling tasks. Python 3.10 retains the original ``BaseException``
-    behavior because ``gather`` normalizes cancellation subclasses there.
-    User code with ``except Exception:`` handlers does not intercept either form.
+    The signal is cancellation-shaped so ``TaskGroup`` does not cancel sibling
+    tasks. User code with ``except Exception:`` handlers does not intercept it.
     """
 
     def __init__(self, request_id: str, request_data: Any, response_type: type) -> None:
@@ -1197,11 +1183,9 @@ class RunContext:
                     except WorkflowInterrupted:
                         continue
                     except asyncio.CancelledError as exc:
-                        cancelling = getattr(task, "cancelling", None)
-                        cancelling_count = cast(Callable[[], int], cancelling)() if callable(cancelling) else 0
+                        cancelling_count = task.cancelling() if isinstance(task, asyncio.Task) else 0
                         if (
-                            sys.version_info >= (3, 11)
-                            and cancelling_count == 0
+                            cancelling_count == 0
                             and not exc.args
                             and self._get_new_descendant_interruption(cast(asyncio.Task[Any], task), {}) is interruption
                         ):
@@ -2432,7 +2416,6 @@ class FunctionalWorkflow:
                     and ctx._workflow_interruption is not None
                     and not ctx._pause_root_waiter_was_handled()
                     and ctx._cancelled_at_root_pause_location(exc)
-                    and sys.version_info >= (3, 11)
                     and workflow_task.cancelling() == 0
                 ):
                     await ctx._settle_workflow_tasks(
@@ -2961,6 +2944,7 @@ class FunctionalWorkflowAgent(BaseAgent):
         return ResponseStream(
             _generate_updates(),
             finalizer=AgentResponse.from_updates,
+            cleanup_hooks=[workflow_stream.close],
         )
 
     def _request_info_to_approval_request(self, event: WorkflowEvent[Any]) -> Any:

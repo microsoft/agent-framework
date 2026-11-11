@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
@@ -27,11 +28,6 @@ from redisvl.redis.utils import array_to_buffer
 from redisvl.utils.vectorize import BaseVectorizer
 
 from ._feature_usage import FeatureIndex
-
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
 
 if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
@@ -410,9 +406,13 @@ class RedisContextProvider(ContextProvider):
         await self._ensure_index()
         self._validate_filters()
 
-        q = (text or "").strip()
-        if not q:
+        if not (text or "").strip():
             raise IntegrationInvalidRequestException("text_search() requires non-empty text")
+        # TextQuery escapes each term itself, so a backslash added here gets escaped again
+        # and the char stays bare. Drop the syntax chars its escaper misses instead.
+        q = " ".join(re.sub(r"[|?`]", " ", text).split())
+        if not q:
+            return []
         num_results = max(int(num_results or 10), 1)
 
         combined_filter = self._build_filter_from_dict({

@@ -751,7 +751,7 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
         // Wait a moment for eventual consistency
         await Task.Delay(100);
 
-        // Act - Create a new provider that uses a different intializer, but we will use the same session.
+        // Act - Create a new provider that uses a different initializer, but we will use the same session.
         using var newStore = new CosmosChatHistoryProvider(this._connectionString, s_testDatabaseId, HierarchicalTestContainerId,
             _ => new CosmosChatHistoryProvider.State(Guid.NewGuid().ToString()));
 

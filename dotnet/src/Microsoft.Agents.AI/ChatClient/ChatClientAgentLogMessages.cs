@@ -97,4 +97,16 @@ internal static partial class ChatClientAgentLogMessages
         this ILogger logger,
         string agentId,
         string agentName);
+
+    /// <summary>
+    /// Logs a warning when notifying providers of the partial messages of a cancelled streaming run fails.
+    /// </summary>
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Agent {AgentId}/{AgentName}: Failed to notify providers of the partial messages of a cancelled streaming run.")]
+    public static partial void LogAgentChatClientPartialMessagesNotificationFailed(
+        this ILogger logger,
+        string agentId,
+        string agentName,
+        Exception exception);
 }

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -14,6 +15,8 @@ using ContainerFileCitationMessageAnnotation = OpenAI.Responses.ContainerFileCit
 using FileCitationMessageAnnotation = OpenAI.Responses.FileCitationMessageAnnotation;
 using FilePathMessageAnnotation = OpenAI.Responses.FilePathMessageAnnotation;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
+using OpenAIComputerCallOutputResponseItem = OpenAI.Responses.ComputerCallOutputResponseItem;
+using OpenAIComputerCallResponseItem = OpenAI.Responses.ComputerCallResponseItem;
 using OpenAIResponseItem = OpenAI.Responses.ResponseItem;
 using OpenAIStreamingResponseOutputItemDoneUpdate = OpenAI.Responses.StreamingResponseOutputItemDoneUpdate;
 using OpenAIStreamingResponseOutputTextAnnotationAddedUpdate = OpenAI.Responses.StreamingResponseOutputTextAnnotationAddedUpdate;
@@ -438,6 +441,110 @@ public class OutputConverterTests
         }
 
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallNonAsciiArguments_PreservesCharactersAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate
+        {
+            Contents = [new FunctionCallContent("call_1", "get_weather", new Dictionary<string, object?> { ["location"] = "Ереван" })]
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var done = Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
+        Assert.Equal("""{"location":"Ереван"}""", done.Arguments);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_FunctionCallHtmlSensitiveArguments_EscapesCharactersAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate
+        {
+            Contents = [new FunctionCallContent("call_1", "search", new Dictionary<string, object?> { ["query"] = "<tag>&" })]
+        };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var done = Assert.Single(events.OfType<ResponseFunctionCallArgumentsDoneEvent>());
+        Assert.Equal("""{"query":"\u003Ctag\u003E\u0026"}""", done.Arguments);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ToolApprovalRequestNonAsciiArguments_PreservesCharactersAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var functionCall = new FunctionCallContent("call_1", "get_weather", new Dictionary<string, object?> { ["location"] = "Ереван" });
+        var update = new AgentResponseUpdate { Contents = [new ToolApprovalRequestContent("af_request_1", functionCall)] };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream, new AgentSessionStateBag()))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var added = Assert.Single(events.OfType<ResponseOutputItemAddedEvent>());
+        var item = Assert.IsType<OutputItemMcpApprovalRequest>(added.Item);
+        Assert.Equal("""{"location":"Ереван"}""", item.Arguments);
+    }
+
+    [Fact]
+    public void EncodeFunctionResultAsJsonStringPayload_NonAsciiObject_PreservesCharacters()
+    {
+        // Arrange
+        var result = new { city = "Ереван" };
+
+        // Act
+        string payload = OutputConverter.EncodeFunctionResultAsJsonStringPayload(result);
+
+        // Assert
+        Assert.Equal("""{"city":"Ереван"}""", System.Text.Json.JsonSerializer.Deserialize<string>(payload));
+    }
+
+    [Fact]
+    public void EncodeFunctionResultAsJsonStringPayload_JsonElementWithEscapedUnicode_DecodesCharacters()
+    {
+        // Arrange
+        using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse("""{"city":"\u0415"}""");
+
+        // Act
+        string payload = OutputConverter.EncodeFunctionResultAsJsonStringPayload(document.RootElement);
+
+        // Assert
+        Assert.Equal("""{"city":"Е"}""", System.Text.Json.JsonSerializer.Deserialize<string>(payload));
+    }
+
+    [Fact]
+    public void EncodeFunctionResultAsJsonStringPayload_JsonDocumentWithEscapedUnicode_DecodesCharacters()
+    {
+        // Arrange
+        using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse("""{"city":"\u0415"}""");
+
+        // Act
+        string payload = OutputConverter.EncodeFunctionResultAsJsonStringPayload(document);
+
+        // Assert
+        Assert.Equal("""{"city":"Е"}""", System.Text.Json.JsonSerializer.Deserialize<string>(payload));
     }
 
     // G-04
@@ -2354,6 +2461,171 @@ public class OutputConverterTests
 
         Assert.Empty(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
         Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    #endregion
+
+    #region Computer tool items
+
+    private const string ModelComputerCallId = "cu_model_item_1";
+
+    // Shape the service returns for the GA tool: an ordered actions batch, and neither "action" nor "pending_safety_checks".
+    private const string GaComputerCallJson =
+        "{\"type\":\"computer_call\",\"id\":\"" + ModelComputerCallId + "\",\"call_id\":\"call_cu_1\"," +
+        "\"actions\":[{\"type\":\"click\",\"button\":\"left\",\"x\":10,\"y\":20},{\"type\":\"type\",\"text\":\"penguin\"}]," +
+        "\"status\":\"completed\"}";
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_GaComputerCall_EmitsComputerCallWithActionsAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate { Contents = [ModelComputerCall(GaComputerCallJson)] };
+
+        // Act
+        var events = await CollectAsync(stream, update);
+
+        // Assert
+        var added = Assert.IsType<OutputItemComputerToolCall>(Assert.Single(events.OfType<ResponseOutputItemAddedEvent>()).Item);
+        var done = Assert.IsType<OutputItemComputerToolCall>(Assert.Single(events.OfType<ResponseOutputItemDoneEvent>()).Item);
+
+        // AgentServer requires its own item id format and does not stamp one on EmitAdded, so the builder id is used
+        // while the model's call_id is kept for the caller to answer with.
+        Assert.Equal(added.Id, done.Id);
+        Assert.StartsWith("cu_", done.Id, StringComparison.Ordinal);
+        Assert.NotEqual(ModelComputerCallId, done.Id);
+        Assert.Equal("call_cu_1", done.CallId);
+        Assert.Equal(2, done.Actions.Count);
+        Assert.Null(done.Action);
+        Assert.Equal(ItemComputerToolCallStatus.Completed, done.Status);
+
+        string json = ModelReaderWriter.Write(done, ModelReaderWriterOptions.Json).ToString();
+        Assert.Contains("\"actions\":[{\"type\":\"click\"", json);
+        Assert.DoesNotContain("\"action\":", json);
+        Assert.IsType<ResponseCompletedEvent>(events[^1]);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_PreviewComputerCall_EmitsSingleActionAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate
+        {
+            Contents =
+            [
+                ModelComputerCall(
+                    "{\"type\":\"computer_call\",\"id\":\"cu_preview_1\",\"call_id\":\"call_preview_1\"," +
+                    "\"action\":{\"type\":\"click\",\"button\":\"left\",\"x\":10,\"y\":20}," +
+                    "\"pending_safety_checks\":[],\"status\":\"completed\"}")
+            ],
+        };
+
+        // Act
+        var events = await CollectAsync(stream, update);
+
+        // Assert
+        var done = Assert.IsType<OutputItemComputerToolCall>(Assert.Single(events.OfType<ResponseOutputItemDoneEvent>()).Item);
+        Assert.Equal("call_preview_1", done.CallId);
+        Assert.NotNull(done.Action);
+        Assert.Empty(done.Actions);
+        Assert.Contains("\"action\":{\"type\":\"click\"", ModelReaderWriter.Write(done, ModelReaderWriterOptions.Json).ToString());
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ComputerCallClosesOpenMessageAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var updates = new[]
+        {
+            new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent("Let me look.")] },
+            new AgentResponseUpdate { Contents = [ModelComputerCall(GaComputerCallJson)] },
+        };
+
+        // Act
+        var events = await CollectAsync(stream, updates);
+
+        // Assert: the message is completed before the computer call starts.
+        int messageDone = events.FindIndex(e => e is ResponseOutputItemDoneEvent { Item: OutputItemMessage });
+        int computerAdded = events.FindIndex(e => e is ResponseOutputItemAddedEvent { Item: OutputItemComputerToolCall });
+        Assert.True(messageDone >= 0, "The open message was not closed.");
+        Assert.True(computerAdded > messageDone, "The computer call must start after the open message is closed.");
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_AgentProducedComputerCallOutput_EmitsComputerCallOutputAsync()
+    {
+        // Arrange: an agent that runs the actions itself yields the output alongside the call.
+        var (stream, _) = CreateTestStream();
+        var output = Assert.IsType<OpenAIComputerCallOutputResponseItem>(ReadOpenAIItem(
+            "{\"type\":\"computer_call_output\",\"call_id\":\"call_cu_1\"," +
+            "\"output\":{\"type\":\"computer_screenshot\",\"image_url\":\"data:image/png;base64,iVBORw0KGgo=\",\"detail\":\"original\"}}"));
+        var update = new AgentResponseUpdate { Contents = [new ToolResultContent("call_cu_1") { RawRepresentation = output }] };
+
+        // Act
+        var events = await CollectAsync(stream, update);
+
+        // Assert
+        var added = Assert.IsType<OutputItemComputerToolCallOutput>(Assert.Single(events.OfType<ResponseOutputItemAddedEvent>()).Item);
+        var done = Assert.IsType<OutputItemComputerToolCallOutput>(Assert.Single(events.OfType<ResponseOutputItemDoneEvent>()).Item);
+        Assert.Equal(added.Id, done.Id);
+        Assert.False(string.IsNullOrEmpty(done.Id));
+        Assert.Equal("call_cu_1", done.CallId);
+        Assert.Equal("data:image/png;base64,iVBORw0KGgo=", done.Output.ImageUrl?.ToString());
+        Assert.Contains("\"detail\":\"original\"", ModelReaderWriter.Write(done, ModelReaderWriterOptions.Json).ToString());
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ComputerCallWithEmptyCallId_IsSkippedAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var item = ReadOpenAIItem(GaComputerCallJson);
+        var update = new AgentResponseUpdate { Contents = [new ToolCallContent(string.Empty) { RawRepresentation = item }] };
+
+        // Act
+        var events = await CollectAsync(stream, update);
+
+        // Assert: same rule as function calls, a call without an id cannot be answered.
+        Assert.Single(events);
+        Assert.IsType<ResponseCompletedEvent>(events[0]);
+    }
+
+    [Fact]
+    public async Task ConvertUpdatesToEventsAsync_ToolCallWithoutComputerItem_IsSkippedAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var update = new AgentResponseUpdate { Contents = [new ToolCallContent("call_other")] };
+
+        // Act
+        var events = await CollectAsync(stream, update);
+
+        // Assert: only computer calls are mapped; other hosted tool calls keep being skipped.
+        Assert.Single(events);
+        Assert.IsType<ResponseCompletedEvent>(events[0]);
+    }
+
+    private static ToolCallContent ModelComputerCall(string json)
+    {
+        // Mirrors what the MEAI OpenAI Responses client yields for a streamed computer_call.
+        var item = Assert.IsType<OpenAIComputerCallResponseItem>(ReadOpenAIItem(json));
+        return new ToolCallContent(item.CallId) { RawRepresentation = item };
+    }
+
+    private static OpenAIResponseItem ReadOpenAIItem(string json) =>
+        ModelReaderWriter.Read<OpenAIResponseItem>(BinaryData.FromString(json), ModelReaderWriterOptions.Json)!;
+
+    private static async Task<List<ResponseStreamEvent>> CollectAsync(ResponseEventStream stream, params AgentResponseUpdate[] updates)
+    {
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        return events;
     }
 
     #endregion

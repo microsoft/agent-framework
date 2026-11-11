@@ -7,9 +7,26 @@ because the workflow handler validation reflects on real annotation objects
 rather than stringified forms.
 """
 
+from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 from typing import Any
 
-from agent_framework import Executor, Workflow, WorkflowBuilder, WorkflowContext, handler
+from agent_framework import (
+    Agent,
+    AgentExecutor,
+    BaseChatClient,
+    ChatOptions,
+    ChatResponse,
+    ChatResponseUpdate,
+    Content,
+    Executor,
+    InMemoryHistoryProvider,
+    Message,
+    ResponseStream,
+    Workflow,
+    WorkflowBuilder,
+    WorkflowContext,
+    handler,
+)
 
 
 class _UpperExecutor(Executor):
@@ -48,3 +65,53 @@ class _MultiChunkExecutor(Executor):
 
 def build_multi_chunk_workflow() -> Workflow:
     return WorkflowBuilder(start_executor=_MultiChunkExecutor(id="multi")).build()
+
+
+class RecordingClient(BaseChatClient[ChatOptions[None]]):
+    """Chat client that records the text of every model-bound message and always replies ``response``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[list[str]] = []
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool = False,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        self.calls.append([message.text for message in messages])
+        if stream:
+
+            async def updates() -> AsyncIterator[ChatResponseUpdate]:
+                yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("response")])
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        async def get_response() -> ChatResponse:
+            return ChatResponse(messages=Message("assistant", ["response"]))
+
+        return get_response()
+
+
+def agent_executor_workflow_builder(client: RecordingClient) -> WorkflowBuilder:
+    """Return an *unbuilt* builder whose ``AgentExecutor`` is created once and shared by every build."""
+    agent = Agent(client=client, name="worker", context_providers=[InMemoryHistoryProvider(source_id="history")])
+    executor = AgentExecutor(agent, id="worker")
+    return WorkflowBuilder(start_executor=executor, output_from=[executor])
+
+
+def build_agent_executor_workflow(client: RecordingClient) -> Workflow:
+    """Build a workflow around a new ``AgentExecutor``, which owns a new ``AgentSession``."""
+    return agent_executor_workflow_builder(client).build()
+
+
+async def run_workflow(workflow: Workflow, text: str, *, stream: bool) -> None:
+    """Run ``workflow`` once, streaming or not, and drain the result."""
+    if stream:
+        async for _ in workflow.run(text, stream=True):
+            pass
+    else:
+        await workflow.run(text)
