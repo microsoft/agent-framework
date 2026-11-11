@@ -55,8 +55,8 @@ def test_protocol_hosts_import_independently_in_either_order(protocol: str, work
         from agent_framework_foundry_hosting import {names[1]}
         from azure.ai.agentserver.{sdk_module} import {base}
 
-        assert issubclass({agent}, {base})
-        assert issubclass({workflow}, {base})
+        assert {agent}.__bases__ == ({base},)
+        assert {workflow}.__bases__ == ({base},)
         """
     )
     subprocess.run([sys.executable, "-I", "-c", code], check=True)
@@ -102,6 +102,11 @@ def test_host_signatures_expose_only_the_selected_execution_model(protocol: str)
     for name in ("agent", "agent_session_store_provider", "history_source", "background_source", "unsupported_options"):
         assert name not in workflow_parameters
     assert ("prepare_options" in workflow_parameters) is (protocol == "Responses")
+    for parameters in (agent_parameters, workflow_parameters):
+        for name in ("log_level", "agent_server_kwargs"):
+            assert parameters[name].default is None
+            assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+        assert all(parameter.kind is not inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
     if protocol == "Responses":
         assert "response_store" in agent_parameters
         assert "store" not in agent_parameters
@@ -203,17 +208,15 @@ def test_legacy_parser_names_are_not_silently_forwarded_to_sdk(name: str, legacy
         else "azure.ai.agentserver.invocations.InvocationAgentServerHost"
     )
     with patch(f"{base}.__init__", return_value=None) as initialize:
-        with pytest.raises(TypeError, match=f"{legacy} was renamed to parse_input"):
+        with pytest.raises(TypeError, match=legacy):
             host(**values)
         initialize.assert_not_called()
 
 
-def test_responses_workflow_host_preserves_steering_guard() -> None:
-    from azure.ai.agentserver.responses import ResponsesServerOptions
-
-    with pytest.raises(RuntimeError, match="steerable_conversations=True is temporarily unavailable"):
+def test_responses_workflow_host_rejects_removed_options() -> None:
+    with pytest.raises(TypeError, match="options"):
         cast(Any, hosting.ResponsesWorkflowHostServer)(
             workflow=lambda _: None,
             parse_input=lambda _: None,
-            options=ResponsesServerOptions(steerable_conversations=True),
+            options=None,
         )

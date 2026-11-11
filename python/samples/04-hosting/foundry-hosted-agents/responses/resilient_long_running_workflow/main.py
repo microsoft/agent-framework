@@ -15,7 +15,6 @@ from agent_framework_foundry_hosting import (
     WorkflowTurn,
 )
 from azure.ai.agentserver.core.tasks import set_resilient_tasks_enabled
-from azure.ai.agentserver.responses import ResponsesServerOptions
 from pydantic import BaseModel, Field
 
 
@@ -72,7 +71,7 @@ def main() -> None:
         checkpoint_store_provider=CheckpointStoreProvider(
             allowed_checkpoint_types=[f"{CountdownRequest.__module__}:{CountdownRequest.__qualname__}"],
         ),
-        options=ResponsesServerOptions(resilient_background=True),
+        resilient_background=True,
     ).run()
 
 

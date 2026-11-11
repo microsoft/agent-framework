@@ -46,8 +46,10 @@ Agent hosts reject `WorkflowAgent`; workflow hosts require a factory returning a
 Do not silently unwrap agents, migrate their state, or retain a combined-host compatibility shim.
 
 Workflow hosts expose checkpoint storage rather than agent-session storage or agent history settings.
-The Responses workflow host owns native execution directly. Share the Invocations engine between its
-public hosts rather than duplicating it. Group each protocol into agent, workflow, and shared modules,
+Both Invocations hosts inherit directly from the SDK host and own their mode-specific construction,
+parsing, state, and execution. Do not retain a private combined host or replace it with a mode-switching
+base or mixin. Share small identity, wire, and streaming-cleanup helpers rather than duplicating protocol
+logic. Group each protocol into agent, workflow, and shared modules,
 with cross-protocol request contracts and factory resolution in a central shared module.
 
 Keep all hosts in one package. Responses is the initial stable-surface target; Invocations and Toolbox
@@ -113,15 +115,23 @@ Recovery permission neither selects an execution mode nor guarantees exactly-onc
 ### Supported host settings
 
 Expose supported first-class settings and construct SDK options internally, without another framework
-options wrapper. Reject inapplicable or removed settings before side effects; do not leak them through
-`**kwargs` to the SDK.
+options wrapper. Validate framework-owned settings and their applicability before side effects.
+Remove variadic constructor `**kwargs` from all four public hosts. Unknown top-level names fail through
+Python argument binding, including removed names supplied as `None`.
+
+Expose `agent_server_kwargs: Mapping[str, Any] | None = None` as a separate, caller-owned SDK boundary.
+Expand its entries only into the upstream SDK constructor, without inspecting, validating, filtering,
+or mutating the contents. Let Python and the SDK report invalid arguments and duplicate keyword
+collisions; do not add a reserved-key blacklist or a custom merge policy. This does not remove validation
+of framework parameters, caller model options, hooks, or execution policies.
 
 | Setting | Contract |
 | --- | --- |
+| `log_level=None` | Available on all four hosts as `Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] \| None`, forwarded unchanged to the SDK constructor. `None` preserves the SDK default. |
 | `max_history_items: int \| None = None` | `None` supplies no framework override and inherits the installed supported SDK's default. Positive caps count prior history items and apply only to regular host-managed agent history. |
-| `sse_keep_alive_interval_seconds: int \| None = None` | Use an explicit positive interval, otherwise inherit a positive `SSE_KEEPALIVE_INTERVAL`, otherwise disable heartbeats. No separate force-disable switch. |
+| `sse_keep_alive_interval_seconds: int \| None = None` | Available on all four framed-SSE hosts. Explicit values must be positive; zero and negative values are invalid. `None` inherits a positive `SSE_KEEPALIVE_INTERVAL`, otherwise disables heartbeats. No separate force-disable switch. |
 | `shutdown_grace_period_seconds: int = 10` | Shutdown waiting, not a per-request timeout. Also document the upstream reuse for DELETE waiting on response persistence. |
-| `enable_background_recovery: bool = False` | Permit recovery of eligible background work without selecting background execution. |
+| `resilient_background: bool = False` | Permit recovery of eligible background work without selecting background execution. |
 
 Do not interpret a history limit of `None` as unlimited, map it to `-1`, or raise the dependency floor
 to obtain a particular SDK default. History caps do not limit tokens, turns, retention, or checkpoints.
@@ -166,6 +176,7 @@ These decisions do not redesign Core, concurrency, checkpoints, retries, or exte
 - Shared internals avoid duplicate engines without obscuring public contracts.
 - Request-aware factories support identity-dependent resources but require deliberate isolation and cleanup.
 - The API migration breaks combined-host construction, wrapper hosting, unnamed or zero-argument agent factories, old parser/request names, source literals, and the storage-backend alias.
+- SDK constructor arguments move from arbitrary top-level keywords to the explicit, unvalidated `agent_server_kwargs` mapping. The public SDK options bag is replaced by supported first-class settings.
 - Settings, authority, and consent changes require their own implementation and correctness validation; recording a decision does not establish that it has shipped.
 
 ## Validation

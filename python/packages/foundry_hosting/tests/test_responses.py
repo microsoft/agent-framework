@@ -1708,42 +1708,42 @@ class TestResponsesHostServerInit:
             default_options={"store": True},
         )
 
-        with pytest.raises(RuntimeError, match="resilient_background"):
+        with pytest.raises(ValueError, match="resilient_background"):
             ResponsesHostServer(
                 agent,
-                options=ResponsesServerOptions(resilient_background=True),
+                resilient_background=True,
             )
 
         assert agent.default_options["store"] is True
         assert agent.context_providers == []
 
-    def test_init_rejects_resilient_background_for_non_workflow_agent(self, tmp_path: Path) -> None:
+    def test_init_rejects_background_recovery_without_provider_background(self, tmp_path: Path) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
-        with pytest.raises(RuntimeError, match="resilient_background"):
+        with pytest.raises(ValueError, match="resilient_background"):
             ResponsesHostServer(
                 agent,
                 response_store=FileResponseStore(storage_dir=tmp_path),
-                options=ResponsesServerOptions(resilient_background=True),
+                resilient_background=True,
             )
 
-    def test_init_rejects_steerable_conversations(self) -> None:
-        with pytest.raises(RuntimeError, match="steerable_conversations=True is temporarily unavailable"):
-            ResponsesHostServer(
+    def test_init_rejects_removed_options(self) -> None:
+        with pytest.raises(TypeError, match="options"):
+            cast(Any, ResponsesHostServer)(
                 _make_agent(),
                 response_store=InMemoryResponseProvider(),
-                options=ResponsesServerOptions(steerable_conversations=True),
+                options=None,
             )
 
     def test_steering_rejected_before_enabling_task_manager_or_starting_host(self) -> None:
         agent_factory = MagicMock()
 
         def construct(_turn: int) -> str:
-            with pytest.raises(RuntimeError, match="steerable_conversations=True is temporarily unavailable") as error:
-                ResponsesHostServer(
+            with pytest.raises(TypeError, match="steerable_conversations") as error:
+                cast(Any, ResponsesHostServer)(
                     agent=agent_factory,
-                    options=ResponsesServerOptions(steerable_conversations=True),
+                    steerable_conversations=True,
                 )
             return str(error.value)
 
@@ -1755,7 +1755,7 @@ class TestResponsesHostServerInit:
             failures = list(executor.map(construct, range(24)))
 
         assert len(failures) == 24
-        assert all("Azure/azure-sdk-for-python#49233" in failure for failure in failures)
+        assert all("steerable_conversations" in failure for failure in failures)
         enable.assert_not_called()
         base_init.assert_not_called()
         agent_factory.assert_not_called()
@@ -1764,7 +1764,7 @@ class TestResponsesHostServerInit:
         agent = _make_agent(
             stream_updates=[AgentResponseUpdate(contents=[Content.from_text("finished")], role="assistant")]
         )
-        server = _make_server(agent, options=ResponsesServerOptions(steerable_conversations=False))
+        server = _make_server(agent)
 
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as http:
             pending = await http.post("/responses", json={"input": "hello", "store": True, "background": True})
@@ -1785,12 +1785,12 @@ class TestResponsesHostServerInit:
         agent = Agent(client=_ServiceStorageRecordingClient())
         with pytest.raises(ValueError, match="history_source='inference_service'"):
             _make_server(agent, background_source="inference_service")
-        with pytest.raises(RuntimeError, match="temporarily unavailable"):
+        with pytest.raises(TypeError, match="steerable_conversations"):
             _make_server(
                 agent,
                 history_source="inference_service",
                 background_source="inference_service",
-                options=ResponsesServerOptions(steerable_conversations=True),
+                steerable_conversations=True,
             )
 
     @pytest.mark.parametrize("old_store", [None, InMemoryResponseProvider()])
@@ -1803,7 +1803,7 @@ class TestResponsesHostServerInit:
         if with_response_store:
             kwargs["response_store"] = InMemoryResponseProvider()
         with patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize:
-            with pytest.raises(TypeError, match="store= alias was removed; use response_store="):
+            with pytest.raises(TypeError, match="store"):
                 ResponsesHostServer(agent, **kwargs)
             initialize.assert_not_called()
         assert agent.context_providers == []
@@ -1983,6 +1983,19 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert InMemoryHistoryProvider.DEFAULT_SOURCE_ID not in stored.state
         assert "_foundry_responses_history" not in stored.state
+
+    @pytest.mark.parametrize("limit", [1, 3])
+    async def test_explicit_history_cap_limits_prior_items_without_dropping_current_input(self, limit: int) -> None:
+        client = _RecordingHistoryClient()
+        server = _make_server(Agent(client=client), max_history_items=limit)
+
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
+        third = await _post(server, input_text="third", previous_response_id=second.json()["id"])
+
+        assert third.json()["status"] == "completed", third.json()
+        prior = ["first", "recorded", "second", "recorded"]
+        assert [message.text for message in client.calls[-1]] == [*prior[-limit:], "third"]
 
     async def test_agent_server_history_disables_service_storage(self) -> None:
         client = _ServiceStorageRecordingClient()
@@ -2495,7 +2508,7 @@ class TestAgentSessionPersistence:
             session_store=SessionStore(),
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            resilient_background=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         request = CreateResponse(input="hello", store=True, background=True)
@@ -2555,7 +2568,7 @@ class TestAgentSessionPersistence:
             session_store=store,
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            resilient_background=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         request = CreateResponse(input="hello", store=True, background=True, temperature=0.35)
@@ -2629,7 +2642,7 @@ class TestAgentSessionPersistence:
             session_store=store,
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            resilient_background=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         context = ResponseContext(
@@ -2665,7 +2678,7 @@ class TestAgentSessionPersistence:
             session_store=SessionStore(),
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            resilient_background=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         request = CreateResponse(input="hello", store=True, background=True)
@@ -2708,7 +2721,7 @@ class TestAgentSessionPersistence:
             session_store=store,
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            resilient_background=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         request = CreateResponse(
@@ -2740,7 +2753,7 @@ class TestAgentSessionPersistence:
             session_store=store,
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            resilient_background=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         recovered_context = ResponseContext(response_id="outer-recover", mode_flags=MagicMock())
@@ -2790,7 +2803,7 @@ class TestAgentSessionPersistence:
                 agent,
                 history_source="inference_service",
                 background_source="inference_service",
-                options=ResponsesServerOptions(resilient_background=True),
+                resilient_background=True,
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
 
@@ -2876,7 +2889,7 @@ class TestAgentSessionPersistence:
                 agent,
                 history_source="inference_service",
                 background_source="inference_service",
-                options=ResponsesServerOptions(resilient_background=True),
+                resilient_background=True,
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
 
@@ -3066,7 +3079,7 @@ class TestAgentSessionPersistence:
             session_store=store,
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            resilient_background=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         context = ResponseContext(response_id="outer-tool-response", mode_flags=MagicMock())
@@ -3209,7 +3222,7 @@ class TestAgentSessionPersistence:
             session_store=store,
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            resilient_background=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         response_id = f"outer-{stage}-{interruption}"
@@ -3325,7 +3338,7 @@ class TestAgentSessionPersistence:
                 agent,
                 history_source="inference_service",
                 background_source="inference_service",
-                options=ResponsesServerOptions(resilient_background=True),
+                resilient_background=True,
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
 
@@ -3434,7 +3447,7 @@ class TestAgentSessionPersistence:
                 session_store=store,
                 history_source="inference_service",
                 background_source="inference_service",
-                options=ResponsesServerOptions(resilient_background=True),
+                resilient_background=True,
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
 
@@ -3513,7 +3526,7 @@ class TestAgentSessionPersistence:
             session_store=FailingTokenStore() if phase == "save" else SessionStore(),
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            resilient_background=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         request = CreateResponse(input="hello", store=True, background=True)

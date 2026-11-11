@@ -33,13 +33,53 @@ from agent_framework import (
     WorkflowInvocationKwargs,
     WorkflowRunState,
 )
-from azure.ai.agentserver.responses import ResponseContext
+from azure.ai.agentserver.responses import ResponseContext, ResponsesServerOptions
 from azure.ai.agentserver.responses.models import CreateResponse, Item
 from typing_extensions import TypeVar
 
 from ._scope import FoundryRequestScope
 
 UnsupportedOptions: TypeAlias = Literal["ignore", "warn", "error"]
+
+
+def validate_sse_keep_alive_interval(value: int | None) -> None:
+    """Validate an explicit heartbeat interval without replacing SDK environment resolution."""
+    if value is not None:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError("sse_keep_alive_interval_seconds must be an integer or None.")
+        if value <= 0:
+            raise ValueError("sse_keep_alive_interval_seconds must be positive when supplied.")
+
+
+def _build_response_server_options(  # pyright: ignore[reportUnusedFunction]
+    *,
+    max_history_items: int | None = None,
+    sse_keep_alive_interval_seconds: int | None = None,
+    shutdown_grace_period_seconds: int = 10,
+    resilient_background: bool = False,
+) -> ResponsesServerOptions:
+    """Build supported SDK settings, leaving an omitted history limit at its SDK default."""
+    validate_sse_keep_alive_interval(sse_keep_alive_interval_seconds)
+    if isinstance(shutdown_grace_period_seconds, bool) or not isinstance(shutdown_grace_period_seconds, int):
+        raise TypeError("shutdown_grace_period_seconds must be an integer.")
+    if shutdown_grace_period_seconds <= 0:
+        raise ValueError("shutdown_grace_period_seconds must be positive.")
+    if not isinstance(resilient_background, bool):
+        raise TypeError("resilient_background must be a boolean.")
+    history_options: dict[str, Any] = {}
+    if max_history_items is not None:
+        if isinstance(max_history_items, bool) or not isinstance(max_history_items, int):
+            raise TypeError("max_history_items must be an integer or None.")
+        if max_history_items <= 0:
+            raise ValueError("max_history_items must be positive when supplied.")
+        history_options["default_fetch_history_count"] = max_history_items
+    return ResponsesServerOptions(
+        sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
+        shutdown_grace_period_seconds=shutdown_grace_period_seconds,
+        resilient_background=resilient_background,
+        steerable_conversations=False,
+        **history_options,
+    )
 
 
 InputT = TypeVar("InputT", default=Any)

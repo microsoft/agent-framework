@@ -3,7 +3,7 @@
 """Unit tests for InvocationsHostServer.
 
 These tests exercise ``InvocationsHostServer`` directly by constructing the
-host, driving ``_partition_key`` and ``_handle_invoke`` with a fake agent and
+host, driving the shared partition-key helper and ``_handle_invoke`` with a fake agent and
 mock requests. The Foundry request context is injected via the public
 ``set_request_context`` / ``reset_request_context`` helpers rather than by
 patching, matching the style used in ``test_toolbox.py``.
@@ -60,6 +60,7 @@ from starlette.requests import ClientDisconnect, Request
 from starlette.responses import Response, StreamingResponse
 
 from agent_framework_foundry_hosting import InvocationRun, InvocationsHostServer, StoreProvider
+from agent_framework_foundry_hosting._invocations_shared import invocation_partition_key
 from agent_framework_foundry_hosting._state_store import FoundryAgentSessionStore
 
 pytestmark = pytest.mark.filterwarnings("ignore:.*SessionStore is experimental.*")
@@ -1425,17 +1426,17 @@ class TestPartitionKey:
     def test_local_returns_session_id(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         with _request_context(session_id="sess-1"):
-            assert server._partition_key() == "sess-1"  # pyright: ignore[reportPrivateUsage]
+            assert invocation_partition_key(server.config) == "sess-1"
 
     def test_local_missing_session_id_raises(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         with _request_context(), pytest.raises(RuntimeError, match="missing session_id"):
-            server._partition_key()  # pyright: ignore[reportPrivateUsage]
+            invocation_partition_key(server.config)
 
     def test_local_ignores_user_id(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         with _request_context(session_id="sess-1", user_id="user-1"):
-            assert server._partition_key() == "sess-1"  # pyright: ignore[reportPrivateUsage]
+            assert invocation_partition_key(server.config) == "sess-1"
 
     @pytest.mark.parametrize("user_id", [None, ""])
     def test_hosted_requires_user_id(self, user_id: str | None) -> None:
@@ -1446,21 +1447,21 @@ class TestPartitionKey:
             _request_context(call_id="call-1", session_id="sess-1", user_id=user_id),
             pytest.raises(RuntimeError, match="missing user_id"),
         ):
-            server._partition_key()  # pyright: ignore[reportPrivateUsage]
+            invocation_partition_key(server.config)
 
     def test_hosted_returns_composite_key(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         server.config.is_hosted = True
         server.config.session_id = "sess-1"
         with _request_context(call_id="call-1", session_id="sess-1", user_id="user-1"):
-            assert server._partition_key() == ("sess-1", "user-1")  # pyright: ignore[reportPrivateUsage]
+            assert invocation_partition_key(server.config) == ("sess-1", "user-1")
 
     def test_hosted_uses_platform_session_when_context_omits_it(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         server.config.is_hosted = True
         server.config.session_id = "sess-1"
         with _request_context(call_id="call-1", user_id="user-1"):
-            assert server._partition_key() == ("sess-1", "user-1")  # pyright: ignore[reportPrivateUsage]
+            assert invocation_partition_key(server.config) == ("sess-1", "user-1")
 
     def test_hosted_rejects_a_different_request_session(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
@@ -1470,7 +1471,7 @@ class TestPartitionKey:
             _request_context(call_id="call-1", session_id="caller-session", user_id="user-1"),
             pytest.raises(RuntimeError, match="does not match"),
         ):
-            server._partition_key()  # pyright: ignore[reportPrivateUsage]
+            invocation_partition_key(server.config)
 
     def test_hosted_requires_platform_call_id(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
@@ -1480,7 +1481,7 @@ class TestPartitionKey:
             _request_context(session_id="sess-1", user_id="user-1"),
             pytest.raises(RuntimeError, match="trusted user ID and call ID"),
         ):
-            server._partition_key()  # pyright: ignore[reportPrivateUsage]
+            invocation_partition_key(server.config)
 
     async def test_hosted_keys_and_session_ids_preserve_identifier_values(self) -> None:
         agent = _make_agent(response_text="hi")
@@ -1493,7 +1494,7 @@ class TestPartitionKey:
         for session_id, user_id in product(identifiers, repeat=2):
             server.config.session_id = session_id
             with _request_context(call_id="call-1", session_id=session_id, user_id=user_id):
-                key = server._partition_key()  # pyright: ignore[reportPrivateUsage]
+                key = invocation_partition_key(server.config)
                 response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
 
             assert isinstance(key, tuple)
@@ -1946,7 +1947,7 @@ class TestHandleInvoke:
         with (
             _request_context(call_id="call-1", session_id="sess-1", user_id="user-1"),
             patch(
-                "agent_framework_foundry_hosting._invocations_shared.AgentSession", wraps=AgentSession
+                "agent_framework_foundry_hosting._invocations_agent.AgentSession", wraps=AgentSession
             ) as session_factory,
         ):
             for _ in range(2):
