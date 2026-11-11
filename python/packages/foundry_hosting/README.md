@@ -398,8 +398,9 @@ Failure boundaries:
 
 - The response fails if a consent link is not a safe absolute HTTPS URL or is outside the configured origin
   allowlist. The host does not expose that URL.
-- The response fails with "OAuth consent continuation requires store=true." if the request has `store=false`. The host
-  exposes no consent or approval output for that request.
+- Consent continuation requires `store=true`. If the request has `store=false`, the response fails and the host
+  exposes no consent or approval output. Consent appears during tool execution, after the response has started, so
+  this is a failed response, not an HTTP 400 rejection.
 - Consent at connection time (`tools/list`) behaves as before.
 
 Limits:
