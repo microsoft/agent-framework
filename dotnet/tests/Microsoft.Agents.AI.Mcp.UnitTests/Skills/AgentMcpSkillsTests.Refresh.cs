@@ -864,12 +864,13 @@ public sealed partial class AgentMcpSkillsTests
                     new JsonObject { ["uri"] = SkillUri, ["text"] = SkillContent }),
                 "base64" => new JsonArray(new JsonObject { ["uri"] = SkillUri, ["blob"] = "%invalid%" }),
                 "binary-instructions" => new JsonArray(new JsonObject { ["uri"] = SkillUri, ["blob"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(SkillContent)) }),
-                _ => new JsonArray(new JsonObject { ["uri"] = SkillUri, ["text"] = SkillContent + "x" }),
+                _ => new JsonArray(new JsonObject { ["uri"] = SkillUri, ["text"] = SkillContent + new string('x', 15) }),
             };
             return Task.FromResult(result);
         });
         using var source = new AgentMcpSkillsSource(client.Object, loggerFactory: null,
-            options: new AgentMcpSkillsSourceOptions { MaxResourceSizeBytes = Encoding.UTF8.GetByteCount(SkillContent) },
+            // The limit covers the listed sizes: SKILL.md, the checklist (10 bytes), and the icon (4 bytes).
+            options: new AgentMcpSkillsSourceOptions { MaxResourceSizeBytes = Encoding.UTF8.GetByteCount(SkillContent) + 14 },
             timeProvider: clock);
         IList<AgentSkill> original = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         if (cached)
@@ -962,7 +963,7 @@ public sealed partial class AgentMcpSkillsTests
                     case "compatibility": result["skill"]!["frontmatter"]!["compatibility"] = new string('a', 501); break;
                     case "compatibility-type": result["skill"]!["frontmatter"]!["compatibility"] = true; break;
                     case "digest": result["skill"]!["resources"]![0]!["digest"] = "invalid"; break;
-                    case "size": result["skill"]!["resources"]![0]!["size"] = 2_000_000; break;
+                    case "size": result["skill"]!["resources"]![0]!["size"] = 16_777_217; break;
                     case "incomplete": result["skill"]!["resources"] = new JsonArray(); break;
                     case "unknown-resources": result["skill"]!["resources"] = "unknown"; break;
                     case "ttl": result["ttlMs"] = "1000"; break;

@@ -341,6 +341,68 @@ public sealed partial class AgentMcpSkillTests
         Assert.Equal(0, reads);
     }
 
+    [Fact]
+    public async Task DynamicSkill_ResourceCountLimit_IncludesInstructionsAsync()
+    {
+        // Arrange
+        int reads = 0;
+        await using var server = CreateServer((uri, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult(Text(uri, uri == SkillUri ? SkillContent : "x"));
+        });
+        await using var client = await server.CreateClientAsync();
+        var skill = CreateDynamicSkill(client);
+        await skill.GetContentAsync();
+        for (int i = 1; i < AgentMcpSkill.DefaultMaxResourceCount; i++)
+        {
+            Assert.NotNull(await skill.GetResourceAsync($"references/file-{i}.md"));
+        }
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetResourceAsync("references/one-too-many.md"));
+        var cached = await skill.GetResourceAsync("references/file-1.md");
+
+        // Assert
+        Assert.Contains("limit of 512 entries", exception.Message);
+        Assert.NotNull(cached);
+        Assert.Equal(AgentMcpSkill.DefaultMaxResourceCount + 1, reads);
+    }
+
+    [Fact]
+    public async Task DynamicSkill_ResourceSizeLimit_AppliesToCombinedTextAndBinaryContentAsync()
+    {
+        // Arrange
+        var clock = new ResourceTimeProvider();
+        int textReads = 0;
+        await using var server = CreateServer((uri, _) =>
+        {
+            ReadResourceResult result = uri.EndsWith(".bin", StringComparison.Ordinal)
+                ? new ReadResourceResult { Contents = [BlobResourceContents.FromBytes(new byte[] { 1, 2, 3, 4, 5 }, uri, "application/octet-stream")] }
+                : Text(uri, uri.EndsWith("first.md", StringComparison.Ordinal) && ++textReads == 1 ? "123456" : "1");
+            result.TimeToLive = TimeSpan.FromSeconds(1);
+            return ValueTask.FromResult(result);
+        });
+        await using var client = await server.CreateClientAsync();
+        var skill = CreateDynamicSkill(client, maxResourceSizeBytes: 10, timeProvider: clock);
+        Assert.NotNull(await skill.GetResourceAsync("references/first.md"));
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetResourceAsync("assets/icon.bin"));
+
+        // Refreshing the 6-byte resource with 1 byte frees space for the 5-byte binary resource.
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var refreshed = await skill.GetResourceAsync("references/first.md");
+        var binary = await skill.GetResourceAsync("assets/icon.bin");
+
+        // Assert
+        Assert.Contains("total size limit of 10", exception.Message);
+        Assert.NotNull(refreshed);
+        Assert.Equal("1", await refreshed.ReadAsync());
+        Assert.NotNull(binary);
+        Assert.Equal(new byte[] { 1, 2, 3, 4, 5 }, Assert.IsType<DataContent>(await binary.ReadAsync()).Data.ToArray());
+    }
+
     private static AgentMcpSkill CreateDynamicSkill(
         McpClient client,
         long maxResourceSizeBytes = AgentMcpSkill.DefaultMaxResourceSizeBytes,

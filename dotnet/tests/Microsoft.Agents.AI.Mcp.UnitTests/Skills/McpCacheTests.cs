@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,7 +9,7 @@ using System.Threading.Tasks;
 namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
 
 /// <summary>
-/// Tests cache expiration, queued refreshes, entry replacement, and clearing stored values.
+/// Tests cache expiration, queued refreshes, entry replacement, and entry limits.
 /// </summary>
 public sealed class McpCacheTests
 {
@@ -28,7 +29,7 @@ public sealed class McpCacheTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task GetOrRefreshAsync_InfiniteLifetime_RefreshesOnlyWhenRequestedOrClearedAsync(bool needsRefresh)
+    public async Task GetOrRefreshAsync_InfiniteLifetime_RefreshesOnlyWhenRequestedAsync(bool needsRefresh)
     {
         // Arrange
         var clock = new ManualTimeProvider();
@@ -49,19 +50,6 @@ public sealed class McpCacheTests
         // Assert
         Assert.Equal(needsRefresh ? "replacement" : "original", value);
         Assert.Equal(needsRefresh ? 1 : 0, refreshes);
-
-        // Act
-        cache.Clear();
-        string reloaded = await cache.GetOrRefreshAsync("resource", (previous, _) =>
-        {
-            Assert.Null(previous);
-            refreshes++;
-            return ValueTask.FromResult(new McpCacheEntry<string>("reloaded", McpCacheLifetime.Infinite));
-        }, CancellationToken.None);
-
-        // Assert
-        Assert.Equal("reloaded", reloaded);
-        Assert.Equal(needsRefresh ? 2 : 1, refreshes);
     }
 
     [Theory]
@@ -158,29 +146,6 @@ public sealed class McpCacheTests
         }, CancellationToken.None);
     }
 
-    [Fact]
-    public async Task Clear_RemovesAllEntriesAsync()
-    {
-        // Arrange
-        var cache = new McpCache<string, string>(new ManualTimeProvider(), StringComparer.Ordinal);
-        await cache.GetOrRefreshAsync("first",
-            (_, _) => ValueTask.FromResult(new McpCacheEntry<string>("one", new(0, TimeSpan.FromSeconds(1)))), CancellationToken.None);
-        await cache.GetOrRefreshAsync("second",
-            (_, _) => ValueTask.FromResult(new McpCacheEntry<string>("two", new(0, TimeSpan.FromSeconds(1)))), CancellationToken.None);
-
-        // Act
-        cache.Clear();
-
-        // Assert
-        Assert.False(cache.Contains("first", _ => true));
-        Assert.False(cache.Contains("second", _ => true));
-        await cache.GetOrRefreshAsync("first", (previous, _) =>
-        {
-            Assert.Null(previous);
-            return ValueTask.FromResult(new McpCacheEntry<string>("replacement", new(0, TimeSpan.FromSeconds(1))));
-        }, CancellationToken.None);
-    }
-
     [Theory]
     [InlineData(-1, 8)]
     [InlineData(0, 8)]
@@ -269,6 +234,127 @@ public sealed class McpCacheTests
             await cache.GetOrRefreshAsync("resource", (_, _) => throw new InvalidOperationException("Unexpected refresh."), cts.Token));
         Assert.Equal(cts.Token, error.CancellationToken);
         Assert.Equal(cached, cache.Contains("resource", _ => true));
+        Assert.Equal(cached ? 1 : 0, cache.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetOrRefreshAsync_FailedOrCanceledFirstRead_RemovesEmptyStateAsync(bool canceled)
+    {
+        // Arrange
+        var cache = new McpCache<string, string>(new ManualTimeProvider(), StringComparer.Ordinal);
+        var release = new TaskCompletionSource<McpCacheEntry<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cts = new CancellationTokenSource();
+        Task<string> pending = cache.GetOrRefreshAsync("resource", (_, token) => new(release.Task.WaitAsync(token)), cts.Token).AsTask();
+
+        // Act & Assert
+        if (canceled)
+        {
+            await cts.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
+        }
+        else
+        {
+            var error = new InvalidOperationException("Read failed.");
+            release.SetException(error);
+            Assert.Same(error, await Assert.ThrowsAsync<InvalidOperationException>(() => pending.WaitAsync(TimeSpan.FromSeconds(10))));
+        }
+
+        Assert.Equal(0, cache.Count);
+
+        // Act
+        string value = await cache.GetOrRefreshAsync("other",
+            (_, _) => ValueTask.FromResult(new McpCacheEntry<string>("content", McpCacheLifetime.Infinite)), CancellationToken.None);
+
+        // Assert
+        Assert.Equal("content", value);
+    }
+
+    [Fact]
+    public async Task GetOrRefreshAsync_ReaderJoiningDuringFailure_KeepsStateUntilItsReadFinishesAsync()
+    {
+        // Arrange
+        string lateKey = new("resource".ToCharArray());
+        var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseLookup = new ManualResetEventSlim();
+        int pauseLookup = 1;
+        var comparer = EqualityComparer<string>.Create((left, right) =>
+        {
+            if (ReferenceEquals(right, lateKey) && Interlocked.Exchange(ref pauseLookup, 0) == 1)
+            {
+                lookupStarted.SetResult();
+                Assert.True(releaseLookup.Wait(TimeSpan.FromSeconds(10)));
+            }
+
+            return StringComparer.Ordinal.Equals(left, right);
+        }, StringComparer.Ordinal.GetHashCode);
+        var cache = new McpCache<string, string>(new ManualTimeProvider(), comparer);
+        var release = new TaskCompletionSource<McpCacheEntry<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<string> first = cache.GetOrRefreshAsync("resource", (_, _) => new(release.Task), CancellationToken.None).AsTask();
+        Task<string> late = Task.Run(async () => await cache.GetOrRefreshAsync(lateKey,
+            (_, _) => ValueTask.FromResult(new McpCacheEntry<string>("replacement", McpCacheLifetime.Infinite)), CancellationToken.None));
+
+        try
+        {
+            await lookupStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            // Act
+            var error = new InvalidOperationException("Read failed.");
+            release.SetException(error);
+
+            // Assert
+            Assert.Same(error, await Assert.ThrowsAsync<InvalidOperationException>(() => first.WaitAsync(TimeSpan.FromSeconds(10))));
+            Assert.Equal(1, cache.Count);
+            Assert.False(late.IsCompleted);
+
+            // Act
+            releaseLookup.Set();
+
+            // Assert
+            Assert.Equal("replacement", await late.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(1, cache.Count);
+        }
+        finally
+        {
+            releaseLookup.Set();
+        }
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(8)]
+    public async Task GetOrRefreshAsync_FailedQueuedReads_RemoveStateAfterLastReadAsync(int canceledWaiters)
+    {
+        // Arrange
+        var cache = new McpCache<string, string>(new ManualTimeProvider(), StringComparer.Ordinal);
+        var release = new TaskCompletionSource<McpCacheEntry<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var error = new InvalidOperationException("Read failed.");
+        Task<string> first = cache.GetOrRefreshAsync("resource", (_, _) => new(release.Task), CancellationToken.None).AsTask();
+        using var cts = new CancellationTokenSource();
+        Task<string>[] canceled = Enumerable.Range(0, canceledWaiters).Select(_ => cache.GetOrRefreshAsync("resource",
+            (_, _) => throw new InvalidOperationException("Unexpected refresh."), cts.Token).AsTask()).ToArray();
+        Task<string> last = cache.GetOrRefreshAsync("resource", (_, _) => throw error, CancellationToken.None).AsTask();
+
+        // Act
+        await cts.CancelAsync();
+        foreach (Task<string> task in canceled)
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task.WaitAsync(TimeSpan.FromSeconds(10)));
+        }
+
+        // Assert
+        Assert.Equal(1, cache.Count);
+        Assert.False(last.IsCompleted);
+
+        // Act
+        release.SetException(error);
+
+        // Assert
+        Assert.Same(error, await Assert.ThrowsAsync<InvalidOperationException>(() => first.WaitAsync(TimeSpan.FromSeconds(10))));
+        Assert.Same(error, await Assert.ThrowsAsync<InvalidOperationException>(() => last.WaitAsync(TimeSpan.FromSeconds(10))));
+        Assert.Equal(0, cache.Count);
     }
 
     [Theory]
@@ -448,28 +534,204 @@ public sealed class McpCacheTests
     }
 
     [Fact]
-    public async Task Clear_ActiveRefresh_KeepsReadsInTheSameQueueAsync()
+    public async Task GetOrRefreshAsync_EntryCountLimit_RejectsNewKeysButAllowsRefreshesAsync()
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        var cache = new McpCache<string, string>(clock, StringComparer.Ordinal, new() { MaxEntryCount = 2 });
+        await cache.GetOrRefreshAsync("first", (_, _) => EntryAsync("one", size: 0, TimeSpan.Zero), CancellationToken.None);
+        await cache.GetOrRefreshAsync("second", (_, _) => EntryAsync("two", size: 0, TimeSpan.Zero), CancellationToken.None);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cache.GetOrRefreshAsync("third", (_, _) => EntryAsync("three", size: 0, TimeSpan.Zero), CancellationToken.None).AsTask());
+        string refreshed = await cache.GetOrRefreshAsync("first", (_, _) => EntryAsync("updated", size: 0, TimeSpan.Zero), CancellationToken.None);
+
+        // Assert
+        Assert.Contains("limit of 2 entries", exception.Message);
+        Assert.Equal("updated", refreshed);
+        Assert.False(cache.Contains("third", _ => true));
+        Assert.Equal(2, cache.Count);
+    }
+
+    [Fact]
+    public async Task GetOrRefreshAsync_TotalSizeLimit_AcceptsBoundaryAndRejectsLargerAsync()
+    {
+        // Arrange
+        var cache = new McpCache<string, string>(new ManualTimeProvider(), StringComparer.Ordinal, new() { MaxTotalSize = 10 });
+        await cache.GetOrRefreshAsync("first", (_, _) => EntryAsync("one", size: 6, TimeSpan.Zero), CancellationToken.None);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cache.GetOrRefreshAsync("second", (_, _) => EntryAsync("too large", size: 5, TimeSpan.Zero), CancellationToken.None).AsTask());
+        string second = await cache.GetOrRefreshAsync("second", (_, _) => EntryAsync("two", size: 4, TimeSpan.Zero), CancellationToken.None);
+
+        // Assert
+        Assert.Contains("total size limit of 10", exception.Message);
+        Assert.Equal("two", second);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cache.GetOrRefreshAsync("third", (_, _) => EntryAsync("three", size: 1, TimeSpan.Zero), CancellationToken.None).AsTask());
+    }
+
+    [Fact]
+    public async Task GetOrRefreshAsync_TotalSizeLimit_RefreshReplacesPreviousSizeAsync()
+    {
+        // Arrange
+        var cache = new McpCache<string, string>(new ManualTimeProvider(), StringComparer.Ordinal, new() { MaxTotalSize = 10 });
+        await cache.GetOrRefreshAsync("first", (_, _) => EntryAsync("one", size: 3, TimeSpan.Zero), CancellationToken.None);
+        await cache.GetOrRefreshAsync("second", (_, _) => EntryAsync("two", size: 7, TimeSpan.Zero), CancellationToken.None);
+
+        // Act
+        string grown = await cache.GetOrRefreshAsync("first", (_, _) => EntryAsync("grown", size: 3, TimeSpan.Zero), CancellationToken.None);
+        string shrunk = await cache.GetOrRefreshAsync("second", (_, _) => EntryAsync("shrunk", size: 2, TimeSpan.Zero), CancellationToken.None);
+        string third = await cache.GetOrRefreshAsync("third", (_, _) => EntryAsync("three", size: 5, TimeSpan.Zero), CancellationToken.None);
+
+        // Assert
+        Assert.Equal("grown", grown);
+        Assert.Equal("shrunk", shrunk);
+        Assert.Equal("three", third);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cache.GetOrRefreshAsync("first", (_, _) => EntryAsync("too large", size: 4, TimeSpan.Zero), CancellationToken.None).AsTask());
+    }
+
+    [Fact]
+    public async Task GetOrRefreshAsync_RejectedRefresh_KeepsPreviousEntryAndTotalsAsync()
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        var cache = new McpCache<string, string>(clock, StringComparer.Ordinal, new() { MaxTotalSize = 10 });
+        await cache.GetOrRefreshAsync("resource", (_, _) => EntryAsync("original", size: 4, TimeSpan.FromSeconds(1)), CancellationToken.None);
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cache.GetOrRefreshAsync("resource", (_, _) => EntryAsync("too large", size: 11, TimeSpan.FromSeconds(1)), CancellationToken.None).AsTask());
+        string other = await cache.GetOrRefreshAsync("other", (_, _) => EntryAsync("other", size: 6, TimeSpan.Zero), CancellationToken.None);
+
+        // Assert
+        Assert.Equal("other", other);
+        Assert.True(cache.Contains("resource", value => value == "original"));
+        await cache.GetOrRefreshAsync("resource", (previous, _) =>
+        {
+            Assert.Equal("original", previous?.Value);
+            return ValueTask.FromResult(previous!);
+        }, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task GetOrRefreshAsync_ExpiredEntries_CountTowardLimitsAsync()
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        var cache = new McpCache<string, string>(clock, StringComparer.Ordinal, new() { MaxEntryCount = 1, MaxTotalSize = 10 });
+        await cache.GetOrRefreshAsync("first", (_, _) => EntryAsync("one", size: 10, TimeSpan.FromSeconds(1)), CancellationToken.None);
+
+        // Act
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        // Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cache.GetOrRefreshAsync("second", (_, _) => EntryAsync("two", size: 0, TimeSpan.Zero), CancellationToken.None).AsTask());
+    }
+
+    [Fact]
+    public async Task GetOrRefreshAsync_ParallelReadsOfDifferentKeys_ShareLimitsAsync()
+    {
+        // Arrange
+        var cache = new McpCache<string, string>(new ManualTimeProvider(), StringComparer.Ordinal, new() { MaxEntryCount = 3, MaxTotalSize = 30 });
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int started = 0;
+        var allStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<string>[] reads = Enumerable.Range(0, 8).Select(i => cache.GetOrRefreshAsync($"resource-{i}", async (_, _) =>
+        {
+            if (Interlocked.Increment(ref started) == 8)
+            {
+                allStarted.SetResult();
+            }
+
+            await release.Task.ConfigureAwait(false);
+            return new McpCacheEntry<string>($"content-{i}", 10, McpCacheLifetime.Infinite);
+        }, CancellationToken.None).AsTask()).ToArray();
+
+        // Act
+        await allStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        release.SetResult();
+        await Task.WhenAll(reads.Select(read => read.ContinueWith(_ => { }, TaskScheduler.Default))).WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Assert
+        Assert.Equal(3, reads.Count(read => read.Status == TaskStatus.RanToCompletion));
+        Assert.All(reads.Where(read => read.IsFaulted), read => Assert.IsType<InvalidOperationException>(read.Exception!.InnerException));
+        Assert.Equal(3, Enumerable.Range(0, 8).Count(i => cache.Contains($"resource-{i}", _ => true)));
+    }
+
+    [Fact]
+    public async Task GetOrRefreshAsync_NoLimits_AcceptsAnyCountAndSizeAsync()
     {
         // Arrange
         var cache = new McpCache<string, string>(new ManualTimeProvider(), StringComparer.Ordinal);
-        var release = new TaskCompletionSource<McpCacheEntry<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        Task<string> active = cache.GetOrRefreshAsync("resource", (_, _) => new(release.Task), CancellationToken.None).AsTask();
 
         // Act
-        cache.Clear();
-        Task<string> waiting = cache.GetOrRefreshAsync("resource",
-            (_, _) => throw new InvalidOperationException("Unexpected overlapping refresh."), CancellationToken.None).AsTask();
+        for (int i = 0; i < 100; i++)
+        {
+            await cache.GetOrRefreshAsync($"resource-{i}", (_, _) => EntryAsync("content", size: long.MaxValue, TimeSpan.FromSeconds(1)), CancellationToken.None);
+        }
 
         // Assert
-        Assert.False(waiting.IsCompleted);
-
-        // Act
-        release.SetResult(new("content", new(0, TimeSpan.FromSeconds(1))));
-
-        // Assert
-        Assert.Equal("content", await active.WaitAsync(TimeSpan.FromSeconds(10)));
-        Assert.Equal("content", await waiting.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(100, Enumerable.Range(0, 100).Count(i => cache.Contains($"resource-{i}", _ => true)));
     }
+
+    [Fact]
+    public async Task GetOrRefreshAsync_TotalSizeLimit_RejectsEntryWithoutSizeAsync()
+    {
+        // Arrange
+        var cache = new McpCache<string, string>(new ManualTimeProvider(), StringComparer.Ordinal, new() { MaxTotalSize = 10 });
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => cache.GetOrRefreshAsync("resource",
+            (_, _) => ValueTask.FromResult(new McpCacheEntry<string>("content", McpCacheLifetime.Infinite)), CancellationToken.None).AsTask());
+
+        // Assert
+        Assert.Contains("requires a size", exception.Message);
+        Assert.False(cache.Contains("resource", _ => true));
+    }
+
+    [Fact]
+    public async Task GetOrRefreshAsync_EntryCountLimit_AcceptsEntriesWithoutSizeAsync()
+    {
+        // Arrange
+        var cache = new McpCache<string, string>(new ManualTimeProvider(), StringComparer.Ordinal, new() { MaxEntryCount = 1 });
+
+        // Act
+        string value = await cache.GetOrRefreshAsync("resource",
+            (_, _) => ValueTask.FromResult(new McpCacheEntry<string>("content", McpCacheLifetime.Infinite)), CancellationToken.None);
+
+        // Assert
+        Assert.Equal("content", value);
+        Assert.Null(new McpCacheEntry<string>("content", McpCacheLifetime.Infinite).Size);
+    }
+
+    [Fact]
+    public void Constructor_NonPositiveLimits_Throws()
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+
+        // Act & Assert
+        Assert.Throws<ArgumentOutOfRangeException>("MaxEntryCount", () =>
+            new McpCache<string, string>(clock, StringComparer.Ordinal, new() { MaxEntryCount = 0 }));
+        Assert.Throws<ArgumentOutOfRangeException>("MaxTotalSize", () =>
+            new McpCache<string, string>(clock, StringComparer.Ordinal, new() { MaxTotalSize = -1 }));
+    }
+
+    [Fact]
+    public void McpCacheEntry_NegativeSize_Throws()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentOutOfRangeException>("size", () => new McpCacheEntry<string>("content", -1, McpCacheLifetime.Infinite));
+    }
+
+    private static ValueTask<McpCacheEntry<string>> EntryAsync(string value, long size, TimeSpan ttl) =>
+        ValueTask.FromResult(new McpCacheEntry<string>(value, size, new(0, ttl)));
 
     /// <summary>
     /// Provides a clock that tests can advance without waiting.
