@@ -87,9 +87,7 @@ The existing upstream Invocations `graceful_shutdown_timeout` passthrough is a s
 
 An explicit positive SSE interval takes precedence over a positive environment value. However, the SDK parses
 `SSE_KEEPALIVE_INTERVAL` before applying that override: malformed values, including an empty string, still raise
-`ValueError` even with an explicit interval. Heartbeats do not set a request timeout. Invocations agent
-`legacy_wire_format=True` disables inherited heartbeats because its stream is raw text; combining that mode
-with an explicit interval raises `ValueError`.
+`ValueError` even with an explicit interval. Heartbeats do not set a request timeout.
 
 The public `ResponsesServerOptions` bag is no longer accepted through `options=`. Removed host settings
 `default_fetch_history_count`, `default_model`, `create_span_hook`, `additional_server_version`,
@@ -646,7 +644,7 @@ and user ID. Consumers must use it as a whole and must not parse it or depend on
 representation. Repeated requests for the same identifier pair restore the saved session.
 Locally, the platform session ID is used unchanged.
 
-### Invocations agent requests and wire compatibility
+### Invocations agent requests and response format
 
 By default, `POST /invocations` accepts `{"message": "Hi", "options": {}, "stream": false}`. Applications can supply
 a sync or async `parse_input(request)` returning a typed `InvocationRun(messages, options, stream)` to accept their
@@ -658,12 +656,12 @@ runtime options. It also rejects agent execution controls: `additional_function_
 `client_kwargs`, `middleware`, `session`, `tools`, `instructions`, `compaction_strategy`, and `tokenizer`. Trusted tool
 arguments belong in developer-configured agent defaults or middleware/factories, not in request options or hook output.
 A hook may strip denied caller fields before validation; allowed generation and provider-specific options remain
-available. These restrictions apply to both wire formats and every `unsupported_options` policy.
+available. These restrictions apply to streaming and non-streaming requests under every `unsupported_options` policy.
 When an agent cannot accept runtime options, `unsupported_options="warn"` (default) logs and ignores
 them; `"ignore"` silently drops them and `"error"` rejects them. For request-scoped factories, unsupported options
 discovered after streaming starts are reported as an SSE `error` event with `status: 400`.
 
-**New default:** non-streaming success is JSON `{"response": "..."}`. Streaming success is real SSE
+Non-streaming success is JSON `{"response": "..."}`. Streaming success is framed SSE
 `event: delta` with `{"text": "..."}`, followed by `event: done` with the platform sandbox `session_id`.
 The `done` event is sent only after the final MAF `ResponseStream` is finalized and the session is persisted.
 Client validation errors return JSON HTTP 400 before streaming where possible. Provider errors are logged and
@@ -672,14 +670,6 @@ with `code: "session_conflict"` and `status: 409`. A stream may emit deltas befo
 same-session requests in one process, but a CAS conflict can still follow external tool effects in separate
 processes; it does not guarantee exactly-once execution. See the
 [Invocations agent/parser example](../../samples/04-hosting/foundry-hosted-agents/invocations/basic/).
-
-**Deprecated opt-in:** set `InvocationsHostServer(agent, legacy_wire_format=True)` only for existing clients
-that must keep the previous plain-text non-streaming response and raw text-chunk streaming format. The host logs
-and emits a deprecation warning once on construction. Errors are never returned as successful text: non-stream
-failures still use JSON error statuses; a post-start legacy stream failure terminates the stream rather than
-injecting unexpected SSE framing. Migrate all opted-in clients to JSON/SSE; remove the compatibility mode only
-after those callers have migrated and a separate, deliberate breaking-change decision, never by silently
-switching an opted-in deployment.
 
 Both hosts accept `agent_session_store_provider` to select a `StoreProvider[SessionStore]`.
 Session state must support `AgentSession` serialization. Use `register_state_type()` codecs for
@@ -869,7 +859,7 @@ including the verified `agent_session_id` query alternative when the platform
 does not configure `FOUNDRY_AGENT_SESSION_ID`. Body/header IDs cannot establish
 sandbox routing or select private checkpoints. The agent path still uses its
 separate `invocation_sessions` store, existing hooks/defaults and JSON/`delta` SSE
-contract. Agent-only `legacy_wire_format=True`, `prepare_options` and
+contract. Agent-only `prepare_options` and
 `agent_session_store_provider` are rejected for native workflows rather than
 silently reinterpreted.
 
