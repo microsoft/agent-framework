@@ -471,7 +471,7 @@ def background_agent_run_kwargs(agent: SupportsAgentRun, *, provider_background:
         guard = _PROVIDER_BACKGROUND_AGENT_OPTIONS if provider_background else _FOREGROUND_AGENT_OPTIONS
         return {"middleware": [guard]}
     kwargs: dict[str, Any] = {}
-    _append_background_chat_options(agent, kwargs, provider_background=provider_background)
+    _append_background_chat_options(cast(SupportsAgentRun, agent), kwargs, provider_background=provider_background)
     return {"client_kwargs": kwargs} if kwargs else {}
 
 
