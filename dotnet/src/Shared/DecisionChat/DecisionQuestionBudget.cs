@@ -3,7 +3,7 @@
 using System.Globalization;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.AI.TypeSafe;
+namespace Microsoft.Agents.AI.Decisions;
 
 /// <summary>
 /// Counts the internal questions that tool routing adds to a request, and stops the request when they exceed
@@ -14,11 +14,11 @@ namespace Microsoft.Agents.AI.TypeSafe;
 /// is excluded for an unsupported schema therefore returns the questions it reserved to the tools after it.
 /// Exceeding the budget stops question materialization, but is reported only after the whole tool schema is checked.
 /// </remarks>
-internal sealed class JevQuestionBudget
+internal sealed class DecisionQuestionBudget
 {
     public const int MaxInternalQuestions = 128;
 
-    public JevQuestionBudget(int count = 0)
+    public DecisionQuestionBudget(int count = 0)
     {
         this.Count = count;
     }
@@ -39,7 +39,7 @@ internal sealed class JevQuestionBudget
             // of excluding the tool that crossed the limit.
             Throw.InvalidOperationException(string.Format(
                 CultureInfo.InvariantCulture,
-                "The tools need more than {0} internal Jev questions. Offer fewer tools, or tools with fewer arguments.",
+                "The tools need more than {0} internal decision questions. Offer fewer tools, or tools with fewer arguments.",
                 MaxInternalQuestions));
         }
     }

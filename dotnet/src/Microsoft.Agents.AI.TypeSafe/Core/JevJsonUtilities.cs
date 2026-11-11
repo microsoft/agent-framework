@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -11,13 +10,10 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.TypeSafe;
 
 /// <summary>
-/// Serializer options, JSON schemas, and JSON value helpers shared by the Jev tool and chat client.
+/// Serializer options and JSON schemas of the Jev contract types, shared by the Jev tool and chat client.
 /// </summary>
 internal static class JevJsonUtilities
 {
-    private static readonly JsonElement s_true = Parse("true");
-    private static readonly JsonElement s_false = Parse("false");
-    private static readonly JsonElement s_null = Parse("null");
     private static readonly AIJsonSchemaCreateOptions s_schemaOptions = new() { TransformSchemaNode = DescribeEntries };
     private static readonly Lazy<JsonElement> s_requestSchema = new(static () => AIJsonUtilities.CreateJsonSchema(typeof(JevRequest), serializerOptions: Options, inferenceOptions: s_schemaOptions));
     private static readonly Lazy<JsonElement> s_resultSchema = new(static () => AIJsonUtilities.CreateJsonSchema(typeof(JevResult), serializerOptions: Options, inferenceOptions: s_schemaOptions));
@@ -52,62 +48,6 @@ internal static class JevJsonUtilities
             },
             _ => JsonSerializer.SerializeToNode(value, Options.GetTypeInfo(value.GetType())),
         };
-
-    /// <summary>
-    /// Converts a value from a chat message, such as a function argument or result, into a JSON node. A value that
-    /// cannot be serialized, for example a type without metadata under native AOT, becomes its text.
-    /// </summary>
-    public static JsonNode? ToNodeOrText(object? value)
-    {
-        try
-        {
-            return ToNode(value);
-        }
-        catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or JsonException or ArgumentException)
-        {
-            // Chat history is informational for Jev, so an unserializable value is described rather than failing
-            // the whole request.
-            return JsonValue.Create(value?.ToString());
-        }
-    }
-
-    /// <summary>Converts a value from a chat message into a detached <see cref="JsonElement"/>, like <see cref="ToNodeOrText"/>.</summary>
-    public static JsonElement ToElement(object? value) =>
-        value switch
-        {
-            JsonElement element => element.ValueKind == JsonValueKind.Undefined ? s_null : element.Clone(),
-            null => s_null,
-            _ => Parse(ToNodeOrText(value)?.ToJsonString() ?? "null"),
-        };
-
-    /// <summary>Gets the JSON <see langword="true"/> or <see langword="false"/> value.</summary>
-    public static JsonElement CreateBoolean(bool value) => value ? s_true : s_false;
-
-    /// <summary>Writes values into a new JSON array.</summary>
-    public static JsonElement CreateArray(IEnumerable<JsonElement> values)
-    {
-        var buffer = new ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer))
-        {
-            writer.WriteStartArray();
-            foreach (JsonElement value in values)
-            {
-                value.WriteTo(writer);
-            }
-
-            writer.WriteEndArray();
-        }
-
-        using JsonDocument document = JsonDocument.Parse(buffer.WrittenMemory);
-        return document.RootElement.Clone();
-    }
-
-    /// <summary>Parses JSON text into a detached <see cref="JsonElement"/>.</summary>
-    public static JsonElement Parse(string json)
-    {
-        using JsonDocument document = JsonDocument.Parse(json);
-        return document.RootElement.Clone();
-    }
 
     private static JsonSerializerOptions CreateOptions()
     {

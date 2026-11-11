@@ -8,6 +8,7 @@ dotnet_style_qualification_for_field = false:none
 dotnet_style_qualification_for_property = false:none
 dotnet_style_qualification_for_method = false:none
 dotnet_style_qualification_for_event = false:none
+dotnet_diagnostic.IDE0001.severity = none
 dotnet_diagnostic.IDE0009.severity = none
 dotnet_diagnostic.IDE0073.severity = none
 dotnet_diagnostic.RCS1146.severity = none

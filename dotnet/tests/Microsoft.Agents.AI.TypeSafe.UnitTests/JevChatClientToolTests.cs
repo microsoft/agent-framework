@@ -9,6 +9,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Decisions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 
@@ -549,12 +550,12 @@ public sealed class JevChatClientToolTests
         }
 
         // Act
-        int turnStart = JevChatState.GetCurrentTurnStart(messages);
+        int turnStart = DecisionChatState.GetCurrentTurnStart(messages);
 
         // Assert
         Assert.Equal(messages.Length, turnStart);
-        Assert.Equal(0, JevChatState.CountCurrentTurnCalls(messages, turnStart));
-        Assert.Empty(JevChatState.GetCurrentTurnResultTexts(messages, turnStart));
+        Assert.Equal(0, DecisionChatState.CountCurrentTurnCalls(messages, turnStart));
+        Assert.Empty(DecisionChatState.GetCurrentTurnResultTexts(messages, turnStart));
     }
 
     [Theory]
@@ -573,7 +574,7 @@ public sealed class JevChatClientToolTests
         ];
 
         // Act
-        int turnStart = JevChatState.GetCurrentTurnStart(messages);
+        int turnStart = DecisionChatState.GetCurrentTurnStart(messages);
 
         // Assert
         Assert.Equal(expectedTurnStart, turnStart);

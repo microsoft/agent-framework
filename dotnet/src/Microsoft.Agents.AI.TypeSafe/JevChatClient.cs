@@ -3,11 +3,11 @@
 using System;
 using System.ClientModel;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Decisions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -44,12 +44,9 @@ namespace Microsoft.Agents.AI.TypeSafe;
 /// </remarks>
 public sealed class JevChatClient : IChatClient
 {
-    private const string ProviderName = "typesafe.ai";
-
     private readonly JevHttpClient _client;
+    private readonly DecisionChatEngine _engine;
     private readonly IReadOnlyDictionary<string, JevQuestion>? _defaultQuestions;
-    private readonly int _maximumToolCallsPerTurn;
-    private readonly ILogger _logger;
     private readonly ChatClientMetadata _metadata;
 
     /// <summary>
@@ -78,10 +75,20 @@ public sealed class JevChatClient : IChatClient
 
         // The questions are copied so that later changes to the caller's dictionary do not change this client.
         this._defaultQuestions = options.DefaultQuestions?.ToDictionary(question => question.Key, question => question.Value, StringComparer.Ordinal);
-        this._maximumToolCallsPerTurn = options.MaximumToolCallsPerTurn;
-        this._logger = (options.ClientLoggingOptions?.LoggerFactory ?? NullLoggerFactory.Instance).CreateLogger<JevChatClient>();
         this._client = new JevHttpClient(credential, options, options.Endpoint, options.ModelId);
-        this._metadata = new ChatClientMetadata(ProviderName, this._client.Endpoint, this._client.ModelId);
+        this._metadata = new ChatClientMetadata(JevDecisionClient.ProviderName, this._client.Endpoint, this._client.ModelId);
+
+        // The conversation, tool calling, and turn logic are provider-neutral; this client supplies Jev as the decision
+        // client and keeps the Jev result as what callers see.
+        this._engine = new DecisionChatEngine(new JevDecisionClient(this._client), new DecisionChatEngineOptions
+        {
+            ModelName = "Jev",
+            QuestionsDescription = $"the questions passed with {nameof(JevChatOptionsExtensions.WithJevQuestions)}",
+            CallIdPrefix = "typesafe",
+            DescribeAnswers = DescribeAnswers,
+            MaximumToolCallsPerTurn = options.MaximumToolCallsPerTurn,
+            Logger = (options.ClientLoggingOptions?.LoggerFactory ?? NullLoggerFactory.Instance).CreateLogger<JevChatClient>(),
+        });
     }
 
     /// <inheritdoc />
@@ -94,68 +101,19 @@ public sealed class JevChatClient : IChatClient
     public async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(messages);
-        IReadOnlyList<ChatMessage> history = messages as IReadOnlyList<ChatMessage> ?? [.. messages];
 
-        EnsureSupported(options);
+        // The Jev questions are sent unchanged, so JSON instructions and criteria keep their form; the decision
+        // questions made from them correlate the answers.
         IReadOnlyDictionary<string, JevQuestion> questions = this.GetQuestions(options);
-        JevToolCallCompiler.EnsureNoReservedQuestionIds(questions.Keys);
-        List<AIFunctionDeclaration> tools = GetFunctionTools(options);
-
-        // Once the turn has used its tool calls, tools are no longer offered, so the next response answers the
-        // questions with the tool results in the state. This is what ends the function-invoking loop, like the
-        // max_function_calls default of one in the Python connector.
-        int turnStart = JevChatState.GetCurrentTurnStart(history);
-        ChatToolMode? toolMode = JevChatState.CountCurrentTurnCalls(history, turnStart) >= this._maximumToolCallsPerTurn
-            ? ChatToolMode.None
-            : options?.ToolMode;
-        JevToolCallPlan? plan = JevToolCallCompiler.Compile(tools, toolMode, JevChatState.GetCurrentTurnCalls(history, turnStart), this._logger);
-
-        var allQuestions = new Dictionary<string, JevQuestion>(StringComparer.Ordinal);
-        foreach (KeyValuePair<string, JevQuestion> question in questions)
+        JevContractValidator.ValidateQuestions(questions, nameof(options));
+        List<DecisionQuestion> decisionQuestions = [.. questions.Select(question => JevDecisionMapping.ToDecisionQuestion(question.Key, question.Value))];
+        var decisionOptions = new DecisionOptions
         {
-            allQuestions[question.Key] = question.Value;
-        }
-
-        foreach (KeyValuePair<string, JevQuestion> question in plan?.Questions ?? new Dictionary<string, JevQuestion>())
-        {
-            allQuestions[question.Key] = question.Value;
-        }
-
-        var request = new JevRequest { State = JevChatState.Build(history, options?.Instructions), Questions = allQuestions };
-        JevContractValidator.ValidateRequest(request);
-
-        string modelId = string.IsNullOrWhiteSpace(options?.ModelId) ? this._client.ModelId : options!.ModelId!;
-        JevResult result = await this._client.SystemOneAsync(request, modelId, cancellationToken).ConfigureAwait(false);
-
-        // Validation covers the internal questions too, so the decoders below only see labels they offered.
-        JevContractValidator.ValidateResult(request, result);
-        UsageDetails? usage = result.Usage is { } tokens
-            ? new UsageDetails { InputTokenCount = tokens.InputTokens, OutputTokenCount = tokens.OutputTokens, TotalTokenCount = tokens.InputTokens + tokens.OutputTokens }
-            : null;
-
-        if (plan?.Decode(result) is { } call)
-        {
-            var callMessage = new ChatMessage(ChatRole.Assistant, [new FunctionCallContent($"typesafe-{Guid.NewGuid():N}", call.Function.Name, call.Arguments)]);
-            return new ChatResponse(callMessage)
-            {
-                ModelId = result.Model,
-                FinishReason = ChatFinishReason.ToolCalls,
-                Usage = usage,
-                CreatedAt = DateTimeOffset.UtcNow,
-            };
-        }
-
-        // The caller asked only its own questions, so the internal tool answers are removed from what it sees.
-        JevResult answers = WithoutInternalAnswers(result, questions);
-        var message = new ChatMessage(ChatRole.Assistant, BuildText(history, turnStart, answers)) { RawRepresentation = answers };
-        return new ChatResponse(message)
-        {
-            ModelId = result.Model,
-            FinishReason = ChatFinishReason.Stop,
-            Usage = usage,
-            CreatedAt = DateTimeOffset.UtcNow,
-            RawRepresentation = answers,
+            ModelId = options?.ModelId,
+            RawRepresentationFactory = _ => new JevDecisionRequestOptions { Questions = questions },
         };
+
+        return await this._engine.GetResponseAsync(messages, options, decisionQuestions, decisionOptions, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -180,48 +138,14 @@ public sealed class JevChatClient : IChatClient
         // The pipeline owns no disposable resources; its default transport shares one HttpClient per process.
     }
 
-    private static void EnsureSupported(ChatOptions? options)
+    /// <summary>
+    /// Describes the answers to the caller's questions as the <see cref="JevResult"/> that callers read, in JSON for the
+    /// response text and typed for <see cref="JevResultExtensions.GetJevResult(ChatResponse)"/>.
+    /// </summary>
+    private static DecisionChatAnswers DescribeAnswers(DecisionResponse answers)
     {
-        if (options is null)
-        {
-            return;
-        }
-
-        var unsupported = new List<string>();
-        AddIf(options.Temperature is not null, nameof(ChatOptions.Temperature));
-        AddIf(options.TopP is not null, nameof(ChatOptions.TopP));
-        AddIf(options.TopK is not null, nameof(ChatOptions.TopK));
-        AddIf(options.MaxOutputTokens is not null, nameof(ChatOptions.MaxOutputTokens));
-        AddIf(options.FrequencyPenalty is not null, nameof(ChatOptions.FrequencyPenalty));
-        AddIf(options.PresencePenalty is not null, nameof(ChatOptions.PresencePenalty));
-        AddIf(options.Seed is not null, nameof(ChatOptions.Seed));
-        AddIf(options.Reasoning is not null, nameof(ChatOptions.Reasoning));
-        AddIf(options.StopSequences is { Count: > 0 }, nameof(ChatOptions.StopSequences));
-        AddIf(options.ResponseFormat is not (null or ChatResponseFormatText), nameof(ChatOptions.ResponseFormat));
-        AddIf(options.ConversationId is not null, nameof(ChatOptions.ConversationId));
-        AddIf(options.AllowBackgroundResponses is true, nameof(ChatOptions.AllowBackgroundResponses));
-#pragma warning disable MEAI001 // ContinuationToken is experimental; it is only checked to reject it.
-        AddIf(options.ContinuationToken is not null, nameof(ChatOptions.ContinuationToken));
-#pragma warning restore MEAI001
-
-        if (unsupported.Count > 0)
-        {
-            throw new NotSupportedException(
-                $"Jev does not support these chat options: {string.Join(", ", unsupported)}. Jev does not generate text; it answers the questions passed with {nameof(JevChatOptionsExtensions.WithJevQuestions)}.");
-        }
-
-        if (options.AllowMultipleToolCalls is true)
-        {
-            throw new NotSupportedException($"Jev requests one tool call per response. Leave {nameof(ChatOptions)}.{nameof(ChatOptions.AllowMultipleToolCalls)} unset or false.");
-        }
-
-        void AddIf(bool condition, string name)
-        {
-            if (condition)
-            {
-                unsupported.Add(name);
-            }
-        }
+        JevResult result = JevDecisionMapping.ToJevResult(answers);
+        return new DecisionChatAnswers(JsonSerializer.Serialize(result, JevJsonContext.Default.JevResult), result);
     }
 
     private IReadOnlyDictionary<string, JevQuestion> GetQuestions(ChatOptions? options)
@@ -240,63 +164,5 @@ public sealed class JevChatClient : IChatClient
         }
 
         return questions;
-    }
-
-    private static List<AIFunctionDeclaration> GetFunctionTools(ChatOptions? options)
-    {
-        if (options?.Tools is not { Count: > 0 } tools)
-        {
-            return [];
-        }
-
-        List<string> unsupported = [.. tools.Where(tool => tool is not AIFunctionDeclaration).Select(tool => tool.Name)];
-        if (unsupported.Count > 0)
-        {
-            throw new NotSupportedException($"Jev can only call function tools; these tools are not supported: {string.Join(", ", unsupported)}.");
-        }
-
-        return [.. tools.Cast<AIFunctionDeclaration>()];
-    }
-
-    private static JevResult WithoutInternalAnswers(JevResult result, IReadOnlyDictionary<string, JevQuestion> questions)
-    {
-        var answers = new Dictionary<string, JevResponse>(questions.Count, StringComparer.Ordinal);
-        foreach (string id in questions.Keys)
-        {
-            answers[id] = result.Answers[id];
-        }
-
-        return new JevResult { Model = result.Model, Answers = answers, Usage = result.Usage };
-    }
-
-    /// <summary>
-    /// Builds the response text: the result as JSON, or, after tool calls, the tool results followed by the Choice and
-    /// Score decisions, which is what a caller that reads only text needs to see.
-    /// </summary>
-    private static string BuildText(IReadOnlyList<ChatMessage> history, int turnStart, JevResult answers)
-    {
-        List<string> lines = JevChatState.GetCurrentTurnResultTexts(history, turnStart);
-        if (lines.Count == 0)
-        {
-            return JsonSerializer.Serialize(answers, JevJsonContext.Default.JevResult);
-        }
-
-        // Noul answers are probabilities rather than decisions, so, as in the Python connector, they are left to the
-        // typed result.
-        foreach (KeyValuePair<string, JevResponse> answer in answers.Answers)
-        {
-            switch (answer.Value)
-            {
-                case JevChoiceResponse choice:
-                    lines.Add($"{answer.Key}: {choice.Choice}");
-                    break;
-
-                case JevScoreResponse score:
-                    lines.Add($"{answer.Key}: {score.Score.ToString("G6", CultureInfo.InvariantCulture)}");
-                    break;
-            }
-        }
-
-        return string.Join("\n", lines);
     }
 }

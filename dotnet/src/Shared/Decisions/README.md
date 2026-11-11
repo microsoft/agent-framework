@@ -39,7 +39,9 @@ suppresses `MEAI001`, as it will have to once they ship.
 
 Each project that injects this folder compiles its own copy, so the types are distinct per assembly. Do not expose them
 in a public API, and do not pass an `IDecisionClient` from one package to another; expose provider-specific types
-instead.
+instead. A public type that uses them must translate `DecisionProtocolException` and `DecisionClientException`, which
+are internal here, into public exceptions. `../DecisionChat` is a provider-neutral chat client engine built on this
+copy.
 
 ## When Microsoft.Extensions.AI ships the API
 

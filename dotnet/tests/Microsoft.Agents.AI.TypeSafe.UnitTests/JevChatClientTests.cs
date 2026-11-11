@@ -302,6 +302,45 @@ public sealed class JevChatClientTests
     }
 
     [Fact]
+    public async Task GetResponseAsync_JsonInstructionsAndUndescribedLabels_AreSentUnchangedAsync()
+    {
+        // Arrange: the chat client runs on the provider-neutral decision API, which carries text only, so the Jev
+        // questions themselves must reach the API.
+        using var handler = new JevTestHttpHandler().Reply(System.Net.HttpStatusCode.OK, JevChatTestData.Result(JevChatTestData.Choice("tone", "calm", "calm", "angry")));
+        using var httpClient = new HttpClient(handler);
+        using JevChatClient client = CreateClient(httpClient);
+        JsonElement instructions = JsonDocument.Parse("""{ "question": "What is the tone of `reply`?", "reply": "Thanks!" }""").RootElement.Clone();
+        var questions = new Dictionary<string, JevQuestion>
+        {
+            ["tone"] = new JevChoiceQuestion { Instructions = (JevEntry)instructions, Criteria = new Dictionary<string, JevEntry> { ["calm"] = JevEntry.Null, ["angry"] = "Hostile or upset" } },
+        };
+
+        // Act
+        ChatResponse response = await client.GetResponseAsync(Ticket, new ChatOptions().WithJevQuestions(questions));
+
+        // Assert
+        JsonNode sent = JsonNode.Parse(Assert.Single(handler.Requests).Body)!["questions"]!["tone"]!;
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(instructions.GetRawText()), sent["instructions"]), sent.ToJsonString());
+        Assert.Null(sent["criteria"]!["calm"]);
+        Assert.Equal("calm", Assert.IsType<JevChoiceResponse>(response.GetJevResult()!.Answers["tone"]).Choice);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_IncompleteDistribution_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange: the answer leaves out the probability of a label.
+        using var handler = new JevTestHttpHandler().Reply(System.Net.HttpStatusCode.OK, JevChatTestData.Result(
+            "\"department\":{\"type\":\"choice\",\"choice\":\"billing\",\"confidence\":0.9,\"probabilities\":{\"billing\":1.0}}",
+            JevChatTestData.Noul("is_urgent", 0.9)));
+        using var httpClient = new HttpClient(handler);
+        using JevChatClient client = CreateClient(httpClient);
+
+        // Act & Assert
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => client.GetResponseAsync(Ticket, new ChatOptions().WithJevQuestions(JevChatTestData.Questions())));
+        Assert.Contains("'technical'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task GetResponseAsync_ApiError_ThrowsClientResultExceptionAsync()
     {
         // Arrange

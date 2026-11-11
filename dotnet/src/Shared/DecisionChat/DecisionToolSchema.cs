@@ -7,13 +7,13 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 
-namespace Microsoft.Agents.AI.TypeSafe;
+namespace Microsoft.Agents.AI.Decisions;
 
 /// <summary>
-/// Reads the JSON schemas of tool parameters for <see cref="JevToolCallCompiler"/>: which keywords are allowed where,
-/// how references and nullable forms resolve, and how values are described to Jev.
+/// Reads the JSON schemas of tool parameters for <see cref="DecisionToolCallCompiler"/>: which keywords are allowed where,
+/// how references and nullable forms resolve, and how values are described to the decision model.
 /// </summary>
-internal static class JevToolSchema
+internal static class DecisionToolSchema
 {
     // A schema definition may refer to itself; without a limit its resolution would never end.
     private const int MaxResolutionDepth = 16;
@@ -53,7 +53,7 @@ internal static class JevToolSchema
     {
         if (depth > MaxResolutionDepth)
         {
-            throw new JevUnsupportedToolSchemaException("schema references are nested too deeply");
+            throw new DecisionUnsupportedToolSchemaException("schema references are nested too deeply");
         }
 
         var resolved = new Dictionary<string, JsonElement>(schema, StringComparer.Ordinal);
@@ -64,7 +64,7 @@ internal static class JevToolSchema
         {
             if (depth + hops >= MaxResolutionDepth)
             {
-                throw new JevUnsupportedToolSchemaException("schema references are nested too deeply");
+                throw new DecisionUnsupportedToolSchemaException("schema references are nested too deeply");
             }
 
             RejectCompositionSiblings(resolved, "$ref");
@@ -72,7 +72,7 @@ internal static class JevToolSchema
             const string DefinitionsPrefix = "#/$defs/";
             if (path?.StartsWith(DefinitionsPrefix, StringComparison.Ordinal) is not true)
             {
-                throw new JevUnsupportedToolSchemaException("only local $defs references are supported");
+                throw new DecisionUnsupportedToolSchemaException("only local $defs references are supported");
             }
 
             if (!root.TryGetValue("$defs", out JsonElement definitions) ||
@@ -80,7 +80,7 @@ internal static class JevToolSchema
                 !definitions.TryGetProperty(path.Substring(DefinitionsPrefix.Length), out JsonElement definition) ||
                 definition.ValueKind != JsonValueKind.Object)
             {
-                throw new JevUnsupportedToolSchemaException($"unresolved schema reference '{path}'");
+                throw new DecisionUnsupportedToolSchemaException($"unresolved schema reference '{path}'");
             }
 
             // Annotations next to the reference, such as a description, override those of the definition, so the
@@ -95,7 +95,7 @@ internal static class JevToolSchema
             RejectCompositionSiblings(resolved, "anyOf");
             if (anyOf.ValueKind != JsonValueKind.Array)
             {
-                throw new JevUnsupportedToolSchemaException("anyOf must be an array");
+                throw new DecisionUnsupportedToolSchemaException("anyOf must be an array");
             }
 
             List<JsonElement> arms = [.. anyOf.EnumerateArray()];
@@ -103,7 +103,7 @@ internal static class JevToolSchema
             List<JsonElement> valueArms = [.. arms.Where(arm => arm.ValueKind == JsonValueKind.Object && !IsNullSchema(arm))];
             if (arms.Count != 2 || nullArms.Count != 1 || valueArms.Count != 1)
             {
-                throw new JevUnsupportedToolSchemaException("only a single schema combined with null is supported");
+                throw new DecisionUnsupportedToolSchemaException("only a single schema combined with null is supported");
             }
 
             (Dictionary<string, JsonElement> nested, _) = Resolve(ToMap(valueArms[0]), root, depth + 1);
@@ -114,13 +114,13 @@ internal static class JevToolSchema
         if (resolved.TryGetValue("type", out JsonElement type) && type.ValueKind == JsonValueKind.Array && type.EnumerateArray().Any(IsNullName))
         {
             List<JsonElement> valueTypes = [.. type.EnumerateArray().Where(item => !IsNullName(item))];
-            resolved["type"] = valueTypes.Count == 1 ? valueTypes[0] : JevJsonUtilities.CreateArray(valueTypes);
+            resolved["type"] = valueTypes.Count == 1 ? valueTypes[0] : DecisionJson.CreateArray(valueTypes);
             nullable = true;
         }
 
         if (resolved.TryGetValue("enum", out JsonElement values) && values.ValueKind == JsonValueKind.Array && values.EnumerateArray().Any(value => value.ValueKind == JsonValueKind.Null))
         {
-            resolved["enum"] = JevJsonUtilities.CreateArray(values.EnumerateArray().Where(value => value.ValueKind != JsonValueKind.Null));
+            resolved["enum"] = DecisionJson.CreateArray(values.EnumerateArray().Where(value => value.ValueKind != JsonValueKind.Null));
             nullable = true;
         }
 
@@ -132,7 +132,7 @@ internal static class JevToolSchema
         List<string> unsupported = [.. schema.Keys.Where(key => !supportedKeys.Contains(key)).OrderBy(key => key, StringComparer.Ordinal)];
         if (unsupported.Count > 0)
         {
-            throw new JevUnsupportedToolSchemaException($"unsupported {location} schema constraints: {string.Join(", ", unsupported)}");
+            throw new DecisionUnsupportedToolSchemaException($"unsupported {location} schema constraints: {string.Join(", ", unsupported)}");
         }
     }
 
@@ -156,7 +156,7 @@ internal static class JevToolSchema
             return [.. value.EnumerateArray().Select(item => item.GetString()!)];
         }
 
-        throw new JevUnsupportedToolSchemaException($"{location} type must be a string or non-empty string array");
+        throw new DecisionUnsupportedToolSchemaException($"{location} type must be a string or non-empty string array");
     }
 
     public static bool MatchesType(JsonElement value, string type) =>
@@ -179,7 +179,7 @@ internal static class JevToolSchema
     /// Checks that every <c>const</c> or <c>enum</c> value of a schema matches its declared <c>type</c>.
     /// </summary>
     /// <remarks>
-    /// A value of another type can never be a valid argument, for example <c>"fast"</c> for an integer. Jev would
+    /// A value of another type can never be a valid argument, for example <c>"fast"</c> for an integer. The model would
     /// still choose it, and the call would fail only when the function binds its arguments, so such a tool is left out
     /// of routing instead. A schema without a <c>type</c> is not checked.
     /// </remarks>
@@ -200,8 +200,8 @@ internal static class JevToolSchema
         {
             if (!types.Any(candidate => MatchesType(value, candidate)))
             {
-                string declared = types.Count == 1 ? $"\"{types[0]}\"" : Describe(types.Select(candidate => JevJsonUtilities.ToElement(candidate)));
-                throw new JevUnsupportedToolSchemaException($"{valueName} {Describe(value)} does not match declared {typeName} {declared}");
+                string declared = types.Count == 1 ? $"\"{types[0]}\"" : Describe(types.Select(candidate => DecisionJson.ToElement(candidate)));
+                throw new DecisionUnsupportedToolSchemaException($"{valueName} {Describe(value)} does not match declared {typeName} {declared}");
             }
         }
     }
@@ -210,17 +210,17 @@ internal static class JevToolSchema
     {
         if (values.ValueKind != JsonValueKind.Array || values.GetArrayLength() == 0)
         {
-            throw new JevUnsupportedToolSchemaException($"{name} must be a non-empty array");
+            throw new DecisionUnsupportedToolSchemaException($"{name} must be a non-empty array");
         }
 
-        if (values.GetArrayLength() > JevToolCallCompiler.MaxEnumValues)
+        if (values.GetArrayLength() > DecisionToolCallCompiler.MaxEnumValues)
         {
-            throw new JevUnsupportedToolSchemaException(string.Format(
+            throw new DecisionUnsupportedToolSchemaException(string.Format(
                 CultureInfo.InvariantCulture,
                 "{0} defines {1} values; the supported maximum is {2}",
                 name,
                 values.GetArrayLength(),
-                JevToolCallCompiler.MaxEnumValues));
+                DecisionToolCallCompiler.MaxEnumValues));
         }
 
         return [.. values.EnumerateArray()];
@@ -230,20 +230,20 @@ internal static class JevToolSchema
     {
         if (!schema.TryGetValue("items", out JsonElement element) || element.ValueKind != JsonValueKind.Object)
         {
-            throw new JevUnsupportedToolSchemaException("array items must define an object schema");
+            throw new DecisionUnsupportedToolSchemaException("array items must define an object schema");
         }
 
         (Dictionary<string, JsonElement> items, bool nullable) = Resolve(ToMap(element), root);
         RejectUnsupportedKeys(items, ArrayItemKeys, "array item");
         if (nullable)
         {
-            throw new JevUnsupportedToolSchemaException("nullable array members are not supported");
+            throw new DecisionUnsupportedToolSchemaException("nullable array members are not supported");
         }
 
         return items;
     }
 
-    /// <summary>Checks all supported constraints before offering a constant or enum value to Jev.</summary>
+    /// <summary>Checks all supported constraints before offering a constant or enum value to the model.</summary>
     public static void EnsureValuesMatchSchema(Dictionary<string, JsonElement> schema, IReadOnlyList<JsonElement> values, Dictionary<string, JsonElement> root, string valueName)
     {
         EnsureValuesMatchType(schema, values, "argument", valueName, "type");
@@ -275,7 +275,7 @@ internal static class JevToolSchema
             {
                 if (!alternatives.Any(alternative => JsonElement.DeepEquals(value, alternative)))
                 {
-                    throw new JevUnsupportedToolSchemaException($"{valueName} {Describe(value)} does not match declared enum {Describe(alternatives)}");
+                    throw new DecisionUnsupportedToolSchemaException($"{valueName} {Describe(value)} does not match declared enum {Describe(alternatives)}");
                 }
             }
         }
@@ -283,8 +283,8 @@ internal static class JevToolSchema
 
     /// <summary>
     /// Writes a value the way the Python connector does with <c>json.dumps(value, ensure_ascii=False, sort_keys=True)</c>:
-    /// sorted object keys, <c>", "</c> and <c>": "</c> separators, and unescaped text. Jev reads these values in
-    /// criteria and instructions, so both connectors send the same words.
+    /// sorted object keys, <c>", "</c> and <c>": "</c> separators, and unescaped text. The model reads these values in
+    /// criteria and instructions, so the .NET and Python connectors send the same words.
     /// </summary>
     public static string Describe(JsonElement value)
     {
@@ -314,7 +314,7 @@ internal static class JevToolSchema
         List<string> siblings = [.. schema.Keys.Where(key => !AnnotationKeys.Contains(key)).OrderBy(key => key, StringComparer.Ordinal)];
         if (siblings.Count > 0)
         {
-            throw new JevUnsupportedToolSchemaException($"{keyword} sibling constraints are not supported: {string.Join(", ", siblings)}");
+            throw new DecisionUnsupportedToolSchemaException($"{keyword} sibling constraints are not supported: {string.Join(", ", siblings)}");
         }
     }
 

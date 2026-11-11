@@ -12,6 +12,7 @@
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectSharedDecisions>true</InjectSharedDecisions>
+    <InjectSharedDecisionChat>true</InjectSharedDecisionChat>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

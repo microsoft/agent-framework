@@ -4,28 +4,28 @@ using System.Collections.Generic;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI.TypeSafe;
+namespace Microsoft.Agents.AI.Decisions;
 
 /// <summary>
-/// One tool that can be expressed as Jev questions: its route label, its argument questions, and their decoders.
+/// One tool that can be expressed as decision questions: its route label, its argument questions, and their decoders.
 /// </summary>
-internal sealed class JevCompiledTool
+internal sealed class DecisionCompiledTool
 {
     public required AIFunctionDeclaration Function { get; init; }
 
     /// <summary>Gets the label of the tool in the route question, such as <c>t0</c>.</summary>
     public required string RouteLabel { get; init; }
 
-    public required IReadOnlyDictionary<string, JevQuestion> Questions { get; init; }
+    public required IReadOnlyDictionary<string, DecisionQuestion> Questions { get; init; }
 
-    public required IReadOnlyList<JevArgumentPlan> Arguments { get; init; }
+    public required IReadOnlyList<DecisionArgumentPlan> Arguments { get; init; }
 
-    public Dictionary<string, object?> DecodeArguments(JevResult result)
+    public Dictionary<string, object?> DecodeArguments(DecisionResponse response)
     {
         var arguments = new Dictionary<string, object?>(this.Arguments.Count);
-        foreach (JevArgumentPlan argument in this.Arguments)
+        foreach (DecisionArgumentPlan argument in this.Arguments)
         {
-            if (argument.TryDecode(result, out JsonElement value))
+            if (argument.TryDecode(response, out JsonElement value))
             {
                 arguments[argument.Name] = value;
             }

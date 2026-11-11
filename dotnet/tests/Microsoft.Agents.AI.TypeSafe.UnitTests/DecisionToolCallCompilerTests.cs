@@ -4,14 +4,19 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using Microsoft.Agents.AI.Decisions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.TypeSafe.UnitTests;
 
-public sealed class JevToolCallCompilerTests
+/// <summary>
+/// Tests the provider-neutral tool call compiler that <see cref="JevChatClient"/> is built on, with Jev answers.
+/// </summary>
+public sealed class DecisionToolCallCompilerTests
 {
     private static readonly Dictionary<string, List<Dictionary<string, JsonElement>>> s_noCalls = [];
+    private static readonly JsonElement s_state = JsonDocument.Parse("""{ "messages": [] }""").RootElement.Clone();
 
     [Fact]
     public void Compile_ReferencesAndAnyOfNull_ResolveAndDecode()
@@ -31,15 +36,16 @@ public sealed class JevToolCallCompilerTests
             """);
 
         // Act
-        JevToolCallPlan plan = Compile([tool])!;
-        JevToolCall? call = plan.Decode(Result(
+        DecisionToolCallPlan plan = Compile([tool])!;
+        DecisionToolCall? call = plan.Decode(Decide(
+            plan,
             JevChatTestData.RouteTo("t0", "t0", "none"),
             JevChatTestData.Choice("__af_tool__.t0.a0.value", "v1", "v0", "v1"),
             JevChatTestData.Noul("__af_tool__.t0.a1.present", 0.9),
             JevChatTestData.Choice("__af_tool__.t0.a1.value", "v0", "v0", "v1")));
 
         // Assert
-        Assert.Contains("The mode", plan.Questions["__af_tool__.t0.a0.value"].Instructions!.Value.Text, StringComparison.Ordinal);
+        Assert.Contains("The mode", plan.Questions["__af_tool__.t0.a0.value"].Instructions, StringComparison.Ordinal);
         Assert.Equal(["route", "t0.a0.value", "t0.a1.present", "t0.a1.value"], plan.Questions.Keys.Select(key => key["__af_tool__.".Length..]));
         Assert.Equal("safe", ((JsonElement)call!.Value.Arguments["mode"]!).GetString());
         Assert.Equal("low", ((JsonElement)call.Value.Arguments["level"]!).GetString());
@@ -68,15 +74,16 @@ public sealed class JevToolCallCompilerTests
             """);
 
         // Act
-        JevToolCallPlan plan = Compile([tool])!;
-        JevToolCall? call = plan.Decode(Result(
+        DecisionToolCallPlan plan = Compile([tool])!;
+        DecisionToolCall? call = plan.Decode(Decide(
+            plan,
             JevChatTestData.RouteTo("t0", "t0", "none"),
             JevChatTestData.Choice("__af_tool__.t0.a0.value", "v1", "v0", "v1"),
             JevChatTestData.Noul("__af_tool__.t0.a1.present", 0.9),
             JevChatTestData.Choice("__af_tool__.t0.a1.value", "v1", "v0", "v1")));
 
         // Assert: the description next to the first reference wins, and the nullable alias still gets a presence question.
-        Assert.Contains("How fast to go", plan.Questions["__af_tool__.t0.a0.value"].Instructions!.Value.Text, StringComparison.Ordinal);
+        Assert.Contains("How fast to go", plan.Questions["__af_tool__.t0.a0.value"].Instructions, StringComparison.Ordinal);
         Assert.Equal("safe", ((JsonElement)call!.Value.Arguments["speed"]!).GetString());
         Assert.Equal("high", ((JsonElement)call.Value.Arguments["level"]!).GetString());
     }
@@ -98,8 +105,9 @@ public sealed class JevToolCallCompilerTests
             """);
 
         // Act
-        JevToolCallPlan plan = Compile([tool])!;
-        JevToolCall? call = plan.Decode(Result(
+        DecisionToolCallPlan plan = Compile([tool])!;
+        DecisionToolCall? call = plan.Decode(Decide(
+            plan,
             JevChatTestData.RouteTo("t0", "t0", "none"),
             JevChatTestData.Choice("__af_tool__.t0.a0.value", "v1", "v0", "v1"),
             JevChatTestData.Noul("__af_tool__.t0.a2.m0", 0.1),
@@ -129,7 +137,7 @@ public sealed class JevToolCallCompilerTests
             """);
 
         // Act
-        JevToolCallPlan? plan = Compile([tool]);
+        DecisionToolCallPlan? plan = Compile([tool]);
 
         // Assert
         Assert.NotNull(plan);
@@ -169,7 +177,7 @@ public sealed class JevToolCallCompilerTests
         var logger = new ListLoggerFactory();
 
         // Act
-        JevToolCallPlan? plan = Compile([Declaration("tool", schema)], logger: logger.CreateLogger("test"));
+        DecisionToolCallPlan? plan = Compile([Declaration("tool", schema)], logger: logger.CreateLogger("test"));
 
         // Assert
         Assert.Null(plan);
@@ -193,8 +201,9 @@ public sealed class JevToolCallCompilerTests
             """);
 
         // Act
-        JevToolCallPlan plan = Compile([tool])!;
-        JevToolCall? call = plan.Decode(Result(
+        DecisionToolCallPlan plan = Compile([tool])!;
+        DecisionToolCall? call = plan.Decode(Decide(
+            plan,
             JevChatTestData.RouteTo("t0", "t0", "none"),
             JevChatTestData.Choice("__af_tool__.t0.a1.value", "v1", "v0", "v1")));
 
@@ -211,8 +220,8 @@ public sealed class JevToolCallCompilerTests
         AIFunctionDeclaration single = Declaration("single", """{ "type": "object", "properties": { "scope": { "enum": ["all"] } }, "required": ["scope"] }""");
 
         // Act
-        JevToolCallPlan plan = Compile([refresh, single])!;
-        JevToolCall? call = plan.Decode(Result(JevChatTestData.RouteTo("t1", "t0", "t1", "none")));
+        DecisionToolCallPlan plan = Compile([refresh, single])!;
+        DecisionToolCall? call = plan.Decode(Decide(plan, JevChatTestData.RouteTo("t1", "t0", "t1", "none")));
 
         // Assert
         Assert.Equal([JevChatTestData.Route], plan.Questions.Keys);
@@ -224,7 +233,7 @@ public sealed class JevToolCallCompilerTests
     public void Compile_TooManyTools_Throws()
     {
         // Arrange
-        List<AIFunctionDeclaration> tools = [.. Enumerable.Range(0, JevToolCallCompiler.MaxRoutableTools + 1).Select(index => Declaration($"tool{index}", """{ "type": "object", "properties": {} }"""))];
+        List<AIFunctionDeclaration> tools = [.. Enumerable.Range(0, DecisionToolCallCompiler.MaxRoutableTools + 1).Select(index => Declaration($"tool{index}", """{ "type": "object", "properties": {} }"""))];
 
         // Act & Assert
         Assert.Throws<InvalidOperationException>(() => Compile(tools));
@@ -234,10 +243,10 @@ public sealed class JevToolCallCompilerTests
     public void Compile_RequiredToolFilter_AppliesBeforeTheToolLimit()
     {
         // Arrange
-        List<AIFunctionDeclaration> tools = [.. Enumerable.Range(0, JevToolCallCompiler.MaxRoutableTools + 1).Select(index => Declaration($"tool{index}", """{ "type": "object", "properties": {} }"""))];
+        List<AIFunctionDeclaration> tools = [.. Enumerable.Range(0, DecisionToolCallCompiler.MaxRoutableTools + 1).Select(index => Declaration($"tool{index}", """{ "type": "object", "properties": {} }"""))];
 
         // Act
-        JevToolCallPlan plan = Compile(tools, ChatToolMode.RequireSpecific("tool3"))!;
+        DecisionToolCallPlan plan = Compile(tools, ChatToolMode.RequireSpecific("tool3"))!;
 
         // Assert
         Assert.Equal("tool3", plan.RequiredTool!.Function.Name);
@@ -265,7 +274,7 @@ public sealed class JevToolCallCompilerTests
         AIFunctionDeclaration tool = Declaration("large", "{ \"type\": \"object\", \"properties\": { \"a\": " + array + ", \"b\": " + array + " }, \"required\": [\"a\", \"b\"] }");
 
         // Act & Assert
-        JevToolCallPlan plan = Compile([tool], ChatToolMode.RequireAny)!;
+        DecisionToolCallPlan plan = Compile([tool], ChatToolMode.RequireAny)!;
         Assert.Equal(128, plan.Questions.Count);
         Assert.Null(plan.RouteQuestionId);
         Assert.Throws<InvalidOperationException>(() => Compile([tool]));
@@ -280,7 +289,7 @@ public sealed class JevToolCallCompilerTests
         string schema = "{ \"type\": \"object\", \"properties\": { \"a\": { \"type\": \"array\", \"items\": { \"enum\": [" + first + "] } }, \"b\": { \"type\": \"array\", \"items\": { \"enum\": [" + second + "] } } }, \"required\": [\"a\", \"b\"] }";
 
         // Act
-        JevToolCallPlan plan = Compile([Declaration("large", schema)])!;
+        DecisionToolCallPlan plan = Compile([Declaration("large", schema)])!;
 
         // Assert
         Assert.Equal(128, plan.Questions.Count);
@@ -296,7 +305,7 @@ public sealed class JevToolCallCompilerTests
         AIFunctionDeclaration large = Declaration("large", $$"""{ "type": "object", "properties": { "a": { "type": "array", "items": { "enum": [{{members}}] } }, "b": { "type": "array", "items": { "enum": [{{string.Join(",", Enumerable.Range(0, 60).Select(index => $"\"n{index}\""))}}] } } }, "required": ["a", "b"] }""");
 
         // Act
-        JevToolCallPlan plan = Compile([failing, large])!;
+        DecisionToolCallPlan plan = Compile([failing, large])!;
 
         // Assert
         Assert.Equal(125, plan.Questions.Count);
@@ -318,7 +327,7 @@ public sealed class JevToolCallCompilerTests
         var logger = new ListLoggerFactory();
 
         // Act
-        JevToolCallPlan plan = Compile(unsupportedFirst ? [unsupported, supported] : [supported, unsupported], logger: logger.CreateLogger("test"))!;
+        DecisionToolCallPlan plan = Compile(unsupportedFirst ? [unsupported, supported] : [supported, unsupported], logger: logger.CreateLogger("test"))!;
 
         // Assert
         Assert.Equal("supported", Assert.Single(plan.Tools).Function.Name);
@@ -336,7 +345,7 @@ public sealed class JevToolCallCompilerTests
         var logger = new ListLoggerFactory();
 
         // Act
-        JevToolCallPlan? plan = Compile([tool], logger: logger.CreateLogger("test"));
+        DecisionToolCallPlan? plan = Compile([tool], logger: logger.CreateLogger("test"));
 
         // Assert
         Assert.Null(plan);
@@ -347,11 +356,11 @@ public sealed class JevToolCallCompilerTests
     public void Compile_TooManyEnumValuesOrProperties_ExcludeTheTool()
     {
         // Arrange
-        string values = string.Join(",", Enumerable.Range(0, JevToolCallCompiler.MaxEnumValues + 1).Select(index => $"\"v{index}\""));
-        string properties = string.Join(",", Enumerable.Range(0, JevToolCallCompiler.MaxToolProperties + 1).Select(index => $"\"p{index}\": {{ \"type\": \"boolean\" }}"));
+        string values = string.Join(",", Enumerable.Range(0, DecisionToolCallCompiler.MaxEnumValues + 1).Select(index => $"\"v{index}\""));
+        string properties = string.Join(",", Enumerable.Range(0, DecisionToolCallCompiler.MaxToolProperties + 1).Select(index => $"\"p{index}\": {{ \"type\": \"boolean\" }}"));
 
         // Act
-        JevToolCallPlan? plan = Compile(
+        DecisionToolCallPlan? plan = Compile(
         [
             Declaration("enum", $$"""{ "type": "object", "properties": { "a": { "enum": [{{values}}] } } }"""),
             Declaration("wide", $$"""{ "type": "object", "properties": { {{properties}} } }"""),
@@ -362,14 +371,15 @@ public sealed class JevToolCallCompilerTests
     }
 
     [Fact]
-    public void Decode_UnknownRouteOrMissingAnswer_Throws()
+    public void Decode_UnknownRouteOrMissingAnswer_IsRejectedBeforeDecoding()
     {
         // Arrange
-        JevToolCallPlan plan = Compile([Declaration("flag", """{ "type": "object", "properties": { "on": { "type": "boolean" } }, "required": ["on"] }""")])!;
+        DecisionToolCallPlan plan = Compile([Declaration("flag", """{ "type": "object", "properties": { "on": { "type": "boolean" } }, "required": ["on"] }""")])!;
 
-        // Act & Assert
-        Assert.Throws<InvalidOperationException>(() => plan.Decode(Result(JevChatTestData.RouteTo("t9", "t9"))));
-        Assert.Throws<InvalidOperationException>(() => plan.Decode(Result(JevChatTestData.RouteTo("t0", "t0"))));
+        // Act & Assert: a decision response must answer every question with the labels it offered, so neither reaches
+        // the decoders.
+        Assert.Throws<DecisionProtocolException>(() => Decide(plan, fillMissing: false, JevChatTestData.RouteTo("t9", "t9")));
+        Assert.Throws<DecisionProtocolException>(() => Decide(plan, fillMissing: false, JevChatTestData.RouteTo("t0", "t0", "none")));
     }
 
     [Fact]
@@ -380,11 +390,12 @@ public sealed class JevToolCallCompilerTests
         AIFunctionDeclaration second = Declaration("second", """{ "type": "object", "properties": {} }""", "Does it.");
 
         // Act
-        JevChoiceQuestion route = Assert.IsType<JevChoiceQuestion>(Compile([first, second])!.Questions[JevChatTestData.Route]);
+        ChoiceDecisionQuestion route = Assert.IsType<ChoiceDecisionQuestion>(Compile([first, second])!.Questions[JevChatTestData.Route]);
 
         // Assert
-        Assert.Equal("Tool 'first': Does it.", route.Criteria["t0"].Text);
-        Assert.Equal("Tool 'second': Does it.", route.Criteria["t1"].Text);
+        Assert.Equal(["t0", "t1", "none"], route.Candidates.Select(candidate => candidate.Id));
+        Assert.Equal("Tool 'first': Does it.", route.Candidates[0].Description);
+        Assert.Equal("Tool 'second': Does it.", route.Candidates[1].Description);
     }
 
     [Fact]
@@ -394,7 +405,7 @@ public sealed class JevToolCallCompilerTests
         JsonElement value = JsonDocument.Parse("""{"city":"São Paulo","b":[1,2.5,true,null],"q":"say \"hi\"\n"}""").RootElement;
 
         // Act
-        string described = JevToolSchema.Describe(value);
+        string described = DecisionToolSchema.Describe(value);
 
         // Assert
         Assert.Equal("""{"b": [1, 2.5, true, null], "city": "São Paulo", "q": "say \"hi\"\n"}""", described);
@@ -403,9 +414,44 @@ public sealed class JevToolCallCompilerTests
     private static AIFunctionDeclaration Declaration(string name, string schema, string? description = null) =>
         AIFunctionFactory.CreateDeclaration(name, description, JsonDocument.Parse(schema).RootElement.Clone());
 
-    private static JevToolCallPlan? Compile(IReadOnlyList<AIFunctionDeclaration> tools, ChatToolMode? mode = null, ILogger? logger = null) =>
-        JevToolCallCompiler.Compile(tools, mode, s_noCalls, logger ?? new ListLoggerFactory().CreateLogger("test"));
+    private static DecisionToolCallPlan? Compile(IReadOnlyList<AIFunctionDeclaration> tools, ChatToolMode? mode = null, ILogger? logger = null) =>
+        DecisionToolCallCompiler.Compile(tools, mode, s_noCalls, "Jev", logger ?? new ListLoggerFactory().CreateLogger("test"));
 
-    private static JevResult Result(params string[] answers) =>
-        JsonSerializer.Deserialize(JevChatTestData.Result(answers), JevJsonContext.Default.JevResult)!;
+    private static DecisionResponse Decide(DecisionToolCallPlan plan, params string[] answers) =>
+        Decide(plan, fillMissing: true, answers);
+
+    /// <summary>
+    /// Converts Jev answers to the plan's questions into a decision response, as <see cref="JevDecisionClient"/> does.
+    /// </summary>
+    /// <param name="plan">The plan whose questions are answered.</param>
+    /// <param name="fillMissing">
+    /// Whether questions without an answer get one that the decoders do not read for the selected call: no for a Binary
+    /// question and the first candidate for a Choice.
+    /// </param>
+    /// <param name="answers">The Jev answers, from <see cref="JevChatTestData"/>.</param>
+    private static DecisionResponse Decide(DecisionToolCallPlan plan, bool fillMissing, params string[] answers)
+    {
+        JevResult result = JsonSerializer.Deserialize(JevChatTestData.Result(answers), JevJsonContext.Default.JevResult)!;
+        var decisionAnswers = new List<DecisionAnswer>();
+        foreach (DecisionQuestion question in plan.Questions.Values)
+        {
+            if (result.Answers.TryGetValue(question.Id, out JevResponse? answer))
+            {
+                decisionAnswers.Add(JevDecisionMapping.ToDecisionAnswer(question, answer));
+            }
+            else if (fillMissing)
+            {
+                decisionAnswers.Add(question switch
+                {
+                    ChoiceDecisionQuestion choice => new ChoiceDecisionAnswer(
+                        question.Id,
+                        choice.Candidates[0].Id,
+                        [.. choice.Candidates.Select((candidate, index) => new DecisionProbability(candidate.Id, index == 0 ? 1 : 0))]),
+                    _ => new BinaryDecisionAnswer(question.Id, 0),
+                });
+            }
+        }
+
+        return new DecisionResponse(new DecisionRequest(s_state, [.. plan.Questions.Values]), decisionAnswers);
+    }
 }

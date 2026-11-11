@@ -554,6 +554,33 @@
     <File Path="src/LegacySupport/TrimAttributes/UnconditionalSuppressMessageAttribute.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/Shared/" />
+  <Folder Name="/Solution Items/src/Shared/DecisionChat/">
+    <File Path="src/Shared/DecisionChat/DecisionArgumentKind.cs" />
+    <File Path="src/Shared/DecisionChat/DecisionArgumentPlan.cs" />
+    <File Path="src/Shared/DecisionChat/DecisionChatEngine.cs" />
+    <File Path="src/Shared/DecisionChat/DecisionChatEngineOptions.cs" />
+    <File Path="src/Shared/DecisionChat/DecisionChatLog.cs" />
+    <File Path="src/Shared/DecisionChat/DecisionChatState.cs" />
+    <File Path="src/Shared/DecisionChat/DecisionCompiledTool.cs" />
+    <File Path="src/Shared/DecisionChat/DecisionJson.cs" />
+    <File Path="src/Shared/DecisionChat/DecisionQuestionBudget.cs" />
+    <File Path="src/Shared/DecisionChat/DecisionToolCall.cs" />
+    <File Path="src/Shared/DecisionChat/DecisionToolCallCompiler.cs" />
+    <File Path="src/Shared/DecisionChat/DecisionToolCallPlan.cs" />
+    <File Path="src/Shared/DecisionChat/DecisionToolSchema.cs" />
+    <File Path="src/Shared/DecisionChat/DecisionUnsupportedToolSchemaException.cs" />
+    <File Path="src/Shared/DecisionChat/README.md" />
+  </Folder>
+  <Folder Name="/Solution Items/src/Shared/Decisions/">
+    <File Path="src/Shared/Decisions/.editorconfig" />
+    <File Path="src/Shared/Decisions/DecisionAnswers.cs" />
+    <File Path="src/Shared/Decisions/DecisionBinding.cs" />
+    <File Path="src/Shared/Decisions/DecisionClient.cs" />
+    <File Path="src/Shared/Decisions/DecisionDefinitions.cs" />
+    <File Path="src/Shared/Decisions/DecisionFeatures.cs" />
+    <File Path="src/Shared/Decisions/DecisionQuestions.cs" />
+    <File Path="src/Shared/Decisions/README.md" />
+  </Folder>
   <Folder Name="/Solution Items/src/Shared/Demos/">
     <File Path="src/Shared/Demos/README.md" />
     <File Path="src/Shared/Demos/SampleEnvironment.cs" />

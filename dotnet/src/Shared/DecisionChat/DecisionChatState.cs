@@ -8,10 +8,11 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.AI.TypeSafe;
+namespace Microsoft.Agents.AI.Decisions;
 
 /// <summary>
-/// Converts a conversation into the state that Jev answers questions about, and reads the current turn of it.
+/// Converts a conversation into the state that a decision model answers questions about, and reads the current turn of
+/// it.
 /// </summary>
 /// <remarks>
 /// The state has the shape of the Python TypeSafe connector: <c>{"messages": [{"role", "contents": [...]}],
@@ -20,9 +21,13 @@ namespace Microsoft.Agents.AI.TypeSafe;
 /// and result they lead to carry the information. The current turn is everything after the last user message that
 /// starts a request: the tool calls and results that answer it.
 /// </remarks>
-internal static class JevChatState
+internal static class DecisionChatState
 {
-    public static JevEntry Build(IReadOnlyList<ChatMessage> messages, string? instructions)
+    /// <summary>Builds the JSON state of a conversation.</summary>
+    /// <param name="messages">The conversation.</param>
+    /// <param name="instructions">The chat instructions, which become the <c>instructions</c> field.</param>
+    /// <param name="modelName">The name of the decision model, such as <c>Jev</c>, for messages.</param>
+    public static JsonElement Build(IReadOnlyList<ChatMessage> messages, string? instructions, string modelName)
     {
         var stateMessages = new JsonArray();
         for (int index = 0; index < messages.Count; index++)
@@ -36,7 +41,7 @@ internal static class JevChatState
             if (unsupported.Count > 0)
             {
                 throw new NotSupportedException(
-                    $"Jev supports text, reasoning text, and function call and result content only; message {index} contains {string.Join(", ", unsupported)}.");
+                    $"{modelName} supports text, reasoning text, and function call and result content only; message {index} contains {string.Join(", ", unsupported)}.");
             }
 
             // Approval content is not written: FunctionInvokingChatClient keeps handled approvals in the history of
@@ -67,7 +72,7 @@ internal static class JevChatState
                         break;
 
                     case FunctionResultContent result:
-                        contents.Add((JsonNode)SerializeResult(result));
+                        contents.Add((JsonNode)SerializeResult(result, modelName));
                         break;
                 }
             }
@@ -80,7 +85,7 @@ internal static class JevChatState
 
         if (stateMessages.Count == 0)
         {
-            Throw.ArgumentException(nameof(messages), "Jev needs at least one message with text or function call content.");
+            Throw.ArgumentException(nameof(messages), $"{modelName} needs at least one message with text or function call content.");
         }
 
         var state = new JsonObject { ["messages"] = stateMessages };
@@ -89,7 +94,7 @@ internal static class JevChatState
             state["instructions"] = instructions;
         }
 
-        return new JevEntry(JevJsonUtilities.Parse(state.ToJsonString()));
+        return DecisionJson.Parse(state.ToJsonString());
     }
 
     /// <summary>
@@ -172,7 +177,7 @@ internal static class JevChatState
             var arguments = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
             foreach (KeyValuePair<string, object?> argument in call.Arguments ?? new Dictionary<string, object?>())
             {
-                arguments[argument.Key] = JevJsonUtilities.ToElement(argument.Value);
+                arguments[argument.Key] = DecisionJson.ToElement(argument.Value);
             }
 
             if (!calls.TryGetValue(call.Name, out List<Dictionary<string, JsonElement>>? list))
@@ -214,13 +219,13 @@ internal static class JevChatState
         var json = new JsonObject();
         foreach (KeyValuePair<string, object?> argument in arguments)
         {
-            json[argument.Key] = JevJsonUtilities.ToNodeOrText(argument.Value);
+            json[argument.Key] = DecisionJson.ToNodeOrText(argument.Value);
         }
 
         return json;
     }
 
-    private static JsonObject SerializeResult(FunctionResultContent result)
+    private static JsonObject SerializeResult(FunctionResultContent result, string modelName)
     {
         var json = new JsonObject { ["type"] = "function_result", ["call_id"] = result.CallId };
         IEnumerable<AIContent>? items = result.Result switch
@@ -232,17 +237,17 @@ internal static class JevChatState
 
         if (items is null)
         {
-            json["result"] = JevJsonUtilities.ToNodeOrText(result.Result);
+            json["result"] = DecisionJson.ToNodeOrText(result.Result);
             return json;
         }
 
-        // Rich results are sent as text items, like the Python connector; other media cannot be described to Jev.
+        // Rich results are sent as text items, like the Python connector; other media cannot be described to the model.
         var texts = new List<string>();
         foreach (AIContent item in items)
         {
             if (item is not TextContent text)
             {
-                throw new NotSupportedException($"Jev supports text function results only; a result of the call '{result.CallId}' contains {item.GetType().Name}.");
+                throw new NotSupportedException($"{modelName} supports text function results only; a result of the call '{result.CallId}' contains {item.GetType().Name}.");
             }
 
             texts.Add(text.Text ?? string.Empty);
@@ -269,7 +274,7 @@ internal static class JevChatState
             JsonElement element => Unwrap(element.GetRawText()),
             TextContent content => content.Text,
             IEnumerable<AIContent> contents => string.Concat(contents.OfType<TextContent>().Select(content => content.Text)),
-            _ => JevJsonUtilities.ToNodeOrText(result)?.ToJsonString(),
+            _ => DecisionJson.ToNodeOrText(result)?.ToJsonString(),
         };
 
     /// <summary>
