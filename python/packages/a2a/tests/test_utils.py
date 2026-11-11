@@ -28,6 +28,15 @@ def test_get_uri_data_valid() -> None:
     assert get_uri_data(uri) == "SGVsbG8sIFdvcmxkIQ=="
 
 
+@pytest.mark.parametrize(
+    "uri",
+    ["data:application/octet-stream;base64,", "data:text/plain;charset=utf-8;base64,"],
+)
+def test_get_uri_data_empty_payload(uri: str) -> None:
+    """An empty base64 payload represents a valid zero-byte attachment."""
+    assert get_uri_data(uri) == ""
+
+
 def test_get_uri_data_invalid_format() -> None:
     """Test get_uri_data with invalid URI formats."""
     invalid_uris = [

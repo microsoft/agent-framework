@@ -7,6 +7,7 @@ This sample demonstrates the helper-first hosting shape for workflows:
 1. ``agent-framework-hosting-responses`` converts the Responses request body to
    Agent Framework run values and renders the final response payload.
 2. ``agent-framework-hosting`` resolves the workflow target via ``WorkflowState``.
+   A factory creates the workflow and its executors for every request.
 3. FastAPI owns the route, request parsing, policy decisions, response object,
    and file-backed checkpoint cursor.
 
@@ -29,7 +30,7 @@ Run
 
     uv sync
     az login
-    export FOUNDRY_PROJECT_ENDPOINT=https://<your-project>.services.ai.azure.com
+    export FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
     export FOUNDRY_MODEL=gpt-5-nano
     uv run hypercorn app:app --bind 0.0.0.0:8000
 
@@ -62,6 +63,7 @@ from agent_framework import (
     Executor,
     FileCheckpointStorage,
     Message,
+    Workflow,
     WorkflowBuilder,
     WorkflowContext,
     handler,
@@ -202,23 +204,35 @@ class TerminalFormatter(Executor):
 
 
 client = FoundryChatClient(credential=DefaultAzureCredential())
-writer = Agent(
-    client=client,
-    name="writer",
-    instructions="You are an excellent slogan writer. Create one short slogan from the given brief.",
-)
-writer_ex = AgentExecutor(writer, context_mode="last_agent")
-formatter_ex = TerminalFormatter(id="terminal_formatter")
 
-workflow_builder = WorkflowBuilder(
-    name="local_responses_slogan_workflow",
-    start_executor=writer_ex,
-    output_from=[formatter_ex],
-).add_edge(writer_ex, formatter_ex)
+
+def create_workflow() -> Workflow:
+    """Build the workflow and its executors for one request.
+
+    An ``AgentExecutor`` keeps one ``AgentSession`` between runs, so every
+    request needs its own executors. The workflow name and the executor ids stay
+    stable, which lets a checkpoint restore into the next request's new workflow.
+    """
+    writer = Agent(
+        client=client,
+        name="writer",
+        instructions="You are an excellent slogan writer. Create one short slogan from the given brief.",
+    )
+    writer_ex = AgentExecutor(writer, context_mode="last_agent")
+    formatter_ex = TerminalFormatter(id="terminal_formatter")
+    return (
+        WorkflowBuilder(
+            name="local_responses_slogan_workflow",
+            start_executor=writer_ex,
+            output_from=[formatter_ex],
+        )
+        .add_edge(writer_ex, formatter_ex)
+        .build()
+    )
 
 
 app = FastAPI()
-state = WorkflowState(workflow_builder, cache_target=False)
+state = WorkflowState(create_workflow, cache_target=False)
 
 
 @app.post("/responses", response_model=None)

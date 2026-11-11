@@ -5,6 +5,15 @@ Provides extension methods and resource definitions for an Aspire AppHost to con
 > [!WARNING]
 > DevUI and its aggregator are for trusted development environments, not production authentication gateways. Protect backend agent endpoints independently; protecting the Aspire dashboard or UI does not automatically protect those routes. Follow the [shared hosting guide](../../samples/04-hosting/README.md#development-tools) for backend authorization, caller isolation, and client/proxy credential requirements.
 
+The aggregator binds only to loopback and includes limited browser-request protections: every request must use
+`localhost` or a loopback IP address in its `Host` header, and state-changing requests with a mismatched or invalid
+`Origin` or `Sec-Fetch-Site: cross-site` are rejected. Non-browser clients that send neither header continue to work.
+These checks reduce local DNS-rebinding and cross-site request risks, but they do not provide authentication,
+authorization, multi-user isolation, or protection for the backend services. Use the aggregator only for local,
+trusted development. After validating the incoming browser request, the aggregator does not forward browser
+provenance headers such as `Origin` or `Sec-Fetch-*` on its server-to-server backend hop; application credentials
+such as `Authorization` are forwarded.
+
 ## Getting started
 
 ### Prerequisites

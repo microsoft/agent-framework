@@ -24,8 +24,8 @@ var endpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOI
 // environment does not define the variable referenced from azure.yaml. An empty string is not
 // null, so a plain ?? chain would pass the blank straight through and fail deep inside the SDK.
 var deploymentName = FirstNonBlank(
-    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     "gpt-4o");
 
 var agentName = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-text-rag";
@@ -54,7 +54,7 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredentia
 
 // Host the agent using the Responses protocol.
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent);
+builder.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();

@@ -23,6 +23,8 @@ Security notes:
   authors must trust the MCP server they invoke.
 """
 
+from __future__ import annotations
+
 import hmac
 import json
 import logging
@@ -32,7 +34,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
 from agent_framework import (
     Content,
     Message,
@@ -40,7 +41,6 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework.exceptions import ToolExecutionException
 
 from ._declarative_base import (
     ActionComplete,
@@ -177,6 +177,8 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
     - On error returned by the handler (``is_error=True``): assigns
       ``"Error: <message>"`` to ``output.result`` and completes normally
       (parity with .NET ``AssignErrorAsync``).
+    - Setup, transport, and protocol exceptions propagate and fail the action,
+      including when resuming an approved invocation.
 
     .. note::
 
@@ -243,7 +245,7 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
             )
             return
 
-        result = await self._invoke_with_narrow_catch(invocation)
+        result = await self._mcp_tool_handler.invoke_tool(invocation)
         await self._process_result(
             ctx=ctx,
             state=state,
@@ -357,7 +359,7 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
                 )
                 await self._request_approval(invocation, dict(metadata), ctx)
                 return
-        result = await self._invoke_with_narrow_catch(invocation)
+        result = await self._mcp_tool_handler.invoke_tool(invocation)
         await self._process_result(
             ctx=ctx,
             state=state,
@@ -471,49 +473,6 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
         if isinstance(evaluated, str):
             return evaluated.strip().lower() in {"true", "1", "yes"}
         return bool(evaluated)
-
-    # ----- Invocation + error handling ----------------------------------------
-
-    async def _invoke_with_narrow_catch(self, invocation: MCPToolInvocation) -> MCPToolResult:
-        """Invoke the handler with a narrow exception catch.
-
-        Only known transport / tool exceptions are normalised to an error
-        result. Programmer bugs (TypeError, ValueError from misuse, etc.)
-        propagate so they fail loudly.
-
-        ``asyncio.CancelledError`` is a ``BaseException``, not ``Exception``,
-        so it is not caught here and propagates unchanged for workflow
-        cancellation.
-        """
-        try:
-            return await self._mcp_tool_handler.invoke_tool(invocation)
-        except ToolExecutionException as exc:
-            message = str(exc) or type(exc).__name__
-            return MCPToolResult(
-                outputs=[Content.from_text(f"Error: {message}")],
-                is_error=True,
-                error_message=message,
-            )
-        except httpx.HTTPError as exc:
-            message = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
-            return MCPToolResult(
-                outputs=[Content.from_text(f"Error: {message}")],
-                is_error=True,
-                error_message=message,
-            )
-        except Exception as exc:
-            try:
-                from mcp.shared.exceptions import McpError
-            except ImportError:  # pragma: no cover - mcp is a hard dep
-                raise
-            if isinstance(exc, McpError):
-                message = str(exc) or type(exc).__name__
-                return MCPToolResult(
-                    outputs=[Content.from_text(f"Error: {message}")],
-                    is_error=True,
-                    error_message=message,
-                )
-            raise
 
     # ----- Result handling -----------------------------------------------------
 

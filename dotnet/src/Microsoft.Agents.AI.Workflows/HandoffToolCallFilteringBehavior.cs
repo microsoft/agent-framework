@@ -8,6 +8,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// Specifies the behavior for filtering <see cref="FunctionCallContent"/> and <see cref="ChatRole.Tool"/> contents from
 /// <see cref="ChatMessage"/>s flowing through a handoff workflow. This can be used to prevent agents from seeing external
 /// tool calls.
+/// When filtering removes tool content, messages left with only <see cref="TextReasoningContent"/> are also removed.
 /// </summary>
 public enum HandoffToolCallFilteringBehavior
 {

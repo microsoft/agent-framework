@@ -602,6 +602,8 @@ class DuckDBCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         if keys is not None:
             if order_by:
                 raise ValueError("order_by applies only to filtered retrieval, not key lookup.")
+            if skip:
+                raise ValueError("DuckDB key retrieval cannot be combined with skip.")
             adapted = [_prepare_value(self.definition.key_field, key) for key in keys]
             if not adapted:
                 return []

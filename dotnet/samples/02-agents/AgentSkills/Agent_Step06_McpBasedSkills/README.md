@@ -22,12 +22,12 @@ This sample demonstrates how to discover **Agent Skills served over MCP** with a
 ### Prerequisites
 
 - .NET 10.0 SDK
-- Microsoft Foundry project with a deployed model
+- A Microsoft Foundry project with a deployed model
 
 ### Setup
 
 ```powershell
-$env:FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/api/projects/your-project"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
 $env:FOUNDRY_MODEL="gpt-5.4-mini"
 ```
 

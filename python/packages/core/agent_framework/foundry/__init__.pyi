@@ -14,6 +14,7 @@ from agent_framework_azure_contentunderstanding import (
 from agent_framework_foundry import (
     FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY,
     FoundryAgent,
+    FoundryAgentOptions,
     FoundryChatClient,
     FoundryChatOptions,
     FoundryEmbeddingClient,
@@ -44,6 +45,9 @@ from agent_framework_foundry_hosting import (
     InvocationsHostServer,
     ResponsesHostServer,
     StoreProvider,
+    WorkflowSource,
+    WorkflowTurn,
+    response_input_messages,
 )
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
@@ -63,6 +67,7 @@ __all__ = [
     "FileSearchBackend",
     "FileSearchConfig",
     "FoundryAgent",
+    "FoundryAgentOptions",
     "FoundryAgentSessionStore",
     "FoundryChatClient",
     "FoundryChatOptions",
@@ -89,7 +94,10 @@ __all__ = [
     "RawFoundryEmbeddingClient",
     "ResponsesHostServer",
     "StoreProvider",
+    "WorkflowSource",
+    "WorkflowTurn",
     "evaluate_foundry_target",
     "evaluate_traces",
+    "response_input_messages",
     "to_prompt_agent",
 ]

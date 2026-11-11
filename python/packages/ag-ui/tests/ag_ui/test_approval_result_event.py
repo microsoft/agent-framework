@@ -15,7 +15,7 @@ from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ign
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import run_agent_stream
 from agent_framework_ag_ui._approval_lifecycle import ApprovalExecutionOwner, ApprovalStatus
-from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore
+from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore, approval_state_thread_id
 
 
 def _weather_tool(executions: list[str]) -> FunctionTool:
@@ -44,10 +44,11 @@ async def _run_resume(
         default_options={"tools": [tool]},
     )
     store = InMemoryAGUIApprovalStateStore()
+    approval_thread_id = approval_state_thread_id(scope=None, thread_id=thread_id)
     for call_id, city in calls:
         store.register(
             owner=ApprovalExecutionOwner.LOCAL,
-            thread_ids=[thread_id],
+            thread_ids=[approval_thread_id],
             name="get_weather",
             arguments=json.dumps({"city": city}, sort_keys=True, separators=(",", ":")),
             request_id=call_id,
@@ -102,9 +103,10 @@ async def _run_custom_approval(
         },
     )
     store = InMemoryAGUIApprovalStateStore()
+    approval_thread_id = approval_state_thread_id(scope=None, thread_id="thread-custom")
     store.register(
         owner=ApprovalExecutionOwner.LOCAL,
-        thread_ids=["thread-custom"],
+        thread_ids=[approval_thread_id],
         name=tool.name,
         arguments="{}",
         request_id="approval-custom",
@@ -202,8 +204,9 @@ async def test_resolve_approval_responses_treats_non_boolean_decision_as_rejecti
     )
     response.approved = "true"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
     store = InMemoryAGUIApprovalStateStore()
+    approval_thread_id = approval_state_thread_id(scope=None, thread_id="thread-bool")
     store.set_tool_approval_state(
-        "thread-bool",
+        approval_thread_id,
         {"collected_approval_responses": [response]},
     )
     agent = StubAgent(
@@ -226,7 +229,7 @@ async def test_resolve_approval_responses_treats_non_boolean_decision_as_rejecti
     ]
 
     occurrence = store.lifecycle.occurrence_for_alias(
-        thread_id="thread-bool",
+        thread_id=approval_thread_id,
         interrupt_id="approval-bool",
     )
     rejection_results = [

@@ -28,7 +28,7 @@ RUN apt-get update \
 COPY out/ .
 EXPOSE 8088
 ENV ASPNETCORE_URLS=http://+:8088
-ENV LOCAL_CODEACT_PYTHON=python3
+ENV LOCAL_CODEACT_PYTHON=/usr/bin/python3
 # The container is non-interactive: never block on a console prompt for a missing setting.
 ENV AF_DEMO_NONINTERACTIVE=1
 ENTRYPOINT ["dotnet", "ClawAgent.Hosted.dll"]

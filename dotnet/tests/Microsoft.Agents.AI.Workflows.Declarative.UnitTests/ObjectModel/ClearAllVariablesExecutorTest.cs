@@ -54,6 +54,27 @@ public sealed class ClearAllVariablesExecutorTest(ITestOutputHelper output) : Wo
     }
 
     [Fact]
+    public async Task ClearVariablesRejectsSensitiveScopeAsync()
+    {
+        // Arrange
+        this.State.Set("Control", FormulaValue.New(true), sensitivity: SensitivityLevel.Sensitive);
+        this.State.Set("LocalVar", FormulaValue.New("existing"));
+        ClearAllVariables.Builder builder = this.CreateModel(
+            nameof(ClearVariablesRejectsSensitiveScopeAsync), VariablesToClear.AllGlobalVariables).ToBuilder();
+        builder.Variables = EnumExpression<VariablesToClearWrapper>.Expression(
+            """If(Local.Control, "AllGlobalVariables", "ConversationScopedVariables")""");
+        ClearAllVariablesExecutor action = new(AssignParent<ClearAllVariables>(builder), this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("variable scope", exception.Message);
+        this.VerifyState("LocalVar", FormulaValue.New("existing"));
+    }
+
+    [Fact]
     public async Task ClearWorkflowHistoryAsync()
     {
         // Arrange

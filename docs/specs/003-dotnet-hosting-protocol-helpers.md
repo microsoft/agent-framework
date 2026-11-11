@@ -9,7 +9,7 @@ informed: []
 
 # .NET hosting: OpenAI Responses protocol helpers and optional execution state
 
-Implements [ADR-0032](../decisions/0032-dotnet-hosting-protocol-helpers.md), which realizes the
+Implements [ADR-0036](../decisions/0036-dotnet-hosting-protocol-helpers.md), which realizes the
 helper-first direction of [ADR-0027](../decisions/0027-hosting-channels.md) for .NET.
 
 ## What is the goal of this feature?
@@ -109,6 +109,11 @@ public abstract class AgentSessionStore
         AgentSessionStoreKey key,
         AgentSession session,
         CancellationToken cancellationToken = default);
+
+    public abstract ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default);
 }
 ```
 
@@ -139,7 +144,8 @@ state without observing another branch's changes. The store performs no cross-ca
 application that needs concurrent runs against the same id to be serialized owns that coordination.
 `SaveSessionAsync(agent, key, session)` persists the post-run state, including under a newly
 minted `resp_*` id when the protocol creates a continuation id. No agent-side holder is needed because
-the convenience method already performs lookup or creation.
+the convenience method already performs lookup or creation. `DeleteSessionAsync(agent, key)` removes the
+stored session and is a no-op when nothing is stored.
 
 `AgentSessionStoreKey` contains a session id plus arbitrary named partitions. Every partition contributes
 to identity, independent of dictionary order. Stores must not ignore unknown partitions. Physical key

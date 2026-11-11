@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, cast
 from unittest.mock import patch
@@ -9,6 +10,8 @@ import pytest
 from agent_framework import (
     MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
     Agent,
+    AgentResponse,
+    AgentResponseUpdate,
     AgentSession,
     ChatContext,
     ChatMiddleware,
@@ -20,6 +23,7 @@ from agent_framework import (
     FunctionTool,
     Message,
     MessageInjectionMiddleware,
+    MiddlewareTermination,
     ResponseStream,
     SupportsChatGetResponse,
     chat_middleware,
@@ -35,6 +39,45 @@ from .conftest import MockBaseChatClient
 
 class TestChatMiddleware:
     """Test cases for chat middleware functionality."""
+
+    async def test_agent_run_returns_chat_termination_result(self) -> None:
+        client = MockBaseChatClient()
+        expected = ChatResponse(messages=[Message(role="assistant", contents=["terminated response"])])
+
+        class TerminatingMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                raise MiddlewareTermination(result=expected)
+
+        agent = Agent(client=client, middleware=[TerminatingMiddleware()])
+        response = await agent.run("hi")
+
+        assert isinstance(response, AgentResponse)
+        assert response.text == "terminated response"
+        assert client.call_count == 0
+
+    async def test_agent_run_returns_chat_termination_stream(self) -> None:
+        client = MockBaseChatClient()
+
+        async def updates() -> AsyncIterable[ChatResponseUpdate]:
+            yield ChatResponseUpdate(contents=[Content.from_text("terminated chat stream")])
+
+        expected = ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        class TerminatingMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                raise MiddlewareTermination(result=expected)
+
+        agent = Agent(client=client, middleware=[TerminatingMiddleware()])
+        stream = agent.run("hi", stream=True)
+        streamed_updates = [update async for update in stream]
+        final_response = await stream.get_final_response()
+
+        # Agent.run also emits updates containing only response metadata.
+        assert [update.text for update in streamed_updates if update.contents] == ["terminated chat stream"]
+        assert all(isinstance(update, AgentResponseUpdate) for update in streamed_updates)
+        assert isinstance(final_response, AgentResponse)
+        assert final_response.text == "terminated chat stream"
+        assert client.call_count == 0
 
     async def test_class_based_chat_middleware(self, chat_client_base: SupportsChatGetResponse) -> None:
         """Test class-based chat middleware with ChatClient."""
@@ -277,6 +320,69 @@ class TestChatMiddleware:
 
         # Verify middleware executed
         assert execution_order == ["streaming_before", "streaming_after"]
+
+    async def test_chat_result_gate_without_buffer_logs_warning(
+        self, chat_client_base: "MockBaseChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A result gate on an unbuffered streamed run logs a fail-open warning."""
+
+        @chat_middleware
+        async def result_gate_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            if context.stream:
+                context.stream_result_gates_after.append(lambda result: None)
+            await call_next()
+
+        chat_client_base.chat_middleware = [cast(ChatMiddlewareTypes, result_gate_middleware)]
+        messages = [Message(role="user", contents=["test message"])]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            async for _ in chat_client_base.get_response(messages, stream=True):
+                pass
+
+        assert any("stream_buffer_updates" in record.message for record in caplog.records)
+
+    async def test_chat_result_gate_with_buffer_logs_no_warning(
+        self, chat_client_base: "MockBaseChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A result gate on a buffered streamed run blocks as documented, so no warning."""
+
+        @chat_middleware
+        async def buffered_result_gate_middleware(
+            context: ChatContext, call_next: Callable[[], Awaitable[None]]
+        ) -> None:
+            if context.stream:
+                context.stream_buffer_updates = True
+                context.stream_result_gates_after.append(lambda result: None)
+            await call_next()
+
+        chat_client_base.chat_middleware = [cast(ChatMiddlewareTypes, buffered_result_gate_middleware)]
+        messages = [Message(role="user", contents=["test message"])]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            updates = [update async for update in chat_client_base.get_response(messages, stream=True)]
+
+        assert not any("stream_buffer_updates" in record.message for record in caplog.records)
+        assert updates
+
+    async def test_chat_result_gate_attached_directly_to_stream_logs_warning(
+        self, chat_client_base: "MockBaseChatClient", caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A gate a middleware attaches straight to the final stream is detected too."""
+
+        @chat_middleware
+        async def direct_gate_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+            if isinstance(context.result, ResponseStream):
+                context.result.with_result_gate(lambda result: None)
+
+        chat_client_base.chat_middleware = [cast(ChatMiddlewareTypes, direct_gate_middleware)]
+        messages = [Message(role="user", contents=["test message"])]
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework._middleware"):
+            async for _ in chat_client_base.get_response(messages, stream=True):
+                pass
+
+        assert any("stream_buffer_updates" in record.message for record in caplog.records)
 
     async def test_run_level_middleware_isolation(self, chat_client_base: "MockBaseChatClient") -> None:
         """Test that run-level middleware is isolated and doesn't persist across calls."""

@@ -12,7 +12,7 @@ import inspect
 import keyword
 import types
 import typing
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Annotated, Any, cast, get_type_hints
 
 MAX_PRINT_OUTPUT_CHARS = 8192
@@ -39,8 +39,10 @@ def _ensure_json_value(value: Any) -> Any:
     raise ValueError(f"Value of type {type(value).__name__} is not JSON-safe.")
 
 
-def _external_error(exc: Exception) -> dict[str, str]:
-    return {"exc_type": type(exc).__name__, "message": str(exc)}
+def _external_error(exc: Exception, *, include_detailed_errors: bool = False) -> dict[str, str]:
+    if include_detailed_errors:
+        return {"exc_type": type(exc).__name__, "message": str(exc)}
+    return {"exc_type": "RuntimeError", "message": "Host tool execution failed."}
 
 
 def _parse_call_tool(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -93,12 +95,26 @@ def _python_type_repr(annotation: Any) -> str:
     return str(annotation)
 
 
-def generate_type_stubs(tool_callables: dict[str, Callable[..., Any]]) -> str:
+def generate_type_stubs(
+    tool_callables: dict[str, Callable[..., Any]],
+    *,
+    accepted_parameters: Mapping[str, Collection[str]] | None = None,
+) -> str:
     """Generate Python type stub declarations for tools + DSL primitives.
 
     Stubs are fed to Monty's ``type_check_stubs`` so ``ty`` can validate the
     LLM-generated code against the actual tool signatures before any host
     call runs.
+
+    Host tools receive keyword arguments only, so every tool parameter is
+    declared keyword-only regardless of how the host function declares it.
+    ``ty`` then rejects positional calls before any code runs instead of the
+    bridge silently dropping the positional arguments. ``*args`` and
+    ``**kwargs`` are never declared because guest code cannot supply them.
+
+    ``accepted_parameters`` maps a tool name to the parameter names guest code
+    may pass (the tool's schema properties). Other parameters of the callable,
+    such as an injected context parameter or ``self``, are left out of the stub.
 
     Tools whose ``name`` is not a valid Python identifier are skipped because
     their name cannot be safely splatted into stub source. The model can still
@@ -130,8 +146,13 @@ def generate_type_stubs(tool_callables: dict[str, Callable[..., Any]]) -> str:
             lines.append("")
             continue
 
+        accepted = accepted_parameters.get(name) if accepted_parameters is not None else None
         params: list[str] = []
         for param_name, param in sig.parameters.items():
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+            if accepted is not None and param_name not in accepted:
+                continue
             annotation = hints.get(param_name, inspect.Parameter.empty)
             type_str = _python_type_repr(annotation)
             if param.default is not inspect.Parameter.empty:
@@ -141,7 +162,7 @@ def generate_type_stubs(tool_callables: dict[str, Callable[..., Any]]) -> str:
 
         return_annotation = hints.get("return", inspect.Parameter.empty)
         return_str = _python_type_repr(return_annotation)
-        param_str = ", ".join(params)
+        param_str = ", ".join(["*", *params] if params else params)
         lines.append(f"async def {name}({param_str}) -> {return_str}:")
         lines.append("    raise NotImplementedError()")
         lines.append("")
@@ -210,11 +231,13 @@ class InlineCodeBridge:
         type_stubs: str | None = None,
         mounts: Sequence[Any] | None = None,
         resource_limits: dict[str, Any] | None = None,
+        include_detailed_errors: bool = False,
     ) -> None:
         self.tool_map: dict[str, Callable[..., Any]] = dict(tool_map)
         self.type_stubs: str | None = type_stubs
         self._mounts = tuple(mounts) if mounts else ()
         self._resource_limits = resource_limits
+        self._include_detailed_errors = include_detailed_errors
         self._pending_calls: dict[int, tuple[str, dict[str, Any]]] = {}
 
     async def run(self, code: str) -> dict[str, Any]:
@@ -235,7 +258,12 @@ class InlineCodeBridge:
             "type_check_stubs": self.type_stubs,
         }
         if self._resource_limits:
-            checkout_kwargs["limits"] = self._resource_limits
+            limits = dict(self._resource_limits)
+            if "max_duration_secs" in limits:
+                if "max_feed_duration_secs" in limits:
+                    raise ValueError("Specify only one of max_duration_secs and max_feed_duration_secs.")
+                limits["max_feed_duration_secs"] = limits.pop("max_duration_secs")
+            checkout_kwargs["limits"] = limits
 
         feed_kwargs: dict[str, Any] = {"print_callback": printer}
         if self._mounts:
@@ -286,10 +314,17 @@ class InlineCodeBridge:
         })
 
     def _schedule_direct_tool(self, snapshot: Any, name: str) -> Any:
-        # Positional args are rejected up-front by ``ty`` because the generated
-        # stubs declare every parameter as keyword-typed. Anything that slips
-        # through (e.g. tools with no signature inspection) is forwarded to the
-        # host tool as-is via kwargs only.
+        # The generated stubs are keyword-only, so ``ty`` rejects positional calls before any code runs. Fail
+        # closed on anything that still reaches the host (for example when type checking is bypassed) instead of
+        # dropping the positional arguments and running the host tool with its defaults. This is a bridge-owned
+        # usage error, not a host failure, so it stays actionable under redaction (like ``_schedule_call_tool``).
+        if snapshot.args:
+            return snapshot.resume(
+                _external_error(
+                    TypeError(f"{name} accepts keyword arguments only. Use keyword arguments for parameters."),
+                    include_detailed_errors=True,
+                )
+            )
         self._pending_calls[int(snapshot.call_id)] = (name, dict(snapshot.kwargs))
         return snapshot.resume({"future": ...})
 
@@ -301,7 +336,7 @@ class InlineCodeBridge:
                 raise ValueError(f"Tool {name!r} is not registered. Available tools: {allowed}")
             self._pending_calls[int(snapshot.call_id)] = (name, kwargs)
         except Exception as exc:
-            return snapshot.resume(_external_error(exc))
+            return snapshot.resume(_external_error(exc, include_detailed_errors=True))
         return snapshot.resume({"future": ...})
 
     async def _handle_future(self, snapshot: Any) -> Any:
@@ -331,4 +366,4 @@ class InlineCodeBridge:
             result = await self.tool_map[name](**kwargs)
             return cid, {"return_value": _ensure_json_value(result)}
         except Exception as exc:
-            return cid, _external_error(exc)
+            return cid, _external_error(exc, include_detailed_errors=self._include_detailed_errors)

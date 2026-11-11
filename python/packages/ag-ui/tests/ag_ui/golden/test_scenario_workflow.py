@@ -465,9 +465,10 @@ async def test_workflow_error_emits_run_error_event(caplog: pytest.LogCaptureFix
     assert "workflow exploded" not in error.message
     records = [record for record in caplog.records if record.name == "agent_framework_ag_ui._workflow_run"]
     assert len(records) == 1
-    assert records[0].exc_info is not None
-    assert isinstance(records[0].exc_info[1], RuntimeError)
-    assert records[0].exc_info[2] is not None
+    exc_info = records[0].exc_info
+    assert exc_info
+    assert isinstance(exc_info[1], RuntimeError)
+    assert exc_info[2] is not None
     assert "workflow exploded" in records[0].getMessage()
 
 

@@ -6,10 +6,9 @@ import copy
 import json
 import logging
 from datetime import date, datetime, time
-from typing import Any
+from typing import Any, Self
 
 import pytest
-from typing_extensions import Self
 
 from agent_framework._serialization import SerializationMixin
 

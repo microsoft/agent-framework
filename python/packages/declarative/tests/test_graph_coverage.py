@@ -451,6 +451,34 @@ class TestBasicExecutorsCoverage:
         result = state.get("Local.result")
         assert result == "test value"
 
+    @pytest.mark.parametrize("variable", ["Local.target", {"path": "Local.target"}])
+    async def test_set_value_executor_with_variable_field(self, mock_context, mock_state, variable):
+        """SetValue accepts 'variable' in place of 'path', so it must write to it."""
+        from agent_framework_declarative._workflows._executors_basic import SetValueExecutor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        action_def = {"kind": "SetValue", "variable": variable, "value": "test value"}
+        executor = SetValueExecutor(action_def)
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        assert state.get("Local.target") == "test value"
+
+    async def test_set_value_executor_path_wins_over_variable(self, mock_context, mock_state):
+        """When SetValue has both 'path' and 'variable', 'path' is used."""
+        from agent_framework_declarative._workflows._executors_basic import SetValueExecutor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        action_def = {"kind": "SetValue", "path": "Local.a", "variable": "Local.b", "value": "v"}
+        executor = SetValueExecutor(action_def)
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        assert state.get("Local.a") == "v"
+        assert state.get("Local.b") is None
+
     async def test_set_variable_executor_with_nested_variable(self, mock_context, mock_state):
         """Test SetVariableExecutor with nested variable object."""
         from agent_framework_declarative._workflows._executors_basic import (

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import warnings
 from collections.abc import Awaitable, Callable, MutableSequence
 from contextlib import nullcontext
 from datetime import timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -19,6 +20,8 @@ from pydantic import create_model
 from agent_framework import (
     DEFAULT_TOOL_APPROVAL_SOURCE_ID,
     Agent,
+    AgentContext,
+    AgentMiddleware,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
@@ -36,12 +39,14 @@ from agent_framework import (
     SessionContext,
     SupportsAgentRun,
     ToolApprovalMiddleware,
+    ToolApprovalRule,
     ToolApprovalState,
     create_always_approve_tool_response,
     create_always_approve_tool_with_arguments_response,
     tool,
 )
 from agent_framework._feature_stage import ExperimentalWarning
+from agent_framework._types import _get_operation_state, _set_operation_state
 from agent_framework.security import (
     PRINCIPAL_METADATA_KEY,
     ConfidentialityLabel,
@@ -63,6 +68,14 @@ def _approval_requests(messages: list[Message]) -> list[Content]:
 def _function_call(request: Content) -> Content:
     assert request.function_call is not None
     return request.function_call
+
+
+def test_tool_approval_rule_preserves_tool_name_whitespace() -> None:
+    """Tool approval rules must preserve the exact approved tool identity."""
+    rule = ToolApprovalRule("run_shell ")
+
+    assert rule.tool_name == "run_shell "
+    assert ToolApprovalRule.from_dict(rule.to_dict()).tool_name == "run_shell "
 
 
 class _MarkUntrusted(FunctionMiddleware):
@@ -460,7 +473,11 @@ async def test_policy_approval_resume_supports_enum_arguments(
         resumed_stream = agent.run(request.to_function_approval_response(True), stream=True, session=session)
         resumed_updates = [update async for update in resumed_stream]
         resumed = await resumed_stream.get_final_response()
-        assert [(update.role, [content.type for content in update.contents]) for update in resumed_updates] == [
+        assert [
+            (update.role, [content.type for content in update.contents])
+            for update in resumed_updates
+            if update.contents
+        ] == [
             ("tool", ["function_result"]),
             ("assistant", ["text"]),
         ]
@@ -572,7 +589,9 @@ async def test_changed_hidden_snapshot_requires_visible_second_approval(
         )
         stale_updates = [update async for update in stale_stream]
         stale = await stale_stream.get_final_response()
-        assert [(update.role, [content.type for content in update.contents]) for update in stale_updates] == [
+        assert [
+            (update.role, [content.type for content in update.contents]) for update in stale_updates if update.contents
+        ] == [
             ("assistant", ["function_approval_request"]),
         ]
     else:
@@ -613,7 +632,11 @@ async def test_changed_hidden_snapshot_requires_visible_second_approval(
         )
         approved_updates = [update async for update in approved_stream]
         approved = await approved_stream.get_final_response()
-        assert [(update.role, [content.type for content in update.contents]) for update in approved_updates] == [
+        assert [
+            (update.role, [content.type for content in update.contents])
+            for update in approved_updates
+            if update.contents
+        ] == [
             ("tool", ["function_result"]),
             ("assistant", ["text"]),
         ]
@@ -703,7 +726,9 @@ async def test_principal_change_requires_visible_second_approval(
         )
         stale_updates = [update async for update in stale_stream]
         stale = await stale_stream.get_final_response()
-        assert [(update.role, [content.type for content in update.contents]) for update in stale_updates] == [
+        assert [
+            (update.role, [content.type for content in update.contents]) for update in stale_updates if update.contents
+        ] == [
             ("assistant", ["function_approval_request"]),
         ]
     else:
@@ -727,7 +752,11 @@ async def test_principal_change_requires_visible_second_approval(
         )
         approved_updates = [update async for update in approved_stream]
         approved = await approved_stream.get_final_response()
-        assert [(update.role, [content.type for content in update.contents]) for update in approved_updates] == [
+        assert [
+            (update.role, [content.type for content in update.contents])
+            for update in approved_updates
+            if update.contents
+        ] == [
             ("tool", ["function_result"]),
             ("assistant", ["text"]),
         ]
@@ -1133,6 +1162,7 @@ async def test_approval_resume_returns_result_without_mutating_inputs(
     conflicting_duplicate: bool,
 ) -> None:
     """Approval resume should return its terminal result without changing caller-owned messages."""
+    caplog.set_level(logging.WARNING)
     calls = 0
 
     @tool(name="guarded_tool", approval_mode="always_require")
@@ -1192,7 +1222,7 @@ async def test_approval_resume_returns_result_without_mutating_inputs(
             second_stream = agent.run(approval_message, stream=True, session=session)
             second_updates = [update async for update in second_stream]
             second_response = await second_stream.get_final_response()
-            assert [[content.type for content in update.contents] for update in second_updates] == [
+            assert [[content.type for content in update.contents] for update in second_updates if update.contents] == [
                 ["function_result"],
                 ["text"],
             ]
@@ -1398,7 +1428,7 @@ async def test_approval_resume_filters_resolved_control_items_from_file_history(
         options: dict[str, Any],
         **kwargs: Any,
     ) -> ChatResponse:
-        captured_types.extend([[content.type for content in message.contents] for message in messages])
+        captured_types.extend([[str(content.type) for content in message.contents] for message in messages])
         return await original_get_response(messages=messages, options=options, **kwargs)
 
     chat_client_base._get_non_streaming_response = capture_messages  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
@@ -2865,7 +2895,7 @@ async def test_tool_approval_middleware_queues_streamed_approval_requests(
     final_updates = [update async for update in final_stream]
     final_response = await final_stream.get_final_response()
 
-    assert final_updates[-1].text == "done"
+    assert "".join(update.text for update in final_updates) == "done"
     assert final_response.text == "done"
     assert calls == 2
 
@@ -2945,13 +2975,17 @@ async def test_tool_approval_middleware_standing_rules_include_hosted_server_bou
         calls += 1
         return "hosted"
 
-    def hosted_call(call_id: str, server_label: str) -> Content:
-        return Content.from_function_call(
+    def hosted_approval_request(call_id: str, server_label: str) -> Content:
+        function_call = Content.from_function_call(
             call_id=call_id,
             name="hosted_tool",
             arguments="{}",
+            id=call_id,
+            hosted=True,
+            server_name=server_label,
             additional_properties={"server_label": server_label},
         )
+        return Content.from_function_approval_request(id=call_id, function_call=function_call)
 
     agent = Agent(
         client=chat_client_base,
@@ -2960,7 +2994,7 @@ async def test_tool_approval_middleware_standing_rules_include_hosted_server_bou
     )
     session = AgentSession(session_id="hosted-boundary-session")
     chat_client_base.run_responses = [
-        ChatResponse(messages=Message(role="assistant", contents=[hosted_call("call_initial", "server-a")]))
+        ChatResponse(messages=Message(role="assistant", contents=[hosted_approval_request("call_initial", "server-a")]))
     ]
 
     first_response = await agent.run("call hosted a", session=session)
@@ -2972,7 +3006,12 @@ async def test_tool_approval_middleware_standing_rules_include_hosted_server_bou
     assert calls == 0
 
     chat_client_base.run_responses = [
-        ChatResponse(messages=Message(role="assistant", contents=[hosted_call("call_same_server", "server-a")])),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[hosted_approval_request("call_same_server", "server-a")],
+            )
+        ),
         ChatResponse(messages=Message(role="assistant", contents=["same server done"])),
     ]
 
@@ -2983,7 +3022,12 @@ async def test_tool_approval_middleware_standing_rules_include_hosted_server_bou
     assert calls == 0
 
     chat_client_base.run_responses = [
-        ChatResponse(messages=Message(role="assistant", contents=[hosted_call("call_other_server", "server-b")]))
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[hosted_approval_request("call_other_server", "server-b")],
+            )
+        )
     ]
 
     other_server_response = await agent.run("call hosted b", session=session)
@@ -3243,6 +3287,89 @@ async def test_streaming_auto_approved_tool_preserves_structured_value(
     assert calls == 1
     assert isinstance(response.value, Answer)
     assert response.value.answer == "42"
+
+
+async def test_streaming_filtered_approval_preserves_response_metadata(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    class StampApprovalMetadata(AgentMiddleware):
+        async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+            assert isinstance(context.result, ResponseStream)
+
+            def stamp(update: AgentResponseUpdate) -> AgentResponseUpdate:
+                if any(content.type == "function_approval_request" for content in update.contents):
+                    update.additional_properties = {"custom": {"approval": "retained"}}
+                return update
+
+            context.result = context.result.with_transform_hook(stamp)
+
+    executions: list[str] = []
+
+    @tool(approval_mode="always_require")
+    def guarded() -> str:
+        executions.append("called")
+        return "Done"
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[guarded],
+        middleware=[
+            ToolApprovalMiddleware(auto_approval_rules=[lambda function_call: True]),
+            StampApprovalMetadata(),
+        ],
+    )
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call("call_1", "guarded", arguments={})],
+            )
+        ],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("Finished")])],
+    ]
+
+    stream = agent.run("Test", stream=True, session=agent.create_session())
+    updates = [AgentResponseUpdate.from_json(update.to_json()) async for update in stream]
+    final = await stream.get_final_response()
+
+    for response in (final, AgentResponse.from_updates(updates)):
+        assert response.additional_properties["custom"] == {"approval": "retained"}
+        assert not _approval_requests(response.messages)
+        assert all(message.contents for message in response.messages)
+    assert executions == ["called"]
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+async def test_streaming_buffered_hosted_approval_preserves_continuation(
+    chat_client_base: MockBaseChatClient, terminal: bool
+) -> None:
+    chat_client_base.function_invocation_configuration["enabled"] = False
+    call = Content.from_function_call("call_1", "hosted", arguments={}, hosted=True)
+    update = ChatResponseUpdate(
+        role="assistant",
+        contents=[Content.from_function_approval_request("approval_1", call)],
+        continuation_token=cast(Any, {"resume": "token"}),
+    )
+    _set_operation_state(update, "in_progress")
+    provider_updates = [update]
+    if terminal:
+        terminal_update = ChatResponseUpdate(finish_reason="stop")
+        _set_operation_state(terminal_update, "terminal")
+        provider_updates.append(terminal_update)
+    chat_client_base.streaming_responses = [provider_updates]
+    agent = Agent(client=chat_client_base, middleware=[ToolApprovalMiddleware()])
+
+    stream = agent.run("Test", stream=True, session=agent.create_session())
+    updates = [update async for update in stream]
+    final = await stream.get_final_response()
+    restored_updates = [AgentResponseUpdate.from_json(update.to_json()) for update in updates]
+
+    for response in (final, AgentResponse.from_updates(updates), AgentResponse.from_updates(restored_updates)):
+        assert response.continuation_token == (None if terminal else {"resume": "token"})
+        assert _get_operation_state(response) == ("terminal" if terminal else "in_progress")
+        assert len(_approval_requests(response.messages)) == 1
+        assert all(message.contents for message in response.messages)
 
 
 async def test_streaming_auto_approved_tool_preserves_value_when_preamble_text_coalesces(

@@ -268,6 +268,15 @@ class TestReturnTypeCoercion:
         assert result.reason == "all good"
 
     @pytest.mark.asyncio
+    async def test_dict_with_score_and_string_passed_raises(self):
+        @evaluator
+        def bad_passed_with_score(response: str) -> dict:
+            return {"score": 0.1, "passed": "false", "reason": "judge said no"}
+
+        with pytest.raises(TypeError, match="non-boolean 'passed' value: 'false'"):
+            await bad_passed_with_score(_make_item())  # type: ignore[misc]  # pyrefly: ignore[not-async]  # ty: ignore[invalid-await]
+
+    @pytest.mark.asyncio
     async def test_check_result_passthrough(self):
         @evaluator
         def returns_check_result(response: str) -> CheckResult:
@@ -985,6 +994,23 @@ class TestCoerceResultScoreError:
         with pytest.raises(TypeError, match="non-numeric 'score'"):
             _coerce_result({"score": None}, "test_check")
 
+    def test_non_boolean_passed_with_score_raises(self):
+        """Dict with score and non-boolean passed string raises TypeError (issue #10165)."""
+        with pytest.raises(TypeError, match="non-boolean 'passed' value: 'false'"):
+            _coerce_result({"score": 0.1, "passed": "false"}, "test_check")
+
+    def test_none_passed_with_score_raises(self):
+        """Dict with score and None passed raises TypeError."""
+        with pytest.raises(TypeError, match="non-boolean 'passed' value: None"):
+            _coerce_result({"score": 0.8, "passed": None}, "test_check")
+
+    def test_boolean_passed_with_score_respected(self):
+        """Valid boolean passed override is respected when score is present."""
+        result_false = _coerce_result({"score": 0.9, "passed": False}, "test_check")
+        assert result_false.passed is False
+        result_true = _coerce_result({"score": 0.1, "passed": True}, "test_check")
+        assert result_true.passed is True
+
 
 class TestBareCheckViaEvaluateAgent:
     """Test bare callable check functions through the public evaluate_agent API."""
@@ -1272,6 +1298,41 @@ class TestAssertScoreAtLeast:
             parent.assert_score_at_least(0.5)
         # Offender from sub-result is surfaced.
         assert "0.200" in str(exc.value)
+
+    def test_evaluator_filter_missing_evaluator_raises(self) -> None:
+        results = _score_results(
+            [
+                EvalScoreResult(name="judge", score=0.9),
+                EvalScoreResult(name="relevance", score=0.85),
+            ],
+        )
+        with pytest.raises(EvalNotPassedError) as exc:
+            results.assert_score_at_least(0.8, evaluator="judeg")
+        msg = str(exc.value)
+        assert "No scores found for evaluator 'judeg'" in msg
+        assert "judge" in msg
+        assert "relevance" in msg
+
+    def test_evaluator_filter_empty_scores_raises(self) -> None:
+        results = _score_results([])
+        with pytest.raises(EvalNotPassedError) as exc:
+            results.assert_score_at_least(0.8, evaluator="relevance")
+        assert "No scores found for evaluator 'relevance'. Available evaluator(s): none" in str(exc.value)
+
+    def test_evaluator_filter_custom_msg_on_missing_evaluator(self) -> None:
+        results = _score_results([EvalScoreResult(name="judge", score=0.9)])
+        with pytest.raises(EvalNotPassedError) as exc:
+            results.assert_score_at_least(0.8, evaluator="missing", msg="Custom missing evaluator message")
+        assert str(exc.value) == "Custom missing evaluator message"
+
+    def test_evaluator_filter_matches_in_sub_results(self) -> None:
+        sub = _score_results([EvalScoreResult(name="sub_eval", score=0.85)])
+        parent = _score_results(
+            [EvalScoreResult(name="parent_eval", score=0.9)],
+            sub_results={"sub": sub},
+        )
+        # Should match "sub_eval" in sub-results and pass without error
+        parent.assert_score_at_least(0.8, evaluator="sub_eval")
 
 
 class TestAssertNoFailedItems:

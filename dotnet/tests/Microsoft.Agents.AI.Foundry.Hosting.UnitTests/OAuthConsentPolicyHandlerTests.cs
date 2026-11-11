@@ -13,7 +13,6 @@ using Azure.Core;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 
@@ -27,7 +26,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 [Collection(FoundryProjectEndpointEnvFixture.Name)]
 public class OAuthConsentPolicyHandlerTests
 {
-    private const string AllowedOrigin = "https://auth.example.com";
+    private static readonly Uri s_allowedOrigin = new("https://auth.example.com");
     private const string AllowedLink = "https://auth.example.com/authorize?state=1";
     private const string OtherLink = "https://other.example.com/authorize?state=1";
 
@@ -35,7 +34,9 @@ public class OAuthConsentPolicyHandlerTests
     public async Task CreateAsync_PendingConsentOutsideAllowlist_FailsWithoutSurfacingLinkAsync()
     {
         // Arrange
-        await using var service = await CreatePendingConsentServiceAsync(OtherLink, [AllowedOrigin]);
+        await using var service = await CreatePendingConsentServiceAsync(
+            OtherLink,
+            new HashSet<Uri> { s_allowedOrigin });
 
         // Act
         var events = await RunAsync(new TestAgent(), service);
@@ -48,7 +49,9 @@ public class OAuthConsentPolicyHandlerTests
     public async Task CreateAsync_PendingConsentMatchingAllowlist_SurfacesConsentRequestAsync()
     {
         // Arrange
-        await using var service = await CreatePendingConsentServiceAsync(AllowedLink, [AllowedOrigin]);
+        await using var service = await CreatePendingConsentServiceAsync(
+            AllowedLink,
+            new HashSet<Uri> { s_allowedOrigin });
 
         // Act
         var events = await RunAsync(new TestAgent(), service);
@@ -58,45 +61,27 @@ public class OAuthConsentPolicyHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_PendingUnsafeConsentWithoutAllowlist_FailsWithoutSurfacingLinkAsync()
+    public async Task CreateAsync_PendingInvalidConsentWithoutAllowlist_FailsWithoutSurfacingLinkAsync()
     {
-        // Arrange: without an allowlist the safe-HTTPS check still applies.
-        const string UnsafeLink = "http://external.example/authorize";
-        await using var service = await CreatePendingConsentServiceAsync(UnsafeLink, allowedOrigins: null);
+        // Arrange: without an allowlist the absolute HTTPS URL validation still applies.
+        const string InvalidLink = "http://external.example/authorize";
+        await using var service = await CreatePendingConsentServiceAsync(InvalidLink, allowedOrigins: null);
 
         // Act
         var events = await RunAsync(new TestAgent(), service);
 
         // Assert
-        AssertFailedWithoutLink(events, UnsafeLink);
-    }
-
-    [Fact]
-    public async Task CreateAsync_MarkerConsentOutsideAllowlist_FailsWithoutSurfacingLinkAsync()
-    {
-        // Arrange
-        await using var service = await CreateStartedServiceAsync(
-            [AllowedOrigin],
-            toolboxNames: [],
-            opener: (name, _, _) => Task.FromResult(
-                new FoundryToolboxService.ToolboxOpenResult(
-                    Cached: null,
-                    Consents: [new McpConsentInfo(name, $"{name}.tool", OtherLink)])));
-        var request = CreateRequest();
-        request.Tools.Add(new MCPTool("marker") { ServerUrl = new Uri("foundry-toolbox://marker-a") });
-
-        // Act
-        var events = await RunAsync(new TestAgent(), service, request);
-
-        // Assert
-        AssertFailedWithoutLink(events, OtherLink);
+        AssertFailedWithoutLink(events, InvalidLink);
     }
 
     [Fact]
     public async Task CreateAsync_PerCallConsentOutsideAllowlist_FailsWithoutSurfacingLinkAsync()
     {
         // Arrange
-        await using var service = await CreateStartedServiceAsync([AllowedOrigin], toolboxNames: [], opener: null);
+        await using var service = await CreateStartedServiceAsync(
+            new HashSet<Uri> { s_allowedOrigin },
+            toolboxNames: [],
+            opener: null);
 
         // Act
         var events = await RunAsync(new ConsentRequiringAgent(OtherLink), service);
@@ -122,7 +107,10 @@ public class OAuthConsentPolicyHandlerTests
     public async Task CreateAsync_PerCallConsentOutsideAllowlist_DoesNotSaveSessionAsync()
     {
         // Arrange
-        await using var service = await CreateStartedServiceAsync([AllowedOrigin], toolboxNames: [], opener: null);
+        await using var service = await CreateStartedServiceAsync(
+            new HashSet<Uri> { s_allowedOrigin },
+            toolboxNames: [],
+            opener: null);
         var sessionStore = new CountingSessionStore();
 
         // Act
@@ -137,7 +125,10 @@ public class OAuthConsentPolicyHandlerTests
     public async Task CreateAsync_PerCallConsentMatchingAllowlist_SavesSessionAsync()
     {
         // Arrange
-        await using var service = await CreateStartedServiceAsync([AllowedOrigin], toolboxNames: [], opener: null);
+        await using var service = await CreateStartedServiceAsync(
+            new HashSet<Uri> { s_allowedOrigin },
+            toolboxNames: [],
+            opener: null);
         var sessionStore = new CountingSessionStore();
 
         // Act
@@ -146,6 +137,32 @@ public class OAuthConsentPolicyHandlerTests
         // Assert: a turn waiting on consent is not a failure, so its session is kept for the retry.
         AssertConsentSurfaced(events, AllowedLink);
         Assert.Equal(1, sessionStore.SaveAttempts);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ConsumerStopsReading_DisposesAgentWithRequestConsentContextAsync()
+    {
+        // Arrange
+        await using var service = await CreateStartedServiceAsync(allowedOrigins: null, toolboxNames: [], opener: null);
+        var agent = new ConsentContextTrackingAgent();
+        var callerState = new RequestConsentState();
+        var previousState = McpConsentContext.Current.Value;
+        McpConsentContext.Current.Value = callerState;
+        try
+        {
+            // Act
+            await RunAsync(agent, service, stopAfterFirstOutput: true);
+
+            // Assert
+            Assert.NotNull(agent.RunState);
+            Assert.NotSame(callerState, agent.RunState);
+            Assert.Same(agent.RunState, agent.DisposeState);
+            Assert.Same(callerState, McpConsentContext.Current.Value);
+        }
+        finally
+        {
+            McpConsentContext.Current.Value = previousState;
+        }
     }
 
     private static void AssertFailedWithoutLink(List<ResponseStreamEvent> events, string rejectedLink)
@@ -163,23 +180,22 @@ public class OAuthConsentPolicyHandlerTests
         Assert.IsType<ResponseIncompleteEvent>(events[^1]);
     }
 
-    private static Task<FoundryToolboxService> CreatePendingConsentServiceAsync(string consentLink, IList<string>? allowedOrigins)
+    private static Task<FoundryToolboxService> CreatePendingConsentServiceAsync(string consentLink, ISet<Uri>? allowedOrigins)
         => CreateStartedServiceAsync(
             allowedOrigins,
             toolboxNames: ["tb"],
-            opener: (name, _, _) => Task.FromResult(
+            opener: (name, _) => Task.FromResult(
                 new FoundryToolboxService.ToolboxOpenResult(
                     Cached: null,
                     Consents: [new McpConsentInfo(name, $"{name}.tool", consentLink)])));
 
     private static async Task<FoundryToolboxService> CreateStartedServiceAsync(
-        IList<string>? allowedOrigins,
+        ISet<Uri>? allowedOrigins,
         IList<string> toolboxNames,
-        Func<string, string?, CancellationToken, Task<FoundryToolboxService.ToolboxOpenResult>>? opener)
+        Func<string, CancellationToken, Task<FoundryToolboxService.ToolboxOpenResult>>? opener)
     {
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
-            StrictMode = false,
             EndpointOverride = "http://127.0.0.1:1/unused",
             AllowedOAuthConsentOrigins = allowedOrigins,
         };
@@ -188,7 +204,7 @@ public class OAuthConsentPolicyHandlerTests
             options.ToolboxNames.Add(name);
         }
 
-        var service = new FoundryToolboxService(Options.Create(options), Mock.Of<TokenCredential>())
+        var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
         {
             ToolboxOpener = opener,
         };
@@ -211,15 +227,16 @@ public class OAuthConsentPolicyHandlerTests
         AIAgent agent,
         FoundryToolboxService toolboxService,
         CreateResponse? request = null,
-        AgentSessionStore? sessionStore = null)
+        AgentSessionStore? sessionStore = null,
+        bool stopAfterFirstOutput = false)
     {
         var services = new ServiceCollection();
-        services.AddSingleton(sessionStore ?? new InMemoryAgentSessionStore());
+        services.AddSingleton(sessionStore ?? new TestAgentSessionStore());
         services.AddSingleton(agent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var handler = new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
+            new FoundryResponsesServerOptions(),
             toolboxService);
 
         var context = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
@@ -230,6 +247,10 @@ public class OAuthConsentPolicyHandlerTests
         await foreach (var evt in handler.CreateAsync(request ?? CreateRequest(), context.Object, CancellationToken.None))
         {
             events.Add(evt);
+            if (stopAfterFirstOutput && evt is ResponseOutputItemAddedEvent)
+            {
+                break;
+            }
         }
 
         return events;
@@ -261,6 +282,12 @@ public class OAuthConsentPolicyHandlerTests
             AgentSessionStoreKey key,
             CancellationToken cancellationToken = default) =>
             new((AgentSession?)null);
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            default;
     }
 
     private abstract class AgentBase : AIAgent
@@ -301,6 +328,31 @@ public class OAuthConsentPolicyHandlerTests
         }
     }
 
+    private sealed class ConsentContextTrackingAgent : AgentBase
+    {
+        public RequestConsentState? RunState { get; private set; }
+
+        public RequestConsentState? DisposeState { get; private set; }
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session,
+            AgentRunOptions? options,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            this.RunState = McpConsentContext.Current.Value;
+            try
+            {
+                await Task.Yield();
+                yield return new AgentResponseUpdate { MessageId = "resp_msg_1", Contents = [new MeaiTextContent("hi")] };
+            }
+            finally
+            {
+                this.DisposeState = McpConsentContext.Current.Value;
+            }
+        }
+    }
+
     /// <summary>
     /// Mirrors <see cref="ConsentAwareMcpClientAIFunction"/> on a <c>-32006</c> response: records the
     /// consent on the request state, cancels the tool loop, and surfaces the cancellation.
@@ -315,7 +367,7 @@ public class OAuthConsentPolicyHandlerTests
         {
             var state = McpConsentContext.Current.Value
                 ?? throw new InvalidOperationException("The handler did not set the consent state.");
-            state.Pending = new McpConsentInfo("tb", "tb.tool", consentLink);
+            state.AddPendingConsent(new McpConsentInfo("tb", "tb.tool", consentLink));
             state.CancellationSource?.Cancel();
             await Task.Yield();
             cancellationToken.ThrowIfCancellationRequested();

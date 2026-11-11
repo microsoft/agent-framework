@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import _AsyncGeneratorContextManager  # pyright: ignore[reportPrivateUsage]
-from typing import TYPE_CHECKING, Any
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import urlsplit
 
-import httpx
+import httpx2 as httpx
 from agent_framework import (
     CachingSkillsSource,
     DeduplicatingSkillsSource,
@@ -21,8 +23,9 @@ from agent_framework import (
     SkillsSourceContext,
 )
 from agent_framework._telemetry import mark_feature_used
+from agent_framework.exceptions import ToolExecutionException
 from azure.ai.agentserver.core import get_request_context
-from azure.ai.agentserver.core.platform_headers import FOUNDRY_CALL_ID
+from mcp.types import Tool
 from typing_extensions import override
 
 from ._feature_usage import FeatureIndex
@@ -31,10 +34,13 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
     from datetime import timedelta
 
-    from agent_framework import Skill
+    from agent_framework import Content, Skill
+    from agent_framework._mcp import MCPSpecificApproval
     from azure.core.credentials import AccessToken, TokenCredential
     from azure.core.credentials_async import AsyncTokenCredential
     from mcp.client.session import ClientSession
+    from mcp.types import Prompt, ReadResourceResult
+    from pydantic import AnyUrl
 
     AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
@@ -44,10 +50,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_TOOLBOX_SCOPE = "https://ai.azure.com/.default"
 # Default timeout (seconds) for toolbox MCP requests.
 _DEFAULT_TIMEOUT = 120.0
+_DEFAULT_APPROVAL_MODE: Literal["always_require", "never_require"] = "never_require"
 # Environment variable used to inject platform-provided toolbox feature flags.
 _TOOLSET_FEATURES_ENV_VAR = "FOUNDRY_AGENT_TOOLSET_FEATURES"
 # Mandatory preview feature flag for Foundry toolbox requests.
 _MANDATORY_TOOLBOX_FEATURE = "Toolboxes=V1Preview"
+_strict_toolbox_header_provider: ContextVar[bool] = ContextVar(
+    "strict_toolbox_header_provider",
+    default=False,
+)
 
 
 def _build_toolbox_features_header(additional_features: str | None) -> str:
@@ -99,7 +110,7 @@ def _toolbox_name_from_endpoint(endpoint: str) -> str:
 
 
 class _ToolboxAuth(httpx.Auth):
-    """Injects a fresh bearer token and the platform call-id on every request.
+    """Inject a fresh bearer token and Toolbox feature flags on every request.
 
     Both the synchronous (``sync_auth_flow``) and asynchronous (``async_auth_flow``)
     httpx auth hooks are implemented, so the same auth works regardless of which
@@ -108,11 +119,11 @@ class _ToolboxAuth(httpx.Auth):
     present. Both synchronous :class:`~azure.core.credentials.TokenCredential` and
     asynchronous :class:`~azure.core.credentials_async.AsyncTokenCredential`
     credentials are supported: the async flow awaits an async credential's
-    ``get_token``, while the sync flow requires a synchronous credential. The
-    ``x-agent-foundry-call-id`` is read from the hosting context inherited by the
-    MCP transport task. That task captures context at connection time, so hosted
-    callers must use a request-owned toolbox/connection rather than sharing one
-    across requests. The header is absent when no call ID is supplied.
+    ``get_token``, while the sync flow requires a synchronous credential.
+
+    Platform request headers are injected separately through the MCP dynamic-header
+    provider so they are resolved in the invoking request task rather than the
+    connection-time transport task.
     """
 
     def __init__(self, credential: AzureCredentialTypes, scope: str) -> None:
@@ -123,10 +134,6 @@ class _ToolboxAuth(httpx.Auth):
 
     def _apply_headers(self, request: httpx.Request, token: AccessToken) -> None:
         request.headers["Authorization"] = f"Bearer {token.token}"
-        # A Request may be retried or reused after an earlier auth flow, so absence must clear prior caller context.
-        request.headers.pop(FOUNDRY_CALL_ID, None)
-        for key, value in get_request_context().platform_headers().items():
-            request.headers[key] = value
         request.headers["Foundry-Features"] = self._features_header
 
     def sync_auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
@@ -139,7 +146,7 @@ class _ToolboxAuth(httpx.Auth):
                 close()
             raise RuntimeError(
                 "An async credential cannot be used with the synchronous auth flow; "
-                "use a synchronous TokenCredential or drive the toolbox with an httpx.AsyncClient."
+                "use a synchronous TokenCredential or drive the toolbox with an httpx2.AsyncClient."
             )
         self._apply_headers(request, token)
         yield request
@@ -152,6 +159,67 @@ class _ToolboxAuth(httpx.Auth):
             token = await token
         self._apply_headers(request, token)
         yield request
+
+
+def _toolbox_approval_filter_matches(value: Any, tool: Tool, server_label: Any) -> bool:
+    """Validate a Foundry MCP approval filter and match its remote identity and annotations."""
+    error = f"Invalid Foundry Toolbox approval filter for tool {tool.name!r}."
+    if not isinstance(value, dict) or value.keys() - {"tool_names", "read_only"}:
+        raise ToolExecutionException(error)
+    approval_filter = cast(dict[str, Any], value)
+    names = approval_filter.get("tool_names")
+    if names is not None and (
+        not isinstance(names, list) or any(not isinstance(name, str) or not name for name in cast(list[object], names))
+    ):
+        raise ToolExecutionException(error)
+    read_only = approval_filter.get("read_only")
+    if read_only is not None and not isinstance(read_only, bool):
+        raise ToolExecutionException(error)
+
+    candidate_names = {tool.name}
+    if isinstance(server_label, str) and server_label:
+        prefix = f"{server_label}___"
+        if tool.name.startswith(prefix):
+            candidate_names.add(tool.name[len(prefix) :])
+    is_read_only = tool.annotations is not None and tool.annotations.read_only_hint is True
+    return (names is None or bool(candidate_names.intersection(cast(list[str], names)))) and (
+        read_only is None or read_only == is_read_only
+    )
+
+
+def _toolbox_approval_mode(item: Tool | Prompt) -> Literal["always_require", "never_require"]:
+    """Resolve Foundry approval metadata for a discovered tool.
+
+    This Foundry-only parser trusts the supplied readOnlyHint for read-only filters;
+    it does not verify tool behavior. Reuse elsewhere carries no security or
+    compatibility guarantees.
+    """
+    if not isinstance(item, Tool):
+        return _DEFAULT_APPROVAL_MODE
+    meta = item.meta
+    if meta is None or "tool_configuration" not in meta:
+        return _DEFAULT_APPROVAL_MODE
+    configuration = meta["tool_configuration"]
+    if not isinstance(configuration, dict):
+        raise ToolExecutionException(f"Invalid Foundry Toolbox tool_configuration for tool {item.name!r}.")
+    configuration = cast(dict[str, Any], configuration)
+    if "require_approval" not in configuration:
+        return _DEFAULT_APPROVAL_MODE
+    approval = configuration["require_approval"]
+    if approval == "always":
+        return "always_require"
+    if approval == "never":
+        return "never_require"
+    if not isinstance(approval, dict) or not approval or approval.keys() - {"always", "never"}:
+        raise ToolExecutionException(f"Invalid Foundry Toolbox require_approval for tool {item.name!r}.")
+    approval = cast(dict[str, Any], approval)
+    matches = {
+        policy: _toolbox_approval_filter_matches(value, item, configuration.get("server_label"))
+        for policy, value in approval.items()
+    }
+    if matches.get("always") or not matches.get("never"):
+        return "always_require"
+    return "never_require"
 
 
 class FoundryToolbox(MCPStreamableHTTPTool):
@@ -167,17 +235,42 @@ class FoundryToolbox(MCPStreamableHTTPTool):
     - forwards the platform per-request call-id (``x-agent-foundry-call-id``) so the
       Foundry MCP proxy can resolve the caller context server-side.
 
-    The call-id is read from the context inherited by the MCP connection's writer.
-    Construct this toolbox inside a request-scoped agent factory so it captures
-    the current caller's context, not a preceding request's.
+    Platform headers are resolved at each operation boundary before work crosses
+    into the MCP connection's writer task. The complete effective header set is
+    bound to the MCP session; when the caller context changes, the Toolbox
+    reconnects that session before sending the operation. Tool, prompt and
+    Toolbox skill-resource operations retain their own request headers. Operations
+    with identical effective headers may overlap; identity changes wait for active
+    operations before reconnecting.
+
     Because the toolbox endpoint is a first-party Foundry service, forwarding the
     opaque caller token to it is safe.
 
+    When ``approval_mode`` is omitted or ``None``, discovered functions honor
+    ``_meta.tool_configuration.require_approval``. Supported policies are ``"always"``,
+    ``"never"``, and ``always``/``never`` filters with ``tool_names`` and/or ``read_only``.
+    Names match the remote name or its name without the Toolbox server-label prefix;
+    local ``tool_name_prefix`` values do not affect metadata matching. Filter criteria
+    are combined, ``always`` wins overlaps, and unmatched tools require approval.
+    Missing configuration preserves the no-approval default. Invalid metadata raises
+    :class:`~agent_framework.exceptions.ToolExecutionException` during discovery.
+    Refreshes, including reconnects, reapply metadata to retained functions.
+    The metadata parser is supplied as an ``approval_mode`` callable. An explicit caller
+    policy (including a per-tool dict or callable) replaces the metadata policy.
+
+    This Foundry-specific integration trusts the supplied ``annotations.readOnlyHint``
+    when evaluating ``read_only`` filters, including rules that skip approval. It does
+    not independently verify the classification or enforce read-only behavior.
+    Applications must trust the classifications supplied through their configured Toolbox.
+    The private metadata parser provides no security or compatibility guarantees when
+    reused outside Foundry Toolbox; it is not a general-purpose MCP approval policy.
+
     Like any MCP tool, the connection lifecycle is driven by the agent: the hosting
     server enters a factory-created agent for its request and closes its toolbox
-    and owned HTTP client afterward. An instance-owned agent instead keeps that
-    connection until shutdown and is not appropriate for differing caller contexts.
-    Using it as an ``async with`` context manager directly is also supported.
+    and owned HTTP client afterward. A long-lived Toolbox is also supported: it
+    keeps its configuration and HTTP client while rebinding its MCP session to
+    changing platform headers. Using it as an ``async with`` context manager
+    directly is also supported.
 
     Examples:
         .. code-block:: python
@@ -209,6 +302,12 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         *,
         url: str | None = None,
         name: str | None = None,
+        approval_mode: (
+            Literal["always_require", "never_require"]
+            | MCPSpecificApproval
+            | Callable[[Tool | Prompt], Literal["always_require", "never_require"]]
+            | None
+        ) = None,
         token_scope: str = DEFAULT_TOOLBOX_SCOPE,
         load_prompts: bool = False,
         load_tools: bool = True,
@@ -229,6 +328,17 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 ``TOOLBOX_NAME``.
             name: The local tool name. When ``None``, it is taken from ``TOOLBOX_NAME``
                 or derived from the endpoint path.
+            approval_mode: Local execution approval policy. ``None`` (the default) selects the
+                Foundry metadata policy, which honors each tool's
+                ``_meta.tool_configuration.require_approval`` and uses the no-approval default
+                when configuration is absent. Unlike regular MCP tools, ``None`` does not
+                unconditionally mean no approval. Supply ``"never_require"`` to disable local
+                approval, ``"always_require"`` to require it for every function, an
+                ``MCPSpecificApproval`` dictionary for per-name rules, or a synchronous callable
+                receiving a discovered ``mcp.types.Tool`` or ``mcp.types.Prompt``. The callable
+                must return ``"always_require"`` or ``"never_require"`` for every item,
+                including its default decision. Every non-``None`` policy replaces the metadata
+                policy entirely; dictionary name-matching and defaults follow regular MCP rules.
             token_scope: The token scope to request. Defaults to the Foundry data-plane
                 scope.
             load_prompts: Whether to load prompts from the toolbox. Defaults to ``False``
@@ -239,6 +349,9 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 mapping configures names per remote function, with ``"*"`` as the global key.
             timeout: Request timeout in seconds for the underlying HTTP client.
             kwargs: Additional options forwarded to :class:`~agent_framework.MCPStreamableHTTPTool`.
+                A custom ``header_provider`` used with :meth:`as_skills_provider`
+                must resolve without runtime kwargs; skill/resource reads do not
+                have a function invocation context.
         """
         endpoint = url or _resolve_toolbox_endpoint()
         tool_name = name or os.environ.get("TOOLBOX_NAME") or _toolbox_name_from_endpoint(endpoint)
@@ -250,11 +363,33 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         self._credential = credential
         self._token_scope = token_scope
         self._timeout = timeout
+        caller_header_provider = cast(
+            Callable[[dict[str, Any]], dict[str, str]] | None,
+            kwargs.pop("header_provider", None),
+        )
+
+        def toolbox_header_provider(runtime_kwargs: dict[str, Any]) -> dict[str, str]:
+            headers: dict[str, str] = {}
+            if caller_header_provider is not None:
+                try:
+                    headers.update(caller_header_provider(runtime_kwargs))
+                except KeyError:
+                    if _strict_toolbox_header_provider.get() or self._connection_kwargs is not None:
+                        raise
+                    logger.debug(
+                        "Caller header_provider needs runtime values unavailable to an ambient Toolbox request; "
+                        "applying platform headers only.",
+                        exc_info=True,
+                    )
+            headers.update(get_request_context().platform_headers())
+            return headers
 
         super().__init__(
             name=tool_name,
             url=endpoint,
+            approval_mode=_toolbox_approval_mode if approval_mode is None else approval_mode,
             http_client=http_client,
+            header_provider=toolbox_header_provider,
             load_prompts=load_prompts,
             load_tools=load_tools,
             additional_tool_argument_names=additional_tool_argument_names,
@@ -266,6 +401,47 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         """Connect to the toolbox and mark its first meaningful activation."""
         await super().connect(reset=reset)
         mark_feature_used(FeatureIndex.FOUNDRY_TOOLBOX)
+
+    @override
+    async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
+        token = _strict_toolbox_header_provider.set(True)
+        try:
+            await super()._prepare_for_run(kwargs)
+        finally:
+            _strict_toolbox_header_provider.reset(token)
+
+    @override
+    async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
+        token = _strict_toolbox_header_provider.set(True)
+        try:
+            return await super().call_tool(tool_name, **kwargs)
+        finally:
+            _strict_toolbox_header_provider.reset(token)
+
+    @override
+    async def _call_prompt_with_runtime_kwargs(
+        self,
+        prompt_name: str,
+        prompt_arguments: Mapping[str, Any],
+        runtime_kwargs: Mapping[str, Any],
+    ) -> str:
+        token = _strict_toolbox_header_provider.set(True)
+        try:
+            return await super()._call_prompt_with_runtime_kwargs(
+                prompt_name,
+                prompt_arguments,
+                runtime_kwargs,
+            )
+        finally:
+            _strict_toolbox_header_provider.reset(token)
+
+    @override
+    async def get_prompt(self, prompt_name: str, **kwargs: Any) -> str:
+        token = _strict_toolbox_header_provider.set(True)
+        try:
+            return await super().get_prompt(prompt_name, **kwargs)
+        finally:
+            _strict_toolbox_header_provider.reset(token)
 
     @override
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
@@ -281,15 +457,44 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         return super().get_mcp_client()
 
     @override
-    async def close(self) -> None:
-        """Close the MCP session and toolbox HTTP client while preserving credentials and timeout for reconnection."""
+    async def _close_connection(self) -> None:
+        """Close the MCP session before its HTTP client, including after waiter cancellation."""
+        async with self._exclusive_header_access():
+            try:
+                await super()._close_connection()
+            finally:
+                # The owner may still need HTTP for teardown after its waiter is cancelled.
+                await self._lifecycle_idle.wait()
+                client = self._httpx_client
+                if client is not None:
+                    self._httpx_client = None
+                    await client.aclose()
+
+    async def _read_resource(self, uri: AnyUrl) -> ReadResourceResult:
+        """Read a Toolbox resource under the current platform-header identity."""
+        headers = self._effective_resource_headers()
+        connection = self._connection
+        if not headers and connection is not None and not connection.is_framework_owned:
+            return await connection.read_resource(str(uri))
+        with self._http_headers(headers):
+            async with self._http_operation():
+                connection = self._require_connection()
+                return await connection.read_resource(str(uri))
+
+    def _effective_resource_headers(self) -> dict[str, str]:
+        """Resolve headers for a resource operation without caller runtime kwargs."""
+        token = _strict_toolbox_header_provider.set(True)
         try:
-            await super().close()
+            try:
+                return self._effective_headers({})
+            except KeyError as ex:
+                raise ToolExecutionException(
+                    "FoundryToolbox skill and resource reads cannot use a header_provider "
+                    "that requires runtime kwargs. Read required values from a closure or "
+                    "ContextVar, or use a request-owned Toolbox."
+                ) from ex
         finally:
-            client = self._httpx_client
-            if client is not None:
-                self._httpx_client = None
-                await client.aclose()
+            _strict_toolbox_header_provider.reset(token)
 
     def as_skills_provider(
         self,
@@ -314,6 +519,11 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         session and exposes them through a provider you can pass to an agent via
         ``context_providers=[...]``.
 
+        A custom Toolbox ``header_provider`` used with skills must resolve from
+        ambient state such as a closure or :class:`~contextvars.ContextVar`.
+        Skill/resource reads do not receive function runtime kwargs, so a provider
+        that requires them fails explicitly instead of sending incomplete headers.
+
         The toolbox must be **connected** before its skills are discovered (which
         happens lazily on the first agent run). Connect it by passing the toolbox to
         the agent via ``tools=`` -- set ``load_tools=False`` if you want skills only
@@ -331,11 +541,10 @@ class FoundryToolbox(MCPStreamableHTTPTool):
                 skills; see :class:`~agent_framework.SkillsProvider`.
             disable_caching: When ``True``, re-query the toolbox on every agent run,
                 re-reading ``skill://index.json`` each time. When ``False`` (the
-                default), the toolbox's skill discovery is cached after the first run
-                so the index is read once. The toolbox's advertised skill set is the
-                same for every caller (the per-request call-id governs execution/
-                authorization, not which skills are listed), so a single shared cache
-                is safe.
+                default), the toolbox's skill discovery is cached while the effective
+                platform-header identity is unchanged. Changing the call ID discards
+                the previous cache before discovery so skill bodies and archive
+                resources loaded for one caller are not reused by another.
             cache_refresh_interval: Optional duration after which the cached skill
                 discovery is considered stale and re-read from the toolbox on the next
                 agent run. Useful when a toolbox's attached skills change over the
@@ -401,13 +610,20 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         if archive_max_uncompressed_size_bytes is not None:
             archive_options["archive_max_uncompressed_size_bytes"] = archive_max_uncompressed_size_bytes
 
-        # The toolbox advertises the same skill set to every caller (the per-request
-        # call-id governs execution/authorization, not which skills are listed), so a
-        # single shared cache is safe. SkillsProvider won't auto-cache a caller source,
-        # so we compose the caching ourselves.
+        # SkillsProvider won't auto-cache a caller source, so compose a bounded
+        # single-identity cache here. Replacing (rather than keying) the cache on
+        # identity changes avoids retaining one bucket per high-cardinality call ID.
         source: SkillsSource = _FoundryToolboxSkillsSource(self, archive_options=archive_options)
         if not disable_caching:
-            source = DeduplicatingSkillsSource(CachingSkillsSource(source, refresh_interval=cache_refresh_interval))
+            source = DeduplicatingSkillsSource(
+                _FoundryToolboxCachingSkillsSource(
+                    source,
+                    identity_provider=lambda: tuple(
+                        sorted((name.lower(), value) for name, value in self._effective_resource_headers().items())
+                    ),
+                    refresh_interval=cache_refresh_interval,
+                )
+            )
         return SkillsProvider(
             source,
             source_id=source_id,
@@ -418,36 +634,68 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         )
 
 
+class _FoundryToolboxResourceSession:
+    """Expose identity-scoped resource reads through a session-like adapter."""
+
+    def __init__(self, toolbox: FoundryToolbox) -> None:
+        self._toolbox = toolbox
+
+    async def read_resource(self, uri: AnyUrl) -> ReadResourceResult:
+        return await self._toolbox._read_resource(uri)  # pyright: ignore[reportPrivateUsage]
+
+
+class _FoundryToolboxCachingSkillsSource(SkillsSource):
+    """Cache skills only while the effective Toolbox header identity is unchanged."""
+
+    def __init__(
+        self,
+        source: SkillsSource,
+        *,
+        identity_provider: Callable[[], tuple[tuple[str, str], ...]],
+        refresh_interval: timedelta | None,
+    ) -> None:
+        self._source = source
+        self._identity_provider = identity_provider
+        self._refresh_interval = refresh_interval
+        self._lock = asyncio.Lock()
+        self._identity: tuple[tuple[str, str], ...] | None = None
+        self._cache: CachingSkillsSource | None = None
+
+    async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
+        identity = self._identity_provider()
+        async with self._lock:
+            if self._cache is None or identity != self._identity:
+                self._identity = identity
+                self._cache = CachingSkillsSource(self._source, refresh_interval=self._refresh_interval)
+            return await self._cache.get_skills(context)
+
+
 class _FoundryToolboxSkillsSource(SkillsSource):
     """Discovers skills from a connected :class:`FoundryToolbox` MCP session.
 
     The toolbox's MCP ``session`` is established lazily when the toolbox connects
     (via the agent or an ``async with`` block) and is **replaced** with a new
-    object whenever the toolbox reconnects. Skills are therefore bound to a
-    ``session_provider`` that resolves the toolbox's current session on every
-    fetch, so cached skills keep using the live session instead of a closed one.
+    object whenever the toolbox reconnects. Skills are therefore bound to an
+    identity-scoped resource adapter that resolves the current session while
+    holding a Toolbox operation lease, so cached skills keep using the live
+    session instead of a closed one.
     """
 
     def __init__(self, toolbox: FoundryToolbox, *, archive_options: dict[str, Any] | None = None) -> None:
         self._toolbox = toolbox
+        self._resource_session = _FoundryToolboxResourceSession(toolbox)
         # Explicitly-set MCPSkillsSource archive kwargs; empty means use its defaults.
         self._archive_options: dict[str, Any] = archive_options or {}
 
-    def _require_session(self) -> ClientSession:
-        """Return the toolbox's current MCP session, or raise if not connected."""
-        session = self._toolbox.session
-        if session is None:
-            raise RuntimeError(
-                "FoundryToolbox is not connected, so its skills cannot be discovered. "
-                "Pass the toolbox to the agent (tools=...) or enter it as an async "
-                "context manager before the agent runs."
-            )
-        return session
+    def _resource_session_provider(self) -> ClientSession:
+        """Return a session-compatible adapter that scopes each resource read."""
+        return cast("ClientSession", self._resource_session)
 
     async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
-        # Fail fast at discovery if not connected, then hand the source a provider
-        # (not a fixed session) so skills survive a reconnect that swaps the session.
-        self._require_session()
-        return await MCPSkillsSource(session_provider=self._require_session, **self._archive_options).get_skills(
-            context
-        )
+        # Hand the source a provider (not a fixed session) so every resource read
+        # resolves the current caller identity and survives a reconnect that swaps
+        # the underlying session.
+        return await MCPSkillsSource(
+            session_provider=self._resource_session_provider,
+            **self._archive_options,
+        ).get_skills(context)

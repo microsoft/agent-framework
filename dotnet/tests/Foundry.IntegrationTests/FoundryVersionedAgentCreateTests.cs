@@ -189,31 +189,40 @@ public class FoundryVersionedAgentCreateTests
     {
         // Arrange — create agent version with OpenAPI tool using native Azure.AI.Projects SDK types.
         string AgentName = FoundryVersionedAgentFixture.GenerateUniqueAgentName("OpenAPITestAgent");
-        const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code.";
+        const string AgentInstructions = "You are a helpful assistant that uses the postal code API to retrieve location details. Always use the API when answering postal code questions.";
 
-        const string CountriesOpenApiSpec = """
+        const string PostalCodeOpenApiSpec = """
         {
           "openapi": "3.1.0",
           "info": {
-            "title": "REST Countries API",
-            "description": "Retrieve information about countries by currency code",
-            "version": "v3.1"
+            "title": "Zippopotam.us API",
+            "description": "Retrieve location details for a postal code",
+            "version": "1.0"
           },
           "servers": [
             {
-              "url": "https://restcountries.com/v3.1"
+              "url": "https://api.zippopotam.us"
             }
           ],
           "paths": {
-            "/currency/{currency}": {
+            "/{country}/{postalCode}": {
               "get": {
-                "description": "Get countries that use a specific currency code (e.g., USD, EUR, GBP)",
-                "operationId": "GetCountriesByCurrency",
+                "description": "Get location details for a postal code",
+                "operationId": "GetPostalCodeDetails",
                 "parameters": [
                   {
-                    "name": "currency",
+                    "name": "country",
                     "in": "path",
-                    "description": "Currency code (e.g., USD, EUR, GBP)",
+                    "description": "Two-letter country code",
+                    "required": true,
+                    "schema": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "name": "postalCode",
+                    "in": "path",
+                    "description": "Postal code",
                     "required": true,
                     "schema": {
                       "type": "string"
@@ -222,20 +231,31 @@ public class FoundryVersionedAgentCreateTests
                 ],
                 "responses": {
                   "200": {
-                    "description": "Successful response with list of countries",
+                    "description": "Successful response with location details",
                     "content": {
                       "application/json": {
                         "schema": {
-                          "type": "array",
-                          "items": {
-                            "type": "object"
+                          "type": "object",
+                          "properties": {
+                            "country": {
+                              "type": "string"
+                            },
+                            "post code": {
+                              "type": "string"
+                            },
+                            "places": {
+                              "type": "array",
+                              "items": {
+                                "type": "object"
+                              }
+                            }
                           }
                         }
                       }
                     }
                   },
                   "404": {
-                    "description": "No countries found for the currency"
+                    "description": "Postal code not found"
                   }
                 }
               }
@@ -246,11 +266,11 @@ public class FoundryVersionedAgentCreateTests
 
         // Step 1: Create the OpenAPI function definition and agent version using native SDK types.
         var openApiFunction = new OpenApiFunctionDefinition(
-            "get_countries",
-            BinaryData.FromString(CountriesOpenApiSpec),
+            "get_postal_code",
+            BinaryData.FromString(PostalCodeOpenApiSpec),
             new OpenApiAnonymousAuthenticationDetails())
         {
-            Description = "Retrieve information about countries by currency code"
+            Description = "Retrieve location details for a postal code"
         };
 
         var definition = new DeclarativeAgentDefinition(model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
@@ -274,30 +294,19 @@ public class FoundryVersionedAgentCreateTests
             Assert.NotNull(retrievedVersion);
 
             // Step 3: Call RunAsync to trigger the server-side OpenAPI function.
-            var result = await agent.RunAsync("What countries use the Euro (EUR) as their currency? Please list them.");
+            var result = await agent.RunAsync("Use the API to look up US postal code 90210. Include the place name, state, latitude, and longitude exactly as returned by the API.");
 
             // Step 4: Validate the OpenAPI tool was invoked server-side.
             // Note: Server-side OpenAPI tools (executed within the Responses API via AgentReference)
             // do not surface as FunctionCallContent in the MEAI abstraction — the API handles the full
-            // tool loop internally. We validate tool invocation by asserting the response contains
-            // multiple specific country names that the model would need API data to enumerate accurately.
+            // tool loop internally. We validate tool invocation using the exact location details returned
+            // by the API.
             var text = result.ToString();
             Assert.NotEmpty(text);
-
-            // The response must mention multiple well-known Eurozone countries — requiring several
-            // correct entries makes it highly unlikely the model answered purely from parametric knowledge.
-            int matchCount = 0;
-            foreach (var country in new[] { "Germany", "France", "Italy", "Spain", "Portugal", "Netherlands", "Belgium", "Austria", "Ireland", "Finland" })
-            {
-                if (text.Contains(country, StringComparison.OrdinalIgnoreCase))
-                {
-                    matchCount++;
-                }
-            }
-
-            Assert.True(
-                matchCount >= 3,
-                $"Expected response to list at least 3 Eurozone countries from the OpenAPI tool, but found {matchCount}. Response: {text}");
+            Assert.Contains("Beverly Hills", text, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("California", text, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("34.0901", text, StringComparison.Ordinal);
+            Assert.Contains("-118.4065", text, StringComparison.Ordinal);
         }
         finally
         {

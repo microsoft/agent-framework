@@ -1,0 +1,77 @@
+name: Other Issue
+description: Report a documentation, process, or repository problem
+title: "[Issue]: "
+type: task
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for problems that are not SDK bugs or feature requests.
+        Ask usage questions in
+        [Discussions](https://github.com/microsoft/agent-framework/discussions).
+        Report security vulnerabilities according to
+        [SECURITY.md](https://github.com/microsoft/agent-framework/security/policy).
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Documentation
+        - Build or CI
+        - Repository maintenance
+        - Contribution process
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is incorrect, missing, or difficult?
+      placeholder: Describe the problem and its impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Provide links, examples, screenshots, or reproduction steps that demonstrate the problem.
+      placeholder: Include enough information for a maintainer to verify the issue.
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired-outcome
+    attributes:
+      label: Desired Outcome
+      description: What should change?
+      placeholder: Describe the expected result without assuming a particular implementation.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: language
+    attributes:
+      label: Language
+      description: Which implementation does this issue affect?
+      options:
+        - Both
+        - .NET
+        - Python
+        - Not Applicable
+      default: 3
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I will wait for explicit maintainer agreement before starting implementation of a non-trivial change.
+          required: true

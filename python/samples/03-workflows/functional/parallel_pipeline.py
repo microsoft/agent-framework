@@ -47,7 +47,9 @@ async def research_pipeline(topic: str) -> str:
     #
     # Tip: if any of these were wrapped with @step (e.g. an expensive agent call),
     # the pattern is identical — @step composes with asyncio.gather, so each
-    # branch is independently cached on HITL resume or checkpoint restore.
+    # branch is independently cached by its arguments on HITL resume or checkpoint
+    # restore. Use replay_key when arguments are opaque or do not uniquely identify
+    # non-interchangeable concurrent calls to the same step.
     web, papers, news = await asyncio.gather(
         research_web(topic),
         research_papers(topic),

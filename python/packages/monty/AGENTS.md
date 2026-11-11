@@ -35,7 +35,12 @@ from agent_framework.monty import (
   (mirrors `HyperlightCodeActProvider.workspace_root`)
 - `file_mounts` — sequence of `FileMountInput` (str shorthand,
   `(host_path, mount_path)` tuple, or `FileMount`)
-- `resource_limits` — Monty `ResourceLimits` TypedDict
+- `resource_limits` — Monty 1.x `ResourceLimits` keys; legacy `max_duration_secs`
+  maps to `max_feed_duration_secs`, and supplying both is an error
+- `include_detailed_errors` — keyword-only Boolean, default `False`. Host failures become generic
+  `RuntimeError`s and execution errors omit raw details. Trusted opt-in preserves original diagnostics.
+  The flag is not a code input, is independent of outer-client error/logging settings, and is copied
+  into run snapshots and serializable state.
 - `tool_description_format` — keyword-only
   `Literal["compact", "json"] | Mapping[str, Literal["compact", "json"]] = "compact"`.
   Selects parameter documentation in both the description and instructions.
@@ -70,8 +75,11 @@ Tool-management methods on both classes: `add_tools`, `get_tools`,
   written to `read-write` mounts as `Content.from_data` items.
 - **`_monty_bridge.py`** — `InlineCodeBridge` and `generate_type_stubs`,
   adapted from the reference Monty CodeAct repo. Pauses on `FunctionSnapshot`
-  to dispatch host calls, then resumes; supports direct typed tool calls,
-  the `call_tool` fallback, `asyncio.gather` fan-out, and forwards
+  to dispatch host calls, then resumes; supports direct typed tool calls
+  (keyword arguments only; the generated stubs are keyword-only, omit parameters
+  guest code cannot supply such as an injected context, `self`, `*args` and
+  `**kwargs`, and the bridge rejects positional arguments), the `call_tool`
+  fallback, `asyncio.gather` fan-out, and forwards
   ``limits`` / type-check options via `pool.checkout(...)`, and ``mount`` /
   ``print_callback`` via `session.feed_start(...)`.
 - **`_instructions.py`** — dynamic instruction / tool-description builders

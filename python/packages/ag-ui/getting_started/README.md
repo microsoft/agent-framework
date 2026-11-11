@@ -170,7 +170,7 @@ AG-UI is a protocol that enables:
 
 Before you begin, ensure you have the following:
 
-- Python 3.10 or later
+- Python 3.11–3.15
 - Azure OpenAI service endpoint and deployment configured
 - Azure CLI installed and authenticated (for DefaultAzureCredential)
 - User has the `Cognitive Services OpenAI Contributor` role for the Azure OpenAI resource
@@ -241,8 +241,10 @@ agent = Agent(
 # Create FastAPI app
 app = FastAPI(title="AG-UI Server")
 
-# Register the AG-UI endpoint
-add_agent_framework_fastapi_endpoint(app, agent, "/")
+# Register the local single-user AG-UI endpoint.
+# For production, replace single_user=True with an authorization_scope_resolver
+# backed by authenticated request context.
+add_agent_framework_fastapi_endpoint(app, agent, "/", single_user=True)
 
 if __name__ == "__main__":
     import uvicorn

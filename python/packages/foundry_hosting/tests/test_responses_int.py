@@ -26,7 +26,7 @@ import time
 from collections.abc import Callable
 from importlib import import_module
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Never, cast
 from unittest.mock import MagicMock
 
 import httpx
@@ -44,11 +44,10 @@ from agent_framework import (
     handler,
     tool,
 )
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
 from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponsesServerOptions
 from azure.identity import AzureCliCredential
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
-from typing_extensions import Never
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 
@@ -92,10 +91,10 @@ async def get_weather(location: Annotated[str, "The city name"]) -> str:
 def history_server(request: pytest.FixtureRequest) -> ResponsesHostServer:
     """Create a real Foundry server for each model-history source."""
     client = FoundryChatClient(credential=AzureCliCredential())  # pyrefly: ignore[bad-argument-type]
-    agent = Agent(
+    agent = Agent[FoundryChatOptions](
         client=client,  # ty: ignore[invalid-argument-type]
         instructions="You are a concise assistant. Keep answers very short (one or two sentences).",
-        default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+        default_options={"store": True},
     )
     return ResponsesHostServer(
         agent,
@@ -108,11 +107,11 @@ def history_server(request: pytest.FixtureRequest) -> ResponsesHostServer:
 def history_server_with_tools(request: pytest.FixtureRequest) -> ResponsesHostServer:
     """Create a real Foundry tool-calling server for each model-history source."""
     client = FoundryChatClient(credential=AzureCliCredential())  # pyrefly: ignore[bad-argument-type]
-    agent = Agent(
+    agent = Agent[FoundryChatOptions](
         client=client,  # ty: ignore[invalid-argument-type]
         instructions="You are a concise assistant. Use the provided tools when appropriate. Keep answers very short.",
         tools=[get_weather],
-        default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+        default_options={"store": True},
     )
     return ResponsesHostServer(
         agent,
@@ -753,14 +752,14 @@ class TestReasoningHostedMcpReplay:
             allowed_tools=["microsoft_docs_search"],
             approval_mode="never_require",
         )
-        agent = Agent(
+        agent = Agent[FoundryChatOptions](
             client=client,  # ty: ignore[invalid-argument-type]
             instructions=(
                 "Always use the Microsoft Learn MCP tool to answer documentation questions. "
                 "Keep the final answer to one short sentence."
             ),
             tools=[learn_mcp],
-            default_options={  # pyrefly: ignore[bad-argument-type]
+            default_options={
                 "store": False,
                 "reasoning": {"effort": "low", "summary": "auto"},
                 "include": ["reasoning.encrypted_content"],

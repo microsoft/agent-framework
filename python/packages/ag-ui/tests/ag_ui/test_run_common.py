@@ -13,6 +13,7 @@ from ag_ui.core.events import (
     ReasoningMessageContentEvent,
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
+    ToolCallStartEvent,
 )
 from agent_framework import Content, Message
 
@@ -28,6 +29,7 @@ from agent_framework_ag_ui._run_common import (
     FlowState,
     _build_run_finished_event,
     _close_reasoning_block,
+    _emit_content,
     _emit_mcp_tool_result,
     _emit_text_reasoning,
     _emit_tool_result,
@@ -620,7 +622,7 @@ class TestEmitToolResultWithState:
         approval_event = _make_approval_tool_result_events([content])[0]
         approval_snapshot = _resolved_tool_result_snapshot_messages(
             [Message(role="tool", contents=[content], message_id="approval-result")]
-        )["mcp-1"]
+        )[("mcp-1", 1)][0]
         assert json.loads(approval_event.content) == host_payload
         assert approval_snapshot["content"] == "Summary"
         assert json.loads(approval_snapshot[_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY]) == host_payload
@@ -646,8 +648,8 @@ class TestEmitToolResultWithState:
         snapshot = _build_messages_snapshot(flow, []).messages[-1].model_dump(by_alias=True, exclude_none=True)
         approval_event = _make_approval_tool_result_events([content])[0]
         approval_snapshot = _resolved_tool_result_snapshot_messages([Message(role="tool", contents=[content])])[
-            "mcp-empty"
-        ]
+            ("mcp-empty", 1)
+        ][0]
 
         assert getattr(result_event, _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY) == []
         assert flow.tool_results[-1]["content"] == ""
@@ -683,8 +685,8 @@ class TestEmitToolResultWithState:
         )
         approval_event = _make_approval_tool_result_events([content])[0]
         approval_snapshot = _resolved_tool_result_snapshot_messages([Message(role="tool", contents=[content])])[
-            "mcp-display"
-        ]
+            ("mcp-display", 1)
+        ][0]
 
         assert json.loads(result_event.content) == display_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert flow.tool_results[-1]["content"] == "Summary"
@@ -1108,3 +1110,49 @@ class TestReasoningCoalescing:
         assert id1 is not None
         assert id2 is not None
         assert id1 != id2, "New turn should get a new reasoning message_id"
+
+
+def test_replayed_declaration_only_calls_start_each_tool_call_once() -> None:
+    """Two declaration-only calls replayed after streaming must not re-emit START (#9638)."""
+    flow = FlowState()
+    streamed = [
+        Content.from_function_call(call_id="call_a", name="get_weather", arguments='{"city": "NYC"}'),
+        Content.from_function_call(call_id="call_b", name="get_time", arguments='{"zone": "UTC"}'),
+    ]
+    replayed = [
+        Content.from_function_call(call_id="call_a", name="get_weather"),
+        Content.from_function_call(call_id="call_b", name="get_time"),
+    ]
+    events = []
+    for content in [*streamed, *replayed]:
+        events.extend(_emit_content(content, flow))
+
+    starts = [e for e in events if isinstance(e, ToolCallStartEvent)]
+    assert sorted(e.tool_call_id for e in starts) == ["call_a", "call_b"]
+    ids = [entry["id"] for entry in flow.pending_tool_calls]
+    assert sorted(ids) == ["call_a", "call_b"]
+
+
+def test_reused_provider_call_id_starts_a_new_occurrence() -> None:
+    """A later distinct call reusing a completed provider call_id must START again (#9638)."""
+    flow = FlowState()
+    streamed = [
+        Content.from_function_call(call_id="call_x", name="get_weather", arguments='{"city": "NYC"}'),
+    ]
+    for content in streamed:
+        _emit_content(content, flow)
+    _emit_content(Content.from_function_result(call_id="call_x", result="72F"), flow)
+    second = [
+        Content.from_function_call(call_id="call_x", name="get_weather", arguments='{"city": "LA"}'),
+    ]
+    events = []
+    for content in second:
+        events.extend(_emit_content(content, flow))
+
+    starts = [e for e in events if isinstance(e, ToolCallStartEvent)]
+    assert [e.tool_call_id for e in starts] == ["call_x"]
+    assert flow.tool_calls_by_id["call_x"]["function"]["arguments"] == '{"city": "LA"}'
+    assert "call_x" not in flow.tool_calls_ended
+    # The first occurrence already ended; only the reused, still-open one may
+    # receive an END from the end-of-run loop.
+    assert [tc["id"] for tc in flow.get_pending_without_end()] == ["call_x"]

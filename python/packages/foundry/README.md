@@ -8,6 +8,27 @@ This package supports `azure-ai-projects>=2.2.0,<2.8.0`. Projects 2.5 and later 
 `openai>=3.0.0`, so `agent-framework-foundry` requires `agent-framework-openai>=1.14.2`,
 which supports both OpenAI 2.x and 3.x.
 
+## Chat client lifecycle
+
+Use `async with FoundryChatClient(...)` or `async with FoundryAgent(...)` to release owned connections, or call
+`await client.close()` explicitly when using a chat client without a context manager. Chat clients close their
+derived OpenAI connection, including when a timeout-configured copy shares its transport. They also close the
+project connection if they created it. A supplied `project_client` and credential remain caller-owned; manage the
+credential's context outside the chat client or agent. Cleanup does not delete remote agents or conversations.
+
+## Tool ownership for preconfigured Foundry agents
+
+`FoundryAgent` connects to a PromptAgent or HostedAgent whose instructions, tool declarations, and tool-selection
+behavior are configured in Microsoft Foundry. The `tools=` argument supplies only the local Python implementations
+for function declarations already present on that remote agent; it does not replace or restrict the remote tool
+inventory.
+
+Per-run `tool_choice` restrictions and `allow_multiple_tool_calls` values cannot be sent with an agent reference and
+are ignored with a warning. The framework's unrestricted `tool_choice="auto"` default is omitted silently. Configure
+tool behavior on the remote Foundry agent, or use `FoundryChatClient` when tool selection must vary per request.
+`FunctionMiddleware` and tool approval policies can authorize local Python execution, but they do not change tools
+that execute inside the remote Foundry agent.
+
 ## Tracing an existing Foundry agent
 
 Install Azure Monitor to connect client and service traces:
@@ -50,9 +71,17 @@ The client uses the project for authentication and converts a
 `https://<resource>.services.ai.azure.com/api/projects/<project>` endpoint to the documented resource-scoped
 `https://<resource>.openai.azure.com/openai/v1/` model route. The existing `FOUNDRY_MODELS_ENDPOINT` and
 `FOUNDRY_MODELS_API_KEY` configuration remains available for Foundry Models inference endpoints. A Models endpoint is
-required for image embedding models. If both project and Models endpoints are configured only through environment
-variables, the Models endpoint is retained for backward compatibility; pass `project_endpoint` explicitly to select
-the project OpenAI deployment.
+required for image embedding models unless an `ImageEmbeddingsClient` is supplied. If both project and Models
+endpoints are configured only through environment variables, the Models endpoint is retained for backward
+compatibility; pass `project_endpoint` explicitly to select the project OpenAI deployment.
+
+A preconfigured `EmbeddingsClient` or `ImageEmbeddingsClient` can be passed as `text_client` or `image_client`.
+The injected client is the transport for that modality and takes precedence over constructor connection settings,
+environment settings, and framework defaults, so no endpoint, API key, credential, or Foundry environment is
+required for it. `model` and `image_model` keep their usual explicit-argument, environment, then default
+resolution. The other modality is created only when a request needs it and enough settings are available.
+For example, an injected `image_client` can be combined with project configuration for text embeddings;
+the project text transport is initialized only when a request includes text.
 
 ## Evaluations
 
@@ -81,6 +110,10 @@ For manual control, construct public `EvalItem` instances and pass them to
 entry points for existing traces, response IDs, and registered targets.
 
 ## Concurrent reuse
+
+When a Foundry agent is used through `as_tool(propagate_session=True)`, application-owned state propagates
+between the parent and child, but service-owned session handles do not. Each delegated invocation has its own
+service session. This also applies to an `Agent` configured with a `RawFoundryAgentChatClient`.
 
 A `FoundryChatClient` instance can be shared by concurrent asynchronous calls on the same event loop. Streaming,
 non-streaming, and mixed calls are supported. Keep mutable run state isolated by creating a separate `Agent` and

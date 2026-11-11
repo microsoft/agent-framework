@@ -10,15 +10,14 @@
 // README.md.
 //
 // Required environment variables:
-//   AZURE_AI_PROJECT_ENDPOINT (local-dev) OR FOUNDRY_PROJECT_ENDPOINT (hosted runtime)
-//                                     - Foundry project endpoint. The Foundry hosted
-//                                       runtime auto-injects FOUNDRY_PROJECT_ENDPOINT; locally
-//                                       set AZURE_AI_PROJECT_ENDPOINT (the AF-repo convention).
+//   FOUNDRY_PROJECT_ENDPOINT           - Foundry project endpoint. The Foundry hosted
+//                                       runtime auto-injects it; set it locally for `dotnet run`.
 //   TOOLBOX_NAME                      - Name of the Foundry Toolbox to load
 //                                       (default: auth-paths-toolbox)
 //
 // Optional:
-//   AZURE_AI_MODEL_DEPLOYMENT_NAME    - Model deployment name (default: gpt-4o)
+//   FOUNDRY_MODEL (or AZURE_AI_MODEL_DEPLOYMENT_NAME)
+//                                     - Model deployment name (default: gpt-4o)
 //   AGENT_NAME                        - Defaults to "hosted-toolbox-auth-paths-agent".
 //
 // The Foundry.Hosting package builds the toolbox proxy URL from FOUNDRY_PROJECT_ENDPOINT
@@ -29,8 +28,6 @@
 // listed above) are reserved by the Foundry container platform and rejected by the
 // agent-create API. Use TOOLBOX_NAME, not FOUNDRY_TOOLBOX_NAME, for sample-owned config.
 
-#pragma warning disable OPENAI001 // FoundryAITool.CreateHostedMcpToolbox is experimental
-
 using Azure.AI.Projects;
 using Azure.Identity;
 using DotNetEnv;
@@ -40,18 +37,10 @@ using Microsoft.Agents.AI.Foundry.Hosting;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-// Project endpoint resolution order:
-//   1. FOUNDRY_PROJECT_ENDPOINT — auto-injected by the Foundry hosted runtime.
-//   2. AZURE_AI_PROJECT_ENDPOINT — the convention developers set locally for `dotnet run`.
-// When deployed, only (1) is available; the AF-repo sample convention to set (2) at
-// deploy time fails silently because the platform reserves all FOUNDRY_* env-var names
-// and rejects them at agent-create time. Read both, prefer the platform-injected one.
 string endpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
-    ?? System.Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException(
-        "Neither FOUNDRY_PROJECT_ENDPOINT (platform-injected in hosted runtime) " +
-        "nor AZURE_AI_PROJECT_ENDPOINT (local-dev convention) is set.");
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = FirstNonBlank(
+    System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
     System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     "gpt-4o")!;
 string toolboxName = FirstNonBlank(
@@ -63,16 +52,8 @@ string agentName = FirstNonBlank(
 
 var credential = new DefaultAzureCredential();
 
-// Notes on toolbox wiring — there are two ways to attach a Foundry Toolbox to an agent:
-//   - Server-side "baked-in" (what this sample uses): calling AddFoundryToolboxes(credential, name)
-//     below registers the toolbox with the Foundry.Hosting layer, which resolves that
-//     toolbox's MCP tools once at startup and automatically makes them available to the
-//     agent on every request. The agent code does nothing per request.
-//   - Per-request / caller-driven (NOT used here): a client can attach a toolbox for a
-//     single call by placing a FoundryAITool.CreateHostedMcpToolbox(name) marker in the
-//     request body's tool list.
-// Because this sample bakes the toolbox in on the server, it uses AddFoundryToolboxes and
-// does NOT put the CreateHostedMcpToolbox marker in the agent's `tools:` array.
+// AddFoundryToolboxService registers the toolbox with the Foundry.Hosting layer, which discovers
+// its MCP tools at startup and automatically makes them available on every request.
 AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
     .AsAIAgent(
         model: deploymentName,
@@ -92,11 +73,15 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
 // mapped it), so the sample stays free of platform plumbing.
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddFoundryResponses(agent);
-// Pre-register the toolbox name so FoundryToolboxService resolves the foundry-toolbox://
-// marker at request time. With FOUNDRY_PROJECT_ENDPOINT injected by the platform, startup
-// MCP tools/list against the toolbox proxy is typically <100ms in-region.
+builder.AddFoundryResponses(agent);
+// With FOUNDRY_PROJECT_ENDPOINT injected by the platform, startup MCP tools/list against
+// the toolbox proxy is typically <100ms in-region.
+#if USE_LOCAL_AGENT_FRAMEWORK_SOURCE
+builder.Services.AddFoundryToolboxService(credential, toolboxName);
+#else
+// Published 1.27 uses the previous extension name. Remove this branch after the next release.
 builder.Services.AddFoundryToolboxes(credential, toolboxName);
+#endif
 
 var app = builder.Build();
 app.MapFoundryResponses();

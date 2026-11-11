@@ -21,7 +21,7 @@ Environment variables:
 
 async def main() -> None:
     agent = FoundryAgent(
-        project_endpoint="https://your-project.services.ai.azure.com",
+        project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
         agent_name="my-prompt-agent",
         agent_version="1.0",
         credential=AzureCliCredential(),

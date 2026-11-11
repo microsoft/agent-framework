@@ -2,6 +2,23 @@
 
 **FIDES**  is a comprehensive security system for AI agents. This developer guide describes the deterministic prompt injection defense system implemented in the agent framework. The system provides label-based security mechanisms to defend against prompt injection attacks by tracking integrity and confidentiality of content throughout agent execution.
 
+> [!WARNING]
+> **Combining FIDES with CodeAct providers is currently unsupported**, including
+> [Monty](../../../packages/monty/README.md) and
+> [Hyperlight](../../../packages/hyperlight/README.md). FIDES's per-tool guarantees
+> apply to invocations routed through its function middleware. Host-tool calls
+> inside generated code bypass that middleware; nested calls and intermediate
+> code values do not receive its policy enforcement or label tracking. Checking
+> the outer `execute_code` invocation does not enforce the policies of individual
+> tools called inside it, and sandbox isolation does not supply FIDES enforcement.
+>
+> CodeAct logs a warning for recognized FIDES tool metadata, but this is diagnostic
+> only: execution is not blocked, and defaults can apply to unannotated tools.
+> No warning does not imply support or safety. Keep tools that require FIDES as
+> direct agent tools rather than CodeAct-managed tools, or disable CodeAct for
+> workflows requiring those guarantees. Host functions must independently enforce
+> authorization and destination restrictions.
+
 ## Context Provider Pattern with SecureAgentConfig!
 
 **`SecureAgentConfig` is now a `ContextProvider`** — add it to any agent with a single `context_providers=[config]` line. It automatically injects security tools, instructions, and middleware via the `before_run()` hook. No security knowledge required from developers.
@@ -1077,10 +1094,18 @@ Configure tool security requirements in the `@tool` decorator:
 ```
 
 Hidden variable references in tool arguments are expanded recursively, but their stored labels remain attached to
-the invocation. A tool with `accepts_untrusted=False` is blocked, audited, or sent for policy approval before it can
-receive hidden untrusted data. `accepts_untrusted=True` permits blind forwarding without exposing that data to the
-model context. It does not bypass `max_allowed_confidentiality`; hidden private data still cannot flow to a public
-sink. Argument labels do not rewrite result labels.
+the invocation. FIDES resolves a detached copy for label and approval binding, then blocks, audits, or requests policy
+approval before it mutates the live arguments or runs Pydantic validators. Validators and the tool body receive hidden
+values only after the policy permits the call. `accepts_untrusted=True` permits blind forwarding without exposing that
+data to the model context. It does not bypass `max_allowed_confidentiality`; hidden private data still cannot flow to
+a public sink. Argument labels do not rewrite result labels. After a policy violation is approved, validator
+normalization must preserve the approved resolved invocation; a changed value fails closed before the tool body runs.
+
+FIDES metadata keys and values are exact and case-sensitive. Misspelled or incorrectly cased FIDES-like keys,
+unknown label values, and non-boolean `accepts_untrusted` declarations are blocked as an `invalid_policy`
+configuration violation instead of falling back to a less restrictive policy. Unrelated integration metadata remains
+allowed. FIDES binds the exact tool object, normalized policy, and canonical USER_IDENTITY principal set through
+terminal execution and retries, so later middleware cannot replace the authorization policy after preflight.
 
 **Approval model:**
 - Use `approval_mode="always_require"` for normal human-in-the-loop approval on a specific tool.

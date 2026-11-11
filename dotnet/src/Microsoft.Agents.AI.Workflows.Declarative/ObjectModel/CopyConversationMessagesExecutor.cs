@@ -19,7 +19,9 @@ internal sealed class CopyConversationMessagesExecutor(CopyConversationMessages 
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
-        string conversationId = this.Evaluator.GetValue(this.Model.ConversationId).Value;
+        string conversationId = this.GetNonSensitiveValue(
+            this.Evaluator.GetValue(this.Model.ConversationId),
+            ConversationIdLocation);
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? _);
 
         IEnumerable<ChatMessage>? inputMessages = this.GetInputMessages();

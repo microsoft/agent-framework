@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = [
 #     "agent-framework-foundry",
 #     "azure-identity",
@@ -34,11 +34,14 @@ Prerequisites:
 
 async def main() -> None:
     """Generate text embeddings through a Foundry project."""
-    async with AzureCliCredential() as credential, FoundryEmbeddingClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_EMBEDDING_MODEL"],
-        credential=credential,
-    ) as client:
+    async with (
+        AzureCliCredential() as credential,
+        FoundryEmbeddingClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_EMBEDDING_MODEL"],
+            credential=credential,
+        ) as client,
+    ):
         # 1. Generate a single embedding.
         result = await client.get_embeddings(["Hello, world!"])
         print(f"Single embedding dimensions: {result[0].dimensions}")

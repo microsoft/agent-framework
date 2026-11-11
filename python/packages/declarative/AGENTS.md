@@ -14,20 +14,37 @@ YAML/JSON-based declarative agent and workflow definitions.
 
 Both state classes validate object attribute names but leave dictionary keys unchanged.
 
+`DefaultHttpRequestHandler(max_response_body_bytes=...)` defaults to a 10 MiB
+wire and decoded-stage body limit, including redirect and authentication responses.
+It supports identity, gzip, and deflate, rejects unsupported or incomplete encodings,
+and closes response streams without closing caller-owned clients.
+HTTPX is constrained to the 0.27 and 0.28 series; focused CI checks both
+series because response caching and default-header integration use its internals.
+
 ## MCP Handler Lifetimes
 
-`DefaultMCPToolHandler` caches/coalesces sessions only without a `client_provider`.
-With a provider, every invocation (including `tools/list`) gets a fresh tool/session,
-even if the provider returns `None` or a shared HTTP client. Invocation cleanup closes
-the session and any internally owned fallback client, never caller-owned HTTP clients.
-Shutdown waits for active provider-backed invocations to clean up. Calling `aclose()`
-from an active invocation's context (including inherited child tasks and cleanup)
-raises `RuntimeError` before changing handler state; shutdown must run outside that
-context or after invocation completion.
+`DefaultMCPToolHandler` creates a fresh tool/session for every invocation, including
+`tools/list`, with or without a `client_provider`. A provider may return `None` or a
+shared HTTP client without sharing protocol sessions. Invocation cleanup closes
+the session and any internally owned HTTP client, never caller-owned HTTP clients.
+The handler forwards its configurable `max_discovery_pages` and `max_discovery_items`
+limits to every internally created `MCPStreamableHTTPTool`.
+The handler has no cache, `aclose()`, or async context manager. It accepts the
+legacy `cache_max_size` parameter as a deprecated no-op for compatibility:
+non-`None` values emit `DeprecationWarning` without validation, and omission or
+`None` emits no warning. The parameter never enables session sharing.
+Hosts own admission, deadlines, cancellation, and shutdown of active calls; cancel
+and await them before closing any borrowed HTTP client.
 
-Per-invocation sessions intentionally add connection overhead and lose server
-session continuity between invocations;
-shared session ownership requires an explicitly scoped custom `MCPToolHandler`.
+Provider, connection, discovery, and transport failures propagate and fail the
+action, including after approval. Remote tool error responses remain
+`MCPToolResult(is_error=True)`; executors do not convert raised exceptions into results.
+
+Per-invocation sessions add connection overhead and intentionally lose implicit
+server session continuity across calls, approval waits, and checkpoint resumes.
+Applications requiring continuity must use explicit remote state handles or an
+explicitly scoped custom `MCPToolHandler`. No Core workflow scope or checkpoint
+migration is involved.
 
 ## MCP Approval Context
 

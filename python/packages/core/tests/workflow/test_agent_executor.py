@@ -576,6 +576,130 @@ async def test_from_response_context_mode_custom_uses_filter() -> None:
     assert seen[0].role == "user" and "hello" in (seen[0].text or "")
 
 
+def test_ensure_trailing_user_turn_defaults_to_false() -> None:
+    """ensure_trailing_user_turn should default to False, preserving existing behavior."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent)
+    assert executor._ensure_trailing_user_turn is False  # pyright: ignore[reportPrivateUsage]
+
+
+def test_build_invocation_messages_noop_when_flag_disabled() -> None:
+    """When the flag is off, the returned messages match the cache without modification."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, ensure_trailing_user_turn=False)
+    executor._cache = [
+        Message(role="user", contents=["go"]),
+        Message(role="assistant", contents=["W-OK"]),
+    ]
+    messages = executor._build_invocation_messages()
+    assert len(messages) == 2
+    assert messages[-1].role == "assistant"
+    assert len(executor._cache) == 2
+
+
+def test_build_invocation_messages_noop_when_cache_not_assistant_ending() -> None:
+    """When the flag is on but the cache already ends on user/tool, nothing is appended."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, ensure_trailing_user_turn=True)
+    executor._cache = [
+        Message(role="user", contents=["go"]),
+        Message(role="assistant", contents=["W-OK"]),
+        Message(role="user", contents=["continue"]),
+    ]
+    messages = executor._build_invocation_messages()
+    assert len(messages) == 3
+    assert messages[-1].role == "user"
+    assert len(executor._cache) == 3
+
+
+def test_build_invocation_messages_appends_synthetic_user_turn_when_enabled() -> None:
+    """When the flag is on and cache ends on assistant, a synthetic user turn is
+    appended to the returned copy — but the original cache is not mutated."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, ensure_trailing_user_turn=True)
+    executor._cache = [
+        Message(role="user", contents=["go"]),
+        Message(role="assistant", contents=["W-OK"]),
+    ]
+    messages = executor._build_invocation_messages()
+    assert len(messages) == 3
+    assert messages[-1].role == "user"
+    assert "please continue" in (messages[-1].text or "")
+    assert len(executor._cache) == 2
+    assert executor._cache[-1].role == "assistant"
+
+
+def test_build_invocation_messages_noop_when_cache_empty() -> None:
+    """An empty cache must not raise or append anything, even with the flag enabled."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, ensure_trailing_user_turn=True)
+    assert executor._cache == []
+    messages = executor._build_invocation_messages()
+    assert messages == []
+    assert executor._cache == []
+
+
+async def test_synthetic_turn_does_not_leak_to_third_agent() -> None:
+    """The synthetic 'please continue.' must not appear in the third agent's
+    context — it is invocation-only and must not persist in full_conversation."""
+    a1 = _MessageCapturingAgent(id="first", name="First", reply_text="first reply")
+    a2 = _MessageCapturingAgent(id="second", name="Second", reply_text="second reply")
+    a3 = _MessageCapturingAgent(id="third", name="Third", reply_text="third reply")
+    exec_a = AgentExecutor(a1, id="exec_a")
+    exec_b = AgentExecutor(a2, id="exec_b", context_mode="full", ensure_trailing_user_turn=True)
+    exec_c = AgentExecutor(a3, id="exec_c", context_mode="full")
+    wf = WorkflowBuilder(start_executor=exec_a).add_edge(exec_a, exec_b).add_edge(exec_b, exec_c).build()
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+    seen = a3.last_messages
+    assert len(seen) == 3
+    for msg in seen:
+        assert "please continue" not in (msg.text or "")
+
+
+async def test_from_response_ensure_trailing_user_turn_end_to_end_full_mode() -> None:
+    """chained full mode context should get a synthetic  trailing user turn before the second agent runs,
+    when the flag is enabled."""
+
+    first = _MessageCapturingAgent(id="first", name="First", reply_text="first reply")
+    second = _MessageCapturingAgent(id="second", name="Second", reply_text="second reply")
+
+    exec_a = AgentExecutor(first, id="exec_a")
+    exec_b = AgentExecutor(second, id="exec_b", context_mode="full", ensure_trailing_user_turn=True)
+
+    wf = WorkflowBuilder(start_executor=exec_a).add_edge(exec_a, exec_b).build()
+
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+
+    seen = second.last_messages
+    assert len(seen) == 3
+    assert seen[0].role == "user" and "hello" in (seen[0].text or "")
+    assert seen[1].role == "assistant" and "first reply" in (seen[1].text or "")
+    assert seen[2].role == "user"
+
+
+async def test_from_response_without_ensure_trailing_user_turn_still_ends_on_assistant() -> None:
+    """Default (flag off) behavior is unchanged: chained context still ends on assistant."""
+    first = _MessageCapturingAgent(id="first", name="First", reply_text="first reply")
+    second = _MessageCapturingAgent(id="second", name="Second", reply_text="second reply")
+
+    exec_a = AgentExecutor(first, id="exec_a")
+    exec_b = AgentExecutor(second, id="exec_b", context_mode="full")
+
+    wf = WorkflowBuilder(start_executor=exec_a).add_edge(exec_a, exec_b).build()
+
+    async for ev in wf.run("hello", stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+
+    seen = second.last_messages
+    assert len(seen) == 2
+    assert seen[-1].role == "assistant"
+
+
 async def test_checkpoint_save_does_not_include_context_mode() -> None:
     """on_checkpoint_save should not include context_mode in the saved state."""
     agent = _CountingAgent(id="a", name="A")

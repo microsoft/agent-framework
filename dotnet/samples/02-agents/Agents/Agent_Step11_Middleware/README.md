@@ -23,6 +23,13 @@ Not all agents support function invocation middleware.
 
 Attempting to use function middleware on agents that do not wrap a ChatClientAgent or derives from it will throw an InvalidOperationException.
 
+> **Note:** Function invocation middleware applies to tools registered on the agent. This
+> includes tools passed to the `ChatClientAgent` constructor, passed to `AsAIAgent`, configured
+> through `ChatClientAgentOptions.ChatOptions.Tools`, or supplied for an individual run. These
+> tools are passed through `ChatOptions.Tools`. Functions added directly to
+> `FunctionInvokingChatClient.AdditionalTools` bypass this middleware entirely, so don't rely on
+> the middleware to enforce checks for those functions.
+
 ## Prerequisites
 
 1. Environment variables:

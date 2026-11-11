@@ -19,6 +19,8 @@ namespace Microsoft.Agents.AI;
 /// This decorator is intended to operate between the <see cref="FunctionInvokingChatClient"/> and the leaf
 /// <see cref="IChatClient"/> in a <see cref="ChatClientAgent"/> pipeline. It is activated when
 /// <see cref="ChatClientAgentOptions.RequirePerServiceCallChatHistoryPersistence"/> is <see langword="true"/>.
+/// For custom pipelines, use <see cref="ChatClientBuilderExtensions.UsePerServiceCallChatHistoryPersistence"/>
+/// to add this decorator.
 /// </para>
 /// <para>
 /// When active, it handles two complementary scenarios:
@@ -54,7 +56,7 @@ namespace Microsoft.Agents.AI;
 /// available or if the agent is not a <see cref="ChatClientAgent"/>.
 /// </para>
 /// </remarks>
-internal sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingChatClient
+public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingChatClient
 {
     /// <summary>
     /// A sentinel value returned on <see cref="ChatResponse.ConversationId"/> to signal
@@ -72,13 +74,13 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
     /// requests before forwarding to the inner client, so the underlying model never sees it.
     /// </para>
     /// </remarks>
-    internal const string LocalHistoryConversationId = "_agent_local_chat_history";
+    public const string LocalHistoryConversationId = "_agent_local_chat_history";
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PerServiceCallChatHistoryPersistingChatClient"/> class.
     /// </summary>
     /// <param name="innerClient">The underlying chat client that will handle the core operations.</param>
-    public PerServiceCallChatHistoryPersistingChatClient(IChatClient innerClient)
+    internal PerServiceCallChatHistoryPersistingChatClient(IChatClient innerClient)
         : base(innerClient)
     {
     }
@@ -145,6 +147,7 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var (agent, session) = GetRequiredAgentAndSession();
+        var runOptions = AIAgent.CurrentRunContext?.RunOptions;
         options = StripLocalHistoryConversationId(options);
 
         bool isServiceManaged = !string.IsNullOrEmpty(options?.ConversationId);
@@ -183,12 +186,19 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
 
         bool loopExitedNormally = false;
         bool serviceErrorOccurred = false;
+        bool continuationTokenReceived = false;
         try
         {
             bool hasUpdates;
             try
             {
                 hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ShouldNotifyProvidersOfPartialMessages(agent, ex, runOptions, skipSimulation || isServiceManaged || continuationTokenReceived, cancellationToken))
+            {
+                serviceErrorOccurred = true;
+                await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options, messagesForService).ConfigureAwait(false);
+                throw;
             }
             catch (Exception ex)
             {
@@ -201,6 +211,12 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             {
                 var update = enumerator.Current;
                 responseUpdates.Add(update.Clone());
+
+                // Track continuation tokens on the original update, because ChatResponseUpdate.Clone() does not copy them.
+                if (update.ContinuationToken is not null)
+                {
+                    continuationTokenReceived = true;
+                }
 
                 // If the service returned a real ConversationId on any update, remember that.
                 // Otherwise stamp our sentinel so FICC treats this as service-managed —
@@ -219,6 +235,12 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
                 try
                 {
                     hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ShouldNotifyProvidersOfPartialMessages(agent, ex, runOptions, skipSimulation || isServiceManaged || continuationTokenReceived, cancellationToken))
+                {
+                    serviceErrorOccurred = true;
+                    await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options, messagesForService).ConfigureAwait(false);
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -280,6 +302,26 @@ internal sealed class PerServiceCallChatHistoryPersistingChatClient : Delegating
             session.ConversationId = LocalHistoryConversationId;
         }
     }
+
+    /// <summary>
+    /// Determines whether providers should be notified of the partial messages of the current service call
+    /// after a cancellation, instead of being notified of a failure.
+    /// </summary>
+    /// <remarks>
+    /// This method is evaluated in exception filters, so it must not have side effects.
+    /// Callers pass <paramref name="skipPartialMessages"/> as <see langword="true"/> when chat history is not simulated by this
+    /// decorator (service-managed history, continuation or background runs) or when any received update carried a continuation
+    /// token. In the latter case, the caller can resume the run with the received token, and the resumed run persists the
+    /// request and the updates received so far, so persisting them here would duplicate them in the chat history.
+    /// </remarks>
+    private static bool ShouldNotifyProvidersOfPartialMessages(
+        ChatClientAgent agent,
+        Exception ex,
+        AgentRunOptions? runOptions,
+        bool skipPartialMessages,
+        CancellationToken cancellationToken) =>
+        !skipPartialMessages
+        && agent.ShouldNotifyProvidersOfPartialMessagesOnCancellation(ex, runOptions, cancellationToken);
 
     /// <summary>
     /// Notifies <see cref="ChatHistoryProvider"/>s of the input messages only (no response

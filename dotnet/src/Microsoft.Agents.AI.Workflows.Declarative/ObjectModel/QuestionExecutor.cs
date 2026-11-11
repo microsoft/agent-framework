@@ -45,20 +45,22 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         InitializablePropertyPath variable = Throw.IfNull(this.Model.Variable);
-        bool isValueUndefined = context.ReadState(variable.Path) is BlankValue;
+        EvaluationResult<bool> isValueUndefined = new(
+            context.ReadState(variable.Path) is BlankValue,
+            this.State.GetSensitivity(Throw.IfNull(variable.Path.VariableName), variable.Path.NamespaceAlias));
         // Snapshot prior-execution state before we mutate it below so the SkipQuestionMode
         // evaluation reflects whether this is the first time the action has run.
         bool hasExecutedPreviously = await this._hasExecuted.ReadAsync(context).ConfigureAwait(false);
-        bool proceed = this.Evaluator.GetValue(this.Model.AlwaysPrompt).Value;
+        bool proceed = this.GetNonSensitiveValue(this.Evaluator.GetValue(this.Model.AlwaysPrompt), "always prompt");
 
         if (!proceed)
         {
-            SkipQuestionMode mode = this.Evaluator.GetValue(this.Model.SkipQuestionMode).Value;
+            SkipQuestionMode mode = this.GetNonSensitiveValue(this.Evaluator.GetValue(this.Model.SkipQuestionMode), "skip question mode");
             proceed =
                 mode switch
                 {
-                    SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue => isValueUndefined || hasExecutedPreviously,
-                    SkipQuestionMode.AlwaysSkipIfVariableHasValue => isValueUndefined,
+                    SkipQuestionMode.SkipOnFirstExecutionIfVariableHasValue => hasExecutedPreviously || this.GetNonSensitiveValue(isValueUndefined, "question skip"),
+                    SkipQuestionMode.AlwaysSkipIfVariableHasValue => this.GetNonSensitiveValue(isValueUndefined, "question skip"),
                     SkipQuestionMode.AlwaysAsk => true,
                     _ => true,
                 };
@@ -159,7 +161,7 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
 
     private async ValueTask PromptAsync(IWorkflowContext context, int actualCount, CancellationToken cancellationToken)
     {
-        long repeatCount = this.Evaluator.GetValue(this.Model.RepeatCount).Value;
+        long repeatCount = this.GetNonSensitiveValue(this.Evaluator.GetValue(this.Model.RepeatCount), "repeat count");
         if (actualCount >= repeatCount)
         {
             EvaluationResult<DataValue> defaultValue = new(DataValue.Blank(), SensitivityLevel.None);

@@ -11,7 +11,7 @@ No real MCP server or network is exercised. See
 import sys
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 try:
@@ -27,7 +27,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 from agent_framework import Content, Message  # noqa: E402
-from agent_framework.exceptions import ToolExecutionException  # noqa: E402
+from agent_framework.exceptions import ToolException, ToolExecutionException  # noqa: E402
+from mcp.shared.exceptions import MCPError  # noqa: E402
 
 from agent_framework_declarative._workflows import (  # noqa: E402
     DECLARATIVE_STATE_KEY,
@@ -604,26 +605,34 @@ class TestErrorHandling:
         decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["Result"] == "Error: server down"
 
-    @pytest.mark.asyncio
-    async def test_tool_execution_exception_becomes_error_result(self) -> None:
-        handler = StubMcpHandler(raise_exc=ToolExecutionException("invalid arguments"))
-        factory = WorkflowFactory(mcp_tool_handler=handler)
-        workflow = factory.create_workflow_from_definition(_yaml(_action(output={"result": "Local.Result"})))
-        await workflow.run({})
-        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
-        assert decl["Local"]["Result"] == "Error: invalid arguments"
+    @pytest.mark.parametrize("require_approval", [False, True])
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ToolException("connection failed"),
+            ToolExecutionException("tool failure"),
+            httpx.ConnectError("dns fail"),
+            MCPError(-32603, "protocol error"),
+        ],
+    )
+    async def test_handler_exception_fails_workflow(self, error: Exception, require_approval: bool) -> None:
+        from agent_framework_declarative._workflows import ToolApprovalResponse
 
-    @pytest.mark.asyncio
-    async def test_httpx_error_becomes_error_result(self) -> None:
-        handler = StubMcpHandler(raise_exc=httpx.ConnectError("dns fail"))
+        handler = StubMcpHandler(raise_exc=error)
         factory = WorkflowFactory(mcp_tool_handler=handler)
-        workflow = factory.create_workflow_from_definition(_yaml(_action(output={"result": "Local.Result"})))
-        await workflow.run({})
-        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
-        result = decl["Local"]["Result"]
-        assert isinstance(result, str)
-        assert result.startswith("Error:")
-        assert "ConnectError" in result
+        workflow = factory.create_workflow_from_definition(
+            _yaml(_action(require_approval=require_approval, output={"result": "Local.Result"}))
+        )
+        if require_approval:
+            paused = await workflow.run({})
+            [request] = paused.get_request_info_events()
+            with pytest.raises(Exception) as excinfo:
+                await workflow.run(responses={request.request_id: ToolApprovalResponse(approved=True)})
+        else:
+            with pytest.raises(Exception) as excinfo:
+                await workflow.run({})
+        assert str(error) in str(excinfo.value)
+        assert handler.call_count == 1
 
     @pytest.mark.asyncio
     async def test_unexpected_exception_propagates(self) -> None:

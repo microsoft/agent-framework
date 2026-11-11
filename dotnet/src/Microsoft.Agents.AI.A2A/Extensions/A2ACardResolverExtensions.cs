@@ -22,11 +22,17 @@ namespace A2A;
 /// with A2A agents by handling the conversion from A2A clients to
 /// <see cref="A2AAgent"/> instances that implement the <see cref="AIAgent"/> interface.
 /// </para>
+/// <para>
+/// To select gRPC, also reference the SDK's <c>A2A.Grpc</c> package,
+/// call <c>A2A.Grpc.A2AGrpcClientRegistration.Register()</c> once during application startup,
+/// and include <see cref="ProtocolBindingNames.Grpc"/> in <see cref="A2AClientOptions.PreferredBindings"/>.
+/// Agent card discovery still uses HTTP. Client ownership follows <see cref="AgentCardExtensions"/>.
+/// </para>
 /// </remarks>
 public static class A2ACardResolverExtensions
 {
     /// <summary>
-    /// Retrieves an instance of <see cref="AIAgent"/> for an existing A2A agent.
+    /// Retrieves an instance of <see cref="A2AAgent"/> for an existing A2A agent.
     /// </summary>
     /// <remarks>
     /// This method can be used to access A2A agents that support the
@@ -41,8 +47,8 @@ public static class A2ACardResolverExtensions
     /// </param>
     /// <param name="loggerFactory">The logger factory for enabling logging within the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
-    public static async Task<AIAgent> GetAIAgentAsync(this A2ACardResolver resolver, HttpClient? httpClient = null, A2AClientOptions? options = null, ILoggerFactory? loggerFactory = null, CancellationToken cancellationToken = default)
+    /// <returns>An <see cref="A2AAgent"/> instance backed by the A2A agent.</returns>
+    public static async Task<A2AAgent> GetAIAgentAsync(this A2ACardResolver resolver, HttpClient? httpClient = null, A2AClientOptions? options = null, ILoggerFactory? loggerFactory = null, CancellationToken cancellationToken = default)
     {
         // Obtain the agent card from the resolver.
         var agentCard = await resolver.GetAgentCardAsync(cancellationToken).ConfigureAwait(false);
@@ -51,7 +57,7 @@ public static class A2ACardResolverExtensions
     }
 
     /// <summary>
-    /// Retrieves an instance of <see cref="AIAgent"/> for an existing A2A agent.
+    /// Retrieves an instance of <see cref="A2AAgent"/> for an existing A2A agent.
     /// </summary>
     /// <remarks>
     /// This method can be used to access A2A agents that support the
@@ -74,8 +80,8 @@ public static class A2ACardResolverExtensions
     /// </param>
     /// <param name="loggerFactory">The logger factory for enabling logging within the agent.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
-    public static async Task<AIAgent> GetAIAgentAsync(this A2ACardResolver resolver, A2AAgentOptions agentOptions, HttpClient? httpClient = null, A2AClientOptions? clientOptions = null, ILoggerFactory? loggerFactory = null, CancellationToken cancellationToken = default)
+    /// <returns>An <see cref="A2AAgent"/> instance backed by the A2A agent.</returns>
+    public static async Task<A2AAgent> GetAIAgentAsync(this A2ACardResolver resolver, A2AAgentOptions agentOptions, HttpClient? httpClient = null, A2AClientOptions? clientOptions = null, ILoggerFactory? loggerFactory = null, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(agentOptions);
 

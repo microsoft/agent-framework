@@ -24,7 +24,7 @@
 // approvals use the native OpenAI mcp_approval_response item.
 //
 // Required environment variables:
-//   AZURE_AI_PROJECT_ENDPOINT  - Foundry project endpoint, or the local dev server base
+//   FOUNDRY_PROJECT_ENDPOINT   - Foundry project endpoint, or the local dev server base
 //                                (e.g. http://localhost:8088/api/projects/local).
 //   AZURE_AI_AGENT_NAME        - The registered server-side agent name
 //                                (default: hosted-toolbox-auth-paths-agent).
@@ -44,9 +44,8 @@ using OpenAI.Responses;
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-Uri projectEndpoint = new(Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set."));
+Uri projectEndpoint = new(Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set."));
 
 string agentName = Environment.GetEnvironmentVariable("AZURE_AI_AGENT_NAME")
     ?? "hosted-toolbox-auth-paths-agent";
@@ -164,15 +163,21 @@ while (true)
                 bool approved = Console.ReadLine()?.Trim().Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false;
                 // Hosted MCP approval IDs use the mcpr_ wire prefix. They need the native OpenAI
                 // response item; CreateResponse produces the Agent Framework function-tool shape.
+                // When rejecting a function tool, tell the model not to retry the call.
                 AIContent decision = approval.RequestId.StartsWith("mcpr_", StringComparison.Ordinal)
                     ? new AIContent
                     {
                         RawRepresentation = new McpToolCallApprovalResponseItem(approval.RequestId, approved),
                     }
-                    : approval.CreateResponse(approved);
+                    : approved
+                        ? approval.CreateResponse(approved: true)
+                        : approval.CreateResponse(approved: false, reason: "The user rejected this tool call. Do not retry it.");
                 return new ChatMessage(ChatRole.User, [decision]);
             });
 
+            // Reuse the AgentSession so the client sends the same conversation id. An approval
+            // response belongs to that explicit conversation; previous_response_id alone selects
+            // the separate implicit-chain path, and the Responses API rejects sending both.
             response = await agent.RunAsync(decisions, session);
         }
 

@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from typing import Any, cast
 from unittest.mock import patch
 
+from openai import AsyncAzureOpenAI
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pytest import FixtureRequest, fixture, skip
@@ -59,6 +60,7 @@ def openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  #
         [
             "OPENAI_API_KEY",
             "OPENAI_ORG_ID",
+            "OPENAI_PROJECT_ID",
             "OPENAI_MODEL",
             "OPENAI_EMBEDDING_MODEL",
             "OPENAI_CHAT_COMPLETION_MODEL",
@@ -108,6 +110,7 @@ def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dic
         [
             "OPENAI_API_KEY",
             "OPENAI_ORG_ID",
+            "OPENAI_PROJECT_ID",
             "OPENAI_MODEL",
             "OPENAI_EMBEDDING_MODEL",
             "OPENAI_CHAT_COMPLETION_MODEL",
@@ -144,6 +147,23 @@ def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dic
         monkeypatch.setenv(key, value)  # type: ignore
 
     return env_vars
+
+
+@fixture
+def azure_sdk_client_factory() -> Callable[[str | None], AsyncAzureOpenAI]:
+    """Return a factory for dummy AsyncAzureOpenAI clients with an optional deployment."""
+
+    def create_client(deployment: str | None) -> AsyncAzureOpenAI:
+        kwargs: dict[str, Any] = {
+            "api_key": "dummy",
+            "azure_endpoint": "https://example.openai.azure.com",
+            "api_version": "2025-01-01-preview",
+        }
+        if deployment is not None:
+            kwargs["azure_deployment"] = deployment
+        return AsyncAzureOpenAI(**kwargs)
+
+    return create_client
 
 
 # region Observability fixtures

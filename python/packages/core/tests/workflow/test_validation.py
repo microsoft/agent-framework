@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -98,6 +98,25 @@ def test_edge_duplication_validation_fails():
     assert exc_info.value.validation_type == ValidationTypeEnum.EDGE_DUPLICATION
 
 
+def test_parameterized_output_to_bare_container_input_builds():
+    # A list[str] output going to a handler typed with plain `list` used to fail
+    # validation, although the message is a list at runtime.
+    class ListProducer(Executor):
+        @handler
+        async def produce(self, message: str, ctx: WorkflowContext[list[str]]) -> None:
+            await ctx.send_message([message])
+
+    class ListConsumer(Executor):
+        @handler
+        async def consume(self, messages: list, ctx: WorkflowContext[None, list]) -> None:  # type: ignore[type-arg]
+            await ctx.yield_output(messages)
+
+    producer = ListProducer(id="producer")
+    consumer = ListConsumer(id="consumer")
+
+    WorkflowBuilder(start_executor=producer).add_edge(producer, consumer).build()
+
+
 def test_type_compatibility_validation_fails():
     string_executor = StringExecutor(id="string_executor")
     int_executor = IntExecutor(id="int_executor")
@@ -127,6 +146,22 @@ def test_type_compatibility_from_any_source_passes():
     string_executor = StringExecutor(id="string_executor")
 
     workflow = WorkflowBuilder(start_executor=any_executor).add_edge(any_executor, string_executor).build()
+
+    assert workflow is not None
+
+
+def test_type_compatibility_from_literal_source_passes():
+    """An executor that sends a Literal type can connect to an executor that handles the literal values' type."""
+
+    class DecisionExecutor(Executor):
+        @handler
+        async def decide(self, message: str, ctx: WorkflowContext[Literal["approve", "reject"]]) -> None:
+            await ctx.send_message("approve")
+
+    decision_executor = DecisionExecutor(id="decision_executor")
+    string_executor = StringExecutor(id="string_executor")
+
+    workflow = WorkflowBuilder(start_executor=decision_executor).add_edge(decision_executor, string_executor).build()
 
     assert workflow is not None
 

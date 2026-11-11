@@ -12,9 +12,8 @@ import copy
 import importlib.metadata
 import inspect
 import logging
-import sys
 from collections.abc import Awaitable, Callable, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, TypedDict, overload
 
 from agent_framework import (
     AgentSession,
@@ -70,10 +69,6 @@ if TYPE_CHECKING:
         KnowledgeRetrievalMinimalReasoningEffort as KBRetrievalMinimalReasoningEffort,
     )
 
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
 
 # Runtime imports for agentic mode. Core knowledge base retrieval works on both the
 # stable/GA SDK (api-version 2026-04-01) and the preview SDK (api-version
@@ -682,7 +677,24 @@ class AzureAISearchContextProvider(ContextProvider):
         messages_list = list(context.input_messages)
 
         filtered_messages = [
-            msg for msg in messages_list if msg and msg.text and msg.text.strip() and msg.role in ["user", "assistant"]
+            msg
+            for msg in messages_list
+            if msg
+            and msg.role in ["user", "assistant"]
+            and (
+                (msg.text and msg.text.strip())
+                or (
+                    self.mode == "agentic"
+                    and self.retrieval_reasoning_effort in ["low", "medium"]
+                    and any(
+                        content.type in ["uri", "data"]
+                        and content.uri
+                        and content.media_type
+                        and content.media_type.startswith("image/")
+                        for content in msg.contents
+                    )
+                )
+            )
         ]
         if not filtered_messages:
             return

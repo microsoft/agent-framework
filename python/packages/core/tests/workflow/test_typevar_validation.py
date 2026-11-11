@@ -2,10 +2,9 @@
 
 """Tests for unresolved TypeVar detection during handler/executor registration."""
 
-from typing import TypeVar
+from typing import Never, TypeVar
 
 import pytest
-from typing_extensions import Never
 
 from agent_framework import (
     Executor,

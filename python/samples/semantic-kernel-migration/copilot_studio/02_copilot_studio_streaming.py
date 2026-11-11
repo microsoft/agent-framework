@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = [
 #     "agent-framework-copilotstudio",
 #     "python-dotenv",
@@ -47,10 +47,9 @@ async def run_semantic_kernel() -> None:
 async def run_agent_framework() -> None:
     from agent_framework.microsoft import CopilotStudioAgent
 
-    agent = CopilotStudioAgent(
-        name="TourGuide",
-        instructions="Provide travel recommendations in short bursts.",
-    )
+    # AF connects to an already-published Copilot Studio agent, so its instructions
+    # are configured in Copilot Studio rather than passed to the wrapper.
+    agent = CopilotStudioAgent(name="TourGuide")
     # AF streaming provides incremental AgentResponseUpdate objects.
     print("[AF][stream]", end=" ")
     async for update in agent.run("Plan a day in Copenhagen for foodies.", stream=True):

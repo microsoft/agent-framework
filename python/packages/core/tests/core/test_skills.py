@@ -78,7 +78,7 @@ class _NamedMockAgent(MockAgent):
 
 def _make_source_context(agent_name: str = "test-agent") -> SkillsSourceContext:
     """Build a :class:`SkillsSourceContext` for exercising skill sources in tests."""
-    return SkillsSourceContext(agent=_NamedMockAgent(agent_name))  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
+    return SkillsSourceContext(agent=_NamedMockAgent(agent_name))  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]  # ty: ignore[call-non-callable]
 
 
 # Shared context for the common case where the agent/session are irrelevant.
@@ -2091,7 +2091,7 @@ class TestInlineSkill:
     def test_skill_is_abstract(self) -> None:
         """Skill base class cannot be instantiated directly."""
         with pytest.raises(TypeError):
-            Skill()  # type: ignore[abstract]
+            Skill()  # type: ignore[abstract]  # ty: ignore[call-non-callable]
 
     def test_inline_skill_is_skill(self) -> None:
         """InlineSkill is a subclass of Skill."""
@@ -2581,6 +2581,86 @@ class TestFileBasedSkillParsing:
 # ---------------------------------------------------------------------------
 # Tests: _load_skill formatting
 # ---------------------------------------------------------------------------
+
+
+class TestFileSkillNameCollisions:
+    @pytest.mark.parametrize("kind", ["resource", "script"])
+    @pytest.mark.parametrize("names", [("readme.md", "README.md"), ("refs/one.md", "REFS/ONE.md")])
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_constructor_rejects_names_differing_only_by_case(
+        self, kind: str, names: tuple[str, str], reverse: bool
+    ) -> None:
+        names = (names[1], names[0]) if reverse else names
+        resources = [InlineSkillResource(name=name, content="data") for name in names]
+        scripts = [FileSkillScript(name=name, full_path=f"{_ABS}\\{name}") for name in names]
+        with pytest.raises(ValueError, match=f"{kind} names that differ only by case"):
+            FileSkill(
+                frontmatter=SkillFrontmatter(name="example", description="Example."),
+                content="Instructions.",
+                path=_ABS,
+                resources=resources if kind == "resource" else [],
+                scripts=scripts if kind == "script" else [],
+            )
+
+    async def test_resource_and_script_names_are_checked_separately(self) -> None:
+        resource = InlineSkillResource(name="run.py", content="data")
+        script = FileSkillScript(name="RUN.py", full_path=f"{_ABS}\\RUN.py")
+        skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="example", description="Example."),
+            content="Instructions.",
+            path=_ABS,
+            resources=[resource],
+            scripts=[script],
+        )
+        assert await skill.get_resource("RUN.PY") is resource
+        assert await skill.get_script("run.py") is script
+
+    @pytest.mark.parametrize("names", [("\u03a3.md", "\u03c2.md"), ("stra\u00dfe.md", "strasse.md")])
+    async def test_unicode_names_with_distinct_lowercase_keys_remain_distinct(self, names: tuple[str, str]) -> None:
+        resources = [InlineSkillResource(name=name, content=name) for name in names]
+        scripts = [FileSkillScript(name=name, full_path=f"{_ABS}\\{name}") for name in names]
+        skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="example", description="Example."),
+            content="Instructions.",
+            path=_ABS,
+            resources=resources,
+            scripts=scripts,
+        )
+
+        for resource, script in zip(resources, scripts):
+            assert await skill.get_resource(resource.name.lower()) is resource
+            assert await skill.get_script(script.name.lower()) is script
+
+    async def test_distinct_names_allow_case_insensitive_lookup(self) -> None:
+        names = ["readme.md", "refs/one.md", "REFS/two.md"]
+        resources = [InlineSkillResource(name=name, content=name) for name in names]
+        scripts = [FileSkillScript(name=name, full_path=f"{_ABS}\\{name}") for name in names]
+        skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="example", description="Example."),
+            content="Instructions.",
+            path=_ABS,
+            resources=resources,
+            scripts=scripts,
+        )
+        for resource, script in zip(resources, scripts):
+            assert await skill.get_resource(resource.name.upper()) is resource
+            assert await skill.get_script(script.name.upper()) is script
+
+    async def test_filesystem_collision_skips_only_affected_skill(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        _write_skill(tmp_path, "bad")
+        _write_skill(tmp_path, "good")
+        original = FileSkillsSource._discover_script_files
+
+        def discover_script_files(self: FileSkillsSource, skill_path: str, skill_name: str) -> list[str]:
+            return ["run.py", "RUN.py"] if skill_name == "bad" else original(self, skill_path, skill_name)
+
+        with patch.object(FileSkillsSource, "_discover_script_files", discover_script_files):
+            skills = await FileSkillsSource(tmp_path).get_skills(_SOURCE_CTX)
+
+        assert [skill.frontmatter.name for skill in skills] == ["good"]
+        assert "Skipping skill 'bad'" in caplog.text
 
 
 class TestLoadSkillFormatting:
@@ -7861,7 +7941,7 @@ class TestSkillsSourceContext:
 
     async def test_context_exposes_agent_and_session(self) -> None:
         """SkillsSourceContext carries the agent and optional session."""
-        agent = _NamedMockAgent()  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
+        agent = _NamedMockAgent()  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]  # ty: ignore[call-non-callable]
         ctx = SkillsSourceContext(agent=agent)
         assert ctx.agent is agent
         assert ctx.session is None

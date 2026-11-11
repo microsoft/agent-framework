@@ -2,6 +2,15 @@
 
 Instructions for AI coding agents working in the .NET codebase.
 
+## Public Consumer Skills
+
+The installable skills under `/skills/` guide high-level application-development choices. They are not documentation
+or a checklist of framework behavior. Follow the
+[consumer skill maintenance contract](../skills/README.md#repository-maintenance-contract). Do not update them merely
+because a public API, package, sample, or implementation changed.
+
+This restriction concerns public consumer skills, not repository task skills under `.github/skills/`.
+
 ## Build, Test, and Lint Commands
 
 See `./.github/skills/build-and-test/SKILL.md` for detailed instructions on building, testing, and linting projects.
@@ -40,6 +49,7 @@ using types like `IChatClient`, `FunctionInvokingChatClient`, `AITool`, `AIFunct
 - **Async**: Use `Async` suffix for methods returning `Task`/`ValueTask`
 - **Private classes**: Should be `sealed` unless subclassed
 - **Config**: Read from environment variables with `UPPER_SNAKE_CASE` naming
+- **String comparisons**: Use `string.Equals` with an explicit `StringComparison` (typically `Ordinal`) rather than `==`.
 - **Tests**: Add Arrange/Act/Assert comments; use Moq for mocking; test methods returning `Task`/`ValueTask` must use the `Async` suffix.
 
 ## Key Design Principles

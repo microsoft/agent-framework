@@ -85,6 +85,8 @@ public sealed class AnthropicClientExtensionsTests
 
         public ISkillService Skills => throw new NotImplementedException();
 
+        public IOrganizationService Organization => throw new NotImplementedException();
+
         public IBetaService Beta => throw new NotImplementedException();
 
         public IAnthropicClient WithOptions(Func<ClientOptions, ClientOptions> modifier)

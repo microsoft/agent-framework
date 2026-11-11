@@ -81,6 +81,47 @@ public class IsolationKeyScopedAgentSessionStoreTests
     }
 
     [Fact]
+    public async Task DeleteSessionAsync_AddsIsolationPartitionAsync()
+    {
+        // Arrange
+        var key = new AgentSessionStoreKey("session-1");
+        this._innerStoreMock
+            .Setup(x => x.DeleteSessionAsync(
+                this._agentMock.Object,
+                It.Is<AgentSessionStoreKey>(actual =>
+                    actual.SessionId == "session-1"
+                    && actual.Partitions != null
+                    && actual.Partitions["isolation"] == TestIsolationKey),
+                It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+        var store = this.CreateStore(TestIsolationKey);
+
+        // Act
+        await store.DeleteSessionAsync(this._agentMock.Object, key);
+
+        // Assert
+        this._innerStoreMock.VerifyAll();
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_StrictModeWithoutIsolationKey_ThrowsAsync()
+    {
+        // Arrange
+        var store = this.CreateStore(
+            isolationKey: null,
+            new IsolationKeyScopedAgentSessionStoreOptions { Strict = true });
+
+        // Act and assert
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.DeleteSessionAsync(
+                this._agentMock.Object,
+                new AgentSessionStoreKey("session-1")).AsTask());
+        this._innerStoreMock.Verify(
+            x => x.DeleteSessionAsync(It.IsAny<AIAgent>(), It.IsAny<AgentSessionStoreKey>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task GetOrCreateSessionAsync_ForwardsScopedKeyToSpecializedInnerStoreAsync()
     {
         // Arrange
@@ -291,6 +332,15 @@ public class IsolationKeyScopedAgentSessionStoreTests
             AIAgent agent,
             AgentSessionStoreKey key,
             AgentSession session,
+            CancellationToken cancellationToken = default)
+        {
+            this.Keys.Add(key);
+            return ValueTask.CompletedTask;
+        }
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
             CancellationToken cancellationToken = default)
         {
             this.Keys.Add(key);

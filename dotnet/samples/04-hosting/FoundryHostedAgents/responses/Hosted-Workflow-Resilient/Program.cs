@@ -17,8 +17,8 @@ Env.TraversePath().Load();
 var projectEndpoint = new Uri(System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set."));
 var deployment = FirstNonBlank(
-    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     "gpt-4o");
 var agentName = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-workflow-resilient";
 
@@ -53,7 +53,16 @@ AIAgent agent = new WorkflowBuilder(frenchAgent)
     .AsAIAgent(name: agentName);
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent, configure: options => options.ResilientBackground = true);
+// Repository builds use the unreleased direct-options API; source ZIPs target published 1.27.
+#if USE_LOCAL_AGENT_FRAMEWORK_SOURCE
+builder.AddFoundryResponses(
+    agent,
+    options: new FoundryResponsesServerOptions { ResilientBackground = true });
+#else
+builder.AddFoundryResponses(
+    agent,
+    configure: options => options.ResilientBackground = true);
+#endif
 
 var app = builder.Build();
 app.MapFoundryResponses();

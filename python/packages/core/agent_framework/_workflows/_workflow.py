@@ -11,7 +11,8 @@ import types
 import uuid
 import warnings
 import weakref
-from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
@@ -365,6 +366,7 @@ class Workflow(DictConvertible):
         self.start_executor_id = start_executor.id
         self.max_iterations = max_iterations
         self.name = name
+        self._generated_name: str | None = None
         self.description = description
         # Generate a unique ID for the workflow instance for monitoring purposes. This is not intended to be a
         # stable identifier across instances created from the same builder, for that, use the name field.
@@ -531,7 +533,7 @@ class Workflow(DictConvertible):
         | Mapping[str, Any]
         | None = None,
         client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-    ) -> AsyncIterable[WorkflowEvent]:
+    ) -> AsyncGenerator[WorkflowEvent]:
         """Private method to run workflow with proper tracing.
 
         All workflow entry points create a NEW workflow span. It is the responsibility
@@ -558,7 +560,7 @@ class Workflow(DictConvertible):
         """
         # Create workflow span that encompasses the entire execution
         attributes: dict[str, Any] = {OtelAttr.WORKFLOW_ID: self.id}
-        if self.name:
+        if self.name and self.name != self._generated_name:
             attributes[OtelAttr.WORKFLOW_NAME] = self.name
         if self.description:
             attributes[OtelAttr.WORKFLOW_DESCRIPTION] = self.description
@@ -644,20 +646,21 @@ class Workflow(DictConvertible):
 
                 # Activate the workflow span for each runner pull, then detach before yielding to callers.
                 runner_events = self._runner.run_until_convergence()
-                while True:
-                    with _activate_span(span):
-                        try:
-                            event = await anext(runner_events)
-                        except StopAsyncIteration:
-                            break
-                    yield event
+                async with aclosing(runner_events):
+                    while True:
+                        with _activate_span(span):
+                            try:
+                                event = await anext(runner_events)
+                            except StopAsyncIteration:
+                                break
+                        yield event
 
-                    if event.type == "request_info" and not emitted_in_progress_pending:
-                        emitted_in_progress_pending = True
-                        self._status = WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
-                        with _framework_event_origin():
-                            pending_status = WorkflowEvent.status(self._status)
-                        yield pending_status
+                        if event.type == "request_info" and not emitted_in_progress_pending:
+                            emitted_in_progress_pending = True
+                            self._status = WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
+                            with _framework_event_origin():
+                                pending_status = WorkflowEvent.status(self._status)
+                            yield pending_status
                 # Workflow runs until idle - emit final status based on whether requests are pending.
                 # Continuations such as cancellation may retain an existing sibling request without
                 # re-emitting its request_info event during this run.
@@ -680,7 +683,12 @@ class Workflow(DictConvertible):
                     yield event
 
                 # Surface structured failure details before propagating exception
-                details = WorkflowErrorDetails.from_exception(exc)
+                from ..observability import OBSERVABILITY_SETTINGS
+
+                details = WorkflowErrorDetails.from_exception(
+                    exc,
+                    include_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED,
+                )
                 with _framework_event_origin():
                     failed_event = WorkflowEvent.failed(details)
                 yield failed_event
@@ -688,12 +696,14 @@ class Workflow(DictConvertible):
                 with _framework_event_origin():
                     failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
                 yield failed_status
+                error_attributes = {
+                    "error.type": type(exc).__name__,
+                }
+                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+                    error_attributes["error.message"] = str(exc)
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,
-                    attributes={
-                        "error.message": str(exc),
-                        "error.type": type(exc).__name__,
-                    },
+                    attributes=error_attributes,
                 )
                 capture_exception(span, exception=exc)
                 raise
@@ -981,24 +991,27 @@ class Workflow(DictConvertible):
 
             initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
 
-            async for event in self._run_workflow_with_tracing(
-                initial_executor_fn=initial_executor_fn,
-                is_continuation=(message is None),
-                streaming=streaming,
-                tools=tools,
-                function_invocation_kwargs=function_invocation_kwargs,
-                client_kwargs=client_kwargs,
-            ):
-                if event.type == "request_info" and event.request_id in (responses or {}):
-                    # Don't yield request_info events for which we have responses to send -
-                    # these are considered "handled". This prevents the caller from seeing
-                    # events for requests they are already responding to.
-                    # This usually happens when responses are provided with a checkpoint
-                    # (restore then send), because the request_info events are stored in the
-                    # checkpoint and would be emitted on restoration by the runner regardless
-                    # of if a response is provided or not.
-                    continue
-                yield event
+            async with aclosing(
+                self._run_workflow_with_tracing(
+                    initial_executor_fn=initial_executor_fn,
+                    is_continuation=(message is None),
+                    streaming=streaming,
+                    tools=tools,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
+                )
+            ) as events:
+                async for event in events:
+                    if event.type == "request_info" and event.request_id in (responses or {}):
+                        # Don't yield request_info events for which we have responses to send -
+                        # these are considered "handled". This prevents the caller from seeing
+                        # events for requests they are already responding to.
+                        # This usually happens when responses are provided with a checkpoint
+                        # (restore then send), because the request_info events are stored in the
+                        # checkpoint and would be emitted on restoration by the runner regardless
+                        # of if a response is provided or not.
+                        continue
+                    yield event
         finally:
             # Whether this run is still the active one (no successor ``run()`` has
             # installed a new weakref since we started). Captured once because the

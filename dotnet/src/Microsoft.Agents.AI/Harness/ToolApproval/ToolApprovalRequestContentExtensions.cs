@@ -24,6 +24,12 @@ public static class ToolApprovalRequestContentExtensions
     /// <see cref="ToolApprovalResponseContent"/> with the <see cref="AlwaysApproveToolApprovalResponseContent.AlwaysApproveTool"/>
     /// flag set to <see langword="true"/>.
     /// </returns>
+    /// <remarks>
+    /// The resulting standing rule persists in session state and is not tied to the agent or tool instance that
+    /// created the request. Before reusing the session with a different agent or tool set, especially one that can
+    /// load tools from an outside source such as MCP, ensure the rule is still appropriate for every matching tool
+    /// name.
+    /// </remarks>
     public static AlwaysApproveToolApprovalResponseContent CreateAlwaysApproveToolResponse(
         this ToolApprovalRequestContent request,
         string? reason = null)
@@ -48,6 +54,12 @@ public static class ToolApprovalRequestContentExtensions
     /// <see cref="ToolApprovalResponseContent"/> with the <see cref="AlwaysApproveToolApprovalResponseContent.AlwaysApproveToolWithArguments"/>
     /// flag set to <see langword="true"/>.
     /// </returns>
+    /// <remarks>
+    /// The resulting standing rule persists in session state and is not tied to the agent or tool instance that
+    /// created the request. Before reusing the session with a different agent or tool set, especially one that can
+    /// load tools from an outside source such as MCP, ensure the rule is still appropriate for every matching tool
+    /// name and argument set. Otherwise, use a new session.
+    /// </remarks>
     public static AlwaysApproveToolApprovalResponseContent CreateAlwaysApproveToolWithArgumentsResponse(
         this ToolApprovalRequestContent request,
         string? reason = null)

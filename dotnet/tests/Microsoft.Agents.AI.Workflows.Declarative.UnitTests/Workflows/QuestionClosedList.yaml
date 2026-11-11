@@ -1,0 +1,33 @@
+﻿kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+  actions:
+
+    - kind: Question
+      id: question_color
+      variable: Local.SelectedColor
+      alwaysPrompt: false
+      repeatCount: 2
+      prompt: Please select a color
+      invalidPrompt: Please pick one of the listed colors.
+      defaultValue: option-2
+      defaultValueResponse: No valid color selected, using the default.
+      entity:
+        kind: EmbeddedEntity
+        definition:
+          kind: ClosedListEntity
+          items:
+            - id: option-1
+              displayName: red
+              synonyms:
+                - crimson
+            - id: option-2
+              displayName: yello
+        displayName: Multiple choice
+
+    - kind: SendActivity
+      id: activity_color
+      activity: |-
+        Selected: "{Local.SelectedColor}"

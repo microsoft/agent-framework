@@ -50,8 +50,8 @@ class OllamaEmbeddingOptions(EmbeddingGenerationOptions, total=False):
     truncate: bool
     """Whether to truncate input text that exceeds the model's context length.
 
-    When True, input that is too long will be silently truncated.
-    When False (default), the request will fail if input exceeds the context length.
+    When True (default), input that is too long will be silently truncated.
+    When False, the request will fail if input exceeds the context length.
     """
 
     keep_alive: float | str

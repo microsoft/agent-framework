@@ -6,7 +6,10 @@ from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 
+from scripts._toml import tomllib
 from scripts.dependencies._dependency_bounds_release_impl import (
     _PROBE_RESULT_PREFIX,
     ReleaseProbePlan,
@@ -15,9 +18,53 @@ from scripts.dependencies._dependency_bounds_release_impl import (
     _build_release_project_map,
     _changed_release_project_paths,
     _parse_probe_payload,
+    _validate_core_all_dependency_bounds,
     run_release_mode,
 )
 from scripts.dependencies.validate_dependency_bounds import main
+
+
+@pytest.mark.parametrize("python_version", ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"])
+@pytest.mark.parametrize(
+    ("sys_platform", "platform_machine", "supported"),
+    [
+        ("darwin", "x86_64", False),
+        ("darwin", "arm64", True),
+        ("linux", "x86_64", True),
+        ("linux", "aarch64", True),
+        ("linux", "armv7l", False),
+        ("win32", "AMD64", True),
+        ("win32", "ARM64", True),
+        ("win32", "x86_64", True),
+        ("win32", "aarch64", True),
+        ("win32", "x86", False),
+    ],
+)
+def test_foundry_local_dependencies_select_supported_environments(
+    python_version: str, sys_platform: str, platform_machine: str, supported: bool
+) -> None:
+    workspace = Path(__file__).resolve().parents[3]
+    core = tomllib.loads((workspace / "packages/core/pyproject.toml").read_text())["project"]
+    integration = tomllib.loads((workspace / "packages/foundry_local/pyproject.toml").read_text())["project"]
+    adapter = next(
+        req
+        for value in core["optional-dependencies"]["all"]
+        if (req := Requirement(value)).name == "agent-framework-foundry-local"
+    )
+    sdk = next(req for value in integration["dependencies"] if (req := Requirement(value)).name == "foundry-local-sdk")
+    environment = {
+        "python_version": python_version,
+        "sys_platform": sys_platform,
+        "platform_machine": platform_machine,
+    }
+
+    assert adapter.marker is not None
+    assert adapter.marker.evaluate(environment) == (supported and python_version in {"3.11", "3.12", "3.13", "3.14"})
+    assert sdk.marker is not None
+    assert sdk.marker.evaluate(environment) == supported
+    assert (python_version in SpecifierSet(integration["requires-python"])) == (
+        python_version in {"3.11", "3.12", "3.13", "3.14"}
+    )
 
 
 def _write_project(path: Path, content: str) -> None:
@@ -25,14 +72,14 @@ def _write_project(path: Path, content: str) -> None:
     (path / "pyproject.toml").write_text(content)
 
 
-def test_release_probe_uses_only_the_required_internal_dependency_closure(tmp_path: Path) -> None:
+def test_core_all_dependencies_are_bounded_to_the_current_workspace_versions(tmp_path: Path) -> None:
     _write_project(
         tmp_path,
         """
 [project]
 name = "agent-framework"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["agent-framework-core[all]==1.2.0"]
 
 [tool.uv.workspace]
@@ -48,7 +95,154 @@ name = "agent_framework_meta"
 [project]
 name = "agent-framework-core"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+all = [
+  "agent-framework-connector>=1.0.0,<2",
+  "agent-framework-external>=1.0.0b1,<2",
+]
+
+[tool.flit.module]
+name = "agent_framework"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/connector",
+        """
+[project]
+name = "agent-framework-connector"
+version = "1.0.0"
+requires-python = ">=3.11"
+dependencies = ["agent-framework-core>=1,<2"]
+
+[tool.flit.module]
+name = "agent_framework_connector"
+""",
+    )
+
+    _validate_core_all_dependency_bounds(_build_release_project_map(tmp_path))
+
+
+@pytest.mark.parametrize("all_config", ["", "[project.optional-dependencies]\nall = []"])
+def test_core_all_dependency_bounds_reject_missing_or_empty_extra(tmp_path: Path, all_config: str) -> None:
+    _write_project(
+        tmp_path,
+        """
+[project]
+name = "agent-framework"
+version = "1.2.0"
+requires-python = ">=3.11"
+dependencies = ["agent-framework-core[all]==1.2.0"]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.flit.module]
+name = "agent_framework_meta"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/core",
+        f"""
+[project]
+name = "agent-framework-core"
+version = "1.2.0"
+requires-python = ">=3.11"
+
+{all_config}
+
+[tool.flit.module]
+name = "agent_framework"
+""",
+    )
+
+    with pytest.raises(RuntimeError, match="all must not be missing or empty"):
+        _validate_core_all_dependency_bounds(_build_release_project_map(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    [
+        "agent-framework-connector",
+        "agent-framework-connector>=0.9.0,<2",
+        "agent-framework-connector>=1.0.0",
+    ],
+)
+def test_core_all_dependency_bounds_reject_unbounded_or_stale_cohorts(tmp_path: Path, requirement: str) -> None:
+    _write_project(
+        tmp_path,
+        """
+[project]
+name = "agent-framework"
+version = "1.2.0"
+requires-python = ">=3.11"
+dependencies = ["agent-framework-core[all]==1.2.0"]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.flit.module]
+name = "agent_framework_meta"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/core",
+        f"""
+[project]
+name = "agent-framework-core"
+version = "1.2.0"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+all = [{requirement!r}]
+
+[tool.flit.module]
+name = "agent_framework"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/connector",
+        """
+[project]
+name = "agent-framework-connector"
+version = "1.0.0"
+requires-python = ">=3.11"
+dependencies = ["agent-framework-core>=1,<2"]
+
+[tool.flit.module]
+name = "agent_framework_connector"
+""",
+    )
+
+    with pytest.raises(RuntimeError, match=r"core\[all\] dependency bounds are incomplete"):
+        _validate_core_all_dependency_bounds(_build_release_project_map(tmp_path))
+
+
+def test_release_probe_uses_only_the_required_internal_dependency_closure(tmp_path: Path) -> None:
+    _write_project(
+        tmp_path,
+        """
+[project]
+name = "agent-framework"
+version = "1.2.0"
+requires-python = ">=3.11"
+dependencies = ["agent-framework-core[all]==1.2.0"]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.flit.module]
+name = "agent_framework_meta"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/core",
+        """
+[project]
+name = "agent-framework-core"
+version = "1.2.0"
+requires-python = ">=3.11"
 dependencies = ["pydantic>=2,<3"]
 
 [project.optional-dependencies]
@@ -65,7 +259,7 @@ name = "agent_framework"
 [project]
 name = "agent-framework-connector"
 version = "1.0.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["agent-framework-core>=1,<2", "httpx>=0.27,<1"]
 
 [tool.flit.module]
@@ -78,7 +272,7 @@ name = "agent_framework_connector"
 [project]
 name = "agent-framework-provider"
 version = "1.0.0"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = ["agent-framework-core>=1,<2", "openai>=2,<3"]
 
 [tool.flit.module]
@@ -93,14 +287,14 @@ name = "agent_framework_provider"
     assert "packages/provider" in provider_editables
     assert "packages/core" in provider_editables
     assert "packages/connector" not in provider_editables
-    assert provider_plan.python_version == "3.11"
+    assert provider_plan.python_version == "3.12"
 
     root_plan = _build_release_probe_plan(tmp_path, projects["agent-framework"], projects)
     root_editables = "\n".join(root_plan.editable_specs)
     assert "packages/core" in root_editables
     assert "packages/connector" in root_editables
     assert "pytest" not in root_plan.reported_distributions
-    assert root_plan.python_version == "3.10"
+    assert root_plan.python_version == "3.11"
 
 
 def test_release_probe_repeats_internal_prerelease_requirements_at_the_probe_root(tmp_path: Path) -> None:
@@ -110,7 +304,7 @@ def test_release_probe_repeats_internal_prerelease_requirements_at_the_probe_roo
 [project]
 name = "agent-framework"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["agent-framework-core[all]==1.2.0"]
 
 [tool.uv.workspace]
@@ -126,7 +320,7 @@ name = "agent_framework_meta"
 [project]
 name = "agent-framework-core"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["pydantic>=2,<3"]
 
 [project.optional-dependencies]
@@ -143,7 +337,7 @@ name = "agent_framework"
 [project]
 name = "agent-framework-hosting"
 version = "1.0.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["agent-framework-core>=1,<2", "server-responses>=2.2.0b1,<3", "httpx>=0.28,<1"]
 
 [tool.flit.module]
@@ -221,7 +415,7 @@ def test_run_release_mode_dry_run_uses_selected_package_python_floor(tmp_path: P
 [project]
 name = "agent-framework"
 version = "1.2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = []
 
 [tool.uv.workspace]
@@ -229,6 +423,21 @@ members = ["packages/*"]
 
 [tool.flit.module]
 name = "agent_framework_meta"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/core",
+        """
+[project]
+name = "agent-framework-core"
+version = "1.2.0"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+all = []
+
+[tool.flit.module]
+name = "agent_framework"
 """,
     )
     _write_project(

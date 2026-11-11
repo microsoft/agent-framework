@@ -15,11 +15,13 @@ import asyncio
 import json
 import logging
 import uuid
+import warnings
 import weakref
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from itertools import product
-from typing import Literal, cast
+from pathlib import Path
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -34,12 +36,17 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Executor,
     FunctionInvocationLayer,
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
     ServiceSessionId,
     SessionStore,
+    WorkflowAgent,
+    WorkflowBuilder,
+    WorkflowContext,
+    handler,
     tool,
 )
 from azure.ai.agentserver.core import (
@@ -53,7 +60,6 @@ from azure.ai.agentserver.core.storage import FoundryStateStore
 from starlette.datastructures import QueryParams
 from starlette.requests import ClientDisconnect, Request
 from starlette.responses import Response, StreamingResponse
-from typing_extensions import Any
 
 from agent_framework_foundry_hosting import InvocationRun, InvocationsHostServer, StoreProvider
 from agent_framework_foundry_hosting._state_store import FoundryAgentSessionStore
@@ -251,7 +257,7 @@ def _request_context(
     call_id: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
-) -> Iterator[None]:
+) -> Generator[None]:
     """Install a Foundry request context for the duration of the block."""
     token = set_request_context(FoundryAgentRequestContext(call_id=call_id, user_id=user_id, session_id=session_id))
     try:
@@ -286,6 +292,38 @@ async def _success_text(response: Response) -> str:
         return "".join(data["text"] for event, data in events if event == "delta")
     assert response.media_type == "application/json"
     return json.loads(bytes(response.body))["response"]
+
+
+class _EchoExecutor(Executor):
+    def __init__(self) -> None:
+        super().__init__("echo")
+
+    @handler
+    async def echo(self, messages: list[Message], ctx: WorkflowContext[str, str]) -> None:
+        await ctx.yield_output(messages[-1].text)
+
+
+def _make_workflow_agent() -> WorkflowAgent:
+    return WorkflowBuilder(name="legacy", start_executor=_EchoExecutor()).build().as_agent()
+
+
+def _workflow_agent_warnings(captured: Sequence[warnings.WarningMessage]) -> list[warnings.WarningMessage]:
+    return [item for item in captured if "Hosting WorkflowAgent" in str(item.message)]
+
+
+def _workflow_agent_logs(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "DEPRECATION: Hosting WorkflowAgent" in record.getMessage()
+    ]
+
+
+async def _invoke_text(server: InvocationsHostServer, message: str) -> str:
+    request = _make_request({"message": message})
+    with _request_context(session_id="session"):
+        response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
+    return await _success_text(response)
 
 
 # endregion
@@ -646,6 +684,48 @@ class TestInit:
     def test_rejects_invalid_configuration(self, parameter: str, value: Any, error: str) -> None:
         with pytest.raises((TypeError, ValueError), match=error):
             InvocationsHostServer(_make_agent(response_text="ok"), **{parameter: value})
+
+
+class TestLegacyWorkflowAgentHosting:
+    async def test_instance_warns_once_per_host(self, caplog: pytest.LogCaptureFixture) -> None:
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always", DeprecationWarning)
+            server = InvocationsHostServer(_make_workflow_agent())
+            texts = [await _invoke_text(server, "one"), await _invoke_text(server, "two")]
+
+        deprecations = _workflow_agent_warnings(captured)
+        assert len(deprecations) == 1
+        assert deprecations[0].category is DeprecationWarning
+        message = str(deprecations[0].message)
+        assert "should be avoided" in message
+        assert "stateful" in message
+        assert "parse_request" in message
+        assert "stateless, single-turn" in message
+        assert Path(deprecations[0].filename).name == Path(__file__).name
+        assert len(_workflow_agent_logs(caplog)) == 1
+        assert texts == ["one", "two"]
+
+    async def test_factory_warns_once_on_first_request(self, caplog: pytest.LogCaptureFixture) -> None:
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always", DeprecationWarning)
+            server = InvocationsHostServer(_make_workflow_agent)
+            assert _workflow_agent_warnings(captured) == []
+            assert _workflow_agent_logs(caplog) == []
+            texts = [await _invoke_text(server, "one"), await _invoke_text(server, "two")]
+
+        assert len(_workflow_agent_warnings(captured)) == 1
+        assert len(_workflow_agent_logs(caplog)) == 1
+        assert texts == ["one", "two"]
+
+    async def test_regular_agent_does_not_warn(self, caplog: pytest.LogCaptureFixture) -> None:
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always", DeprecationWarning)
+            server = InvocationsHostServer(_make_agent(response_text="hi"))
+            text = await _invoke_text(server, "hello")
+
+        assert text == "hi"
+        assert _workflow_agent_warnings(captured) == []
+        assert _workflow_agent_logs(caplog) == []
 
 
 # endregion

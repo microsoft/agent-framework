@@ -14,12 +14,14 @@ Run with:
     python samples/03-workflows/declarative/invoke_foundry_toolbox_mcp/main.py
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 from collections.abc import Generator
 from pathlib import Path
 
-import httpx
+import httpx2 as httpx
 from agent_framework import Agent
 from agent_framework.declarative import (
     DefaultMCPToolHandler,
@@ -99,13 +101,10 @@ async def main() -> None:
             )
         return http_client
 
-    async with (
-        http_client,
-        DefaultMCPToolHandler(client_provider=_client_provider) as mcp_handler,
-    ):
+    async with http_client:
         factory = WorkflowFactory(
             agents={AGENT_NAME: summary_agent},
-            mcp_tool_handler=mcp_handler,
+            mcp_tool_handler=DefaultMCPToolHandler(client_provider=_client_provider),
             configuration={
                 "FOUNDRY_TOOLBOX_MCP_SERVER_URL": toolbox_endpoint,
                 "FOUNDRY_TOOLBOX_DOCS_SERVER_LABEL": DOCS_SERVER_LABEL,

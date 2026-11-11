@@ -92,3 +92,72 @@ def create_completion_message(
         contents=[message_text],
         author_name=author_name,
     )
+
+
+_FENCE_MARKER = "```"
+
+
+def _backtick_run_end(text: str, start: int) -> int:
+    """Return the index just past the run of backticks that begins at ``start``."""
+    end = start
+    while end < len(text) and text[end] == "`":
+        end += 1
+    return end
+
+
+def _fence_info_string_end(text: str, start: int) -> int:
+    """Return the index just past the info string of an opening fence such as ``json`` or ``application/json``.
+
+    An info string has to start with a letter, so a same-line body such as ``{"a": 1}`` that
+    follows the fence directly is left in place.
+    """
+    index = start
+    while index < len(text) and text[index] in " \t":
+        index += 1
+    if index >= len(text) or not text[index].isalpha():
+        return start
+    while index < len(text) and (text[index].isalnum() or text[index] in "_-+./"):
+        index += 1
+    return index
+
+
+def extract_markdown_fence_bodies(text: str) -> list[str]:
+    """Return the stripped bodies of the Markdown code fences in ``text``, in source order.
+
+    Model output that ignores ``response_format`` often wraps JSON in a fence. An opening fence
+    is a run of three or more backticks followed by an optional info string. The closing fence
+    is the next run that is at least as long and ends its line, so backticks inside a JSON
+    string value (which always end in a quote on the same line) never close the block, and an
+    outer fence can use more backticks than the ones inside it. A fence that is never closed
+    yields nothing.
+
+    The scan advances through ``text`` without backtracking, so it stays linear in the input
+    length for malformed output such as an unterminated fence followed by whitespace.
+    """
+    bodies: list[str] = []
+    length = len(text)
+    open_start = text.find(_FENCE_MARKER)
+    while open_start != -1:
+        open_end = _backtick_run_end(text, open_start)
+        closing_marker = text[open_start:open_end]
+        body_start = _fence_info_string_end(text, open_end)
+
+        search_from = body_start
+        close_start = close_end = -1
+        while (run_start := text.find(closing_marker, search_from)) != -1:
+            run_end = _backtick_run_end(text, run_start)
+            line_end = run_end
+            while line_end < length and text[line_end] in " \t\r":
+                line_end += 1
+            if line_end == length or text[line_end] == "\n":
+                close_start, close_end = run_start, run_end
+                break
+            search_from = line_end
+        if close_start == -1:
+            break
+
+        body = text[body_start:close_start].strip()
+        if body:
+            bodies.append(body)
+        open_start = text.find(_FENCE_MARKER, close_end)
+    return bodies

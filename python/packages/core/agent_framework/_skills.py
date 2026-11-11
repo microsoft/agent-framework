@@ -88,15 +88,21 @@ from yaml.nodes import MappingNode, Node, ScalarNode
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
+from ._mcp import _as_mcp_connection, _MCPConnection  # pyright: ignore[reportPrivateUsage]
 from ._middleware import FunctionInvocationContext
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
-from ._tools import ApprovalMode, FunctionTool
+from ._tools import (
+    _FUNCTION_RESULT_CARRIER_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+    ApprovalMode,
+    FunctionTool,
+    _FunctionResultCarrier,  # pyright: ignore[reportPrivateUsage]
+)
+from ._types import SKILL_CONTEXT_NAME_KEY
 
 if TYPE_CHECKING:
-    from mcp.client.session import ClientSession
+    from mcp import Client, ClientSession
     from mcp.types import ReadResourceResult
-    from pydantic import AnyUrl
 
     from ._agents import SupportsAgentRun
     from ._sessions import AgentSession, SessionContext
@@ -1845,6 +1851,11 @@ class ClassSkill(Skill, ABC):
 class FileSkill(Skill):
     """A :class:`Skill` discovered from a filesystem directory backed by a SKILL.md file.
 
+    Resource and script lookup is case-insensitive, so two resources or two
+    scripts whose names differ only by case (e.g. ``readme.md`` and
+    ``README.md``) are ambiguous and rejected with :class:`ValueError`.
+    Comparison uses :meth:`str.lower`, not :meth:`str.casefold`.
+
     Attributes:
         path: Absolute path to the directory containing this skill.
     """
@@ -1868,6 +1879,9 @@ class FileSkill(Skill):
             path: Absolute path to the skill directory on disk.
             resources: Resources discovered for this skill.
             scripts: Scripts discovered for this skill.
+
+        Raises:
+            ValueError: If resource or script names differ only by case.
         """
         self._frontmatter = frontmatter
 
@@ -1875,6 +1889,8 @@ class FileSkill(Skill):
         self.path = path
         self._resources: list[SkillResource] = list(resources) if resources is not None else []
         self._scripts: list[SkillScript] = list(scripts) if scripts is not None else []
+        self._reject_case_variant_names(frontmatter.name, "resource", self._resources)
+        self._reject_case_variant_names(frontmatter.name, "script", self._scripts)
         self._cached_content: str | None = None
 
     @property
@@ -1931,6 +1947,21 @@ class FileSkill(Skill):
         """
         name_lower = name.lower()
         return next((s for s in self._scripts if s.name.lower() == name_lower), None)
+
+    @staticmethod
+    def _reject_case_variant_names(skill_name: str, kind: str, entries: Sequence[SkillResource | SkillScript]) -> None:
+        """Reject names with equal ``str.lower()`` keys, matching resource and script lookup.
+
+        Raises:
+            ValueError: If two names differ only by case.
+        """
+        names: dict[str, str] = {}
+        for entry in entries:
+            previous = names.setdefault(entry.name.lower(), entry.name)
+            if previous != entry.name:
+                raise ValueError(
+                    f"Skill '{skill_name}' has {kind} names that differ only by case: '{previous}' and '{entry.name}'."
+                )
 
 
 # endregion
@@ -2200,15 +2231,14 @@ class SkillsProvider(ContextProvider):
     def _is_local_tool_call(function_call: Content) -> bool:
         """Return whether a function call targets this provider's local tools.
 
-        Hosted-tool calls carry a ``server_label`` in their
-        ``additional_properties`` and are a separate server-scoped approval
+        Hosted-tool calls set ``hosted=True`` and are a separate server-scoped approval
         boundary that must be passed through untouched (see
         :func:`agent_framework._tools._is_hosted_tool_approval`). These rules
         only ever auto-approve the provider's own local tools, so any call that
-        carries a ``server_label`` is rejected even if its name collides with a
+        is hosted is rejected even if its name collides with a
         skill tool name.
         """
-        return not function_call.additional_properties.get("server_label")
+        return not function_call.hosted
 
     @staticmethod
     def read_only_tools_auto_approval_rule(function_call: Content) -> bool:
@@ -2223,7 +2253,7 @@ class SkillsProvider(ContextProvider):
         skill content (``load_skill`` and ``read_skill_resource``), while still
         prompting for script execution (``run_skill_script``).
 
-        Hosted-tool calls (those carrying a ``server_label``) are never
+        Hosted-tool calls are never
         auto-approved, even when their name matches a skill tool, so the rule
         stays scoped to this provider's local tools.
 
@@ -2260,7 +2290,7 @@ class SkillsProvider(ContextProvider):
         ``auto_approval_rules``) to automatically approve every skill tool,
         including the script execution tool (``run_skill_script``).
 
-        Hosted-tool calls (those carrying a ``server_label``) are never
+        Hosted-tool calls are never
         auto-approved, even when their name matches a skill tool, so the rule
         stays scoped to this provider's local tools.
 
@@ -2718,8 +2748,8 @@ class SkillsProvider(ContextProvider):
             A list of :class:`FunctionTool` instances.
         """
 
-        async def _load(skill_name: str) -> str:
-            return await self._load_skill(skills, skill_name)
+        async def _load(ctx: FunctionInvocationContext, skill_name: str) -> str:
+            return await self._load_skill(skills, skill_name, context=ctx)
 
         # The runtime kwargs these handlers forward come from the host's
         # ``agent.run(function_invocation_kwargs=...)``, never from the model. Two
@@ -2753,6 +2783,7 @@ class SkillsProvider(ContextProvider):
                 skill_name,
                 resource_name,
                 runtime_kwargs=ctx.kwargs,
+                context=ctx,
             )
 
         async def _run_script(
@@ -2864,7 +2895,26 @@ class SkillsProvider(ContextProvider):
         name_lower = name.lower()
         return next((s for s in skills if s.frontmatter.name.lower() == name_lower), None)
 
-    async def _load_skill(self, skills: Sequence[Skill], skill_name: str) -> str:
+    @staticmethod
+    def _record_skill_context(context: FunctionInvocationContext | None, skill: Skill) -> None:
+        """Attach the resolved skill identity without changing model-facing output."""
+        if context is not None:
+            carrier = context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
+            if isinstance(carrier, _FunctionResultCarrier):
+                carrier.additional_properties[SKILL_CONTEXT_NAME_KEY] = skill.frontmatter.name
+            else:
+                context.metadata[_FUNCTION_RESULT_CARRIER_CONTEXT_KEY] = _FunctionResultCarrier(
+                    additional_properties={SKILL_CONTEXT_NAME_KEY: skill.frontmatter.name},
+                    item_additional_properties={},
+                )
+
+    async def _load_skill(
+        self,
+        skills: Sequence[Skill],
+        skill_name: str,
+        *,
+        context: FunctionInvocationContext | None = None,
+    ) -> str:
         """Return the full content for the named skill.
 
         Delegates to the skill's :meth:`~Skill.get_content` method, which
@@ -2873,6 +2923,9 @@ class SkillsProvider(ContextProvider):
         Args:
             skills: The skills to look up the skill from.
             skill_name: The name of the skill to load.
+
+        Keyword Args:
+            context: Invocation context for recording successful load provenance.
 
         Returns:
             The skill content text, or a user-facing error message if
@@ -2887,7 +2940,9 @@ class SkillsProvider(ContextProvider):
 
         logger.info("Loading skill: %s", skill_name)
 
-        return await skill.get_content()
+        content = await skill.get_content()
+        self._record_skill_context(context, skill)
+        return content
 
     async def _run_skill_script(
         self,
@@ -2955,6 +3010,7 @@ class SkillsProvider(ContextProvider):
         resource_name: str,
         *,
         runtime_kwargs: Mapping[str, Any] | None = None,
+        context: FunctionInvocationContext | None = None,
     ) -> Any:
         """Read a named resource from a skill.
 
@@ -2972,6 +3028,7 @@ class SkillsProvider(ContextProvider):
                 ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
                 and delivered through :class:`FunctionInvocationContext`; they are
                 never sourced from model-supplied tool arguments.
+            context: Invocation context for recording successful resource provenance.
 
         Returns:
             The resource content (any type). Returns a user-facing error
@@ -3000,10 +3057,13 @@ class SkillsProvider(ContextProvider):
             return f"Error: Resource '{resource_name}' not found in skill '{skill_name}'."
 
         try:
-            return await resource.read(**(runtime_kwargs or {}))
+            result = await resource.read(**(runtime_kwargs or {}))
         except Exception:
             logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
             raise
+
+        self._record_skill_context(context, skill)
+        return result
 
 
 # endregion
@@ -3107,6 +3167,9 @@ class FileSkillsSource(SkillsSource):
     By default, the scan depth is 2 (root + one level of subdirectories).
     Use *script_filter* and *resource_filter* predicates to control which
     discovered files are included.
+
+    Resource and script names that differ only by case skip the whole skill
+    with a warning.
 
     Security: file-based metadata is XML-escaped before prompt injection,
     and resource reads are guarded against path traversal and symlink escape.
@@ -3260,13 +3323,17 @@ class FileSkillsSource(SkillsSource):
                     )
                 )
 
-            file_skill = FileSkill(
-                frontmatter=frontmatter,
-                content=content,
-                path=skill_path,
-                resources=resources,
-                scripts=scripts,
-            )
+            try:
+                file_skill = FileSkill(
+                    frontmatter=frontmatter,
+                    content=content,
+                    path=skill_path,
+                    resources=resources,
+                    scripts=scripts,
+                )
+            except ValueError as exc:
+                logger.warning("Skipping skill '%s' at '%s': %s", frontmatter.name, skill_path, exc)
+                continue
 
             skills[file_skill.frontmatter.name] = file_skill
             logger.info("Loaded skill: %s", file_skill.frontmatter.name)
@@ -4440,15 +4507,8 @@ class AggregatingSkillsSource(SkillsSource):
 # region MCP Skills
 
 
-def _mcp_any_url(uri: str) -> AnyUrl:
-    """Convert a string URI to a :class:`pydantic.AnyUrl` for MCP client calls."""
-    from pydantic import AnyUrl as _AnyUrl
-
-    return _AnyUrl(uri)
-
-
 def _is_mcp_resource_not_found(ex: Exception) -> bool:
-    """Return ``True`` when *ex* is an :class:`McpError` indicating a missing resource.
+    """Return ``True`` when *ex* is an :class:`MCPError` indicating a missing resource.
 
     Two codes are treated as "not found":
 
@@ -4458,6 +4518,7 @@ def _is_mcp_resource_not_found(ex: Exception) -> bool:
     * ``METHOD_NOT_FOUND`` (``-32601``) — the server does not implement
       ``resources/read`` at all, which for the skills source is functionally
       equivalent to "no skills available."
+    * ``INVALID_PARAMS`` from an :class:`MCPError` indicating that the ``uri`` parameter is invalid.
 
     All other codes — ``INVALID_PARAMS``, ``INTERNAL_ERROR``, ``PARSE_ERROR``,
     ``CONNECTION_CLOSED``, auth rejections, and generic handler errors
@@ -4465,13 +4526,20 @@ def _is_mcp_resource_not_found(ex: Exception) -> bool:
     token or crashing server is not silently mistaken for "the server has no
     skills."
     """
-    from mcp.shared.exceptions import McpError as _McpError
-
-    if not isinstance(ex, _McpError):
-        return False
+    from mcp.shared.exceptions import MCPError as _MCPError
+    from mcp.types import INVALID_PARAMS as _INVALID_PARAMS
     from mcp.types import METHOD_NOT_FOUND as _METHOD_NOT_FOUND
 
-    return ex.error.code in {-32002, _METHOD_NOT_FOUND}
+    if not isinstance(ex, _MCPError):
+        return False
+
+    data = ex.error.data
+    return ex.error.code in {-32002, _METHOD_NOT_FOUND} or (
+        ex.error.code == _INVALID_PARAMS
+        and isinstance(data, dict)
+        and cast(dict[str, object], data).keys() == {"uri"}
+        and isinstance(data["uri"], str)
+    )
 
 
 def _mcp_join_text(result: ReadResourceResult) -> str:
@@ -4506,7 +4574,7 @@ def _mcp_first_blob(result: ReadResourceResult) -> tuple[bytes, str | None] | No
                 # binascii.Error (invalid base64) subclasses ValueError.
                 logger.warning("Failed to base64-decode blob resource content from the MCP server.", exc_info=True)
                 return None
-            return data, content.mimeType
+            return data, content.mime_type
     return None
 
 
@@ -4589,37 +4657,39 @@ def _parse_mcp_skill_index(text: str) -> _McpSkillIndex:
     return _McpSkillIndex(schema=raw.get("$schema"), skills=entries)
 
 
-def _resolve_mcp_session_provider(
-    client: ClientSession | None,
-    session_provider: Callable[[], ClientSession] | None,
-) -> Callable[[], ClientSession]:
-    """Normalize the two MCP session inputs into a single session resolver.
+def _resolve_mcp_connection_provider(
+    client: Client | ClientSession | None,
+    session_provider: Callable[[], Client | ClientSession] | None,
+) -> Callable[[], _MCPConnection]:
+    """Normalize the two MCP connection inputs into one connection provider.
 
     Callers supply **exactly one** of a fixed ``client`` or a
     ``session_provider`` callable. A fixed client is wrapped in a provider that
-    always returns it; a provider is used as-is so the session is resolved on
-    every call (reconnect-safe for sources whose underlying session is replaced
-    over time, e.g. a reconnecting :class:`~agent_framework.MCPTool`).
+    always returns it; a provider is resolved on every call so a reconnecting
+    owner can supply its current high-level Client or low-level ClientSession.
+    The ``session_provider`` name is retained for compatibility.
 
     Args:
-        client: A fixed MCP client session, or ``None``.
-        session_provider: A callable returning the current MCP client session,
-            or ``None``.
+        client: A fixed MCP client or session, or ``None``.
+        session_provider: A callable returning the current high-level Client or
+            low-level ClientSession, or ``None``.
 
     Returns:
-        A callable that returns the MCP client session to use.
+        A callable returning the normalized MCP connection used for resource reads.
 
     Raises:
         ValueError: If both or neither of *client* and *session_provider* are
             provided.
     """
-    if client is not None and session_provider is not None:
-        raise ValueError("Provide exactly one of 'client' or 'session_provider', not both.")
     if session_provider is not None:
-        return session_provider
+        if client is not None:
+            raise ValueError("Provide exactly one of 'client' or 'session_provider'.")
+        return lambda: _as_mcp_connection(session_provider())
+
     if client is None:
         raise ValueError("Provide exactly one of 'client' or 'session_provider'.")
-    fixed: ClientSession = client
+
+    fixed = _as_mcp_connection(client)
     return lambda: fixed
 
 
@@ -4712,9 +4782,9 @@ class MCPSkill(Skill):
         self,
         frontmatter: SkillFrontmatter,
         skill_md_uri: str,
-        client: ClientSession | None = None,
+        client: Client | ClientSession | None = None,
         *,
-        session_provider: Callable[[], ClientSession] | None = None,
+        session_provider: Callable[[], Client | ClientSession] | None = None,
     ) -> None:
         """Initialize an MCPSkill.
 
@@ -4725,17 +4795,15 @@ class MCPSkill(Skill):
             skill_md_uri: The full MCP resource URI of the ``SKILL.md`` resource
                 (e.g. ``skill://unit-converter/SKILL.md``). The skill's root URI
                 is derived by stripping the trailing ``SKILL.md`` segment.
-            client: A fixed MCP client session used to fetch resources on demand.
-                Use this when the session outlives the skill (e.g. a caller-owned
-                long-lived session).
+            client: A fixed, already-entered high-level MCP Client or a deprecated
+                caller-owned ClientSession used to fetch resources on demand.
+                MCPSkill borrows the connection and never enters or closes it.
 
         Keyword Args:
-            session_provider: A callable returning the current MCP client session,
-                resolved on every fetch. Prefer this over *client* when the
-                underlying session may be replaced over the skill's lifetime (for
-                example, a reconnecting :class:`~agent_framework.MCPTool` whose
-                ``session`` is swapped on reconnect), so a cached skill keeps
-                using the live session instead of a closed one.
+            session_provider: Compatibility-named callable returning the current
+                high-level Client or low-level ClientSession, resolved on every
+                fetch. Use it when the owner may replace the underlying connection;
+                MCPSkill borrows each returned connection and never enters or closes it.
 
         Raises:
             ValueError: If both or neither of *client* and *session_provider* are
@@ -4744,7 +4812,7 @@ class MCPSkill(Skill):
         self._frontmatter = frontmatter
         self._skill_md_uri = skill_md_uri
         self._skill_root_uri = self._compute_skill_root_uri(skill_md_uri)
-        self._session_provider = _resolve_mcp_session_provider(client, session_provider)
+        self._connection_provider = _resolve_mcp_connection_provider(client, session_provider)
         self._content: str | None = None
 
     @property
@@ -4768,7 +4836,7 @@ class MCPSkill(Skill):
         if self._content is not None:
             return self._content
 
-        result = await self._session_provider().read_resource(_mcp_any_url(self._skill_md_uri))
+        result = await self._connection_provider().read_resource(self._skill_md_uri)
         text = _mcp_join_text(result)
         if not text:
             raise ValueError(f"The MCP server returned no text content for SKILL.md resource '{self._skill_md_uri}'.")
@@ -4798,7 +4866,7 @@ class MCPSkill(Skill):
 
         uri = self._skill_root_uri + normalized
         try:
-            result = await self._session_provider().read_resource(_mcp_any_url(uri))
+            result = await self._connection_provider().read_resource(uri)
         except Exception as ex:
             if _is_mcp_resource_not_found(ex):
                 logger.debug("MCP resource '%s' not available: %s", uri, ex)
@@ -4993,6 +5061,7 @@ def _extract_archive_to_memory(
     ``..`` parent-traversal ("zip-slip") aborts extraction of the whole archive by
     raising. Extraction is bounded by a maximum file count and total uncompressed size
     to mitigate decompression-bomb attacks. No filesystem is touched.
+    Duplicate normalized member paths reject the archive.
 
     Args:
         data: The raw archive bytes.
@@ -5005,7 +5074,7 @@ def _extract_archive_to_memory(
 
     Raises:
         ValueError: If the format is unknown, a limit is exceeded, or a member attempts
-            a path-traversal ("zip-slip") escape.
+            a path-traversal ("zip-slip") escape, or two members normalize to the same path.
         OSError: If the payload cannot be read.
         zipfile.BadZipFile: If a ZIP payload is malformed.
     """
@@ -5036,6 +5105,8 @@ def _extract_zip_to_memory(
         name = _normalize_archive_member_name(info.filename)
         if name is None:
             continue
+        if name in files:
+            raise ValueError(f"Duplicate archive member {info.filename!r}: normalized path {name!r}.")
 
         with archive.open(info) as source:
             content, remaining_bytes = _read_member_with_limit(source, remaining_bytes)
@@ -5059,13 +5130,15 @@ class _ArchiveEntryLoader:
 
     Extraction is hardened against path-traversal ("zip-slip") member names,
     oversized downloads, excessive file counts, and decompression bombs.
+    Duplicate normalized member paths reject the archive, and resource names that
+    differ only by case reject the skill.
     Supplied SHA-256 digests are verified before extraction; archives without
     a digest remain supported.
     """
 
     def __init__(
         self,
-        session_provider: Callable[[], ClientSession],
+        connection_provider: Callable[[], _MCPConnection],
         *,
         resource_extensions: tuple[str, ...] | None,
         resource_search_depth: int,
@@ -5073,7 +5146,7 @@ class _ArchiveEntryLoader:
         max_size_bytes: int,
         max_uncompressed_size_bytes: int,
     ) -> None:
-        self._session_provider = session_provider
+        self._connection_provider = connection_provider
         self._resource_extensions: tuple[str, ...] = (
             resource_extensions if resource_extensions is not None else DEFAULT_RESOURCE_EXTENSIONS
         )
@@ -5145,7 +5218,7 @@ class _ArchiveEntryLoader:
                 while reading the archive resource is re-raised.
         """
         try:
-            result = await self._session_provider().read_resource(_mcp_any_url(cast(str, entry.url)))
+            result = await self._connection_provider().read_resource(cast(str, entry.url))
         except Exception as ex:
             if _is_mcp_resource_not_found(ex):
                 logger.debug("Archive resource '%s' for skill '%s' not available: %s", entry.url, entry.name, ex)
@@ -5220,7 +5293,11 @@ class _ArchiveEntryLoader:
 
     def _skill_from_files(self, entry: _McpSkillIndexEntry, files: dict[str, bytes]) -> FileSkill | None:
         """Assemble an in-memory :class:`FileSkill` from the archive's extracted files."""
-        skill_md_key = self._find_skill_md(files)
+        try:
+            skill_md_key = self._find_skill_md(files)
+        except ValueError as exc:
+            logger.warning("Skipping skill '%s': %s", entry.name, exc)
+            return None
         if skill_md_key is None:
             logger.warning("Skipping skill '%s': archive contains no SKILL.md", entry.name)
             return None
@@ -5252,20 +5329,26 @@ class _ArchiveEntryLoader:
 
         # ``path`` records the archive's origin URL; it is informational only, as the
         # skill and its resources are served entirely from memory (no filesystem access).
-        return FileSkill(
-            frontmatter=frontmatter,
-            content=content,
-            path=cast(str, entry.url),
-            resources=resources,
-            scripts=[],
-        )
+        try:
+            return FileSkill(
+                frontmatter=frontmatter,
+                content=content,
+                path=cast(str, entry.url),
+                resources=resources,
+                scripts=[],
+            )
+        except ValueError as exc:
+            logger.warning("Skipping skill '%s': %s", entry.name, exc)
+            return None
 
     @staticmethod
     def _find_skill_md(files: dict[str, bytes]) -> str | None:
-        """Return the key of the shallowest ``SKILL.md`` (case-insensitive), or ``None``."""
+        """Return the shallowest ``SKILL.md`` key, rejecting manifest paths that differ only by case."""
         candidates = [key for key in files if key.rsplit("/", 1)[-1].upper() == SKILL_FILE_NAME.upper()]
         if not candidates:
             return None
+        if len({key.lower() for key in candidates}) != len(candidates):
+            raise ValueError("Archive contains SKILL.md paths that differ only by case.")
         # Prefer the shallowest SKILL.md; break ties deterministically by name.
         return min(candidates, key=lambda key: (key.count("/"), key))
 
@@ -5333,6 +5416,9 @@ class MCPSkillsSource(SkillsSource):
       archive are surfaced as read-only resources only; MCP-delivered scripts
       are never discovered as runnable.
 
+    Archive resource names that differ only by case, or members that normalize
+    to the same path, skip the whole archive skill with a warning.
+
     Entries whose type has no registered handler (e.g. ``mcp-resource-template``)
     are skipped.
 
@@ -5343,6 +5429,11 @@ class MCPSkillsSource(SkillsSource):
     keyword arguments. Because Python's :class:`CachingSkillsSource` decorator
     already provides refresh/caching for any source, this source does not offer
     a separate refresh interval; wrap it in :class:`CachingSkillsSource` to cache.
+
+    When backed by a high-level MCP ``Client``, individual resource reads honor
+    modern server ``ttlMs`` / ``cacheScope`` hints through the SDK response cache.
+    A caller-supplied ``ClientSession`` remains uncached. This wire-response cache
+    is separate from :class:`CachingSkillsSource`, which caches the parsed skill list.
 
     Archive digests:
         An archive entry's non-null ``digest`` must be ``sha256:`` followed by
@@ -5380,12 +5471,13 @@ class MCPSkillsSource(SkillsSource):
     Examples:
         .. code-block:: python
 
-            from mcp.client.session import ClientSession
+            from mcp import Client
 
-            source = MCPSkillsSource(client=session)
-            # `context` is normally supplied by SkillsProvider at runtime.
-            context = SkillsSourceContext(agent=agent)
-            skills = await source.get_skills(context)
+            async with Client("https://example.com/mcp") as client:
+                source = MCPSkillsSource(client=client)
+                # `context` is normally supplied by SkillsProvider at runtime.
+                context = SkillsSourceContext(agent=agent)
+                skills = await source.get_skills(context)
     """
 
     _INDEX_URI: Final[str] = "skill://index.json"
@@ -5394,9 +5486,9 @@ class MCPSkillsSource(SkillsSource):
 
     def __init__(
         self,
-        client: ClientSession | None = None,
+        client: Client | ClientSession | None = None,
         *,
-        session_provider: Callable[[], ClientSession] | None = None,
+        session_provider: Callable[[], Client | ClientSession] | None = None,
         archive_resource_extensions: tuple[str, ...] | None = None,
         archive_resource_search_depth: int = DEFAULT_SEARCH_DEPTH,
         archive_max_file_count: int = _DEFAULT_ARCHIVE_MAX_FILE_COUNT,
@@ -5408,19 +5500,18 @@ class MCPSkillsSource(SkillsSource):
         Provide **exactly one** of *client* or *session_provider*.
 
         Args:
-            client: A fixed MCP client session connected to a server that exposes
-                Agent Skills resources. Use this when the session outlives the
-                source (e.g. a caller-owned long-lived session).
+            client: A fixed, already-entered high-level MCP Client or a deprecated
+                caller-owned ClientSession connected to a server that exposes
+                Agent Skills resources. MCPSkillsSource borrows the connection;
+                it never enters or closes it.
 
         Keyword Args:
-            session_provider: A callable returning the current MCP client session,
-                resolved on every discovery and on each skill's on-demand fetch.
-                Prefer this over *client* when the underlying session may be
-                replaced over time (for example, a reconnecting
-                :class:`~agent_framework.MCPTool` whose ``session`` is swapped on
-                reconnect), so cached skills keep using the live session. The
-                provider is forwarded to every :class:`MCPSkill` this source
-                creates.
+            session_provider: Compatibility-named callable returning the current
+                high-level Client or low-level ClientSession. It is resolved on
+                every discovery and on-demand fetch, so cached skills can follow
+                a replacement connection without reading ``MCPTool.session``.
+                MCPSkillsSource borrows every returned connection and never enters
+                or closes it.
             archive_resource_extensions: Allowed file extensions for resources discovered
                 in ``archive``-type skills. When ``None`` (the default), the file-source
                 default set (``.md``, ``.json``, ``.yaml``, ``.yml``, ``.csv``, ``.xml``,
@@ -5442,9 +5533,9 @@ class MCPSkillsSource(SkillsSource):
             ValueError: If both or neither of *client* and *session_provider* are
                 provided.
         """
-        self._session_provider = _resolve_mcp_session_provider(client, session_provider)
+        self._connection_provider = _resolve_mcp_connection_provider(client, session_provider)
         self._archive_loader = _ArchiveEntryLoader(
-            self._session_provider,
+            self._connection_provider,
             resource_extensions=archive_resource_extensions,
             resource_search_depth=archive_resource_search_depth,
             max_file_count=archive_max_file_count,
@@ -5514,7 +5605,7 @@ class MCPSkillsSource(SkillsSource):
             absent, empty, or malformed.
         """
         try:
-            result = await self._session_provider().read_resource(_mcp_any_url(self._INDEX_URI))
+            result = await self._connection_provider().read_resource(self._INDEX_URI)
         except Exception as ex:
             if _is_mcp_resource_not_found(ex):
                 logger.debug("No skill://index.json resource available on MCP server: %s", ex)
@@ -5532,6 +5623,14 @@ class MCPSkillsSource(SkillsSource):
         except (json.JSONDecodeError, ValueError):
             logger.warning("Failed to parse skill://index.json JSON document.", exc_info=True)
             return None
+
+    def _current_connection_source(self) -> Client | ClientSession:
+        connection = self._connection_provider()
+        if connection.client is not None:
+            return connection.client
+        if connection.session is not None:
+            return connection.session
+        raise RuntimeError("MCP connection has neither a Client nor a ClientSession.")
 
     def _try_create_skill(self, entry: _McpSkillIndexEntry) -> MCPSkill | None:
         """Attempt to create an :class:`MCPSkill` from a ``skill-md`` index entry.
@@ -5564,7 +5663,7 @@ class MCPSkillsSource(SkillsSource):
             logger.debug("Skipping entry '%s': invalid metadata: %s", entry.name, ex)
             return None
 
-        return MCPSkill(frontmatter=fm, skill_md_uri=entry.url, session_provider=self._session_provider)
+        return MCPSkill(frontmatter=fm, skill_md_uri=entry.url, session_provider=self._current_connection_source)
 
 
 # endregion

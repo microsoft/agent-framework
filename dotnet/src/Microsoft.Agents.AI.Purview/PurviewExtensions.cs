@@ -56,6 +56,12 @@ public static class PurviewExtensions
     /// <param name="logger">The logger to use for logging.</param>
     /// <param name="cache">The distributed cache to use for caching Purview responses. An in memory cache will be used if this is null.</param>
     /// <returns>The updated <see cref="AIAgentBuilder"/></returns>
+    /// <remarks>
+    /// This evaluates the run boundary: the messages passed to the agent, and the agent's final response.
+    /// Content produced while the run executes, such as context provider output or a function call the
+    /// model returns, is only visible in the final response, after any function has already been invoked.
+    /// Use the <see cref="ChatClientBuilder"/> overload to evaluate every model round trip.
+    /// </remarks>
     public static AIAgentBuilder WithPurview(this AIAgentBuilder builder, TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null, IDistributedCache? cache = null)
     {
         PurviewWrapper purviewWrapper = CreateWrapper(tokenCredential, purviewSettings, logger, cache);
@@ -71,6 +77,14 @@ public static class PurviewExtensions
     /// <param name="logger">The logger to use for logging.</param>
     /// <param name="cache">The distributed cache to use for caching Purview responses. An in memory cache will be used if this is null.</param>
     /// <returns>The updated <see cref="ChatClientBuilder"/></returns>
+    /// <remarks>
+    /// This evaluates every model round trip, including a function call the model returns before that
+    /// function is invoked. That holds only while this client is composed below
+    /// <see cref="FunctionInvokingChatClient"/>. Because <see cref="ChatClientBuilder"/> applies the first
+    /// <c>Use</c> outermost, call <c>WithPurview</c> after <c>UseFunctionInvocation</c>, or omit
+    /// <c>UseFunctionInvocation</c> and let the agent add it above this client. Calling <c>WithPurview</c>
+    /// before <c>UseFunctionInvocation</c> places this client outermost and is not corrected automatically.
+    /// </remarks>
     public static ChatClientBuilder WithPurview(this ChatClientBuilder builder, TokenCredential tokenCredential, PurviewSettings purviewSettings, ILogger? logger = null, IDistributedCache? cache = null)
     {
         PurviewWrapper purviewWrapper = CreateWrapper(tokenCredential, purviewSettings, logger, cache);

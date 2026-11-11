@@ -21,13 +21,16 @@ enforces an allowlist or DNS-rebinding-resistant policy. This split mirrors the
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+import sys
+import zlib
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, replace
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 import httpx
+from httpx._client import ACCEPT_ENCODING
 
 __all__ = [
     "DefaultHttpRequestHandler",
@@ -142,6 +145,16 @@ class DefaultHttpRequestHandler:
     Explicit outbound ``Cookie`` headers and response ``Set-Cookie`` headers are preserved;
     the owned-client policy only prevents automatic cookie persistence.
 
+    Response bodies are limited to ``max_response_body_bytes`` (10 MiB by default),
+    both on the wire and after each gzip/deflate decoding stage. Other content encodings
+    are rejected. The limit also applies to redirect and authentication responses.
+    Caller-supplied response hooks must not eagerly read response bodies.
+
+    Keyword Args:
+        client: Optional caller-owned HTTP client.
+        client_provider: Optional per-request client provider.
+        max_response_body_bytes: Positive wire and decoded response-body limit in bytes.
+
     .. warning::
 
        This handler performs **no** URL filtering or SSRF protection. Wrap or
@@ -153,7 +166,13 @@ class DefaultHttpRequestHandler:
         *,
         client: httpx.AsyncClient | None = None,
         client_provider: ClientProvider | None = None,
+        max_response_body_bytes: int = 10 * 1024 * 1024,
     ) -> None:
+        if isinstance(max_response_body_bytes, bool) or not isinstance(max_response_body_bytes, int):
+            raise ValueError("max_response_body_bytes must be a positive integer.")
+        if max_response_body_bytes <= 0:
+            raise ValueError("max_response_body_bytes must be a positive integer.")
+        self._max_response_body_bytes = max_response_body_bytes
         self._owned_client: httpx.AsyncClient | None = None
         self._caller_client = client
         self._client_provider = client_provider
@@ -193,6 +212,8 @@ class DefaultHttpRequestHandler:
             timeout = httpx.USE_CLIENT_DEFAULT
 
         headers = dict(info.headers)
+        if not _has_header(headers, "accept-encoding") and client.headers.get("accept-encoding") == ACCEPT_ENCODING:
+            headers["Accept-Encoding"] = "gzip, deflate"
         content: bytes | str | None = None
         if info.body is not None:
             content = info.body
@@ -224,7 +245,19 @@ class DefaultHttpRequestHandler:
         )
         request.url = url
 
-        response = await client.send(request)
+        auth = client.auth
+        if auth is None:
+            auth = httpx.BasicAuth(url.username, url.password) if url.username or url.password else httpx.Auth()
+        response = await client.send(
+            request,
+            stream=True,
+            follow_redirects=False,
+            auth=_ResponseLimitAuth(
+                auth,
+                limit=self._max_response_body_bytes,
+                follow_redirects=client.follow_redirects,
+            ),
+        )
 
         # Preserve multi-value headers (e.g. multiple Set-Cookie) as list[str].
         # Normalize names to lowercase so lookups are consistent and case
@@ -296,3 +329,130 @@ def _has_header(headers: Mapping[str, str], name: str) -> bool:
     """Case-insensitive header presence check."""
     needle = name.lower()
     return any(key.lower() == needle for key in headers)
+
+
+class _ResponseLimitAuth(httpx.Auth):
+    """Read every response within bounds before HTTPX can buffer intermediate bodies."""
+
+    def __init__(self, auth: httpx.Auth, *, limit: int, follow_redirects: bool) -> None:
+        self._auth = auth
+        self._limit = limit
+        self._follow_redirects = follow_redirects
+
+    async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
+        flow = self._auth.async_auth_flow(request)
+        try:
+            request = await flow.__anext__()
+            while True:
+                response = yield request
+                await _read_bounded_response(response, self._limit)
+                if self._follow_redirects and response.next_request is not None:
+                    request = response.next_request
+                    continue
+                try:
+                    request = await flow.asend(response)
+                except StopAsyncIteration:
+                    return
+        finally:
+            await flow.aclose()
+
+
+async def _read_bounded_response(response: httpx.Response, limit: int) -> None:
+    """Cache only bounded decoded content, preserving HTTPX text and auth behavior."""
+    try:
+        if response.is_stream_consumed:
+            if len(response.content) > limit:
+                raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+            return
+
+        encodings = [
+            encoding.strip().lower()
+            for encoding in response.headers.get("content-encoding", "").split(",")
+            if encoding.strip().lower() != "identity" and encoding.strip()
+        ]
+        if (
+            response.request.method == "HEAD"
+            or 100 <= response.status_code < 200
+            or response.status_code in {204, 205, 304}
+            or (response.request.method == "CONNECT" and 200 <= response.status_code < 300)
+        ):
+            encodings = []
+        if len(encodings) > 4:
+            raise httpx.DecodingError("HTTP response has too many content encoding stages.", request=response.request)
+        decoders = [_BoundedContentDecoder(encoding, limit) for encoding in reversed(encodings)]
+        body = bytearray()
+        received = 0
+        async for chunk in response.aiter_raw():
+            received += len(chunk)
+            if received > limit:
+                raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+            for decoder in decoders:
+                chunk = decoder.decode(chunk)
+            if len(body) + len(chunk) > limit:
+                raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+            body.extend(chunk)
+        for index, decoder in enumerate(decoders):
+            chunk = decoder.finish()
+            for downstream in decoders[index + 1 :]:
+                chunk = downstream.decode(chunk)
+            if len(body) + len(chunk) > limit:
+                raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+            body.extend(chunk)
+        # HTTPX rereads intermediate responses during auth/redirect handling. Populate
+        # its content cache so those reads cannot trigger automatic decoding again.
+        response._content = bytes(body)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        await response.aclose()
+
+
+class _BoundedContentDecoder:
+    def __init__(self, encoding: str, limit: int) -> None:
+        if encoding not in {"gzip", "deflate"}:
+            raise httpx.DecodingError(f"Unsupported HTTP response content encoding: {encoding}.")
+        self._limit = limit
+        self._decoded = 0
+        self._input = bytearray()
+        self._decoder = zlib.decompressobj(zlib.MAX_WBITS | 16) if encoding == "gzip" else None
+
+    def decode(self, data: bytes) -> bytes:
+        if self._decoder is None:
+            # Raw deflate can share a wrapped stream's prefix. Retain bounded input
+            # until finalization so a failed candidate never reaches downstream stages.
+            if len(self._input) + len(data) > self._limit:
+                raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+            self._input.extend(data)
+            return b""
+        try:
+            decoded = self._decoder.decompress(data, min(self._limit - self._decoded + 1, sys.maxsize))
+        except zlib.error as exc:
+            raise httpx.DecodingError(str(exc)) from exc
+        self._decoded += len(decoded)
+        if self._decoded > self._limit:
+            raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+        if self._decoder.unused_data:
+            raise httpx.DecodingError("Unexpected data after HTTP response content encoding.")
+        return decoded
+
+    def finish(self) -> bytes:
+        if self._decoder is not None:
+            if not self._decoder.eof:
+                raise httpx.DecodingError("Incomplete HTTP response content encoding.")
+            return b""
+
+        data = bytes(self._input)
+        self._input.clear()
+        failures: list[httpx.DecodingError | httpx.StreamError] = []
+        for mode in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
+            self._decoder = zlib.decompressobj(mode)
+            self._decoded = 0
+            try:
+                decoded = self.decode(data)
+                if not self._decoder.eof:
+                    raise httpx.DecodingError("Incomplete HTTP response content encoding.")
+                return decoded
+            except (httpx.DecodingError, httpx.StreamError) as exc:
+                failures.append(exc)
+        for error in failures:
+            if isinstance(error, httpx.StreamError):
+                raise error
+        raise failures[-1]

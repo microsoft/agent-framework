@@ -5,7 +5,7 @@ import os
 from typing import Annotated, Any, Literal
 
 from agent_framework import Agent, tool
-from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient, FoundryChatOptions, ResponsesHostServer
 from agent_framework.hyperlight import HyperlightCodeActProvider
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -57,7 +57,7 @@ def main():
     # 1. Create the Foundry chat client.
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=DefaultAzureCredential(),
         function_invocation_configuration={"include_detailed_errors": True},
     )
@@ -72,7 +72,7 @@ def main():
 
     # 3. Build the agent. History is managed by the hosting infrastructure, so
     #    request the model not to persist server-side conversation state.
-    agent = Agent(
+    agent = Agent[FoundryChatOptions](
         client=client,
         instructions="You are a helpful assistant. Keep your answers brief.",
         context_providers=[codeact],

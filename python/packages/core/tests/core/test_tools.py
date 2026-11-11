@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
 import copy
+import json
 import logging
 import threading
 from contextvars import ContextVar
+from datetime import date, datetime
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
 
@@ -457,6 +459,95 @@ async def test_invoke_omitted_optional_uses_function_default():
     assert result[0].text == "Seattle:C"
 
 
+@pytest.mark.parametrize(
+    ("annotation", "raw_value", "expected"),
+    [
+        (datetime, "2026-01-02T03:04:05", datetime(2026, 1, 2, 3, 4, 5)),
+        (set[str], ["b", "a"], {"a", "b"}),
+        (tuple[int, int], [1, 2], (1, 2)),
+    ],
+    ids=["datetime", "set", "tuple"],
+)
+async def test_invoke_converts_json_values_to_annotated_python_types(annotation: Any, raw_value: Any, expected: Any):
+    """Values pydantic converts from JSON must reach the function instead of failing the schema type check.
+
+    Regression for #8661: the lightweight JSON schema checks ran on the pydantic output, so a
+    ``datetime``/``set``/``tuple`` value was rejected against its ``string``/``array`` schema.
+    """
+    received: list[Any] = []
+
+    def capture(value: Any) -> str:
+        received.append(value)
+        return "ok"
+
+    capture.__annotations__["value"] = annotation
+    capture_tool = tool(capture)
+
+    await capture_tool.invoke(arguments={"value": raw_value})
+
+    assert received == [expected]
+    assert type(received[0]) is type(expected)
+
+
+async def test_invoke_still_rejects_invalid_value_for_pydantic_tool():
+    """Pydantic still rejects values it cannot convert to the annotated type."""
+
+    @tool
+    def when(moment: datetime) -> str:
+        return moment.isoformat()
+
+    with pytest.raises(TypeError, match="Invalid arguments for 'when'"):
+        await when.invoke(arguments={"moment": "not a date"})
+
+
+async def test_invoke_accepts_input_model_instance_with_converted_values():
+    """An input model instance is checked in its JSON form, so converted values pass (#8661)."""
+
+    @tool
+    def when(moment: datetime, tags: set[str]) -> str:
+        return f"{type(moment).__name__}:{type(tags).__name__}"
+
+    assert when.input_model is not None
+    arguments = when.input_model.model_validate({"moment": "2026-01-02T03:04:05", "tags": ["b", "a"]})
+
+    assert (await when.invoke(arguments=arguments))[0].text == "datetime:set"
+
+
+async def test_invoke_still_checks_unvalidated_input_model_instance():
+    """Skipping the checks for model-validated arguments must not let an unvalidated instance through."""
+
+    @tool
+    def count_tool(count: int) -> str:
+        return str(count)
+
+    assert count_tool.input_model is not None
+    arguments = count_tool.input_model.model_construct(count="not a number")
+
+    with pytest.raises(TypeError, match="Invalid arguments for 'count_tool'"):
+        await count_tool.invoke(arguments=arguments)
+
+
+async def test_invoke_revalidates_constructed_input_model_instance():
+    """A constructed instance can hold a wrong Python type whose JSON form still matches the schema.
+
+    Its data is validated through the input model, so the function receives the annotated type.
+    """
+    received: list[Any] = []
+
+    @tool
+    def when(moment: datetime) -> str:
+        received.append(moment)
+        return "ok"
+
+    assert when.input_model is not None
+    arguments = when.input_model.model_construct(moment=date(2026, 9, 30))
+
+    await when.invoke(arguments=arguments)
+
+    assert received == [datetime(2026, 9, 30)]
+    assert type(received[0]) is datetime
+
+
 async def test_auto_invoke_preserves_explicit_null_argument():
     """The auto function-calling path must preserve an explicit null argument too.
 
@@ -501,6 +592,79 @@ async def test_tool_decorator_with_json_schema_invoke_invalid_type():
 
     with pytest.raises(TypeError, match="Invalid type for 'max_results'"):
         await search.invoke(arguments={"query": "hello", "max_results": "three"})
+
+
+async def test_tool_json_schema_integer_accepts_whole_number_float():
+    """JSON Schema "integer" accepts whole-number floats like 3.0 (#9843)."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "count": {"type": "integer"},
+        },
+        "required": ["count"],
+    }
+    received: list[Any] = []
+
+    @tool(name="counter", description="Count tool", schema=json_schema)
+    def counter(count: int) -> str:
+        received.append(count)
+        return str(count)
+
+    # 3.0 is a valid JSON Schema integer; it reaches the callable as the integer
+    # the schema asked for, so range(count) and friends work on it.
+    await counter.invoke(arguments={"count": 3.0})
+    assert received == [3]
+    assert isinstance(received[0], int)
+
+    # 3.5 is not a valid integer.
+    with pytest.raises(TypeError, match="Invalid type for 'count'"):
+        await counter.invoke(arguments={"count": 3.5})
+
+
+async def test_tool_json_schema_nullable_integer_normalizes_whole_number_float():
+    """A nullable integer schema accepts 3.0 and still hands the callable an int."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "count": {"type": ["integer", "null"]},
+        },
+    }
+    received: list[Any] = []
+
+    @tool(name="counter", description="Count tool", schema=json_schema)
+    def counter(count: int | None) -> str:
+        received.append(count)
+        return str(count)
+
+    await counter.invoke(arguments={"count": 3.0})
+    assert received == [3]
+    assert isinstance(received[0], int)
+
+    await counter.invoke(arguments={"count": None})
+    assert received == [3, None]
+
+
+async def test_tool_json_schema_number_alongside_integer_keeps_the_float():
+    """When the schema also allows "number", the value's own type is the answer."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "value": {"type": ["integer", "number"]},
+        },
+    }
+    received: list[Any] = []
+
+    @tool(name="measure", description="Measure tool", schema=json_schema)
+    def measure(value: float) -> str:
+        received.append(value)
+        return str(value)
+
+    await measure.invoke(arguments={"value": 3.0})
+    assert received == [3.0]
+    assert isinstance(received[0], float)
 
 
 def test_tool_decorator_with_json_schema_preserves_custom_properties():
@@ -913,20 +1077,21 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
         name="telemetry_test_tool",
         description="A test tool for telemetry",
     )
-    def telemetry_test_tool(x: int, y: int) -> int:
-        """A function that adds two numbers for telemetry testing."""
-        return x + y
+    def telemetry_test_tool(expression: str) -> str:
+        """A function that echoes an expression for telemetry testing."""
+        return expression
 
     # Mock the histogram
     mock_histogram = Mock()
     telemetry_test_tool._invocation_duration_histogram = mock_histogram
     span_exporter.clear()
+    expression = "(12345 + 67890) / 3"
     # Call invoke
-    result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
+    result = await telemetry_test_tool.invoke(expression=expression, tool_call_id="test_call_id")
 
     # Verify result
     assert isinstance(result, list)
-    assert result[0].text == "3"
+    assert result[0].text == expression
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -938,16 +1103,20 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool for telemetry"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_RESULT] == "3"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"expression": "(12345 + 67890) / 3"}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_RESULT] == expression  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
     # Verify histogram was called with correct attributes
     mock_histogram.record.assert_called_once()
     call_args = mock_histogram.record.call_args
     assert call_args[0][0] > 0  # duration should be positive
     attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
-    assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    assert attributes == {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "telemetry_test_tool",
+        OtelAttr.TOOL_TYPE: "function",
+        OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: "telemetry_test_tool",
+    }
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
@@ -991,8 +1160,12 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     call_args = mock_histogram.record.call_args
     assert call_args[0][0] > 0  # duration should be positive
     attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
-    assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+    assert attributes == {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "telemetry_test_tool",
+        OtelAttr.TOOL_TYPE: "function",
+        OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: "telemetry_test_tool",
+    }
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -1077,10 +1250,14 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 5, "y": 10}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_tool_invoke_telemetry_with_exception(
-    span_exporter: InMemorySpanExporter, caplog: pytest.LogCaptureFixture
-):
+    span_exporter: InMemorySpanExporter,
+    enable_sensitive_data: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Test the tool invoke method with telemetry when an exception occurs."""
+    private_error_detail = "founder-secret-token"
 
     @tool(
         name="exception_test_tool",
@@ -1088,7 +1265,7 @@ async def test_tool_invoke_telemetry_with_exception(
     )
     def exception_test_tool(x: int, y: int) -> int:
         """A function that raises an exception for telemetry testing."""
-        raise ValueError("Test exception for telemetry")
+        raise ValueError(f"Test exception for telemetry: {private_error_detail}")
 
     mock_histogram = Mock()
     exception_test_tool._invocation_duration_histogram = mock_histogram
@@ -1096,26 +1273,47 @@ async def test_tool_invoke_telemetry_with_exception(
     # Call invoke and expect exception
     with pytest.raises(ValueError, match="Test exception for telemetry"):
         await exception_test_tool.invoke(x=1, y=2, tool_call_id="exception_call")
-    assert "Function failed. Error: Test exception for telemetry" in caplog.text
+    if enable_sensitive_data:
+        assert f"Function failed. Error: Test exception for telemetry: {private_error_detail}" in caplog.text
+    else:
+        assert "Function exception_test_tool failed (ValueError)." in caplog.text
+        assert private_error_detail not in caplog.text
     assert "result parser failed" not in caplog.text
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
     assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
     assert "exception_test_tool" in span.name
+    assert span.attributes is not None
     assert span.attributes[OtelAttr.TOOL_NAME] == "exception_test_tool"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "exception_call"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool that raises an exception"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    if enable_sensitive_data:
+        assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    else:
+        assert OtelAttr.TOOL_ARGUMENTS not in span.attributes
     assert span.attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.status.status_code == trace.StatusCode.ERROR
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
     # Verify histogram was called with error attributes
     mock_histogram.record.assert_called_once()
     call_args = mock_histogram.record.call_args
     attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__
+    assert attributes == {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "exception_test_tool",
+        OtelAttr.TOOL_TYPE: "function",
+        OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: "exception_test_tool",
+        OtelAttr.ERROR_TYPE: ValueError.__name__,
+    }
 
 
 async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanExporter):
@@ -1153,7 +1351,12 @@ async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanE
     mock_histogram.record.assert_called_once()
     call_args = mock_histogram.record.call_args
     attributes = call_args[1]["attributes"]
-    assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "async_telemetry_test"
+    assert attributes == {
+        OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
+        OtelAttr.TOOL_NAME: "async_telemetry_test",
+        OtelAttr.TOOL_TYPE: "function",
+        OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME: "async_telemetry_test",
+    }
 
 
 async def test_tool_invoke_invalid_pydantic_args():
@@ -1214,6 +1417,29 @@ def test_tool_serialization():
     assert restored_tool_2.description == "A test tool for serialization"
     assert restored_tool_2.parameters() == serialize_test_tool.parameters()
     assert restored_tool_2(10, 4) == 6
+
+
+@pytest.mark.parametrize("with_func", [True, False])
+def test_tool_serialization_with_json_schema_input_model(with_func: bool):
+    """Test that a tool declared with a JSON schema keeps its parameters through serialization."""
+    schema = {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+    }
+
+    def get_weather(city: str) -> str:
+        return f"Sunny in {city}"
+
+    func = get_weather if with_func else None
+    weather_tool = FunctionTool(name="get_weather", description="Get the weather", func=func, input_model=schema)
+
+    tool_dict = weather_tool.to_dict()
+    assert tool_dict["input_model"] == schema
+
+    restored_tool = FunctionTool.from_dict(tool_dict, dependencies={"function_tool": {"func": func}})
+    assert restored_tool.parameters() == schema
+    assert restored_tool.func is func
 
 
 # region _parse_inputs tests
@@ -2027,6 +2253,154 @@ def test_skip_parsing_is_singleton() -> None:
 
     assert _SkipParsingSentinel() is SKIP_PARSING
     assert repr(SKIP_PARSING) == "SKIP_PARSING"
+
+
+def test_to_json_schema_spec_canonicalizes_reordered_top_level_keywords() -> None:
+    """Verify that to_json_schema_spec canonicalizes top-level and nested keyword order for prompt caching."""
+    # Two tools with differently ordered top-level keywords and properties
+    schema_1 = {
+        "title": "SearchTool",
+        "type": "object",
+        "description": "Searches items",
+        "properties": {
+            "z_query": {"description": "Query string", "type": "string"},
+            "a_limit": {"default": 10, "type": "integer"},
+        },
+        "required": ["z_query"],
+    }
+    schema_2 = {
+        "description": "Searches items",
+        "properties": {
+            "a_limit": {"type": "integer", "default": 10},
+            "z_query": {"type": "string", "description": "Query string"},
+        },
+        "type": "object",
+        "required": ["z_query"],
+        "title": "SearchTool",
+    }
+
+    tool_1 = FunctionTool(name="search", description="Search tool", input_model=schema_1)
+    tool_2 = FunctionTool(name="search", description="Search tool", input_model=schema_2)
+
+    spec_1 = tool_1.to_json_schema_spec()
+    spec_2 = tool_2.to_json_schema_spec()
+
+    # Top-level parameters dictionary keys must be sorted deterministically
+    assert list(spec_1["function"]["parameters"].keys()) == ["description", "properties", "required", "title", "type"]
+    assert list(spec_2["function"]["parameters"].keys()) == ["description", "properties", "required", "title", "type"]
+
+    # Properties dictionary keys must be sorted deterministically
+    assert list(spec_1["function"]["parameters"]["properties"].keys()) == ["a_limit", "z_query"]
+    assert list(spec_2["function"]["parameters"]["properties"].keys()) == ["a_limit", "z_query"]
+
+    # Wire-level serialization must be identical
+    wire_1 = json.dumps(spec_1)
+    wire_2 = json.dumps(spec_2)
+    assert wire_1 == wire_2
+
+
+def test_to_json_schema_spec_canonicalizes_root_schema_without_properties() -> None:
+    """Regression: root schemas without 'properties' are canonicalized deterministically."""
+    schema_1 = {
+        "description": "A scalar or empty tool schema",
+        "type": "string",
+        "title": "ScalarInput",
+    }
+    schema_2 = {
+        "title": "ScalarInput",
+        "description": "A scalar or empty tool schema",
+        "type": "string",
+    }
+
+    tool_1 = FunctionTool(name="scalar_tool", description="Scalar tool", input_model=schema_1)
+    tool_2 = FunctionTool(name="scalar_tool", description="Scalar tool", input_model=schema_2)
+
+    spec_1 = tool_1.to_json_schema_spec()
+    spec_2 = tool_2.to_json_schema_spec()
+
+    assert list(spec_1["function"]["parameters"].keys()) == ["description", "title", "type"]
+    assert list(spec_2["function"]["parameters"].keys()) == ["description", "title", "type"]
+    assert json.dumps(spec_1) == json.dumps(spec_2)
+
+
+def test_to_json_schema_spec_canonicalizes_nested_and_defs_deterministically() -> None:
+    """Verify that nested objects, $defs, and arrays are recursively sorted deterministically."""
+    schema = {
+        "type": "object",
+        "$defs": {
+            "ZItem": {"type": "string"},
+            "AItem": {"type": "integer"},
+        },
+        "properties": {
+            "metadata": {
+                "type": "object",
+                "properties": {
+                    "tag_z": {"type": "string"},
+                    "tag_a": {"type": "string"},
+                },
+            },
+        },
+    }
+    tool = FunctionTool(name="complex_tool", description="Complex tool", input_model=schema)
+    spec = tool.to_json_schema_spec()
+    params = spec["function"]["parameters"]
+
+    assert list(params.keys()) == ["$defs", "properties", "type"]
+    assert list(params["$defs"].keys()) == ["AItem", "ZItem"]
+    assert list(params["properties"]["metadata"]["properties"].keys()) == ["tag_a", "tag_z"]
+
+
+def test_parameters_canonicalizes_schema_deterministically() -> None:
+    """Verify that FunctionTool.parameters() directly canonicalizes schemas deterministically.
+
+    This ensures providers that serialize tool.parameters() directly (such as Anthropic,
+    Bedrock, Gemini, and Mistral) obtain deterministic wire-level outputs without cache churn.
+    """
+    schema_1 = {
+        "title": "Config",
+        "description": "Provider tool",
+        "type": "object",
+        "properties": {
+            "z_param": {"type": "string"},
+            "a_param": {"type": "integer"},
+        },
+    }
+    schema_2 = {
+        "properties": {
+            "a_param": {"type": "integer"},
+            "z_param": {"type": "string"},
+        },
+        "type": "object",
+        "description": "Provider tool",
+        "title": "Config",
+    }
+
+    tool_1 = FunctionTool(name="config_tool", description="tool", input_model=schema_1)
+    tool_2 = FunctionTool(name="config_tool", description="tool", input_model=schema_2)
+
+    params_1 = tool_1.parameters()
+    params_2 = tool_2.parameters()
+
+    # Direct parameters() must be sorted deterministically
+    assert list(params_1.keys()) == ["description", "properties", "title", "type"]
+    assert list(params_2.keys()) == ["description", "properties", "title", "type"]
+    assert list(params_1["properties"].keys()) == ["a_param", "z_param"]
+    assert list(params_2["properties"].keys()) == ["a_param", "z_param"]
+
+    # Provider wire simulation: Anthropic tool definition shape
+    anthropic_wire_1 = json.dumps({
+        "type": "custom",
+        "name": tool_1.name,
+        "description": tool_1.description,
+        "input_schema": tool_1.parameters(),
+    })
+    anthropic_wire_2 = json.dumps({
+        "type": "custom",
+        "name": tool_2.name,
+        "description": tool_2.description,
+        "input_schema": tool_2.parameters(),
+    })
+    assert anthropic_wire_1 == anthropic_wire_2
 
 
 # endregion

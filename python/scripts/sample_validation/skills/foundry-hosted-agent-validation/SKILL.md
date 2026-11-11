@@ -95,11 +95,13 @@ Create `.env` from `.env.example` with the **real** values:
 
 ```
 FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-AZURE_AI_MODEL_DEPLOYMENT_NAME="<real-deployed-model>"
+FOUNDRY_MODEL="<real-deployed-model>"
 ```
 
 Start the server (`python main.py`) — it listens on `http://localhost:8088`.
 `main.py` uses `DefaultAzureCredential`, so `az login` must be current.
+The sample code prefers `FOUNDRY_MODEL` locally and falls back to the
+azd-managed `AZURE_AI_MODEL_DEPLOYMENT_NAME` when hosted.
 
 Invoke (single turn), capture the returned `response_id`, then reuse it for a
 follow-up turn to confirm memory:

@@ -8,10 +8,9 @@
 //
 // Memory scope flows from request -> hosting layer -> session -> provider:
 //   1. Foundry sets x-agent-user-id on every inbound request.
-//   2. AgentFrameworkResponseHandler reads context.PlatformContext.UserIdKey via the registered
-//      HostedSessionIsolationKeyProvider and stores it on the session as a HostedSessionContext.
-//   3. FoundryMemoryProvider's stateInitializer reads HostedSessionContext.UserId and uses it as
-//      the FoundryMemoryProviderScope, partitioning memories per user.
+//   2. The hosting layer reads context.PlatformContext.UserIdKey and associates it with the session.
+//   3. FoundryMemoryProvider's stateInitializer reads that id via GetFoundryHostedUserId and uses it as the
+//      FoundryMemoryProviderScope, partitioning memories per user.
 
 using Azure.AI.Projects;
 using Azure.Identity;
@@ -30,10 +29,11 @@ var agentName = FirstNonBlank(
     System.Environment.GetEnvironmentVariable("AGENT_NAME"),
     "hosted-memory-agent")!;
 var deployment = FirstNonBlank(
-    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     "gpt-4o")!;
 var embeddingDeployment = FirstNonBlank(
+    System.Environment.GetEnvironmentVariable("FOUNDRY_EMBEDDING_MODEL"),
     System.Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_DEPLOYMENT_NAME"),
     "text-embedding-ada-002")!;
 var memoryStoreName = FirstNonBlank(
@@ -49,13 +49,12 @@ var credential = new DefaultAzureCredential();
 
 AIProjectClient projectClient = new(projectEndpoint, credential);
 
-// FoundryMemoryProvider partitions memories per end user via a built-in HostedFoundryMemoryProviderScopes
-// helper that reads the platform-injected user isolation key from the HostedSessionContext that the
-// hosting layer placed on the session.
+// FoundryMemoryProvider partitions memories per end user by reading the trusted user identity that
+// the hosting layer placed on the session.
 FoundryMemoryProvider memoryProvider = new(
     projectClient,
     memoryStoreName,
-    stateInitializer: HostedFoundryMemoryProviderScopes.PerUser());
+    stateInitializer: CreatePerUserMemoryState);
 
 // Provision the memory store on startup if it does not already exist. EnsureMemoryStoreCreatedAsync
 // is idempotent. Doing this once at start avoids per-request latency.
@@ -81,19 +80,35 @@ ChatClientAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions()
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 //
 // Per-user memory isolation comes from the platform-injected x-agent-user-id header, resolved by the
-// default HostedSessionIsolationKeyProvider into the session's HostedSessionContext. This sample scopes
-// memory per user via HostedFoundryMemoryProviderScopes.PerUser(), which REQUIRES that context: a
+// hosting layer and associated with the AgentSession. This sample reads that id directly to scope
+// memory per user. A
 // request with no resolved user identity throws. So locally you must send an x-agent-user-id request
 // header (see scripts/smoke.ps1); vary it to simulate distinct users. On the Foundry platform the
 // header is always present, so no local provider registration is needed.
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent);
+builder.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();
 
 
 app.Run();
+
+static FoundryMemoryProvider.State CreatePerUserMemoryState(AgentSession? session)
+{
+    // Repository builds use the reduced session API; published 1.27 exposes the context object.
+    string userId =
+#if USE_LOCAL_AGENT_FRAMEWORK_SOURCE
+        session?.GetFoundryHostedUserId()
+#else
+        session?.GetHostedContext()?.UserId
+#endif
+        ?? throw new InvalidOperationException(
+            "Foundry hosted user identity is required to scope memories.");
+
+    return new FoundryMemoryProvider.State(
+        new FoundryMemoryProviderScope(userId));
+}
 
 static string? FirstNonBlank(params string?[] candidates) =>
     Array.Find(candidates, candidate => !string.IsNullOrWhiteSpace(candidate));

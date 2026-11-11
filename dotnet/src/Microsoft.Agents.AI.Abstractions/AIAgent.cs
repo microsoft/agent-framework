@@ -337,9 +337,10 @@ public abstract partial class AIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        CurrentRunContext = new(this, session, messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList(), options);
+        var requestMessages = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+        CurrentRunContext = new(this, session, requestMessages, options);
         // NOTE: This method must be async/await in order to restore the previous run context at the end of the method run.
-        return await this.RunCoreAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
+        return await this.RunCoreAsync(requestMessages, session, options, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -468,9 +469,10 @@ public abstract partial class AIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        AgentRunContext context = new(this, session, messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList(), options);
+        var requestMessages = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+        AgentRunContext context = new(this, session, requestMessages, options);
         CurrentRunContext = context;
-        await foreach (var update in this.RunCoreStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
+        await foreach (var update in this.RunCoreStreamingAsync(requestMessages, session, options, cancellationToken).ConfigureAwait(false))
         {
             yield return update;
 
