@@ -36,8 +36,11 @@ The integration examples use **request-owned factories** and the current
 `history_source="host_managed"` API. Use the current workspace, or a hosting
 release containing that API; before the coordinated beta is published, older
 PyPI wheels are not evidence that the examples include these behaviors.
-Toolbox/skills connections inherit the current request's call ID and are closed
-afterward. Files and custom MAF state are sandbox-specific; Foundry Memory
+Toolbox/skills connections inherit the current request's call ID; entered
+contexts are unwound after the request. Pre-entry allocations and partial
+allocations from failed client entry may not be cleaned up. See
+[factory resource lifecycle](../../../packages/foundry_hosting/README.md#factory-resource-lifecycle).
+Files and custom MAF state are sandbox-specific; Foundry Memory
 intentionally shares long-term memories across the **same user's** sandboxes.
 Their READMEs document the external resource/permission boundaries. GitHub MCP
 PAT/OAuth and Telegram/Key Vault require separate setup; the

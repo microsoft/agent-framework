@@ -33,18 +33,20 @@ The `FoundryToolbox` is attached to the agent and its skills are exposed through
 
 The agent is hosted with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol on `http://localhost:8088`.
 
-`agent=create_agent` builds a new Toolbox, skills provider/cache, credential and
-client for **each request**, giving those resources one deterministic owner and
-cleanup boundary. `FoundryToolbox` also scopes tool and skill-resource
+The `create_agent` factory builds a new Toolbox, skills provider/cache, credential
+and client for the request. Successfully entered contexts are unwound after the
+request. `FoundryToolbox` also scopes tool and skill-resource
 operations to the current platform call ID when an instance is reused, rebinding
 its MCP session when that identity changes. `tools=` still connects the Toolbox
 and `context_providers=` still reads skills from that same session; both are
 required. Only loading the vetted sample skill body is auto-approved, not
 arbitrary skill scripts or external actions.
 
-The factory's client context closes its owned SDK transports and credential
-after completion, failed tool entry or cancellation. Local runs use
-`AzureCliCredential`; hosted runs use managed identity.
+After entry, the factory's client context closes its owned SDK transports and
+credential on exit, including if later tool entry fails or the request is
+cancelled. If the request ends before client entry, those allocations may not
+be cleaned up.
+Local runs use `AzureCliCredential`; hosted runs use managed identity.
 `history_source="host_managed"` owns conversation history and disables inner
 model storage. Scope the configured Toolbox/skill resources and RBAC to the
 intended project; a fresh provider is not an external authorization boundary.

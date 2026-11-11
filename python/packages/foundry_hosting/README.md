@@ -261,6 +261,8 @@ state. This is not an exactly-once guarantee for external tools: make
 side-effecting operations idempotent. Legacy unscoped workflow state is not
 read; migration starts a fresh Responses chain.
 
+### Factory resource lifecycle
+
 For Responses integrations, use a factory when a provider, tool cache, client or
 credential carries request identity or needs request-owned cleanup.
 `FoundryToolbox` resolves platform headers at each operation boundary and
@@ -269,15 +271,23 @@ not retain the first request's call ID. The integration samples still construct
 it inside the factory because they also own request-scoped clients, credentials
 and providers.
 
-Factory agents are entered/exited for each request, including failed entry and
-cancellation. `Agent` manages context-managed clients and MCP tools, but it does
-not automatically manage every context provider or external credential. The
+The host unwinds successfully entered factory-agent contexts when a request
+finishes, fails or is cancelled. `Agent` also unwinds client and MCP contexts
+it has entered if a later context fails to enter. Allocations made before agent
+entry and partial allocations from a failed client `__aenter__` may not be
+cleaned up. Calling `agent.close()` before entry does not dispose an unentered
+client.
+
+`Agent` manages context-managed clients and MCP tools, but it does not
+automatically manage every context provider or external credential. Exiting an
+entered `Agent` can close a caller-supplied context-managed client; ownership
+depends on the client's context contract. The host cannot reliably identify a
+shared client on first use, so applications must ensure that shared clients
+support the agent's entry and exit behavior. The
 [integration samples](../../samples/04-hosting/foundry-hosted-agents/) explicitly
 own their SDK transports, credentials and providers: Search is request-owned;
 Memory binds a fresh provider/project client to the trusted user and current call;
 custom Cosmos state uses user **and** sandbox namespaces with conditional writes.
-Only close resources that the factory creates and owns, never a supplied shared
-client or somebody else's credential.
 
 ## Responses agent history and storage
 
@@ -771,10 +781,12 @@ A sync/async `build_workflow(request)` factory returns a **built**, fresh `Workf
 with stable name, executor IDs and graph identity. Build fresh executors, agents,
 clients, providers and mutable tools for each request. Allocation must not execute
 tools or workflow side effects. Both hosted and local workflows require a factory; built instances
-are rejected at construction. Factory-owned agents are entered and
-closed per turn; applications must explicitly own external credentials/providers
-through their resource-managing agent subclasses. Do not configure another
-checkpoint store on `WorkflowBuilder` or share mutable graphs between requests.
+are rejected at construction. Successfully entered factory-agent contexts are
+unwound per turn; see [factory resource lifecycle](#factory-resource-lifecycle)
+for the pre-entry and client-ownership limits. Applications must explicitly own
+external credentials and providers through their resource-managing agent
+subclasses. Do not configure another checkpoint store on `WorkflowBuilder` or
+share mutable graphs between requests.
 
 Native `AgentExecutor` graphs support `Agent` and constrained bare `RawAgent`.
 For `Agent`, hosting applies options through a request-owned agent middleware

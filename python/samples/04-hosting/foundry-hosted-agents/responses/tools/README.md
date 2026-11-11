@@ -24,9 +24,11 @@ When a tool is set to `always_require`, the agent host emits an `mcp_approval_re
 
 The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
 
-The host uses `agent=create_agent` and `history_source="host_managed"`. Each
-request receives its own client and credential; their owned transports are
-closed afterward. History and approval continuation remain in the host's
+The host uses `agent=create_agent` and `history_source="host_managed"`. The
+factory creates a client and credential for the request. Once entered, the client
+context closes its owned transports on exit; pre-entry allocations may not be
+cleaned up.
+History and approval continuation remain in the host's
 trusted user/sandbox-scoped stores, not on a reused agent instance. A fresh
 factory does not remove pending approvals: return the approval response with
 the same outer continuation and sandbox. `store=false` cannot establish a

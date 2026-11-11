@@ -20,9 +20,9 @@ The request-aware `create_agent` factory builds a new agent, credential, project
 client and Memory provider **inside each request**. Chat and Memory share that
 request's project client, not a process-wide client. Its headers capture the
 current platform call ID for both Memory and model calls; raw user IDs are not
-forwarded. The request-owned client's context manager closes its own OpenAI and
-project transports and credential on completion or cancellation. It does not
-change ownership of developer-supplied clients elsewhere in the framework.
+forwarded. Once entered, the request-owned client context closes its own OpenAI
+and project transports and credential on completion or cancellation. Host cleanup
+may not cover allocations when a request ends before client entry.
 
 The Memory namespace is a framed hash of the **trusted platform user ID**. It
 intentionally excludes the sandbox, conversation, MAF session and call IDs: the

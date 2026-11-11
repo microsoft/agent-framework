@@ -79,9 +79,14 @@ clients, providers, and mutable tools. A new graph wrapper around shared executo
 Reject known shared execution resources rather than cloning them. This guard cannot prove that arbitrary
 application globals are isolated. Keep workflow names and executor IDs stable for checkpoint restoration.
 
-Close factory-owned context-managed agents for the request, including failure and cancellation cleanup.
-Applications own cleanup of other resources they create; caller-owned shared resources must not be closed.
-State needed across requests belongs in supported stores, not request-owned instance fields.
+Unwind successfully entered factory-agent contexts when a request finishes, fails, or is cancelled.
+`Agent` also unwinds client and MCP contexts already entered if a later context fails to enter.
+Allocations before agent entry and partial allocations from a failed client `__aenter__` may not be
+cleaned up; calling `agent.close()` before entry does not dispose an unentered client.
+Applications own cleanup of other resources they create. An entered caller-supplied context-managed
+client can be closed on agent exit; ownership depends on its context contract, and the host cannot
+reliably identify shared clients on first use. State needed across requests belongs in supported stores,
+not request-owned instance fields.
 
 ### Persistence and history ownership
 
@@ -199,7 +204,8 @@ These decisions do not redesign Core, concurrency, checkpoints, retries, or exte
 ## Validation
 
 Cover public imports and signatures, invalid construction before SDK side effects, sync/async factory
-invocation, failure/cancellation cleanup, and rejection of shared workflow resources.
+invocation, cleanup of successfully entered contexts on failure/cancellation, and rejection of shared
+workflow resources.
 Exercise streaming and non-streaming execution, session/checkpoint continuation, pending replies,
 and model-free process crash/recovery. Validate maintained samples against public exports.
 Offline checks do not establish live Foundry deployment compatibility.

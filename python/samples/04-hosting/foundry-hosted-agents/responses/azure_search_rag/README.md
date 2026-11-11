@@ -15,9 +15,11 @@ The agent uses `FoundryChatClient` from the Agent Framework to create a Response
 See [main.py](main.py) for the full implementation.
 
 `create_agent` allocates a fresh Search provider, credential and model client for
-each request. The sample's context-managed client explicitly enters/closes the
-provider and closes its own SDK transports and credential, including failed
-entry and cancellation; `Agent` does not automatically enter every provider.
+each request. Once entered, the sample's client context closes the provider and
+its own SDK transports and credential on exit. The client also attempts cleanup
+if Search provider entry fails; `Agent` does not automatically enter every
+provider. If the request ends before client entry, those allocations may not be
+cleaned up.
 `history_source="host_managed"` owns conversation history and disables inner
 model storage. Only first-party Foundry model calls receive the platform call
 ID; it is not forwarded to Search as an authorization substitute.

@@ -156,9 +156,10 @@ does not access/write this custom session store.
 
 For hosted use, configure the endpoint/database/container in the manifest and
 follow the [parent deployment instructions](../../README.md#deploying-the-agent-to-foundry).
-The provider closes the Cosmos client and its own credential at shutdown;
-request clients are closed after their request, including failed tool entry and
-cancellation.
+The provider closes the Cosmos client and its own credential at shutdown.
+After a request client enters, its context closes its own transports and
+credential on exit, including cancellation. If a request ends before client
+entry, those allocations may not be cleaned up.
 
 Live Cosmos access and deployment need separately approved resources and
 permissions.

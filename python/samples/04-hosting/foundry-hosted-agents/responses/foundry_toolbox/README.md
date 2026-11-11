@@ -100,16 +100,17 @@ See [main.py](main.py) for the full implementation.
 ### Request-owned resources
 
 The host receives `agent=create_agent`, not a process-wide agent instance.
-Every request creates a fresh client and Toolbox MCP connection, then closes
-them afterward. This gives the sample one clear owner for its model transports,
-credential and Toolbox lifecycle. `FoundryToolbox` also supports long-lived
-instances: it resolves the current platform headers before each operation and
+The factory creates a fresh client and Toolbox configuration for the request.
+Successfully entered contexts are unwound after the request. `FoundryToolbox`
+also supports long-lived instances: it resolves the current platform headers before each operation and
 reconnects the MCP session when that identity changes, so a shared instance does
 not retain an earlier caller's `x-agent-foundry-call-id`.
 
-The sample client closes only its own model/project transports and credential,
-including when MCP entry fails or the request is cancelled. Local authentication
-uses `AzureCliCredential`; deployed authentication uses managed identity.
+After entry, the sample client context closes its own model/project transports
+and credential on exit, including if later MCP entry fails or the request is
+cancelled. If the request ends before client entry, those allocations may not
+be cleaned up. Local authentication uses `AzureCliCredential`; deployed
+authentication uses managed identity.
 `history_source="host_managed"` reconstructs the outer Responses transcript and
 disables inner model storage. Caller `store=false` prevents host-managed state,
 not external tool side effects.
