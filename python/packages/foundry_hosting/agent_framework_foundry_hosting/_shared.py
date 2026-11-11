@@ -33,13 +33,93 @@ from agent_framework import (
     WorkflowInvocationKwargs,
     WorkflowRunState,
 )
-from azure.ai.agentserver.responses import ResponseContext
+from azure.ai.agentserver.responses import ResponseContext, ResponsesServerOptions
 from azure.ai.agentserver.responses.models import CreateResponse, Item
 from typing_extensions import TypeVar
 
 from ._scope import FoundryRequestScope
 
 UnsupportedOptions: TypeAlias = Literal["ignore", "warn", "error"]
+
+
+def reject_removed_host_settings(settings: Mapping[str, Any]) -> None:
+    """Reject removed SDK settings before constructing a host or allocating resources."""
+    replacements = {
+        "options": "Use the supported first-class host parameters instead of ResponsesServerOptions.",
+        "default_fetch_history_count": "Use max_history_items on a host-managed Responses agent.",
+        "default_model": "Configure inference defaults on the agent or client.",
+        "create_span_hook": "Use Agent Framework observability instead.",
+        "additional_server_version": "Custom server version stamping is not supported.",
+        "steerable_conversations": "Conversation steering is not supported.",
+        "resilient_background": "Use enable_background_recovery on a Responses host.",
+    }
+    for name, message in replacements.items():
+        if name in settings:
+            raise TypeError(f"{name} is no longer a supported host setting. {message}")
+
+
+def validate_sse_keep_alive_interval(value: int | None) -> None:
+    """Validate an explicit heartbeat interval without replacing SDK environment resolution."""
+    if value is not None:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError("sse_keep_alive_interval_seconds must be an integer or None.")
+        if value <= 0:
+            raise ValueError("sse_keep_alive_interval_seconds must be positive when supplied.")
+
+
+def build_response_server_options(
+    *,
+    is_workflow: bool,
+    history_source: Literal["host_managed", "agent_managed", "inference_service"] = "host_managed",
+    background_source: Literal["host_managed", "inference_service"] = "host_managed",
+    max_history_items: int | None = None,
+    sse_keep_alive_interval_seconds: int | None = None,
+    shutdown_grace_period_seconds: int = 10,
+    enable_background_recovery: bool = False,
+) -> ResponsesServerOptions:
+    """Validate supported settings and build SDK options without host initialization.
+
+    Omit an unset history limit so the installed SDK supplies its own default.
+    Leave heartbeat environment resolution to the SDK: an explicit positive
+    interval wins over a positive ``SSE_KEEPALIVE_INTERVAL``, otherwise disabled.
+    Neither SDK ``from_env`` history overrides nor host model defaults are loaded.
+    """
+    validate_sse_keep_alive_interval(sse_keep_alive_interval_seconds)
+    if isinstance(shutdown_grace_period_seconds, bool) or not isinstance(shutdown_grace_period_seconds, int):
+        raise TypeError("shutdown_grace_period_seconds must be an integer.")
+    if shutdown_grace_period_seconds <= 0:
+        raise ValueError("shutdown_grace_period_seconds must be positive.")
+    if not isinstance(enable_background_recovery, bool):
+        raise TypeError("enable_background_recovery must be a boolean.")
+    if history_source not in ("host_managed", "agent_managed", "inference_service"):
+        raise ValueError("history_source must be 'host_managed', 'agent_managed', or 'inference_service'.")
+    if background_source not in ("host_managed", "inference_service"):
+        raise ValueError("background_source must be 'host_managed' or 'inference_service'.")
+    if background_source == "inference_service" and (is_workflow or history_source != "inference_service"):
+        raise ValueError(
+            "Inference-service background requires a regular agent with history_source='inference_service'."
+        )
+    if enable_background_recovery and not is_workflow and background_source != "inference_service":
+        raise ValueError(
+            "enable_background_recovery=True requires history_source='inference_service' and "
+            "background_source='inference_service' for regular agents."
+        )
+    kwargs: dict[str, Any] = {}
+    if max_history_items is not None:
+        if isinstance(max_history_items, bool) or not isinstance(max_history_items, int):
+            raise TypeError("max_history_items must be an integer or None.")
+        if max_history_items <= 0:
+            raise ValueError("max_history_items must be positive when supplied.")
+        if is_workflow or history_source != "host_managed":
+            raise ValueError("max_history_items applies only to regular agents with history_source='host_managed'.")
+        kwargs["default_fetch_history_count"] = max_history_items
+    return ResponsesServerOptions(
+        sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
+        shutdown_grace_period_seconds=shutdown_grace_period_seconds,
+        resilient_background=enable_background_recovery,
+        steerable_conversations=False,
+        **kwargs,
+    )
 
 
 InputT = TypeVar("InputT", default=Any)
@@ -141,6 +221,17 @@ _HOST_CONTROLLED_FIELDS = frozenset({
 
 _OPTION_NAMES = {"max_output_tokens": "max_tokens", "parallel_tool_calls": "allow_multiple_tool_calls"}
 
+_RUN_CONTROLLED_FIELDS = frozenset({
+    "additional_function_arguments",
+    "client_kwargs",
+    "compaction_strategy",
+    "function_invocation_kwargs",
+    "messages",
+    "middleware",
+    "session",
+    "tokenizer",
+})
+
 
 _NATIVE_FIELDS = frozenset(CreateResponse.__annotations__)
 
@@ -160,6 +251,10 @@ def response_run_options(request: CreateResponse) -> dict[str, Any]:
                 raise TypeError("extra_body must be a mapping of model options.")
             if "extra_body" in value:
                 raise ValueError("Nested extra_body is not supported; flatten provider options instead.")
+            if reserved := (_HOST_CONTROLLED_FIELDS | _RUN_CONTROLLED_FIELDS).intersection(
+                cast(Mapping[str, Any], value)
+            ):
+                raise ValueError(f"extra_body cannot set host-controlled fields: {', '.join(sorted(reserved))}.")
             nested_extra.update(cast(Mapping[str, Any], value))
         elif name in _HOST_CONTROLLED_FIELDS:
             continue
@@ -170,7 +265,7 @@ def response_run_options(request: CreateResponse) -> dict[str, Any]:
     return {
         **native,
         **{name: value for name, value in extra.items() if name not in _HOST_CONTROLLED_FIELDS},
-        **{name: value for name, value in nested_extra.items() if name not in _HOST_CONTROLLED_FIELDS},
+        **nested_extra,
     }
 
 
@@ -231,15 +326,20 @@ OptionsHook: TypeAlias = Callable[
 
 
 async def prepare_response_options(request: ResponsesRequest, hook: OptionsHook | None) -> None:
-    """Apply a synchronous or asynchronous developer hook to a copy of caller options."""
+    """Apply a sync/async hook after factory resolution, without changing agent defaults.
+
+    Return replacement per-run options for both streaming and non-streaming requests.
+    Removing a caller ``model`` leaves the developer's agent/client default intact.
+    The host validates protected fields after this hook and before dispatch.
+    """
     if hook is None:
         return
-    result = hook(request, dict(request.options))
+    result = hook(request, deepcopy(dict(request.options)))
     if inspect.isawaitable(result):
         result = await result
-    if not isinstance(result, Mapping):
+    if not isinstance(result, Mapping) or any(not isinstance(key, str) for key in result):
         raise TypeError("prepare_options must return a mapping of MAF run options.")
-    request.set_options(result)
+    request.set_options(deepcopy(dict(result)))
 
 
 async def response_input_messages(request: ResponsesRequest) -> list[Message]:
@@ -256,9 +356,36 @@ async def response_input_messages(request: ResponsesRequest) -> list[Message]:
 
 def validate_request_options(options: Mapping[str, Any]) -> None:
     """Keep hosting identity, storage decisions, and private continuation out of model options."""
-    reserved = _HOST_CONTROLLED_FIELDS.intersection(options)
+    if not isinstance(options, Mapping) or any(not isinstance(key, str) for key in options):
+        raise TypeError("Run options must be a mapping with string keys.")
+    reserved = (_HOST_CONTROLLED_FIELDS | _RUN_CONTROLLED_FIELDS).intersection(options)
     if reserved:
         raise ValueError(f"prepare_options cannot set host-controlled fields: {', '.join(sorted(reserved))}.")
+
+
+def validate_agent_background_options(agent: SupportsAgentRun, *, provider_background: bool) -> None:
+    """Reject hidden provider background in hosting-visible agent defaults without mutating them.
+
+    A selected regular-agent provider-background request may use a top-level
+    boolean default. A transport ``extra_body`` override is never supported.
+    Clients hard-wired internally to provider background are unsupported.
+    This does not select execution mode or validate client/storage capabilities.
+    """
+    defaults = getattr(agent, "default_options", {})
+    if not isinstance(defaults, Mapping):
+        raise TypeError("Agent default_options must be a mapping.")
+    defaults = cast(Mapping[str, Any], defaults)
+    background = defaults.get("background")
+    if background is not None and not isinstance(background, bool):
+        raise TypeError("Agent default background must be a boolean.")
+    if background is True and not provider_background:
+        raise ValueError(
+            "Agent default background=True requires an outer background request with "
+            "history_source='inference_service' and background_source='inference_service'."
+        )
+    extra_body = defaults.get("extra_body")
+    if isinstance(extra_body, Mapping) and "background" in extra_body:
+        raise ValueError("Agent default extra_body cannot set host-controlled fields: background.")
 
 
 def validate_default_transport_options(defaults: Mapping[str, Any], *, allow_agent_store: bool) -> None:
@@ -416,6 +543,12 @@ class _NativeAgentOptions(AgentMiddleware):
         if context.session is not None and context.session.service_session_id is not None:
             raise RuntimeError("Native workflow checkpoints cannot resume a private downstream service session.")
         effective = {**(context.options or {}), **options}
+        if (_CLIENT_CONTROLS - {"store", "instructions", "tools", "extra_body"}).intersection(effective):
+            raise ValueError("Native workflow model options cannot override hosting or transport controls.")
+        if (_CLIENT_CONTROLS - {"additional_function_arguments"}).intersection(context.client_kwargs):
+            raise ValueError("Native workflow client kwargs cannot override hosting or transport controls.")
+        validate_default_transport_options(effective, allow_agent_store=False)
+        validate_agent_background_options(context.agent, provider_background=False)
         client = getattr(context.agent, "client", None)
         if getattr(client, "STORES_BY_DEFAULT", None) is True:
             effective["store"] = False

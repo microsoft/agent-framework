@@ -56,19 +56,24 @@ def test_native_options_are_translated_before_flattened_extra_body() -> None:
     }
 
 
-def test_nested_extra_body_is_also_overlaid_last_without_reserved_fields() -> None:
+def test_nested_extra_body_is_overlaid_last_and_rejects_reserved_fields() -> None:
     request = cast(
         CreateResponse,
         {
             "max_output_tokens": 300,
             "extra_body": {
                 "max_tokens": 150,
-                "session_id": "forged",
-                "continuation_token": {"response_id": "private"},
             },
         },
     )
     assert response_run_options(request) == {"max_tokens": 150}
+    with pytest.raises(ValueError, match="continuation_token, session_id"):
+        response_run_options(
+            cast(
+                CreateResponse,
+                {"extra_body": {"session_id": "forged", "continuation_token": {"response_id": "private"}}},
+            )
+        )
     with pytest.raises(TypeError, match="extra_body must be a mapping"):
         response_run_options(cast(CreateResponse, {"extra_body": ["not a mapping"]}))
     with pytest.raises(ValueError, match="Nested extra_body is not supported"):
