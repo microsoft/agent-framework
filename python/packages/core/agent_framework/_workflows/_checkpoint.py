@@ -662,25 +662,27 @@ class FileCheckpointStorage:
         return file_path
 
     @staticmethod
-    def _read_stored_checkpoint_id(file_path: Path) -> CheckpointID:
-        """Read the persisted identity used to distinguish filesystem aliases."""
+    def _read_stored_checkpoint_id(file_path: Path) -> CheckpointID | None:
+        """Read the persisted identity, or None when the file's content cannot identify it."""
         try:
             with open(file_path, encoding="utf-8") as f:
                 encoded_checkpoint = json.load(f)
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        except OSError as exc:
             raise WorkflowCheckpointException(f"Cannot verify the checkpoint identity stored in {file_path}.") from exc
         if not isinstance(encoded_checkpoint, dict):
-            raise WorkflowCheckpointException(f"Cannot verify the checkpoint identity stored in {file_path}.")
+            return None
         checkpoint_data = cast("dict[str, Any]", encoded_checkpoint)
         stored_id = checkpoint_data.get("checkpoint_id")
-        if not isinstance(stored_id, str):
-            raise WorkflowCheckpointException(f"Cannot verify the checkpoint identity stored in {file_path}.")
-        return stored_id
+        return stored_id if isinstance(stored_id, str) else None
 
-    @staticmethod
-    def _assert_no_variant_collision(file_path: Path, checkpoint_id: CheckpointID) -> None:
+    def _assert_no_variant_collision(self, file_path: Path, checkpoint_id: CheckpointID) -> None:
         """Reject an ID that the filesystem cannot store as an independent file."""
         if not file_path.exists():
+            return
+        stored_id = FileCheckpointStorage._read_stored_checkpoint_id(file_path)
+        if stored_id == checkpoint_id:
             return
         # Use the requested spelling because resolve() can return the on-disk casing on Windows.
         expected_name = f"{checkpoint_id}.json"
@@ -693,12 +695,9 @@ class FileCheckpointStorage:
             ) from exc
         expected_key = _fs_key(expected_name)
         variant = next((name for name in siblings if _fs_key(name) == expected_key), None)
-        # The persisted ID, not the filename, decides identity. The resolved
-        # destination exists, so whether it was reached through a case/Unicode
-        # fold or a path-bearing alias (``./Round-A``) whose basename never
-        # matches a sibling, a different checkpoint must not be replaced.
-        # Re-saving the same ID stays a normal update.
-        if FileCheckpointStorage._read_stored_checkpoint_id(file_path) == checkpoint_id:
+        # Without a readable identity, only an exact, non-symlink entry may be repaired.
+        # An alias still cannot establish ownership of the damaged checkpoint.
+        if stored_id is None and expected_name in siblings and not (self.storage_path / expected_name).is_symlink():
             return
         colliding = (variant or file_path.name).removesuffix(".json")
         raise WorkflowCheckpointException(
@@ -709,8 +708,8 @@ class FileCheckpointStorage:
             "Unicode normalization form."
         )
 
-    @staticmethod
     def _assert_stored_spelling(
+        self,
         file_path: Path,
         checkpoint_id: CheckpointID,
         encoded_checkpoint: dict[str, Any] | None = None,
@@ -720,18 +719,6 @@ class FileCheckpointStorage:
         Filesystems can change the spelling returned by directory enumeration,
         so the persisted checkpoint ID, rather than the filename alone, decides identity.
         """
-        expected_name = f"{checkpoint_id}.json"
-        try:
-            siblings = [entry.name for entry in file_path.parent.iterdir()]
-        except OSError as exc:
-            raise WorkflowCheckpointException(
-                f"Cannot verify checkpoint ID {checkpoint_id!r} against existing checkpoints: "
-                "the storage directory could not be listed."
-            ) from exc
-        variant = next((name for name in siblings if _fs_key(name) == _fs_key(expected_name)), None)
-        # Validate the snapshot even if a concurrent delete removed the directory entry
-        # after it was read. Otherwise an alias load can return another checkpoint just
-        # because the matching name disappeared before this directory scan (#9466 review).
         if encoded_checkpoint is None:
             stored_id = FileCheckpointStorage._read_stored_checkpoint_id(file_path)
         elif isinstance(encoded_checkpoint, dict) and isinstance(encoded_checkpoint.get("checkpoint_id"), str):
@@ -740,7 +727,18 @@ class FileCheckpointStorage:
             raise WorkflowCheckpointException(f"Cannot verify the checkpoint identity stored in {file_path}.")
         if stored_id == checkpoint_id:
             return
-        colliding = variant.removesuffix(".json") if variant is not None else stored_id
+        expected_name = f"{checkpoint_id}.json"
+        try:
+            siblings = [entry.name for entry in file_path.parent.iterdir()]
+        except OSError as exc:
+            raise WorkflowCheckpointException(
+                f"Cannot verify checkpoint ID {checkpoint_id!r} against existing checkpoints: "
+                "the storage directory could not be listed."
+            ) from exc
+        if stored_id is None and expected_name in siblings and not (self.storage_path / expected_name).is_symlink():
+            return
+        variant = next((name for name in siblings if _fs_key(name) == _fs_key(expected_name)), None)
+        colliding = variant.removesuffix(".json") if variant is not None else stored_id or file_path.stem
         raise WorkflowCheckpointException(
             f"No checkpoint found with ID {checkpoint_id}: the stored checkpoint is spelled "
             f"{colliding!r}, and on this filesystem both names resolve to "
@@ -947,8 +945,11 @@ class FileCheckpointStorage:
                 raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
             with open(file_path, encoding="utf-8") as f:
                 encoded_checkpoint = json.load(f)
-            self._assert_stored_spelling(file_path, checkpoint_id, encoded_checkpoint)
-            return encoded_checkpoint
+            if not isinstance(encoded_checkpoint, dict):
+                raise WorkflowCheckpointException(f"Cannot verify the checkpoint identity stored in {file_path}.")
+            checkpoint_data = cast("dict[str, Any]", encoded_checkpoint)
+            self._assert_stored_spelling(file_path, checkpoint_id, checkpoint_data)
+            return checkpoint_data
 
         try:
             encoded_checkpoint = await asyncio.to_thread(_read)

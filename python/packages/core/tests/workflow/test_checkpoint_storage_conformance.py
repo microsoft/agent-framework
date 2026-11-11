@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -415,7 +417,7 @@ async def test_file_delete_and_save_share_physical_destination_ownership(
 
     verified = threading.Event()
     continue_delete = threading.Event()
-    original_assert = FileCheckpointStorage._assert_stored_spelling
+    original_assert = upper_storage._assert_stored_spelling
 
     def pause_after_verify(
         file_path: Path, checkpoint_id: str, encoded_checkpoint: dict[str, Any] | None = None
@@ -439,21 +441,20 @@ async def test_file_delete_and_save_share_physical_destination_ownership(
             continue_delete.set()
             return self._lock.__enter__()
 
-        def __exit__(self, *args: Any) -> Any:
-            return self._lock.__exit__(*args)
+        def __exit__(self, *args: Any) -> None:
+            self._lock.__exit__(*args)
 
     monkeypatch.setattr(lower_storage, "_delete_lock", lambda file_path: SaveSignallingLock(file_path))
 
     original_replace = checkpoint_module.os.replace
     lower_file_path = (lower_storage.storage_path / "Round-A.json").resolve()
 
-    def replace_then_release(source: Any, destination: Any) -> Any:
-        result = original_replace(source, destination)
+    def replace_then_release(source: Any, destination: Any) -> None:
+        original_replace(source, destination)
         if Path(destination) == lower_file_path:
             # On the unfixed path the save needs no destination lock, so the
             # replace itself releases the paused delete after the new data lands.
             continue_delete.set()
-        return result
 
     monkeypatch.setattr(checkpoint_module.os, "replace", replace_then_release)
 
@@ -621,11 +622,132 @@ async def test_file_delete_absent_variant_returns_false_on_case_sensitive_filesy
     assert (await storage.load("Round-A")).state["marker"] == "first"
 
 
+@pytest.mark.parametrize("payload", [b"{", b"{}"], ids=["truncated-json", "missing-id"])
+@pytest.mark.parametrize("operation", ["save", "delete"])
+async def test_file_can_recover_unreadable_checkpoint(tmp_path: Path, payload: bytes, operation: str) -> None:
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    checkpoint = _conformance_checkpoint()
+    path = storage.storage_path / f"{checkpoint.checkpoint_id}.json"
+    path.write_bytes(payload)
+
+    if operation == "delete":
+        assert await storage.delete(checkpoint.checkpoint_id) is True
+        assert not path.exists()
+    else:
+        assert await storage.save(checkpoint) == checkpoint.checkpoint_id
+        _assert_pristine(await storage.load(checkpoint.checkpoint_id))
+
+
+@pytest.mark.parametrize("payload", [b"{", b"{}", b"null", b"[]"])
+async def test_file_load_unreadable_checkpoint_is_not_recovery(tmp_path: Path, payload: bytes) -> None:
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    path = storage.storage_path / "broken.json"
+    path.write_bytes(payload)
+
+    with pytest.raises(WorkflowCheckpointException):
+        await storage.load("broken")
+    assert path.read_bytes() == payload
+
+
+@pytest.mark.parametrize("operation", ["save", "delete"])
+@pytest.mark.parametrize("alias", ["round-a", "./Round-A"])
+async def test_file_unreadable_alias_does_not_recover_another_spelling(
+    tmp_path: Path, operation: str, alias: str
+) -> None:
+    if alias == "round-a" and not _filesystem_is_case_insensitive(tmp_path):
+        pytest.skip("case alias requires a case-insensitive filesystem")
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    path = storage.storage_path / "Round-A.json"
+    path.write_bytes(b"{")
+    checkpoint = _conformance_checkpoint()
+    checkpoint.checkpoint_id = alias
+
+    with pytest.raises(WorkflowCheckpointException):
+        if operation == "save":
+            await storage.save(checkpoint)
+        else:
+            await storage.delete(alias)
+    assert path.read_bytes() == b"{"
+
+
+@pytest.mark.parametrize("operation", ["save", "delete"])
+@pytest.mark.parametrize("target_name", ["other.json", "nested/Recovery-A.json"])
+async def test_file_unreadable_symlink_does_not_recover_another_destination(
+    tmp_path: Path, operation: str, target_name: str
+) -> None:
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    target = storage.storage_path / target_name
+    target.parent.mkdir(exist_ok=True)
+    target.write_bytes(b"{")
+    link = storage.storage_path / "Recovery-A.json"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("filesystem does not permit file symlinks")
+    checkpoint = _conformance_checkpoint()
+    checkpoint.checkpoint_id = "Recovery-A"
+
+    with pytest.raises(WorkflowCheckpointException):
+        if operation == "save":
+            await storage.save(checkpoint)
+        else:
+            await storage.delete(checkpoint.checkpoint_id)
+    assert target.read_bytes() == b"{"
+    assert link.is_symlink()
+
+
+@pytest.mark.parametrize("operation", ["save", "delete"])
+async def test_file_unreadable_recovery_allows_storage_directory_alias(tmp_path: Path, operation: str) -> None:
+    directory = tmp_path / "real-checkpoints"
+    directory.mkdir()
+    alias = tmp_path / "alias-checkpoints"
+    try:
+        alias.symlink_to(directory, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("filesystem does not permit directory symlinks")
+    storage = FileCheckpointStorage(alias)
+    checkpoint = _conformance_checkpoint()
+    path = directory / f"{checkpoint.checkpoint_id}.json"
+    path.write_bytes(b"{")
+
+    if operation == "save":
+        assert await storage.save(checkpoint) == checkpoint.checkpoint_id
+        _assert_pristine(await storage.load(checkpoint.checkpoint_id))
+    else:
+        assert await storage.delete(checkpoint.checkpoint_id) is True
+        assert not path.exists()
+
+
+@pytest.mark.parametrize("operation", ["save", "load", "delete"])
+async def test_file_exact_identity_never_lists_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    storage = FileCheckpointStorage(tmp_path / "checkpoints")
+    checkpoint = _conformance_checkpoint()
+    await storage.save(checkpoint)
+    for index in range(1000):
+        (storage.storage_path / f"unrelated-{index}.json").touch()
+    original_iterdir = Path.iterdir
+
+    def forbid_checkpoint_listing(path: Path) -> Iterator[Path]:
+        if path == storage.storage_path:
+            raise AssertionError("an exact persisted ID must not require directory enumeration")
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", forbid_checkpoint_listing)
+    if operation == "save":
+        assert await storage.save(checkpoint) == checkpoint.checkpoint_id
+    elif operation == "load":
+        _assert_pristine(await storage.load(checkpoint.checkpoint_id))
+    else:
+        assert await storage.delete(checkpoint.checkpoint_id) is True
+
+
 @pytest.mark.parametrize("operation", ["save", "load", "delete"])
 async def test_file_directory_verification_stays_off_event_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
-    """A slow directory scan must not stall unrelated event-loop work."""
+    """A slow identity-mismatch scan must not stall unrelated event-loop work."""
     storage = FileCheckpointStorage(tmp_path / "checkpoints")
     checkpoint = WorkflowCheckpoint(
         workflow_name="workflow",
@@ -634,6 +756,10 @@ async def test_file_directory_verification_stays_off_event_loop(
         state={"marker": "value"},
     )
     await storage.save(checkpoint)
+    file_path = storage.storage_path / f"{checkpoint.checkpoint_id}.json"
+    encoded_checkpoint = json.loads(file_path.read_text(encoding="utf-8"))
+    encoded_checkpoint["checkpoint_id"] = "another-checkpoint"
+    file_path.write_text(json.dumps(encoded_checkpoint), encoding="utf-8")
 
     original_iterdir = Path.iterdir
     release_scan = threading.Event()
@@ -665,12 +791,13 @@ async def test_file_directory_verification_stays_off_event_loop(
     timer = threading.Timer(0.1, release_scan.set)
     timer.start()
     try:
-        if operation == "save":
-            await storage.save(checkpoint)
-        elif operation == "load":
-            await storage.load(checkpoint.checkpoint_id)
-        else:
-            await storage.delete(checkpoint.checkpoint_id)
+        with pytest.raises(WorkflowCheckpointException):
+            if operation == "save":
+                await storage.save(checkpoint)
+            elif operation == "load":
+                await storage.load(checkpoint.checkpoint_id)
+            else:
+                await storage.delete(checkpoint.checkpoint_id)
     finally:
         release_scan.set()
         stop_heartbeat = True
