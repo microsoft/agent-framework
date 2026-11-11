@@ -2,6 +2,8 @@
 
 An [Agent Framework](https://github.com/microsoft/agent-framework) agent that uses **Foundry Toolbox** for tool discovery, hosted on Microsoft Foundry using the **Responses protocol**. Foundry Toolbox is a managed tool registry in Microsoft Foundry that lets you define tools centrally and share them across agents.
 
+The Agent Framework `FoundryToolbox` integration is experimental.
+
 ## Creating a Foundry Toolbox
 
 You can create a Foundry Toolbox by code. Refer to this sample for an example: [Foundry Toolbox CRUD Sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/toolboxes/sample_toolboxes_crud.py).
@@ -117,6 +119,9 @@ PAT-backed tools act as the configured external account; user-identity tools
 require the appropriate pass-through connection and the current call ID. A fresh
 Python object does not by itself grant external permissions. GitHub PAT/OAuth
 connections, project roles and consent are separate setup, not offline coverage.
+If a Toolbox tool call needs OAuth consent, the response is `incomplete` and
+contains an `oauth_consent_request`. Continuation needs `store=true`. See
+[Invocation-time OAuth consent](../../../../../packages/foundry_hosting/README.md#invocation-time-oauth-consent).
 Native code-interpreter file citations are a separate tracked behavior
 (microsoft/agent-framework#7916), not implemented by this lifecycle change.
 

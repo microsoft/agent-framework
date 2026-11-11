@@ -13,8 +13,9 @@ Use `ResponsesHostServer` or `InvocationsHostServer` for agents. Use
 `ResponsesWorkflowHostServer` or `InvocationsWorkflowHostServer` for native workflows.
 Each workflow host requires a request-aware sync/async factory and an explicit parser.
 All four hosts remain in `agent-framework-foundry-hosting`, with matching lazy exports
-under `agent_framework.foundry`. Invocations and Toolbox retain their experimental boundary;
-the split does not promote them.
+under `agent_framework.foundry`. The package is currently in beta, so its public APIs are
+experimental. Responses hosting is the target for an initial stable release, subject to
+qualification. Invocations hosting and `FoundryToolbox` remain experimental.
 
 **Breaking migration:** replace `ResponsesHostServer(workflow=..., parse_response=...)` with
 `ResponsesWorkflowHostServer(workflow=..., parse_input=...)`, and replace
@@ -49,10 +50,36 @@ returning a new wrapper around shared executors does not isolate execution state
 
 Workflow hosts expose checkpoint storage, not agent-session storage or agent history/background
 policies. Responses workflows retain `prepare_options`; Invocations workflows use the parser's
-explicit workflow kwargs instead. Existing SDK options and agent approval-store APIs are unchanged.
+explicit workflow kwargs instead. Agent approval persistence follows the
+[session-store contract below](#function-approvals).
 Agent hosts reject `WorkflowAgent`, whether supplied directly or returned by a factory.
 `checkpoint_store_provider` is available only on workflow hosts.
 No stored state is converted between native workflow and agent execution models.
+
+## Responses route prefix
+
+`ResponsesHostServer` and `ResponsesWorkflowHostServer` pass `prefix` to the
+[AgentServer Responses host](https://learn.microsoft.com/python/api/azure-ai-agentserver-responses/azure.ai.agentserver.responses.responsesagentserverhost?view=azure-python).
+The native workflow host binds its create route at the same prefix. For example, with the
+[request-aware factory below](#agent-instances-and-factories):
+
+```python
+server = ResponsesHostServer(agent=create_agent, prefix="api/v1")
+```
+
+AgentServer applies the prefix to its Responses routes:
+
+| Operation | Default prefix (`""`) | `prefix="api/v1"` |
+| --- | --- | --- |
+| Create a response | `POST /responses` | `POST /api/v1/responses` |
+| Retrieve a response | `GET /responses/{response_id}` | `GET /api/v1/responses/{response_id}` |
+| Cancel a background response | `POST /responses/{response_id}/cancel` | `POST /api/v1/responses/{response_id}/cancel` |
+| Delete a stored response | `DELETE /responses/{response_id}` | `DELETE /api/v1/responses/{response_id}` |
+| List input items | `GET /responses/{response_id}/input_items` | `GET /api/v1/responses/{response_id}/input_items` |
+
+Use the same path prefix in clients and any reverse proxy. See the
+[AgentServer protocol endpoints](https://learn.microsoft.com/python/api/overview/azure/ai-agentserver-responses-readme?view=azure-python#protocol-endpoints)
+for the endpoint behavior and requirements.
 
 ## Toolbox tool approvals
 
@@ -344,6 +371,45 @@ An omitted allowlist preserves existing behavior and does not restrict the HTTPS
 the gate, so an empty sequence rejects every consent link. Entries are normalized as origins, so paths and query strings
 belong on the emitted consent link, not in the configuration.
 
+### Invocation-time OAuth consent
+
+When a Foundry Toolbox MCP `tools/call` reports that the user must give OAuth consent, the Responses agent host
+does not end the run with an opaque error. The response has status `incomplete`, and its output contains:
+
+- the `function_call` for the protected tool;
+- a `function_call_output` for that call, whose text says that OAuth consent is required;
+- an `oauth_consent_request` item with `consent_link` and `server_label`.
+
+The host emits a consent request for one `(consent_link, server_label)` pair only once in a response. Non-streaming
+calls return these items in the final response. Streaming calls give the same items. The host buffers them and
+publishes them only after it saves the approval authority and the session snapshots.
+
+Other tool calls in the same run behave as follows:
+
+- Tool calls that completed before the consent error keep their real results.
+- The host does not run later protected Toolbox calls in the same run. Each one gets a
+  "not executed because another tool requires OAuth consent" output.
+- Each `function_call` gets exactly one terminal output.
+
+To continue, the user opens `consent_link` and gives consent. The client then sends a new request with
+`previous_response_id`, and the agent tries the tool again.
+
+Failure boundaries:
+
+- The response fails if a consent link is not a safe absolute HTTPS URL or is outside the configured origin
+  allowlist. The host does not expose that URL.
+- Consent continuation requires `store=true`. If the request has `store=false`, the response fails and the host
+  exposes no consent or approval output. Consent appears during tool execution, after the response has started, so
+  this is a failed response, not an HTTP 400 rejection.
+- Consent at connection time (`tools/list`) behaves as before.
+
+Limits:
+
+- The host does not cancel sibling tool calls that are already running.
+- Only Toolbox tools are blocked. Other tools continue to run.
+- The host must activate the request scope, so this behavior needs the hosted runtime.
+- Core can log the consent exception.
+
 ## Computer use
 
 The Responses host emits native `computer_call` and `computer_call_output` items, including ordered `actions`,
@@ -381,8 +447,11 @@ Each logical store is saved as one JSON file whose name is a URL-safe Base64
 encoding of the store name. For example:
 
 - Responses agent sessions: `YWdlbnRfc2Vzc2lvbnM.json`
-- Function approvals: `ZnVuY3Rpb25fYXBwcm92YWxz.json`
 - Workflow checkpoints: one file per context, encoded from `checkpoints/<context_id>`
+
+The file-based fallback supports ordinary session and checkpoint persistence, but cannot atomically
+publish or claim agent approvals across processes. Local approval flows require a custom conditional
+session store; see [Function approvals](#function-approvals).
 
 > Read more about the Foundry durable state store in the [developer guide](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/agentserver/azure-ai-agentserver-core/docs/state-store-guide.md).
 
@@ -417,7 +486,7 @@ conversation or response ID.
 | MAF `AgentSession.session_id` / `service_session_id` | Inner agent state and optional downstream service continuation; neither identifies the Foundry sandbox. |
 | Workflow checkpoint ID | Inner workflow state within a checkpoint context, not a Foundry session ID. |
 
-The default hosted MAF session, checkpoint, and approval stores use a `v2` namespace
+The default hosted MAF session and checkpoint stores use a `v2` namespace
 derived from the hashed platform identity, with `user_isolation=True` and an explicit
 platform `call_id` on each item operation. Checkpoint context IDs are hashed as well.
 The same user in two hosted sandboxes cannot read the other's default MAF state.
@@ -533,9 +602,62 @@ locally. Stored checkpoints are scoped under `checkpoints`.
 
 ### Function approvals
 
-`ResponsesHostServer` persists function approvals durably. By default, it uses the
-`FoundryFunctionApprovalStore`, backed by Foundry storage when hosted and file-based
-storage locally. Stored approvals are scoped under `function_approvals`.
+`ResponsesHostServer` persists agent approval state through the same configured
+`agent_session_store_provider` used for `AgentSession` snapshots. Approval authority belongs to
+one pending response in the same trusted user/sandbox scope. Response and conversation snapshots
+retain history and a link to that authority; they are not independent sources of permission.
+Native workflow pending replies remain checkpoint-owned, not agent-session approvals.
+
+**Migration/reset:** pending approvals from the old separate function-approval store are not
+migrated. Start a fresh conversation without an old `previous_response_id` or conversation ID and
+obtain fresh approvals. Do not copy legacy approval records into session state.
+Missing or expired authority fails closed, even when a snapshot still contains the historical
+request. Retained approval history does not authorize another tool execution.
+
+#### Custom conditional session stores
+
+A custom store used for agent approvals must implement ordinary `SessionStore` operations and
+these additional async methods. This is a structural capability; no extra public protocol or
+private framework import is required.
+
+- `get_with_revision(session_id)` returns an independent `AgentSession` snapshot and its exact,
+  nonempty, opaque revision, or exactly `(None, None)` when absent.
+- `compare_and_set(session_id, session, *, expected_revision)` returns the nonempty revision of the
+  persisted version. `expected_revision=None` means atomic **create only**; a nonempty revision
+  means replace only that exact existing version.
+
+Revisions must identify exact persisted versions and must never be reused after writes. A read's
+revision belongs to that read, not to mutable per-request ETag state shared by multiple reads.
+Conflicts raise `RuntimeError` or a subtype; never retry as an unconditional upsert. Storage I/O
+errors and cancellation propagate. A write acknowledgement without a revision is a failure, even
+if the backend stored the value.
+
+Storage lookup keys need not equal the snapshot's inner `AgentSession.session_id`. Support opaque
+keys, including keys containing `/`, and preserve the inner session ID. Ordinary response or
+conversation alias cleanup must not delete approval authority. Custom providers own retention:
+alias and authority lifetimes are independent, and authority is never recreated from an alias
+after it expires.
+
+The default hosted Foundry store uses server-side create-only and ETag-conditional writes.
+The default non-hosted store rejects approval writes with an explicit error requiring
+`get_with_revision` and `compare_and_set`. A single-process development store can coordinate only
+its own process; production and multi-worker stores must coordinate all writers through the
+backend. A process-local lock is not cross-process CAS.
+
+#### Approval batches and failure boundaries
+
+Reply to the complete pending approval batch. Approvals and rejections may be mixed, but omitted,
+duplicate, stale, or foreign controls are invalid. Publishing pending authority requires
+`store=true`; `store=false` cannot publish or resume host-managed approvals.
+
+Claiming a batch is an irreversible conditional transition before protected execution. It does
+not provide exactly-once tool side effects: a crash after a successful claim can lose work.
+A failed or cancelled claim write may already have committed. Do not reopen the batch or
+automatically dispatch the protected work after an uncertain result.
+
+Approval history is bounded to 1,024 requests and 1 MiB of serialized approval-content JSON.
+Exceeding either bound fails explicitly and requires a fresh conversation; history is not silently
+pruned.
 
 ## Native Invocations workflows
 
@@ -614,9 +736,8 @@ If a connection drops after commit, retrying the same trusted user/sandbox/call 
 replays that response's complete stored snapshot without executing the workflow or
 replacing its head. A different call ID starts normal turn validation and cannot
 retrieve that snapshot.
-Local callers may pass one built workflow for a one-shot non-pausing run. Any
-workflow that can pause for external input must use a request-aware factory so a
-fresh graph can restore and consume the durable reply on the next request.
+All native Invocations requests, including local one-shot runs, require a
+request-aware workflow factory that returns a fresh graph for each request.
 After a newer Invocations head is durably committed, the host reclaims completed
 ancestor response records and checkpoints oldest-first, retaining only current,
 pending, active or blocked authority. Cleanup failures are logged and retried by

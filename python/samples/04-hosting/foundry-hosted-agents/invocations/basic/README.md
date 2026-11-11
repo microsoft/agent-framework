@@ -1,5 +1,7 @@
 # Invocations agent with a custom request parser
 
+Agent Framework Invocations hosting is experimental.
+
 [`main.py`](main.py) hosts an Agent Framework agent using the Foundry
 Invocations protocol. The sample accepts application JSON with a `prompt`
 field rather than the host's default `message` field. Its `parse_input`

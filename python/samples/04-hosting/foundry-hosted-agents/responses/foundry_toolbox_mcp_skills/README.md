@@ -2,6 +2,8 @@
 
 An [Agent Framework](https://github.com/microsoft/agent-framework) agent that discovers **Agent Skills attached to a Foundry Toolbox** over the **MCP protocol** and exposes them to the model using the [Agent Skills](https://agentskills.io/) progressive-disclosure pattern, hosted on Microsoft Foundry using the **Responses protocol**.
 
+The Agent Framework `FoundryToolbox` integration is experimental.
+
 This sample is **self-contained**: it ships the `SKILL.md` sources and a `toolbox.yaml`, and walks you through creating the skills and the toolbox from zero with `azd` — you don't need an existing toolbox to run it.
 
 ## How progressive disclosure works
