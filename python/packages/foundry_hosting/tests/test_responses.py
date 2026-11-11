@@ -247,6 +247,51 @@ def _expected_container_file_citation(
     }
 
 
+_PYTHON_SOURCE_URL = "https://www.python.org/downloads/release/python-31315/"
+_DOCS_SOURCE_URL = "https://docs.python.org/3/whatsnew/3.13.html"
+
+
+def _web_search_result(call_id: str) -> Content:
+    """Build a search tool result whose citations repeat a URL and include ignored non-web citations."""
+    return Content.from_function_result(
+        call_id,
+        result=[
+            Content.from_text(
+                "Python 3.13.15 is the latest release.",
+                annotations=[_url_citation(), Annotation(type="citation", url=_DOCS_SOURCE_URL, title="What's New")],
+            ),
+            Content.from_text(
+                '{"annotations": []}',
+                annotations=[
+                    Annotation(type="citation", url=_PYTHON_SOURCE_URL, title="Duplicate title"),
+                    Annotation(type="citation", url="javascript:alert(1)", title="Unsafe"),
+                    Annotation(type="citation", url="notes.txt", file_id="file_123", title="File"),
+                ],
+            ),
+        ],
+    )
+
+
+def _expected_source_citations(text: str) -> list[dict[str, Any]]:
+    """Return the zero-length end-of-text citations expected for ``_web_search_result``."""
+    return [
+        _expected_url_citation(start_index=len(text), end_index=len(text)),
+        _expected_url_citation(url=_DOCS_SOURCE_URL, title="What's New", start_index=len(text), end_index=len(text)),
+    ]
+
+
+def _web_search_citation_updates(answer: str) -> list[AgentResponseUpdate]:
+    return [
+        AgentResponseUpdate(
+            contents=[Content.from_function_call("call_1", "web_search", arguments={})],
+            role="assistant",
+            message_id="msg_call",
+        ),
+        AgentResponseUpdate(contents=[_web_search_result("call_1")], role="tool", message_id="msg_result"),
+        AgentResponseUpdate(contents=[Content.from_text(answer)], role="assistant", message_id="msg_answer"),
+    ]
+
+
 def _url_citation(
     *,
     url: str = "https://www.python.org/downloads/release/python-31315/",
@@ -2517,6 +2562,56 @@ class TestAgentSessionPersistence:
         assert output_done["item"] == message
         assert response.to_dict() == original_response
 
+    async def test_provider_background_attaches_tool_result_sources_to_final_answer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        answer = "Python 3.13.15 is out."
+        response = AgentResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_text("Let me search."),
+                        Content.from_function_call("call_1", "web_search", arguments={}),
+                    ],
+                ),
+                Message(role="tool", contents=[_web_search_result("call_1")]),
+                Message(role="assistant", contents=[Content.from_text(answer)]),
+            ],
+            finish_reason="stop",
+        )
+        agent = Agent(client=_ServiceStorageRecordingClient())
+
+        async def run(messages: Any = None, *, session: AgentSession, **kwargs: Any) -> AgentResponse:
+            del messages, kwargs
+            session.service_session_id = "private-service-conversation"
+            return response
+
+        monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            history_source="service",
+            background_source="provider",
+            options=ResponsesServerOptions(resilient_background=True),
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [
+                event
+                async for event in server._handle_response(request, context, asyncio.Event())
+                if isinstance(event, Mapping)
+            ]
+
+        completed = next(event["response"] for event in events if event["type"] == "response.completed")
+        messages = [item for item in completed["output"] if item["type"] == "message"]
+        assert [message["content"][0]["text"] for message in messages] == ["Let me search.", answer]
+        assert messages[0]["content"][0]["annotations"] == []
+        assert messages[1]["content"][0]["annotations"] == _expected_source_citations(answer)
+
     async def test_provider_background_keeps_private_token_under_outer_response(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -4485,6 +4580,56 @@ class TestNonStreaming:
             _expected_file_citation(),
         ]
 
+    async def test_function_result_url_citations_wait_for_final_output_text(self) -> None:
+        answer = "Python 3.13.15 is out."
+        releases_url = "https://www.python.org/downloads/"
+        second_search = Content.from_function_result(
+            "call_2",
+            result=[
+                Content.from_text(
+                    "Release list.", annotations=[Annotation(type="citation", url=releases_url, title="Releases")]
+                )
+            ],
+        )
+        updates = [
+            *_web_search_citation_updates("Let me search more.")[:-1],
+            AgentResponseUpdate(
+                contents=[Content.from_text("Let me search more.")], role="assistant", message_id="msg_interim"
+            ),
+            AgentResponseUpdate(
+                contents=[Content.from_function_call("call_2", "web_search", arguments={})],
+                role="assistant",
+                message_id="msg_call_2",
+            ),
+            AgentResponseUpdate(contents=[second_search], role="tool", message_id="msg_result_2"),
+            AgentResponseUpdate(
+                contents=[Content.from_text(answer, annotations=[_url_citation()])],
+                role="assistant",
+                message_id="msg_answer",
+            ),
+        ]
+
+        resp = await _post(_make_server(_make_agent(stream_updates=updates)), stream=False)
+
+        assert resp.status_code == 200
+        output = resp.json()["output"]
+        assert [item["type"] for item in output] == [
+            "function_call",
+            "function_call_output",
+            "message",
+            "function_call",
+            "function_call_output",
+            "message",
+        ]
+        assert output[2]["content"][0]["annotations"] == []
+        assert output[5]["content"][0]["annotations"] == [
+            _expected_url_citation(),
+            _expected_url_citation(
+                url=_DOCS_SOURCE_URL, title="What's New", start_index=len(answer), end_index=len(answer)
+            ),
+            _expected_url_citation(url=releases_url, title="Releases", start_index=len(answer), end_index=len(answer)),
+        ]
+
     async def test_latest_pending_container_file_citation_replaces_same_filename(self) -> None:
         agent = _make_agent(
             stream_updates=[
@@ -5361,6 +5506,53 @@ class TestStreaming:
         completed = next(event["data"]["response"] for event in events if event["event"] == "response.completed")
         final_message = next(item for item in completed["output"] if item["type"] == "message")
         assert final_message["content"][0]["annotations"] == [expected_annotation]
+
+    async def test_function_result_url_citations_are_consistent_across_stream_events(self) -> None:
+        answer = "Python 3.13.15 is out."
+        resp = await _post(
+            _make_server(_make_agent(stream_updates=_web_search_citation_updates(answer))),
+            stream=True,
+        )
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        expected = _expected_source_citations(answer)
+        annotation_events = [event for event in events if event["event"] == "response.output_text.annotation.added"]
+        assert [event["data"]["annotation"] for event in annotation_events] == expected
+        content_done = next(event for event in events if event["event"] == "response.content_part.done")
+        assert content_done["data"]["part"]["annotations"] == expected
+        completed = next(event["data"]["response"] for event in events if event["event"] == "response.completed")
+        final_message = next(item for item in completed["output"] if item["type"] == "message")
+        assert final_message["content"][0]["annotations"] == expected
+
+    async def test_pending_url_citations_survive_recovery_and_are_discarded_at_completion(self) -> None:
+        stream = ResponseEventStream(response_id="resp_url_citations")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+        _ = [event async for event in tracker.handle(Content.from_function_call("call_1", "web_search", arguments={}))]
+        _ = [event async for event in tracker.handle(_web_search_result("call_1"))]
+        _ = list(tracker.close())
+        _ = stream.checkpoint()
+
+        recovered = _OutputItemTracker(stream)
+        interim = [event async for event in recovered.handle(Content.from_text("Checking."), message_id="msg_interim")]
+        interim.extend(recovered.close())
+        assert not any(event["type"] == "response.output_text.annotation.added" for event in interim)
+
+        events = [event async for event in recovered.handle(Content.from_text("Done."), message_id="msg_final")]
+        events.extend(recovered.close(final_answer=True))
+        annotations = [
+            event["annotation"] for event in events if event["type"] == "response.output_text.annotation.added"
+        ]
+        assert annotations == _expected_source_citations("Done.")
+
+        _ = [event async for event in recovered.handle(_web_search_result("call_2"))]
+        recovered.discard_pending_citations()
+        discarded = _OutputItemTracker(stream)
+        events = [event async for event in discarded.handle(Content.from_text("Later."), message_id="msg_later")]
+        events.extend(discarded.close(final_answer=True))
+        assert not any(event["type"] == "response.output_text.annotation.added" for event in events)
 
     async def test_pending_container_file_citation_survives_tracker_recovery(self) -> None:
         stream = ResponseEventStream(response_id="resp_container_file")
