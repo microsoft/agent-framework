@@ -246,13 +246,6 @@ class _CheckpointApprovals:
             raise _WorkflowRequestError("Approval output must match one unique request in the exact pause checkpoint.")
         self.aliases[approval_request_id] = matches[0]
 
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        request_id = self.aliases.get(approval_request_id)
-        event = self.pending.get(request_id) if request_id is not None else None
-        if event is None or not isinstance(event.data, Content):
-            raise _WorkflowRequestError("The approval is unavailable in this pending checkpoint.")
-        return event.data
-
 
 async def _project(
     event: WorkflowEvent[Any],
