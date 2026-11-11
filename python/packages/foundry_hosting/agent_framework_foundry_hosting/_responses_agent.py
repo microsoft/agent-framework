@@ -75,7 +75,6 @@ from ._responses_shared import (
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _PublicResponseFailure,  # pyright: ignore[reportPrivateUsage]
     _reject_busy_conversation,  # pyright: ignore[reportPrivateUsage]
-    _reject_removed_host_settings,  # pyright: ignore[reportPrivateUsage]
     _set_agent_session,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
@@ -348,7 +347,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             ValueError: If the history, background, or unsupported-options policy is invalid.
             RuntimeError: If the agent configuration conflicts with the selected history or background source.
         """
-        _reject_removed_host_settings(kwargs)
         if "function_approval_store_provider" in kwargs:
             raise TypeError("Approval state is managed by agent_session_store_provider.")
         if "store" in kwargs:

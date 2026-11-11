@@ -184,20 +184,6 @@ def test_legacy_responses_request_name_is_not_exported() -> None:
         hosting.__getattr__("HostedResponseRequest")
 
 
-@pytest.mark.parametrize("name", ["options", "resilient_background", "steerable_conversations"])
-def test_responses_workflow_host_rejects_removed_settings_before_sdk(name: str) -> None:
-    with (
-        patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize,
-        pytest.raises(TypeError, match=f"{name} is no longer a supported host setting"),
-    ):
-        cast(Any, hosting.ResponsesWorkflowHostServer)(
-            workflow=lambda _: None,
-            parse_input=lambda _: None,
-            **{name: None},
-        )
-    initialize.assert_not_called()
-
-
 def test_responses_workflow_host_rejects_agent_history_limit_even_when_none() -> None:
     with (
         patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize,

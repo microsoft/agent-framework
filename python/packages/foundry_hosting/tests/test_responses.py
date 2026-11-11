@@ -1665,42 +1665,6 @@ class TestSerializationHelpers:
 
 class TestResponsesHostServerInit:
     @pytest.mark.parametrize(
-        "name",
-        [
-            "options",
-            "default_fetch_history_count",
-            "default_model",
-            "create_span_hook",
-            "additional_server_version",
-            "steerable_conversations",
-            "resilient_background",
-        ],
-    )
-    def test_removed_host_setting_fails_before_sdk_or_agent_mutation(self, name: str) -> None:
-        agent = _make_agent()
-        kwargs: dict[str, Any] = {name: None}
-        with (
-            patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize,
-            pytest.raises(TypeError, match=name),
-        ):
-            ResponsesHostServer(agent, **kwargs)
-        initialize.assert_not_called()
-        assert agent.context_providers == []
-        assert agent.default_options == {}
-
-    def test_steering_rejected_before_enabling_task_manager_or_starting_host(self) -> None:
-        agent_factory = MagicMock()
-        with (
-            patch("azure.ai.agentserver.core.tasks.set_resilient_tasks_enabled") as enable,
-            patch("agent_framework_foundry_hosting._responses_agent.ResponsesAgentServerHost.__init__") as base_init,
-            pytest.raises(TypeError, match="options is no longer a supported host setting"),
-        ):
-            ResponsesHostServer(agent=agent_factory, options=ResponsesServerOptions(steerable_conversations=True))
-        enable.assert_not_called()
-        base_init.assert_not_called()
-        agent_factory.assert_not_called()
-
-    @pytest.mark.parametrize(
         ("setting", "value", "error"),
         [
             ("max_history_items", True, TypeError),
@@ -1927,17 +1891,10 @@ class TestResponsesHostServerInit:
         assert final.json()["id"] == response_id
         assert "finished" in str(final.json()["output"])
 
-    def test_provider_background_rejects_steering_and_wrong_history_source(self) -> None:
+    def test_provider_background_rejects_wrong_history_source(self) -> None:
         agent = Agent(client=_ServiceStorageRecordingClient())
         with pytest.raises(ValueError, match="history_source='inference_service'"):
             _make_server(agent, background_source="inference_service")
-        with pytest.raises(TypeError, match="options is no longer a supported host setting"):
-            _make_server(
-                agent,
-                history_source="inference_service",
-                background_source="inference_service",
-                options=ResponsesServerOptions(steerable_conversations=True),
-            )
 
     @pytest.mark.parametrize("old_store", [None, InMemoryResponseProvider()])
     @pytest.mark.parametrize("with_response_store", [False, True])
