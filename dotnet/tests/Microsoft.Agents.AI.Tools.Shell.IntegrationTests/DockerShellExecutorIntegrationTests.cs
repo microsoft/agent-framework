@@ -26,29 +26,60 @@ public sealed class DockerShellExecutorIntegrationTests
     // Alpine ships only busybox sh, which the persistent shell session can't use.
     private const string TestImage = "debian:stable-slim";
 
-    private static async Task<bool> EnsureDockerOrSkipAsync()
+    private static async Task<string> EnsureDockerOrSkipAsync()
     {
-        if (!await DockerShellExecutor.IsAvailableAsync().ConfigureAwait(false))
+        var dockerBinaryPath = FindDockerBinaryPath();
+        if (dockerBinaryPath is null || !await DockerShellExecutor.IsAvailableAsync(dockerBinaryPath).ConfigureAwait(false))
         {
-            Assert.Skip("Docker (or Podman) daemon is not available on this machine.");
-            return false; // unreachable
+            Assert.Skip("Docker (or Podman) daemon is not available on this machine. Set DOCKER_BINARY_PATH to the full path of the runtime executable, or put it on PATH.");
         }
-        return true;
+
+        return dockerBinaryPath;
+    }
+
+    /// <summary>
+    /// Returns <c>DOCKER_BINARY_PATH</c> when set; otherwise searches only the fully qualified
+    /// directories on <c>PATH</c> for <c>docker</c>. The current directory is never searched.
+    /// </summary>
+    private static string? FindDockerBinaryPath()
+    {
+        var configured = Environment.GetEnvironmentVariable("DOCKER_BINARY_PATH");
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured;
+        }
+
+        var fileName = OperatingSystem.IsWindows() ? "docker.exe" : "docker";
+        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(Path.PathSeparator))
+        {
+            if (!Path.IsPathFullyQualified(directory))
+            {
+                continue;
+            }
+
+            var candidate = Path.Combine(directory, fileName);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 
     [Fact]
     public async Task IsAvailableAsync_ReturnsTrue_WhenDaemonRunningAsync()
     {
-        await EnsureDockerOrSkipAsync();
-        Assert.True(await DockerShellExecutor.IsAvailableAsync());
+        var dockerBinaryPath = await EnsureDockerOrSkipAsync();
+        Assert.True(await DockerShellExecutor.IsAvailableAsync(dockerBinaryPath));
     }
 
     [Fact]
     public async Task Persistent_RunsBasicCommandAsync()
     {
-        await EnsureDockerOrSkipAsync();
+        var dockerBinaryPath = await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(new() { Image = TestImage, Mode = ShellMode.Persistent });
+        await using var tool = new DockerShellExecutor(dockerBinaryPath, new() { Image = TestImage, Mode = ShellMode.Persistent });
         await tool.InitializeAsync();
 
         var result = await tool.RunAsync("echo hello-from-docker");
@@ -60,9 +91,9 @@ public sealed class DockerShellExecutorIntegrationTests
     [Fact]
     public async Task Persistent_PreservesStateAcrossCallsAsync()
     {
-        await EnsureDockerOrSkipAsync();
+        var dockerBinaryPath = await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(new() { Image = TestImage, Mode = ShellMode.Persistent });
+        await using var tool = new DockerShellExecutor(dockerBinaryPath, new() { Image = TestImage, Mode = ShellMode.Persistent });
         await tool.InitializeAsync();
 
         var set = await tool.RunAsync("export DEMO=persisted-12345");
@@ -76,9 +107,9 @@ public sealed class DockerShellExecutorIntegrationTests
     [Fact]
     public async Task NetworkNone_BlocksOutboundConnectionsAsync()
     {
-        await EnsureDockerOrSkipAsync();
+        var dockerBinaryPath = await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(new() { Image = TestImage, Mode = ShellMode.Persistent /* network defaults to "none" */ });
+        await using var tool = new DockerShellExecutor(dockerBinaryPath, new() { Image = TestImage, Mode = ShellMode.Persistent /* network defaults to "none" */ });
         await tool.InitializeAsync();
 
         // Try to resolve a hostname; with --network none, even DNS should fail.
@@ -94,9 +125,9 @@ public sealed class DockerShellExecutorIntegrationTests
     [Fact]
     public async Task ReadOnlyRoot_PreventsWritesOutsideTmpAsync()
     {
-        await EnsureDockerOrSkipAsync();
+        var dockerBinaryPath = await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(new() { Image = TestImage, Mode = ShellMode.Persistent });
+        await using var tool = new DockerShellExecutor(dockerBinaryPath, new() { Image = TestImage, Mode = ShellMode.Persistent });
         await tool.InitializeAsync();
 
         var rootWrite = await tool.RunAsync("touch /should-not-exist 2>&1; echo CODE:$?");
@@ -111,9 +142,9 @@ public sealed class DockerShellExecutorIntegrationTests
     [Fact]
     public async Task NonRootUser_RunsAsNobodyAsync()
     {
-        await EnsureDockerOrSkipAsync();
+        var dockerBinaryPath = await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(new() { Image = TestImage, Mode = ShellMode.Persistent });
+        await using var tool = new DockerShellExecutor(dockerBinaryPath, new() { Image = TestImage, Mode = ShellMode.Persistent });
         await tool.InitializeAsync();
 
         var result = await tool.RunAsync("id -u");
@@ -126,9 +157,9 @@ public sealed class DockerShellExecutorIntegrationTests
     [Fact]
     public async Task Stateless_RunsEachCommandInFreshContainerAsync()
     {
-        await EnsureDockerOrSkipAsync();
+        var dockerBinaryPath = await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(new() { Image = TestImage, Mode = ShellMode.Stateless });
+        await using var tool = new DockerShellExecutor(dockerBinaryPath, new() { Image = TestImage, Mode = ShellMode.Stateless });
 
         var first = await tool.RunAsync("echo first; export STATE=set");
         Assert.Equal(0, first.ExitCode);
@@ -143,7 +174,7 @@ public sealed class DockerShellExecutorIntegrationTests
     [Fact]
     public async Task HostWorkdir_MountsAndIsReadOnlyByDefaultAsync()
     {
-        await EnsureDockerOrSkipAsync();
+        var dockerBinaryPath = await EnsureDockerOrSkipAsync();
 
         var hostDir = Path.Combine(Path.GetTempPath(), "af-docker-shell-it-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(hostDir);
@@ -152,7 +183,7 @@ public sealed class DockerShellExecutorIntegrationTests
 
         try
         {
-            await using var tool = new DockerShellExecutor(new()
+            await using var tool = new DockerShellExecutor(dockerBinaryPath, new()
             {
                 Image = TestImage,
                 Mode = ShellMode.Persistent,
@@ -178,9 +209,9 @@ public sealed class DockerShellExecutorIntegrationTests
     [Fact]
     public async Task EnvironmentVariables_ArePassedThroughAsync()
     {
-        await EnsureDockerOrSkipAsync();
+        var dockerBinaryPath = await EnsureDockerOrSkipAsync();
 
-        await using var tool = new DockerShellExecutor(new()
+        await using var tool = new DockerShellExecutor(dockerBinaryPath, new()
         {
             Image = TestImage,
             Mode = ShellMode.Persistent,

@@ -53,7 +53,7 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
     /// <exception cref="System.IO.FileNotFoundException">The interpreter file does not exist.</exception>
     public LocalCodeActProvider(string pythonExecutablePath, LocalCodeActProviderOptions? options = null)
     {
-        PythonExecutablePath.Validate(pythonExecutablePath);
+        PathValidation.ValidateFullyQualifiedPathToExistingFile(pythonExecutablePath, nameof(pythonExecutablePath), "Python executable");
         options ??= new LocalCodeActProviderOptions();
 
         var limits = options.ExecutionLimits ?? new ProcessExecutionLimits();

@@ -44,6 +44,9 @@
   <ItemGroup Condition="'$(InjectSharedHostedAgents)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\HostedAgents\*.cs" LinkBase="Shared\HostedAgents" />
   </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedPathValidation)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\PathValidation\*.cs" LinkBase="Shared\PathValidation" />
+  </ItemGroup>
   <ItemGroup Condition="'$(InjectSharedHttpHeaderValidation)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Http\*.cs" LinkBase="Shared\Http" />
   </ItemGroup>

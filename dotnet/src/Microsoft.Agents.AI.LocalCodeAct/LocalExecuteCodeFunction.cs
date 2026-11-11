@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.LocalCodeAct.Internal;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.LocalCodeAct;
 
@@ -45,7 +46,7 @@ public sealed class LocalExecuteCodeFunction : AIFunction
     /// <exception cref="System.IO.FileNotFoundException">The interpreter file does not exist.</exception>
     public LocalExecuteCodeFunction(string pythonExecutablePath, LocalCodeActProviderOptions? options = null)
     {
-        PythonExecutablePath.Validate(pythonExecutablePath);
+        PathValidation.ValidateFullyQualifiedPathToExistingFile(pythonExecutablePath, nameof(pythonExecutablePath), "Python executable");
         options ??= new LocalCodeActProviderOptions();
 
         var limits = options.ExecutionLimits ?? new ProcessExecutionLimits();
