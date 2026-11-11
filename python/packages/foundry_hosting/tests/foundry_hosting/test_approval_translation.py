@@ -52,7 +52,9 @@ class _OrderedRecorder:
 
 
 def _event_type(event: Any) -> str:
-    return event.get("type") if isinstance(event, Mapping) else event.type
+    event_type = event.get("type") if isinstance(event, Mapping) else event.type  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    assert isinstance(event_type, str)
+    return event_type
 
 
 async def test_history_conversion_only_reads_approval_requests() -> None:
