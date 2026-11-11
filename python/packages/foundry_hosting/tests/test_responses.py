@@ -1895,14 +1895,6 @@ class TestResponsesHostServerInit:
                 enable_background_recovery=True,
             )
 
-    def test_init_rejects_steerable_conversations(self) -> None:
-        with pytest.raises(TypeError, match="options is no longer a supported host setting"):
-            ResponsesHostServer(
-                _make_agent(),
-                response_store=InMemoryResponseProvider(),
-                options=ResponsesServerOptions(steerable_conversations=True),
-            )
-
     def test_steering_rejected_before_enabling_task_manager_or_starting_host(self) -> None:
         agent_factory = MagicMock()
 

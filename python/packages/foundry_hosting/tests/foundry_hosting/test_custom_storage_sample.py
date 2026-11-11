@@ -196,19 +196,6 @@ async def test_cosmos_uses_server_conditions(sample: ModuleType) -> None:
     assert all("/" not in item_id for _, item_id in container.items)
 
 
-async def test_cosmos_missing_ack_revision_fails(sample: ModuleType) -> None:
-    container = FakeContainer()
-    container.acknowledgement_etag = None
-    store = cosmos_store(sample, container)
-    with pytest.raises(RuntimeError, match="ETag"):
-        await store.compare_and_set(_APPROVAL_KEY, make_session("one"), expected_revision=None)
-    stored, revision = await store.get_with_revision(_APPROVAL_KEY)
-    assert stored is not None and stored.state["value"] == "one"
-    assert revision
-    with pytest.raises(RuntimeError):
-        await store.compare_and_set(_APPROVAL_KEY, make_session("duplicate"), expected_revision=None)
-
-
 @pytest.mark.parametrize("condition", ["*", '"stale","1"'])
 async def test_cosmos_fake_models_non_exact_if_match(sample: ModuleType, condition: str) -> None:
     container = FakeContainer()
@@ -286,6 +273,8 @@ async def test_cosmos_rejects_invalid_write_acknowledgement(sample: ModuleType, 
     stored, revision = await store.get_with_revision(_APPROVAL_KEY)
     assert stored is not None and stored.state["value"] == "one"
     assert revision
+    with pytest.raises(RuntimeError):
+        await store.compare_and_set(_APPROVAL_KEY, make_session("duplicate"), expected_revision=None)
 
 
 async def test_cosmos_rejects_invalid_cached_delete_etag(sample: ModuleType) -> None:
