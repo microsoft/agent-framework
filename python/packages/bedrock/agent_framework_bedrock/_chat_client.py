@@ -872,17 +872,29 @@ class BedrockChatClient(
         if not usage:
             return None
         details: UsageDetails = {}
-        if (input_tokens := usage.get("inputTokens")) is not None:
-            details["input_token_count"] = input_tokens
-        if (output_tokens := usage.get("outputTokens")) is not None:
+        input_tokens = usage.get("inputTokens")
+        output_tokens = usage.get("outputTokens")
+        cache_read = usage.get("cacheReadInputTokens")
+        cache_write = usage.get("cacheWriteInputTokens")
+        # Bedrock Converse reports these when prompt caching is active.
+        if cache_read is not None:
+            details["cache_read_input_token_count"] = cache_read
+        if cache_write is not None:
+            details["cache_creation_input_token_count"] = cache_write
+        # inputTokens covers only the uncached part when prompt caching is active;
+        # total input (and gen_ai.usage.input_tokens) must include cache tokens,
+        # matching other connectors and the GenAI semconv.
+        input_total = input_tokens
+        if cache_read is not None:
+            input_total = cache_read if input_total is None else input_total + cache_read
+        if cache_write is not None:
+            input_total = cache_write if input_total is None else input_total + cache_write
+        if input_total is not None:
+            details["input_token_count"] = input_total
+        if output_tokens is not None:
             details["output_token_count"] = output_tokens
         if (total_tokens := usage.get("totalTokens")) is not None:
             details["total_token_count"] = total_tokens
-        # Bedrock Converse reports these when prompt caching is active.
-        if (cache_read := usage.get("cacheReadInputTokens")) is not None:
-            details["cache_read_input_token_count"] = cache_read
-        if (cache_write := usage.get("cacheWriteInputTokens")) is not None:
-            details["cache_creation_input_token_count"] = cache_write
         return details or None
 
     def _parse_message_contents(self, content_blocks: Sequence[dict[str, Any]]) -> list[Any]:

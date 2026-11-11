@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Threading.Tasks;
 using Moq;
 
@@ -13,7 +14,7 @@ public sealed class FeatureUsageActivationTests
     {
         // Arrange
         using var provider = new LocalCodeActProvider(
-            "python",
+            Environment.ProcessPath!,
             new LocalCodeActProviderOptions { ValidationDisabled = true });
         var context = new AIContextProvider.InvokingContext(
             new Mock<AIAgent>().Object,

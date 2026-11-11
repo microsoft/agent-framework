@@ -21,7 +21,7 @@ public sealed class A2AClientExtensionsTests
         const string TestDescription = "Agent created from IA2AClient";
 
         // Act
-        var agent = a2aClient.AsAIAgent(new A2AAgentOptions
+        A2AAgent agent = a2aClient.AsAIAgent(new A2AAgentOptions
         {
             Id = TestId,
             Name = TestName,

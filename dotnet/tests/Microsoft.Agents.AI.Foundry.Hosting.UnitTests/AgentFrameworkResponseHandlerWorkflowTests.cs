@@ -11,7 +11,6 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -143,9 +142,8 @@ public class AgentFrameworkResponseHandlerWorkflowTests
             executionEnvironment: InProcessExecution.OffThread);
 
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddKeyedSingleton("my-workflow", workflowAgent);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -202,20 +200,18 @@ public class AgentFrameworkResponseHandlerWorkflowTests
             bool resilient = false)
     {
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         services.AddSingleton(agent);
         services.AddSingleton<ILogger<AgentFrameworkResponseHandler>>(NullLogger<AgentFrameworkResponseHandler>.Instance);
-        services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(
             sp,
             NullLogger<AgentFrameworkResponseHandler>.Instance,
-            Options.Create(
-                new FoundryResponsesOptions
-                {
-                    ResilientBackground = resilient,
-                }));
+            new FoundryResponsesServerOptions
+            {
+                ResilientBackground = resilient,
+            });
         var request = new CreateResponse
         {
             Model = "test",

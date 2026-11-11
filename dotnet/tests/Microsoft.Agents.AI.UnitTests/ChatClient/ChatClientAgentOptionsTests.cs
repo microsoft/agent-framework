@@ -138,6 +138,7 @@ public class ChatClientAgentOptionsTests
             ThrowOnChatHistoryProviderConflict = false,
             DisableApprovalNotRequiredFunctionBypassing = true,
             EnableInvocableFunctionBypassing = true,
+            PersistPartialMessagesOnCancellation = true,
         };
 
         // Act
@@ -157,6 +158,7 @@ public class ChatClientAgentOptionsTests
         Assert.Equal(original.ThrowOnChatHistoryProviderConflict, clone.ThrowOnChatHistoryProviderConflict);
         Assert.Equal(original.DisableApprovalNotRequiredFunctionBypassing, clone.DisableApprovalNotRequiredFunctionBypassing);
         Assert.Equal(original.EnableInvocableFunctionBypassing, clone.EnableInvocableFunctionBypassing);
+        Assert.Equal(original.PersistPartialMessagesOnCancellation, clone.PersistPartialMessagesOnCancellation);
 
         // ChatOptions should be cloned, not the same reference
         Assert.NotSame(original.ChatOptions, clone.ChatOptions);

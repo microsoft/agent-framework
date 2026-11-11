@@ -110,7 +110,7 @@ AIAgent agent = projectClient.AsAIAgent(new ChatClientAgentOptions
 
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent);
+builder.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();
