@@ -1265,6 +1265,7 @@ def test_memory_topic_truncation_after_a_separator_stays_canonical(tmp_path) -> 
     assert store.get_topic(session, source_id="src", topic=topic).memories == ["kept"]
     entries = store.rebuild_index(session, source_id="src", line_limit=10, line_length=200)
     for entry in entries:
+        assert entry.storage_stem is not None
         assert (store._get_topics_directory(session, source_id="src") / f"{entry.storage_stem}.md").exists()
         assert store.get_topic(session, source_id="src", topic=entry.storage_stem).memories == ["kept"]
 
@@ -1510,7 +1511,7 @@ async def test_memory_consolidation_does_not_lose_a_write_through_an_index_stem(
     stem = written.storage_stem
 
     original_consolidate = provider._consolidate_topic  # type: ignore[reportPrivateUsage]
-    pending_merge: asyncio.Task[None] | None = None
+    pending_merge: asyncio.Task[MemoryTopicRecord] | None = None
 
     async def consolidate_with_a_write_in_flight(
         *,
@@ -1531,7 +1532,7 @@ async def test_memory_consolidation_does_not_lose_a_write_through_an_index_stem(
         await asyncio.sleep(0)
         return record, True
 
-    provider._consolidate_topic = consolidate_with_a_write_in_flight  # type: ignore[method-assign,reportPrivateUsage]
+    provider._consolidate_topic = consolidate_with_a_write_in_flight  # type: ignore[method-assign,reportPrivateUsage]  # ty: ignore[invalid-assignment]
     await provider._run_consolidation(  # type: ignore[reportPrivateUsage]
         client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         session=session,
@@ -1587,13 +1588,21 @@ class _AliasOnlyDictStore(MemoryStore):
     def get_transcripts_directory(self, session: AgentSession, *, source_id: str) -> Path:
         return Path(".")
 
-    def search_transcripts(self, session: AgentSession, *, query: str, source_id: str) -> list[dict[str, Any]]:
+    def search_transcripts(
+        self,
+        session: AgentSession,
+        *,
+        source_id: str,
+        query: str,
+        session_id: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
         return []
 
     def read_state(self, session: AgentSession, *, source_id: str) -> dict[str, Any]:
         return {}
 
-    def write_state(self, session: AgentSession, state: dict[str, Any], *, source_id: str) -> None:
+    def write_state(self, session: AgentSession, state: Mapping[str, Any], *, source_id: str) -> None:
         pass
 
 
@@ -1644,19 +1653,10 @@ async def test_memory_consolidation_processes_topics_in_a_conforming_custom_stor
         source_id=DEFAULT_MEMORY_SOURCE_ID,
     )
 
-    class _DictClient:
-        async def get_response(self, *args: Any, **kwargs: Any) -> ChatResponse[Any]:
-            return ChatResponse(
-                messages=[
-                    Message(
-                        role="assistant",
-                        contents=[json.dumps({"summary": "consolidated", "memories": ["m"]})],
-                    )
-                ]
-            )
-
     count = await provider._run_consolidation(  # pyright: ignore[reportPrivateUsage]
-        client=_DictClient(),
+        client=_MemoryHarnessClient(  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+            consolidation_payload={"summary": "consolidated", "memories": ["m"]}
+        ),
         session=session,
         force=True,
         now=datetime.now(timezone.utc),
@@ -1713,6 +1713,140 @@ def test_memory_file_store_uses_literal_folders_for_safe_identifiers(tmp_path) -
     parts = root.relative_to(tmp_path.resolve()).parts
     assert parts[0] == "memory"
     assert parts[1] == "user_alice"
+
+
+def _seed_legacy_file_holding_another_topic(store: MemoryFileStore, session: AgentSession) -> Path:
+    """Seed a legacy ``c.md`` holding the C++ record, as pre digest stores wrote."""
+    topics_dir = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    topics_dir.mkdir(parents=True, exist_ok=True)
+    legacy = topics_dir / "c.md"
+    legacy.write_text(
+        "# C++\n\nUpdated: t\nSessions: -\n\n## Summary\ncpp\n\n## Memories\n- smart pointers\n",
+        encoding="utf-8",
+    )
+    return legacy
+
+
+async def test_memory_merge_creates_a_distinct_topic_when_a_legacy_slug_file_holds_another_topic(tmp_path) -> None:
+    """A legacy slug-only file must not answer a different topic's merge.
+
+    Reading ``C#`` through the legacy ``c.md`` that holds ``C++`` merged the
+    new memory into the C++ record and wrote it back under the C++ stem, so
+    the C# topic was never created and its lookup kept returning the C++
+    record.
+    """
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    legacy = _seed_legacy_file_holding_another_topic(store, session)
+
+    provider = MemoryContextProvider(store=store)
+    await provider._merge_memory(  # pyright: ignore[reportPrivateUsage]
+        session=session, topic="C#", memory="ctors", now=datetime.now(timezone.utc)
+    )
+
+    cpp = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="C++")
+    assert cpp.memories == ["smart pointers"]
+    cs = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="C#")
+    assert cs.memories == ["ctors"]
+    assert cs.storage_stem != legacy.stem
+    assert legacy.exists()
+
+
+def _seed_dual_file_topic(store: MemoryFileStore, session: AgentSession) -> Path:
+    """Leave a topic on both the digest stem and a legacy slug-only file.
+
+    This is the state an interrupted migration leaves behind: the digest
+    write completed, the unlink of the old file did not.
+    """
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="Travel Preferences", summary="s", memories=["kept"], updated_at="t"),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    topics_dir = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    digest_path = next(path for path in topics_dir.glob("*.md"))
+    legacy = topics_dir / "travel-preferences.md"
+    legacy.write_text(digest_path.read_text(encoding="utf-8"), encoding="utf-8")
+    return digest_path
+
+
+def test_memory_lists_one_record_while_a_migration_left_two_files(tmp_path) -> None:
+    """A leftover legacy copy must not duplicate the topic in listings."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    digest_path = _seed_dual_file_topic(store, session)
+    topics_dir = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    listed = store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    assert [record.topic for record in listed] == ["Travel Preferences"]
+    assert listed[0].storage_stem == digest_path.stem
+    entries = store.rebuild_index(session, source_id=DEFAULT_MEMORY_SOURCE_ID, line_limit=10, line_length=200)
+    assert len(entries) == 1
+    assert entries[0].storage_stem is not None
+    assert (topics_dir / f"{entries[0].storage_stem}.md").exists()
+
+
+def test_memory_delete_removes_every_file_left_by_an_interrupted_migration(tmp_path) -> None:
+    """Deleting a topic removes the stale legacy copy, so the topic cannot resurrect."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    _seed_dual_file_topic(store, session)
+    topics_dir = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    store.delete_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Travel Preferences")
+
+    assert not any(topics_dir.glob("*.md"))
+    with pytest.raises(FileNotFoundError):
+        store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Travel Preferences")
+
+
+def test_memory_write_sweeps_a_leftover_legacy_file_after_a_failed_unlink(tmp_path, monkeypatch) -> None:
+    """A migration whose unlink failed heals on the next write of the topic."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    topics_dir = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    topics_dir.mkdir(parents=True)
+    legacy = topics_dir / "travel-preferences.md"
+    legacy.write_text(
+        "# Travel Preferences\n\nUpdated: t\nSessions: -\n\n## Summary\ns\n\n## Memories\n- kept\n",
+        encoding="utf-8",
+    )
+
+    real_unlink = Path.unlink
+
+    def failing_unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name == legacy.name:
+            raise OSError("simulated crash between write and unlink")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+    with pytest.raises(OSError, match="simulated crash"):
+        store.write_topic(
+            session,
+            MemoryTopicRecord(topic="Travel Preferences", summary="s", memories=["kept"], updated_at="t2"),
+            source_id=DEFAULT_MEMORY_SOURCE_ID,
+        )
+    monkeypatch.undo()
+
+    # The interrupted migration left both files behind, but the stale copy is
+    # hidden rather than listed as a second topic.
+    assert legacy.exists()
+    assert len(store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID)) == 1
+
+    # The next write reconciles the directory: only the digest stem remains.
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="Travel Preferences", summary="s", memories=["kept", "kept"], updated_at="t3"),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    remaining = sorted(path.name for path in topics_dir.glob("*.md"))
+    assert len(remaining) == 1
+    assert remaining[0].startswith("travel-preferences-")
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Travel Preferences").memories == ["kept"]
 
 
 # endregion

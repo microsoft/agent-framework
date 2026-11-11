@@ -180,6 +180,20 @@ def _topic_stem_candidates(topic: str, *, slug_override: str | None = None) -> I
         yield f"{slug}-{digest[:digest_length]}"
 
 
+_DIGEST_STEM_RE = re.compile(r"-(?:[0-9a-f]{16}|[0-9a-f]{32}|[0-9a-f]{64})$")
+
+
+def _is_digest_stem(stem: str) -> bool:
+    """Return whether a filename stem carries the digest suffix ``write_topic`` appends.
+
+    Digest-bearing stems are injective identities: ``write_topic`` extends the
+    digest when a different topic already lives at the stem, so one stem names
+    one topic's file. A slug-only stem is not injective, which is why lookups
+    validate the record such a file holds instead of trusting the name.
+    """
+    return _DIGEST_STEM_RE.search(stem) is not None
+
+
 def _timestamp(value: datetime | None = None) -> str:
     current = value or datetime.now(timezone.utc)
     return current.replace(microsecond=0).isoformat()
@@ -870,11 +884,16 @@ class MemoryFileStore(MemoryStore):
         persisted stem), then any file whose stem starts with the readable
         slug followed by a dash, which serves lookups made by slug or by a
         topic that normalizes differently than its stored spelling. Every
-        digest-stemmed or slug-family candidate is validated against the
-        record it actually holds, and a slug lookup answers only when the
-        lookup string is itself a slug with a single claiming record:
-        default-slug reloads stay working, while colliding topics such as
-        C++ and C# never merge through the shared slug.
+        candidate is validated against the record it actually holds: a legacy
+        file keyed by a slug several topics shared must never answer another
+        topic's lookup, so a store holding C++ in ``c.md`` raises for C#
+        instead of handing out the C++ record. A slug lookup answers only
+        when the lookup string is itself a slug and every claiming record
+        holds one and the same topic: default-slug reloads stay working
+        (and so does the transient two-file state an interrupted migration
+        leaves), while colliding topics such as C++ and C#, or two topics
+        that merely slugify into the same family, never merge through the
+        shared slug.
         """
         topics_dir = self._get_topics_directory(session, source_id=source_id)
         if not topics_dir.is_dir():
@@ -895,34 +914,50 @@ class MemoryFileStore(MemoryStore):
             record = MemoryTopicRecord.from_markdown(candidate_path.read_text(encoding="utf-8"), fallback_topic=topic)
             if record.topic == wanted:
                 return candidate_path
-        # 2. An exact filename match: a legacy slug-only file from stores
-        #    written before the digest suffix, or a caller passing a persisted
-        #    stem such as an index entry slug.
-        legacy_name = _slugify_topic(topic)
-        if len(legacy_name.encode("utf-8")) + len(".md") > 255:
-            pass  # An overlong legacy name cannot exist on a limit bound filesystem.
-        else:
-            exact_path = topics_dir / f"{legacy_name}.md"
+        slug = _slugify_topic(topic)
+        # Claimants collect every file whose record claims this slug; a slug
+        # lookup answers below only when they all hold the same topic.
+        slug_claimants: list[tuple[Path, str]] = []
+        # 2. An exact filename match: a persisted stem (an injective identity
+        #    that names exactly one file, such as the slug an index link
+        #    carries), or a legacy slug-only file. The legacy file is
+        #    validated against the record it holds because the pre digest
+        #    scheme keyed several topics by the same slug; an unvalidated hit
+        #    let a missing topic read, merge into, or delete another topic's
+        #    memories. Otherwise it joins the slug claimants.
+        if len(slug.encode("utf-8")) + len(".md") <= 255:
+            exact_path = topics_dir / f"{slug}.md"
             if exact_path.exists():
-                return exact_path
+                record = MemoryTopicRecord.from_markdown(exact_path.read_text(encoding="utf-8"), fallback_topic=topic)
+                # A legacy file's heading may spell the topic with a different
+                # case than the lookup; the pre digest scheme stored one file
+                # per slug, so case was never a distinguishing identity there.
+                if _is_digest_stem(exact_path.stem) or record.topic.casefold() == wanted.casefold():
+                    return exact_path
+                if record.slug == slug:
+                    slug_claimants.append((exact_path, _normalize_topic(record.topic)))
         # 3. Digest-suffixed stems sharing the slug. A prefix glob alone proves
         #    nothing (a missing topic must never read, merge into, or delete a
         #    longer unrelated slug), so every candidate is validated against
         #    the record it actually holds. A slug lookup answers only when the
-        #    lookup string is itself a slug and exactly one record claims it:
-        #    default-slug reloads stay working, while a topic name whose
-        #    slugification merely lands in the family (two CJK topics both
-        #    slugifying to ``memory-topic``) cannot borrow a neighbor's file.
-        slug = _slugify_topic(topic)
-        slug_holders: list[Path] = []
+        #    lookup string is itself a slug and all claimants hold one and the
+        #    same topic: a topic name whose slugification merely lands in the
+        #    family (two CJK topics both slugifying to ``memory-topic``)
+        #    cannot borrow a neighbor's file.
         for path in sorted(topics_dir.glob(f"{slug}-*.md")):
             record = MemoryTopicRecord.from_markdown(path.read_text(encoding="utf-8"), fallback_topic=topic)
             if record.topic == wanted:
                 return path
             if record.slug == slug:
-                slug_holders.append(path)
-        if topic == slug and len(slug_holders) == 1:
-            return slug_holders[0]
+                slug_claimants.append((path, _normalize_topic(record.topic)))
+        if topic == slug and slug_claimants and len({claimed for _, claimed in slug_claimants}) == 1:
+            # Prefer a digest-bearing claimant: it is the stem write_topic
+            # migrates the record to, so the choice stays deterministic even
+            # while a legacy file and its digest successor coexist.
+            for claimant_path, _ in slug_claimants:
+                if _is_digest_stem(claimant_path.stem):
+                    return claimant_path
+            return slug_claimants[0][0]
         return None
 
     @staticmethod
@@ -960,11 +995,22 @@ class MemoryFileStore(MemoryStore):
         return _storage_key_segment(raw_session_id, encoded_prefix=_FILE_HISTORY_ENCODED_SESSION_PREFIX)
 
     def list_topics(self, session: AgentSession, *, source_id: str) -> list[MemoryTopicRecord]:
-        """Return all topic memory files visible from the current owner."""
-        topics: list[MemoryTopicRecord] = []
+        """Return one record per topic visible from the current owner.
+
+        A migration interrupted between the write and the unlink can leave a
+        legacy slug-only file next to its digest-stemmed successor, both
+        holding the same topic. The digest-stemmed record (the stem
+        ``write_topic`` migrates to) wins and the stale copy is hidden rather
+        than listed twice; the same applies to a legacy heading spelled with a
+        different case, which the pre digest scheme could never have kept
+        apart. Distinct digest-era topics, including topics that differ only
+        by case, each keep their own record.
+        """
+        records_by_topic: dict[str, MemoryTopicRecord] = {}
+        digest_casefolded: set[str] = set()
         topics_directory = self._get_topics_directory(session, source_id=source_id)
         if not topics_directory.exists():
-            return topics
+            return []
         for topic_path in sorted(topics_directory.glob("*.md")):
             if not topic_path.is_file():
                 continue
@@ -973,7 +1019,37 @@ class MemoryFileStore(MemoryStore):
                 fallback_topic=topic_path.stem.replace("-", " "),
             )
             record.set_on_disk_stem(topic_path.stem)
-            topics.append(record)
+            normalized = _normalize_topic(record.topic)
+            if _is_digest_stem(topic_path.stem):
+                digest_casefolded.add(normalized.casefold())
+                current = records_by_topic.get(normalized)
+                if (
+                    current is not None
+                    and _is_digest_stem(current.storage_stem)
+                    and current.updated_at >= record.updated_at
+                ):
+                    continue
+                records_by_topic[normalized] = record
+        for topic_path in sorted(topics_directory.glob("*.md")):
+            if not topic_path.is_file():
+                continue
+            record = MemoryTopicRecord.from_markdown(
+                topic_path.read_text(encoding="utf-8"),
+                fallback_topic=topic_path.stem.replace("-", " "),
+            )
+            record.set_on_disk_stem(topic_path.stem)
+            normalized = _normalize_topic(record.topic)
+            if _is_digest_stem(topic_path.stem):
+                continue
+            if normalized.casefold() in digest_casefolded:
+                # A stale pre digest copy of a topic that already lives on a
+                # digest stem: hide it rather than list the topic twice.
+                continue
+            current = records_by_topic.get(normalized)
+            if current is not None and current.updated_at >= record.updated_at:
+                continue
+            records_by_topic[normalized] = record
+        topics = list(records_by_topic.values())
         return sorted(topics, key=lambda record: (record.topic.lower(), record.updated_at))
 
     def get_topic(self, session: AgentSession, *, source_id: str, topic: str) -> MemoryTopicRecord:
@@ -1012,52 +1088,73 @@ class MemoryFileStore(MemoryStore):
     def write_topic(self, session: AgentSession, record: MemoryTopicRecord, *, source_id: str) -> None:
         """Persist one topic memory file.
 
-        The digest-stemmed file is the single authoritative record: when this
-        topic previously lived at another path (a legacy slug-only file, an
-        extended stem freed by a neighbor's deletion, or a stem written under a
-        different slug override), that file is retired so lookups can never
-        surface stale content or resurrect the old record.
+        The digest-stemmed file is the single authoritative record: after the
+        write, every other file holding this topic is retired. Resolution
+        alone cannot drive that cleanup, because once the digest file exists
+        the lookup already selects it and never names the stale copy again, so
+        a migration interrupted between the write and the unlink (or one whose
+        unlink failed outright) would otherwise leave two live records that
+        ``list_topics`` duplicates and a later delete resurrects.
         """
-        previous_path = self._existing_topic_path(session, source_id=source_id, topic=record.topic)
         topic_path = self._writable_topic_path(session, source_id=source_id, record=record)
         _atomic_write_text(topic_path, f"{record.to_markdown()}\n")
         record.set_on_disk_stem(topic_path.stem)
-        if (
-            previous_path is not None
-            and previous_path != topic_path
-            and self._path_holds_topic(previous_path, record.topic)
-        ):
-            # A resolution through a legacy slug-only file or a shared slug can
-            # name another topic's record; retiring it would silently destroy
-            # that topic, so only a file holding this very topic is retired.
-            previous_path.unlink(missing_ok=True)
+        self._retire_stale_topic_files(session, source_id=source_id, topic=record.topic, keep=topic_path)
 
     def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
         """Delete one topic memory file.
 
         Deletion accepts every alias get_topic answers: the topic name, the
-        readable slug, and the persisted stem an index link carries. The lookup
-        resolution itself rejects an ambiguous slug and validates digest stems,
-        so the file it names is the one record the lookup resolves to; the
-        topic ownership guard stays on the write path, where a resolution can
-        name another topic's file for retirement.
+        readable slug, and the persisted stem an index link carries. The
+        resolution yields the record the lookup belongs to, then every file
+        holding that record's topic is removed, so a migration that left both
+        the digest-stemmed file and its legacy predecessor cannot resurrect
+        the topic from the stale copy.
         """
         topic_path = self._existing_topic_path(session, source_id=source_id, topic=topic)
         if topic_path is None:
             raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
-        topic_path.unlink()
+        record = MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)
+        self._retire_stale_topic_files(session, source_id=source_id, topic=record.topic, keep=None)
+
+    def _retire_stale_topic_files(
+        self, session: AgentSession, *, source_id: str, topic: str, keep: Path | None
+    ) -> None:
+        """Unlink every file whose record holds ``topic``, except ``keep``.
+
+        Each occupant is validated before unlinking, so a slug shared by
+        several topics can never cost a neighbour its file; only this very
+        topic's stale copies (a legacy slug-only file, an extended stem freed
+        by a neighbor's deletion, a stem written under a different slug
+        override) are retired.
+        """
+        topics_dir = self._get_topics_directory(session, source_id=source_id)
+        if not topics_dir.is_dir():
+            return
+        for path in sorted(topics_dir.glob("*.md")):
+            if keep is not None and path == keep:
+                continue
+            if self._path_holds_topic(path, topic):
+                path.unlink()
 
     def _path_holds_topic(self, path: Path, topic: str) -> bool:
         """Return whether the record in ``path`` is the given topic's own record.
 
         Digest-stemmed resolutions already validated exact identity; this guards
         the alias-capable resolutions (legacy slug-only files, shared slugs),
-        where the occupant may be a different topic. The comparison is exact on
-        the normalized topic: case folding would treat slug shaped neighbours
-        such as API and api as one topic and retire the original file.
+        where the occupant may be a different topic. Digest-era comparisons are
+        exact on the normalized topic: case folding would treat slug shaped
+        neighbours such as API and api as one topic and retire the original
+        file. A legacy slug-only file instead folds case, because the pre
+        digest scheme stored one file per slug, so a heading spelled with a
+        different case is the same topic and must migrate, not duplicate.
         """
         record = MemoryTopicRecord.from_markdown(path.read_text(encoding="utf-8"), fallback_topic=path.stem)
-        return _normalize_topic(record.topic) == _normalize_topic(topic)
+        normalized = _normalize_topic(record.topic)
+        wanted = _normalize_topic(topic)
+        if _is_digest_stem(path.stem):
+            return normalized == wanted
+        return normalized.casefold() == wanted.casefold()
 
     def rebuild_index(
         self,
