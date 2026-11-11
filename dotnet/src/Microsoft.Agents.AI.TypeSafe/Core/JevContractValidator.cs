@@ -41,25 +41,35 @@ internal static class JevContractValidator
             Throw.ArgumentException(nameof(request), "The state must be text or a JSON object or array.");
         }
 
-        if (request.Questions is null || request.Questions.Count == 0)
+        ValidateQuestions(request.Questions, nameof(request));
+    }
+
+    /// <summary>
+    /// Checks the questions of a request, which <see cref="ValidateRequest"/> does too.
+    /// </summary>
+    /// <param name="questions">The questions, keyed by ID.</param>
+    /// <param name="paramName">The parameter that the questions came from, for the exception.</param>
+    public static void ValidateQuestions(IReadOnlyDictionary<string, JevQuestion>? questions, string paramName)
+    {
+        if (questions is null || questions.Count == 0)
         {
-            Throw.ArgumentException(nameof(request), "At least one question is required.");
+            Throw.ArgumentException(paramName, "At least one question is required.");
         }
 
-        foreach (KeyValuePair<string, JevQuestion> entry in request.Questions)
+        foreach (KeyValuePair<string, JevQuestion> entry in questions)
         {
             string id = entry.Key;
             switch (entry.Value)
             {
                 case null:
-                    Throw.ArgumentException(nameof(request), $"Question '{id}' is null.");
+                    Throw.ArgumentException(paramName, $"Question '{id}' is null.");
                     break;
 
                 case JevChoiceQuestion choice:
                     int alternatives = choice.Criteria?.Count ?? 0;
                     if (alternatives is < 1 or > MaxChoiceCriteria)
                     {
-                        Throw.ArgumentException(nameof(request), $"Choice question '{id}' has {Count(alternatives, "alternative")}; it needs from 1 to {MaxChoiceCriteria}.");
+                        Throw.ArgumentException(paramName, $"Choice question '{id}' has {Count(alternatives, "alternative")}; it needs from 1 to {MaxChoiceCriteria}.");
                     }
 
                     break;
@@ -68,7 +78,7 @@ internal static class JevContractValidator
                     int scores = score.Criteria?.Count ?? 0;
                     if (scores is < MinScoreCriteria or > MaxScoreCriteria)
                     {
-                        Throw.ArgumentException(nameof(request), $"Score question '{id}' has {Count(scores, "criterion", "criteria")}; it needs from {MinScoreCriteria} to {MaxScoreCriteria}.");
+                        Throw.ArgumentException(paramName, $"Score question '{id}' has {Count(scores, "criterion", "criteria")}; it needs from {MinScoreCriteria} to {MaxScoreCriteria}.");
                     }
 
                     // The SDK types allow null rubric entries, but the API answers 422 for them.
@@ -76,7 +86,7 @@ internal static class JevContractValidator
                     {
                         if (score.Criteria![index].IsNull)
                         {
-                            Throw.ArgumentException(nameof(request), $"Score question '{id}' has a null criterion at index {index.ToString(CultureInfo.InvariantCulture)}; every score needs text or JSON.");
+                            Throw.ArgumentException(paramName, $"Score question '{id}' has a null criterion at index {index.ToString(CultureInfo.InvariantCulture)}; every score needs text or JSON.");
                         }
                     }
 
@@ -85,7 +95,7 @@ internal static class JevContractValidator
                 case JevNoulQuestion noul:
                     if (IsEmpty(noul.Instructions) && IsEmpty(noul.Criteria?.True) && IsEmpty(noul.Criteria?.False))
                     {
-                        Throw.ArgumentException(nameof(request), $"Noul question '{id}' needs instructions or criteria.");
+                        Throw.ArgumentException(paramName, $"Noul question '{id}' needs instructions or criteria.");
                     }
 
                     break;

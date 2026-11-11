@@ -4,6 +4,8 @@
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.AI.TypeSafe</RootNamespace>
     <VersionSuffix>alpha</VersionSuffix>
+    <!-- The decision API is experimental in Microsoft.Extensions.AI; this package compiles it from an internal copy. -->
+    <NoWarn>$(NoWarn);MEAI001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
