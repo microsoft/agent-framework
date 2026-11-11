@@ -35,7 +35,7 @@ from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
 from azure.ai.agentserver.core.storage import FoundryStorageConflictError, FoundryStoragePreconditionError
 
 from agent_framework_foundry_hosting import CheckpointStoreProvider, FoundryRequestScope, WorkflowTurn
-from agent_framework_foundry_hosting._workflow_source import WorkflowResolver, prepare_workflow_kwargs
+from agent_framework_foundry_hosting._shared import WorkflowResolver, prepare_workflow_kwargs
 from agent_framework_foundry_hosting._workflow_state import (
     FoundryWorkflowBindingStore,
     HostedWorkflowRun,
@@ -213,10 +213,39 @@ async def test_resolver_requires_fresh_built_graphs_and_resources() -> None:
     with pytest.raises(TypeError, match="built Workflow"):
         await builder_resolver.resolve(object())
     stored_resolver: WorkflowResolver[object] = WorkflowResolver(
-        WorkflowBuilder(start_executor=_Counter(), checkpoint_storage=InMemoryCheckpointStorage()).build()
+        lambda _: WorkflowBuilder(start_executor=_Counter(), checkpoint_storage=InMemoryCheckpointStorage()).build()
     )
     with pytest.raises(RuntimeError, match="without a store"):
         await stored_resolver.resolve(object())
+
+
+@pytest.mark.parametrize("wrapped_workflow", [False, True])
+@pytest.mark.parametrize("async_factory", [False, True])
+async def test_workflow_sources_reject_agents_before_dispatch(wrapped_workflow: bool, async_factory: bool) -> None:
+    regular_agent = Agent(client=MagicMock(spec=BaseChatClient))
+    agent = (
+        WorkflowBuilder(start_executor=AgentExecutor(regular_agent)).build().as_agent()
+        if wrapped_workflow
+        else regular_agent
+    )
+    requests: list[object] = []
+
+    def create(request: object) -> Any:
+        requests.append(request)
+        return agent
+
+    async def create_async(request: object) -> Any:
+        return create(request)
+
+    with patch.object(agent, "run") as run:
+        with pytest.raises(TypeError, match="request-aware factory"):
+            WorkflowResolver(cast(Any, agent))
+        resolver: WorkflowResolver[object] = WorkflowResolver(create_async if async_factory else create)
+        request = object()
+        with pytest.raises(TypeError, match="must return a built Workflow"):
+            await resolver.resolve(request)
+        assert requests == [request]
+        run.assert_not_called()
 
 
 async def test_request_aware_async_factory() -> None:
@@ -341,14 +370,14 @@ async def test_shared_real_agent_options_use_the_correct_existing_boundary(raw: 
 
     resolver = WorkflowResolver(create)
     workflow = await resolver.resolve(object())
-    run = await _prepare("model-turn", workflow=workflow, fresh_factory=resolver.is_factory)
+    run = await _prepare("model-turn", workflow=workflow, fresh_factory=True)
     turn = run.validate_turn(WorkflowTurn(input=[Message("user", "hello")]))
     clients, functions = prepare_workflow_kwargs(
         workflow,
         turn,
         run.scope,
         options={"temperature": 0.6},
-        fresh_factory=resolver.is_factory,
+        fresh_factory=True,
     )
     await run.claim()
     events = [event async for event in run.events(turn, client_kwargs=clients, function_invocation_kwargs=functions)]

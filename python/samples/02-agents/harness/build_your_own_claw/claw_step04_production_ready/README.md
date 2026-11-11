@@ -107,7 +107,7 @@ conversation or MAF session ID. File memory is **sandbox-specific**, unlike the
 intentional user-wide sharing in the
 [Foundry Memory sample](../../../../04-hosting/foundry-hosted-agents/responses/foundry_memory/).
 
-`ResponsesHostServer(agent=create_agent, history_source="agent_server")` builds
+`ResponsesHostServer(agent=create_agent, history_source="host_managed")` builds
 new clients, Toolbox/skills providers, CodeAct and harness providers for each
 request. The sample injects its own context-managed client into
 `build_claw_agent`, leaving ownership of supplied/shared clients elsewhere

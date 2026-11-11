@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Share Invocations protocol, state, and execution plumbing between agent and workflow hosts."""
+
 from __future__ import annotations
 
 import asyncio
@@ -28,11 +30,8 @@ from agent_framework import (
     ResponseStream,
     SessionStore,
     SupportsAgentRun,
-    Workflow,
-    WorkflowAgent,
     WorkflowCheckpointException,
     WorkflowEvent,
-    WorkflowExecutor,
 )
 from agent_framework._telemetry import mark_feature_used
 from anyio import CancelScope
@@ -49,18 +48,23 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.types import Receive, Scope, Send
 
-from ._agent_source import AgentSource, is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex
-from ._request import (
+from ._scope import FoundryRequestScope
+from ._shared import (
+    AgentSource,
     InvocationRun,
     UnsupportedOptions,
+    WorkflowResolver,
+    WorkflowSource,
     WorkflowTurn,
+    is_agent,
+    resolve_agent,
+    validate_agent_source,
     validate_request_options,
     validate_unsupported_options,
+    workflow_agents,
 )
-from ._scope import FoundryRequestScope
 from ._state_store import AgentSessionStoreProvider, CheckpointStoreProvider, ContextScopedStoreProvider, StoreProvider
-from ._workflow_source import WorkflowResolver, WorkflowSource, workflow_agents
 from ._workflow_state import HostedWorkflowRun, WorkflowBlockedError, WorkflowConflictError
 
 logger = logging.getLogger(__name__)
@@ -234,15 +238,6 @@ def _workflow_frame_size(frame: Mapping[str, Any]) -> int:
     return len(json.dumps(frame, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8"))
 
 
-def _workflow_can_pause(workflow: Workflow) -> bool:
-    for executor in workflow.get_executors_list():
-        if getattr(executor, "is_request_response_capable", False) is True:
-            return True
-        if isinstance(executor, WorkflowExecutor) and _workflow_can_pause(executor.workflow):
-            return True
-    return False
-
-
 def _sse(event: str, data: Mapping[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
@@ -325,63 +320,39 @@ class _WorkflowStreamingResponse(_InvocationStreamingResponse):
                         pass
 
 
-class InvocationsHostServer(InvocationAgentServerHost):
-    """Host an agent or native workflow with durable, application-defined Invocations turns."""
+class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[reportUnusedClass]
+    """Share protocol, scoped state, and execution plumbing between the public hosts."""
 
     def __init__(
         self,
-        agent: AgentSource | None = None,
+        agent: AgentSource[Request] | None = None,
         *,
         workflow: WorkflowSource[Request] | None = None,
         openapi_spec: dict[str, Any] | None = None,
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
-        parse_request: InvocationParser | None = None,
+        parse_input: InvocationParser | None = None,
         prepare_options: InvocationOptionsHook | None = None,
         unsupported_options: UnsupportedOptions = "warn",
         legacy_wire_format: bool = False,
         **kwargs: Any,
     ) -> None:
-        """Initialize an InvocationsHostServer.
-
-        Args:
-            agent: The agent to handle responses for, or a zero-argument sync or async callable that creates one for
-                each request. Use a callable for agents that keep mutable state outside `AgentSession`.
-                Hosting a `WorkflowAgent` here is deprecated and should be avoided: it is stateful, so one instance
-                must never serve requests from different users or conversations. Use `workflow=` instead.
-            workflow: A built native workflow or a sync/async request-aware factory returning a freshly built
-                workflow with stable graph/executor IDs. Hosted workflows require a factory. Supply exactly
-                one of agent or workflow; local workflow instances are single-use and remain application-owned.
-            openapi_spec: The OpenAPI specification for the server.
-            agent_session_store_provider: Provider for conversation session storage. Defaults to Foundry storage
-                when hosted and the SDK's file-backed storage locally. New default stores expire sessions 30 days
-                after their last write. Custom providers control their own retention.
-            checkpoint_store_provider: Native workflow checkpoint storage. The default accepts the host's
-                verified sandbox/user scope. Custom providers must preserve scoped conditional-write semantics.
-            parse_request: Sync or async parser returning `InvocationRun` for agents or `WorkflowTurn` for
-                workflows. Native workflows require an explicit parser for typed input or complete pending
-                reply batches. Without an agent parser, accepts `message`, optional `options` and `stream`.
-            prepare_options: Optional sync or async hook to filter or replace a copy of caller generation options.
-                Tool context and agent execution controls must remain in developer-owned agent configuration.
-            unsupported_options: `"warn"` (default), `"ignore"`, or `"error"` for agents without runtime options.
-            legacy_wire_format: Opt into the deprecated plain-text response and raw streaming chunks instead of
-                the default agent JSON response and framed `delta`/`done`/`error` server-sent events.
-                This agent-only compatibility mode is incompatible with native workflows.
-            **kwargs: Additional keyword arguments.
-        """
+        """Initialize shared protocol plumbing after the public host selects its execution model."""
+        if "parse_request" in kwargs:
+            raise TypeError("parse_request was renamed to parse_input.")
         if agent is not None and workflow is not None:
             raise TypeError("Provide exactly one of agent or workflow.")
         if agent is None and workflow is None:
             raise TypeError(
                 "Provide exactly one of agent or workflow; "
-                "agent must be an agent instance or a zero-argument callable that creates one."
+                "agent must be an agent instance or a callable that creates one."
             )
         if workflow is None:
             validate_agent_source(agent)
-        elif parse_request is None:
-            raise TypeError("parse_request is required when hosting a native Workflow.")
-        if parse_request is not None and not callable(parse_request):
-            raise TypeError("parse_request must be a callable.")
+        elif parse_input is None:
+            raise TypeError("parse_input is required when hosting a native Workflow.")
+        if parse_input is not None and not callable(parse_input):
+            raise TypeError("parse_input must be a callable.")
         if prepare_options is not None and not callable(prepare_options):
             raise TypeError("prepare_options must be a callable.")
         if not isinstance(legacy_wire_format, bool):
@@ -399,13 +370,9 @@ class InvocationsHostServer(InvocationAgentServerHost):
             WorkflowResolver(workflow) if workflow is not None else None
         )
         super().__init__(openapi_spec=openapi_spec, **kwargs)
-        if self._workflow_resolver is not None and self.config.is_hosted and not self._workflow_resolver.is_factory:
-            raise ValueError("Hosted native workflows require a request-aware factory that creates fresh executors.")
-
         self._agent = agent
         self._owns_request_agent = agent is not None and not is_agent(agent)
-        self._warned_workflow_agent = False
-        self._parse_request = parse_request
+        self._parse_input = parse_input
         self._prepare_options = prepare_options
         self._unsupported_options = validate_unsupported_options(unsupported_options)
         self._legacy_wire_format = legacy_wire_format
@@ -425,10 +392,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 "legacy_wire_format=True is deprecated; migrate Invocations clients to JSON responses "
                 "and framed SSE events before removing this compatibility mode."
             )
-            warnings.warn(message, DeprecationWarning, stacklevel=2)
+            warnings.warn(message, DeprecationWarning, stacklevel=3)
             logger.warning("DEPRECATION: %s", message)
-        if isinstance(agent, WorkflowAgent):
-            self._warn_legacy_workflow()
         self.invoke_handler(self._handle_invoke)
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
 
@@ -498,30 +463,11 @@ class InvocationsHostServer(InvocationAgentServerHost):
             is_hosted=True,
         )
 
-    def _warn_legacy_workflow(self) -> None:
-        if not self._warned_workflow_agent:
-            self._warned_workflow_agent = True
-            message = (
-                "Hosting WorkflowAgent through agent= is deprecated for this beta release and should be avoided. "
-                "A WorkflowAgent is stateful and keeps workflow state in memory between runs, so one instance must "
-                "never serve requests from different users or conversations. "
-                "Use workflow=a_request_aware_factory with an explicit parse_request. "
-                "A factory that builds a new WorkflowAgent for every request only suits stateless, "
-                "single-turn workflows, because the Invocations host does not restore workflow checkpoints. "
-                "Wrapper history, context providers, and event semantics are not automatically unwrapped."
-            )
-            warnings.warn(message, DeprecationWarning, stacklevel=3)
-            # Request-time calls cannot be attributed to application code, so Python's default filter hides the
-            # warning there; log it as well.
-            logger.warning("DEPRECATION: %s", message)
-
     @asynccontextmanager
-    async def _request_agent(self) -> AsyncGenerator[SupportsAgentRun]:
+    async def _request_agent(self, request: Request) -> AsyncGenerator[SupportsAgentRun]:
         if self._agent is None:
             raise RuntimeError("No agent is configured for Invocations.")
-        agent = await resolve_agent(self._agent)
-        if isinstance(agent, WorkflowAgent):
-            self._warn_legacy_workflow()
+        agent = await resolve_agent(self._agent, request)
         async with AsyncExitStack() as resources:
             if self._owns_request_agent and isinstance(agent, AbstractAsyncContextManager):
                 await resources.enter_async_context(agent)
@@ -567,14 +513,14 @@ class InvocationsHostServer(InvocationAgentServerHost):
                     ) from exc
 
     async def _parse(self, request: Request) -> InvocationRun | WorkflowTurn[Any]:
-        if self._parse_request is not None:
-            result = self._parse_request(request)
+        if self._parse_input is not None:
+            result = self._parse_input(request)
             parsed = await result if inspect.isawaitable(result) else result
             if self._workflow_resolver is not None:
                 if not isinstance(parsed, WorkflowTurn):
-                    raise TypeError("parse_request must return WorkflowTurn.")
+                    raise TypeError("parse_input must return WorkflowTurn.")
             elif not isinstance(parsed, InvocationRun):
-                raise TypeError("parse_request must return InvocationRun.")
+                raise TypeError("parse_input must return InvocationRun.")
             return parsed
 
         payload = await request.json()
@@ -668,7 +614,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 token: Token[FoundryAgentRequestContext] | None = set_request_context(context)
                 try:
                     lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
-                    async with lock, self._request_agent() as agent:
+                    async with lock, self._request_agent(request) as agent:
                         run_kwargs = self._agent_kwargs(agent, options)
                         async with self._request_session(partition_key, context, hosted_scope=hosted_scope) as session:
                             stream = agent.run(parsed.messages, session=session, stream=True, **run_kwargs)
@@ -727,7 +673,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
         try:
             lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
-            async with lock, self._request_agent() as agent:
+            async with lock, self._request_agent(request) as agent:
                 run_kwargs = self._agent_kwargs(agent, options)
                 async with self._request_session(partition_key, context, hosted_scope=hosted_scope) as session:
                     response = await agent.run(parsed.messages, session=session, **run_kwargs)
@@ -808,8 +754,6 @@ class InvocationsHostServer(InvocationAgentServerHost):
         lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
         async with lock:
             workflow = await resolver.resolve(request)
-            if not resolver.is_factory and _workflow_can_pause(workflow):
-                raise _WorkflowRequestError("A pausing native workflow requires a fresh request-aware factory.")
             run = await HostedWorkflowRun.prepare(
                 workflow,
                 scope=scope,
@@ -818,9 +762,9 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 platform_context=context,
                 checkpoint_store_provider=self._checkpoint_storage_provider,
                 lineage_id="invocations",
-                stored=resolver.is_factory,
+                stored=True,
                 replay_completed=True,
-                fresh_factory=resolver.is_factory,
+                fresh_factory=True,
                 reclaim_superseded=True,
             )
             if run.has_completed_output:
@@ -861,19 +805,14 @@ class InvocationsHostServer(InvocationAgentServerHost):
             try:
                 await run.claim()
                 try:
-                    if resolver.is_factory:
-                        entered: set[int] = set()
-                        for agent in workflow_agents(workflow):
-                            if id(agent) not in entered and isinstance(agent, AbstractAsyncContextManager):
-                                entered.add(id(agent))
-                                await resources.enter_async_context(agent)
+                    entered: set[int] = set()
+                    for agent in workflow_agents(workflow):
+                        if id(agent) not in entered and isinstance(agent, AbstractAsyncContextManager):
+                            entered.add(id(agent))
+                            await resources.enter_async_context(agent)
                     events = run.events(turn)
                     resources.push_async_callback(events.aclose)
                     async for event in events:
-                        if event.type == "request_info" and not resolver.is_factory:
-                            raise _WorkflowRequestError(
-                                "Native workflow pauses require a request-aware factory that rebuilds the workflow."
-                            )
                         frame = _workflow_frame(event)
                         if frame is None:
                             continue

@@ -21,7 +21,7 @@ into application code.
 - Treat translated request options as caller-controlled input and forward only an explicit allowlist.
 - Choose one history owner; do not combine competing host, service, and agent history mechanisms.
 - Reuse an agent instance only when all mutable state is session-scoped. Otherwise use a request-owned factory.
-- Prefer native workflow hosting. A shared `workflow.as_agent()` instance can leak workflow state across requests.
+- Use native workflow hosting. Foundry agent hosts reject `WorkflowAgent` instances and factory results.
 - Build fresh workflows and request-owned resources while keeping workflow and executor identities stable for
   checkpoint restoration. A builder reused across requests returns new workflows that share its registered
   executors, including each `AgentExecutor` and its `AgentSession`; create those executors inside the per-request
@@ -44,6 +44,21 @@ choose patterns with predictable matching time for untrusted values and property
 
 Read the selected host's public docstrings and maintained sample for constructor options, parsers, history modes,
 storage providers, and protocol details.
+
+### Foundry agent and native workflow hosts
+
+Choose an agent host for session-backed agent execution and a native workflow host for checkpoint-owned
+execution and pending replies. Do not mix their storage or history policies, or treat a workflow wrapper
+as an agent-host substitute.
+
+Use request-aware factories for identity-dependent resources. Build fresh workflows, executors, agents,
+clients, providers, and mutable tools for each workflow request; a new graph around shared executors
+does not isolate execution state. Keep graph and executor IDs stable for checkpoint restoration.
+Make cleanup ownership explicit and keep persistent state in the appropriate stores.
+
+Use the maintained [Foundry Hosting package guide](https://github.com/microsoft/agent-framework/blob/main/python/packages/foundry_hosting/README.md)
+and [hosting samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/04-hosting/foundry-hosted-agents)
+for public imports, factory signatures, parser contracts, configuration, and migration details.
 
 ## Deployment readiness
 

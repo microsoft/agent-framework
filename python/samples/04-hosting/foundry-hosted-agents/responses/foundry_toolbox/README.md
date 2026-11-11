@@ -108,7 +108,7 @@ not retain an earlier caller's `x-agent-foundry-call-id`.
 The sample client closes only its own model/project transports and credential,
 including when MCP entry fails or the request is cancelled. Local authentication
 uses `AzureCliCredential`; deployed authentication uses managed identity.
-`history_source="agent_server"` reconstructs the outer Responses transcript and
+`history_source="host_managed"` reconstructs the outer Responses transcript and
 disables inner model storage. Caller `store=false` prevents host-managed state,
 not external tool side effects.
 

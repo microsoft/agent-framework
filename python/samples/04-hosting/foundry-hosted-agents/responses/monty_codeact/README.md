@@ -21,7 +21,7 @@ events) and non-streaming (JSON) response modes.
 
 See [main.py](main.py) for the full implementation.
 
-`ResponsesHostServer(agent=create_agent, history_source="agent_server")`
+`ResponsesHostServer(agent=create_agent, history_source="host_managed")`
 constructs a fresh CodeAct provider, client and credential for each request.
 No interpreter/provider instance, tool connection or model client is reused
 from an earlier caller. The factory's client context closes its owned SDK

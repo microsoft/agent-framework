@@ -5,18 +5,18 @@ who supplies the agent's model history:
 
 | Entry point | `history_source` | Model history |
 | --- | --- | --- |
-| [main.py](main.py) | `"agent_server"` | The outer Responses transcript; the inner client runs with `store=False`. |
-| [service_history.py](service_history.py) | `"service"` | Only new input goes to the model; its private `service_session_id` persists for later turns. |
-| [agent_history.py](agent_history.py) | `"agent"` | This agent opts into `InMemoryHistoryProvider` with `default_options={"store": False}`; another `"agent"` configuration with `store=True` can use service history instead. |
-| [options.py](options.py) | `"agent_server"` | The hook removes the caller's token limit so the agent default is used. |
-| [provider_background.py](provider_background.py) | `"service"` | `background_source="provider"` opts into provider background with a private recovery token. |
+| [main.py](main.py) | `"host_managed"` | The outer Responses transcript; the inner client runs with `store=False`. |
+| [service_history.py](service_history.py) | `"inference_service"` | Only new input goes to the model; its private `service_session_id` persists for later turns. |
+| [agent_history.py](agent_history.py) | `"agent_managed"` | This agent opts into `InMemoryHistoryProvider` with `default_options={"store": False}`; another `"agent_managed"` configuration with `store=True` can use service history instead. |
+| [options.py](options.py) | `"host_managed"` | The hook removes the caller's token limit so the agent default is used. |
+| [provider_background.py](provider_background.py) | `"inference_service"` | `background_source="inference_service"` opts into provider background with a private recovery token. |
 
 For the same two stored requests—first **"My name is Ada"**, then **"What is my name?"** with the first
 response's `previous_response_id`—the modes differ at the *model* boundary. `main.py` replays both
 the first user message and the first assistant output before the follow-up. `service_history.py`
 sends only the follow-up and privately resumes the service thread returned by the first call.
 `agent_history.py` sends the follow-up plus earlier messages loaded from `InMemoryHistoryProvider`
-inside the persisted MAF session. With `history_source="agent"`, the agent's storage default determines
+inside the persisted MAF session. With `history_source="agent_managed"`, the agent's storage default determines
 whether it uses that provider or downstream service storage; the host does not force either one on
 stored requests. In none of these cases is the caller's `response.id` the
 downstream service ID.
@@ -70,7 +70,7 @@ Send another request with the same `conversation` to continue. When deployed, ke
 `AgentSession.service_session_id`. A `conversation` binds that sandbox; with a bare `previous_response_id`, also
 forward the earlier response's `agent_session_id`. Older unscoped hosted MAF state is not migrated; start a new
 conversation after upgrading (see the [package state guide](../../../../../packages/foundry_hosting/README.md#state-store)).
-For `"service"` and `"agent"` history, a stored named turn claims the conversation before inner dispatch: concurrent
+For `"inference_service"` and `"agent_managed"` history, a stored named turn claims the conversation before inner dispatch: concurrent
 turns fail rather than mutating the same service thread. An invalid input does not consume a
 `previous_response_id` parent. If a named turn fails or is cancelled after dispatch, start a new conversation;
 the existing thread may have changed even if its outer response did not complete.
@@ -85,9 +85,9 @@ removing one exposes the agent's own unchanged `default_options`. In [options.py
 the model receives the agent's `max_tokens=256` default instead. Platform IDs, storage flags, and private
 continuation tokens are never caller model options; the hook cannot add them back.
 
-`history_source="agent_server"` and `history_source="agent"` retain their existing meaning without a
-deprecation warning. For **stored** requests, `"agent"` passes only new input to the agent, whose
+`history_source="host_managed"` and `history_source="agent_managed"` retain their existing meaning without a
+deprecation warning. For **stored** requests, `"agent_managed"` passes only new input to the agent, whose
 developer-owned defaults may choose either a HistoryProvider **or downstream service storage**.
-`history_source="service"` explicitly requires service-managed history and overrides the agent's
-`store` default on stored requests. `store=` as a constructor parameter remains a deprecated alias
-for `response_store=` (the outer storage *backend*, not the caller's `store` flag).
+`history_source="inference_service"` explicitly requires service-managed history and overrides the agent's
+`store` default on stored requests. The constructor accepts `response_store=` for the outer storage
+*backend*, not `store=`. The removed alias does not affect the caller's per-request `store` flag.

@@ -1,13 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Expose Foundry agent hosts, native workflow hosts, and scoped storage integrations."""
+
+from __future__ import annotations
+
 import importlib.metadata
 from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
-    from ._invocations import InvocationsHostServer
-    from ._request import HostedResponseRequest, InvocationRun, WorkflowTurn, response_input_messages
-    from ._responses import ResponsesHostServer
+    from ._invocations_agent import InvocationsHostServer
+    from ._invocations_workflow import InvocationsWorkflowHostServer
+    from ._responses_agent import ResponsesHostServer
+    from ._responses_workflow import ResponsesWorkflowHostServer
     from ._scope import FoundryRequestScope
+    from ._shared import InvocationRun, ResponsesRequest, WorkflowSource, WorkflowTurn, response_input_messages
     from ._state_store import (
         AgentSessionStoreProvider,
         CheckpointStoreProvider,
@@ -20,7 +26,6 @@ if TYPE_CHECKING:
         StoreProvider,
     )
     from ._toolbox import FoundryToolbox
-    from ._workflow_source import WorkflowSource
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -36,16 +41,18 @@ _LAZY_EXPORTS: Final[dict[str, str]] = {
     "FoundryFunctionApprovalStore": "._state_store",
     "FoundryRequestScope": "._scope",
     "FoundryToolbox": "._toolbox",
-    "HostedResponseRequest": "._request",
-    "InvocationRun": "._request",
+    "InvocationRun": "._shared",
     "FunctionApprovalStore": "._state_store",
     "FunctionApprovalStoreProvider": "._state_store",
-    "InvocationsHostServer": "._invocations",
-    "ResponsesHostServer": "._responses",
+    "InvocationsHostServer": "._invocations_agent",
+    "InvocationsWorkflowHostServer": "._invocations_workflow",
+    "ResponsesHostServer": "._responses_agent",
+    "ResponsesRequest": "._shared",
+    "ResponsesWorkflowHostServer": "._responses_workflow",
     "StoreProvider": "._state_store",
-    "WorkflowSource": "._workflow_source",
-    "WorkflowTurn": "._request",
-    "response_input_messages": "._request",
+    "WorkflowSource": "._shared",
+    "WorkflowTurn": "._shared",
+    "response_input_messages": "._shared",
 }
 
 __all__ = [
@@ -59,10 +66,12 @@ __all__ = [
     "FoundryToolbox",
     "FunctionApprovalStore",
     "FunctionApprovalStoreProvider",
-    "HostedResponseRequest",
     "InvocationRun",
     "InvocationsHostServer",
+    "InvocationsWorkflowHostServer",
     "ResponsesHostServer",
+    "ResponsesRequest",
+    "ResponsesWorkflowHostServer",
     "StoreProvider",
     "WorkflowSource",
     "WorkflowTurn",

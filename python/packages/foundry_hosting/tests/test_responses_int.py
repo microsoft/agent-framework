@@ -40,16 +40,22 @@ from agent_framework import (
     SlidingWindowStrategy,
     WorkflowBuilder,
     WorkflowContext,
-    executor,
     handler,
     tool,
 )
 from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
+from azure.ai.agentserver.core.tasks import set_resilient_tasks_enabled
 from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponsesServerOptions
 from azure.identity import AzureCliCredential
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework_foundry_hosting import (
+    ResponsesHostServer,
+    ResponsesRequest,
+    ResponsesWorkflowHostServer,
+    WorkflowTurn,
+    response_input_messages,
+)
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 
@@ -78,7 +84,7 @@ def server() -> ResponsesHostServer:
         instructions="You are a concise assistant. Keep answers very short (one or two sentences).",
     )
 
-    return ResponsesHostServer(agent, store=InMemoryResponseProvider())
+    return ResponsesHostServer(agent, response_store=InMemoryResponseProvider())
 
 
 @tool
@@ -87,7 +93,7 @@ async def get_weather(location: Annotated[str, "The city name"]) -> str:
     return f"The weather in {location} is 72°F and sunny."
 
 
-@pytest.fixture(params=["agent_server", "agent"], ids=["agent-server-history", "agent-managed-service-history"])
+@pytest.fixture(params=["host_managed", "agent_managed"], ids=["host-managed-history", "agent-managed-service-history"])
 def history_server(request: pytest.FixtureRequest) -> ResponsesHostServer:
     """Create a real Foundry server for each model-history source."""
     client = FoundryChatClient(credential=AzureCliCredential())  # pyrefly: ignore[bad-argument-type]
@@ -98,12 +104,12 @@ def history_server(request: pytest.FixtureRequest) -> ResponsesHostServer:
     )
     return ResponsesHostServer(
         agent,
-        store=InMemoryResponseProvider(),
+        response_store=InMemoryResponseProvider(),
         history_source=request.param,
     )
 
 
-@pytest.fixture(params=["agent_server", "agent"], ids=["agent-server-history", "agent-managed-service-history"])
+@pytest.fixture(params=["host_managed", "agent_managed"], ids=["host-managed-history", "agent-managed-service-history"])
 def history_server_with_tools(request: pytest.FixtureRequest) -> ResponsesHostServer:
     """Create a real Foundry tool-calling server for each model-history source."""
     client = FoundryChatClient(credential=AzureCliCredential())  # pyrefly: ignore[bad-argument-type]
@@ -115,7 +121,7 @@ def history_server_with_tools(request: pytest.FixtureRequest) -> ResponsesHostSe
     )
     return ResponsesHostServer(
         agent,
-        store=InMemoryResponseProvider(),
+        response_store=InMemoryResponseProvider(),
         history_source=request.param,
     )
 
@@ -595,8 +601,8 @@ class TestMultiTurn:
         )
         server = ResponsesHostServer(
             agent,
-            store=InMemoryResponseProvider(),
-            history_source="agent",
+            response_store=InMemoryResponseProvider(),
+            history_source="agent_managed",
         )
 
         first = await _post_json(
@@ -765,7 +771,7 @@ class TestReasoningHostedMcpReplay:
                 "include": ["reasoning.encrypted_content"],
             },
         )
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server = ResponsesHostServer(agent, response_store=InMemoryResponseProvider())
 
         first = await _post_json(
             server,
@@ -901,7 +907,7 @@ class TestOptions:
 # ---------------------------------------------------------------------------
 # Tests — real crash/recovery for resilient-background workflows
 #
-# A real ResponsesHostServer is force-killed mid-workflow, then a freshly
+# A real ResponsesWorkflowHostServer is force-killed mid-workflow, then a freshly
 # started process pointed at the same on-disk state recovers and completes the same response.
 # The workflow is deterministic and model-free so the test needs no credentials.
 # ---------------------------------------------------------------------------
@@ -989,22 +995,26 @@ class _ToolCallExecutor(Executor):
         await ctx.send_message("Countdown complete.", target_id="complete")
 
 
-@executor(id="complete")
-async def _countdown_complete(message: str, ctx: WorkflowContext[Never, str]) -> None:  # zuban: ignore
-    """Yield the workflow's completion output."""
-    await ctx.yield_output(message)
+class _CountdownCompleteExecutor(Executor):
+    def __init__(self) -> None:
+        super().__init__(id="complete")
+
+    @handler
+    async def complete(self, message: str, ctx: WorkflowContext[Never, str]) -> None:
+        await ctx.yield_output(message)
 
 
 def _build_countdown_workflow(sleep_seconds: float):
     """Build the target extraction, countdown, and completion workflow."""
     start = _CountdownStartExecutor()
     countdown = _CountdownExecutor(sleep_seconds)
+    complete = _CountdownCompleteExecutor()
 
     return (
-        WorkflowBuilder(start_executor=start, output_from="all")
+        WorkflowBuilder(name="countdown-workflow", start_executor=start, output_from="all")
         .add_edge(start, countdown)
         .add_edge(countdown, countdown)
-        .add_edge(countdown, _countdown_complete)
+        .add_edge(countdown, complete)
         .build()
     )
 
@@ -1013,12 +1023,13 @@ def _build_paired_yield_workflow(sleep_seconds: float):
     """Build a workflow whose self-looping executor yields two output items per superstep."""
     start = _CountdownStartExecutor()
     paired = _PairedYieldExecutor(sleep_seconds)
+    complete = _CountdownCompleteExecutor()
 
     return (
-        WorkflowBuilder(start_executor=start, output_from="all")
+        WorkflowBuilder(name="paired-yield-workflow", start_executor=start, output_from="all")
         .add_edge(start, paired)
         .add_edge(paired, paired)
-        .add_edge(paired, _countdown_complete)
+        .add_edge(paired, complete)
         .build()
     )
 
@@ -1027,11 +1038,12 @@ def _build_tool_call_workflow(sleep_seconds: float):
     """Build a workflow that emits a function-call/result pair, then text, then a second superstep."""
     start = _CountdownStartExecutor()
     tool_call = _ToolCallExecutor(sleep_seconds)
+    complete = _CountdownCompleteExecutor()
 
     return (
-        WorkflowBuilder(start_executor=start, output_from="all")
+        WorkflowBuilder(name="tool-call-workflow", start_executor=start, output_from="all")
         .add_edge(start, tool_call)
-        .add_edge(tool_call, _countdown_complete)
+        .add_edge(tool_call, complete)
         .build()
     )
 
@@ -1049,9 +1061,16 @@ def _run_resilient_server(
     os.dup2(log_file.fileno(), 1)
     os.dup2(log_file.fileno(), 2)
     os.environ["AGENTSERVER_STATE_ROOT"] = state_root
+    set_resilient_tasks_enabled(True)
 
-    workflow_agent = build_workflow(sleep_seconds).as_agent(name="resilient-workflow")
-    server = ResponsesHostServer(workflow_agent, options=ResponsesServerOptions(resilient_background=True))
+    async def parse_input(request: ResponsesRequest) -> WorkflowTurn[list[Message]]:
+        return WorkflowTurn(input=await response_input_messages(request))
+
+    server = ResponsesWorkflowHostServer(
+        workflow=lambda request: build_workflow(sleep_seconds),
+        parse_input=parse_input,
+        options=ResponsesServerOptions(resilient_background=True),
+    )
     server.run(host="127.0.0.1", port=port)
 
 
@@ -1226,7 +1245,7 @@ async def _crash_and_recover(
     strict=False,
 )
 class TestWorkflowResilientRecoveryRealCrash:
-    """Force-kill a real ResponsesHostServer process mid-workflow and verify a freshly started
+    """Force-kill a real ResponsesWorkflowHostServer process mid-workflow and verify a freshly started
     process, pointed at the same on-disk state, recovers and completes the response with no
     lost or duplicated output.
 

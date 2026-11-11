@@ -16,21 +16,19 @@ import json
 import logging
 import os
 import uuid
-import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import aclosing, asynccontextmanager, suppress
+from contextlib import suppress
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from agent_framework import (
     Agent,
-    AgentExecutorRequest,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
@@ -46,7 +44,6 @@ from agent_framework import (
     FinishReasonLiteral,
     FunctionInvocationLayer,
     HistoryProvider,
-    InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
     Message,
     RawAgent,
@@ -55,9 +52,6 @@ from agent_framework import (
     SessionStore,
     SupportsAgentRun,
     WorkflowAgent,
-    WorkflowBuilder,
-    WorkflowContext,
-    executor,
     tool,
 )
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
@@ -90,8 +84,8 @@ from openai.types.responses.response_input_item_param import ResponseInputItemPa
 from openai.types.responses.response_usage import ResponseUsage as OpenAIResponseUsage
 from pydantic import TypeAdapter
 
-from agent_framework_foundry_hosting import ResponsesHostServer
-from agent_framework_foundry_hosting._responses import (
+from agent_framework_foundry_hosting import ResponsesHostServer, ResponsesRequest
+from agent_framework_foundry_hosting._responses_shared import (
     _INCOMPLETE_REASON_KEY,  # pyright: ignore[reportPrivateUsage]
     _LATEST_CHECKPOINT_ID_KEY,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
@@ -109,13 +103,11 @@ from agent_framework_foundry_hosting._responses import (
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_items_to_messages,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
-    _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
     _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
 from agent_framework_foundry_hosting._state_store import (
     AgentSessionStoreProvider,
-    CheckpointStoreProvider,
     FoundryAgentSessionStore,
     FunctionApprovalStoreProvider,
 )
@@ -335,7 +327,7 @@ def test_container_file_citations_ignore_recursive_json() -> None:
         },
     )
 
-    with patch("agent_framework_foundry_hosting._responses.json.loads", side_effect=RecursionError):
+    with patch("agent_framework_foundry_hosting._responses_shared.json.loads", side_effect=RecursionError):
         assert _container_file_citations_from_function_result(function_result) == []
 
 
@@ -1588,17 +1580,24 @@ class TestSerializationHelpers:
 
 
 class TestResponsesHostServerInit:
+    def test_rejects_workflow_agent_before_sdk_construction(self) -> None:
+        agent = _WorkflowAgentMock()
+        with (
+            patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize,
+            pytest.raises(TypeError, match="do not support WorkflowAgent"),
+        ):
+            ResponsesHostServer(agent)
+        initialize.assert_not_called()
+        agent.run.assert_not_called()
+
     @pytest.mark.parametrize("agent", [None, 42])
     def test_init_rejects_invalid_agent_source(self, agent: Any) -> None:
-        with pytest.raises(TypeError, match="agent must be an agent instance or a zero-argument callable"):
+        with pytest.raises(TypeError, match="agent must be an agent instance or a callable"):
             ResponsesHostServer(agent)
 
-    async def test_zero_argument_agent_class_is_resolved_as_factory(self) -> None:
-        server = _make_server(cast(Any, _StrictCustomAgent), history_source="agent")
-
-        response = await _post(server)
-
-        assert response.json()["status"] == "completed"
+    def test_zero_argument_agent_class_is_rejected_as_factory(self) -> None:
+        with pytest.raises(TypeError, match="required named 'request' parameter"):
+            _make_server(cast(Any, _StrictCustomAgent), history_source="agent_managed")
 
     def test_init_basic(self) -> None:
         agent = _make_agent(
@@ -1622,10 +1621,6 @@ class TestResponsesHostServerInit:
         assert isinstance(
             server._session_storage_provider,  # pyright: ignore[reportPrivateUsage]
             AgentSessionStoreProvider,
-        )
-        assert isinstance(
-            server._checkpoint_storage_provider,  # pyright: ignore[reportPrivateUsage]
-            CheckpointStoreProvider,
         )
         assert isinstance(
             server._function_approval_storage_provider,  # pyright: ignore[reportPrivateUsage]
@@ -1666,7 +1661,7 @@ class TestResponsesHostServerInit:
         )
         agent.context_providers = [hp]
 
-        ResponsesHostServer(agent, history_source="agent")
+        ResponsesHostServer(agent, history_source="agent_managed")
 
         assert agent.context_providers == [hp]
 
@@ -1694,10 +1689,10 @@ class TestResponsesHostServerInit:
             default_options={"conversation_id": "service-thread"},
         )
 
-        ResponsesHostServer(agent, history_source="agent")
+        ResponsesHostServer(agent, history_source="agent_managed")
 
     def test_init_rejects_custom_agent_for_agent_server_history(self) -> None:
-        with pytest.raises(RuntimeError, match="history_source='agent'"):
+        with pytest.raises(RuntimeError, match="history_source='agent_managed'"):
             ResponsesHostServer(cast(Any, _StrictCustomAgent()))
 
     def test_init_requires_storage_capability_for_agent_server_history(self) -> None:
@@ -1729,16 +1724,15 @@ class TestResponsesHostServerInit:
         with pytest.raises(RuntimeError, match="resilient_background"):
             ResponsesHostServer(
                 agent,
-                store=FileResponseStore(storage_dir=tmp_path),
+                response_store=FileResponseStore(storage_dir=tmp_path),
                 options=ResponsesServerOptions(resilient_background=True),
             )
 
-    def test_init_rejects_steerable_conversations_for_workflow_agent(self) -> None:
-        workflow_agent = _build_text_workflow_agent("hello from workflow")
+    def test_init_rejects_steerable_conversations(self) -> None:
         with pytest.raises(RuntimeError, match="steerable_conversations=True is temporarily unavailable"):
             ResponsesHostServer(
-                cast(SupportsAgentRun, workflow_agent),
-                store=InMemoryResponseProvider(),
+                _make_agent(),
+                response_store=InMemoryResponseProvider(),
                 options=ResponsesServerOptions(steerable_conversations=True),
             )
 
@@ -1755,7 +1749,7 @@ class TestResponsesHostServerInit:
 
         with (
             patch("azure.ai.agentserver.core.tasks.set_resilient_tasks_enabled") as enable,
-            patch("agent_framework_foundry_hosting._responses.ResponsesAgentServerHost.__init__") as base_init,
+            patch("agent_framework_foundry_hosting._responses_agent.ResponsesAgentServerHost.__init__") as base_init,
             ThreadPoolExecutor(max_workers=12) as executor,
         ):
             failures = list(executor.map(construct, range(24)))
@@ -1789,29 +1783,30 @@ class TestResponsesHostServerInit:
 
     def test_provider_background_rejects_steering_and_wrong_history_source(self) -> None:
         agent = Agent(client=_ServiceStorageRecordingClient())
-        with pytest.raises(ValueError, match="history_source='service'"):
-            _make_server(agent, background_source="provider")
+        with pytest.raises(ValueError, match="history_source='inference_service'"):
+            _make_server(agent, background_source="inference_service")
         with pytest.raises(RuntimeError, match="temporarily unavailable"):
             _make_server(
                 agent,
-                history_source="service",
-                background_source="provider",
+                history_source="inference_service",
+                background_source="inference_service",
                 options=ResponsesServerOptions(steerable_conversations=True),
             )
 
-    def test_store_alias_warns_once_without_deprecating_history_source(self) -> None:
-        agent = Agent(client=_ServiceStorageRecordingClient(), default_options=OpenAIChatOptions(store=True))
-        with pytest.warns(DeprecationWarning) as recorded:
-            warnings.warn("unrelated SDK deprecation", DeprecationWarning, stacklevel=2)
-            server = ResponsesHostServer(
-                agent,
-                history_source="agent",
-                store=InMemoryResponseProvider(),
-            )
-        assert server is not None
-        messages = [str(warning.message) for warning in recorded]
-        assert not any(message.startswith("history_source is deprecated;") for message in messages)
-        assert sum(message.startswith("store= is deprecated;") for message in messages) == 1
+    @pytest.mark.parametrize("old_store", [None, InMemoryResponseProvider()])
+    @pytest.mark.parametrize("with_response_store", [False, True])
+    def test_removed_store_alias_is_rejected_before_sdk_construction(
+        self, old_store: Any, with_response_store: bool
+    ) -> None:
+        agent = _make_agent()
+        kwargs: dict[str, Any] = {"store": old_store}
+        if with_response_store:
+            kwargs["response_store"] = InMemoryResponseProvider()
+        with patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize:
+            with pytest.raises(TypeError, match="store= alias was removed; use response_store="):
+                ResponsesHostServer(agent, **kwargs)
+            initialize.assert_not_called()
+        assert agent.context_providers == []
 
     def test_history_and_background_sources_reject_invalid_values(self) -> None:
         agent = _make_agent()
@@ -1823,9 +1818,23 @@ class TestResponsesHostServerInit:
             _make_server(agent, unsupported_options="silent")
 
     @pytest.mark.parametrize(
+        ("setting", "value"),
+        [
+            ("history_source", "agent_server"),
+            ("history_source", "agent"),
+            ("history_source", "service"),
+            ("background_source", "agent_server"),
+            ("background_source", "provider"),
+        ],
+    )
+    def test_legacy_source_literals_are_rejected(self, setting: str, value: str) -> None:
+        with pytest.raises(ValueError, match=setting):
+            _make_server(_make_agent(), **{setting: value})
+
+    @pytest.mark.parametrize(
         "identity_field", ["session_id", "agent_session_id", "user_id", "call_id", "service_session_id"]
     )
-    @pytest.mark.parametrize("history_source", ["agent_server", "agent", "service"])
+    @pytest.mark.parametrize("history_source", ["host_managed", "agent_managed", "inference_service"])
     def test_agent_defaults_cannot_supply_platform_identity(self, identity_field: str, history_source: str) -> None:
         agent = Agent(
             client=_ServiceStorageRecordingClient(),
@@ -1882,7 +1891,7 @@ class TestAgentSessionPersistence:
         context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
 
         with patch(
-            "agent_framework_foundry_hosting._responses.get_request_context",
+            "agent_framework_foundry_hosting._responses_agent.get_request_context",
             return_value=FoundryAgentRequestContext(session_id=request_session_id, user_id="user-1", call_id=call_id),
         ):
             events = [
@@ -2027,7 +2036,7 @@ class TestAgentSessionPersistence:
 
     async def test_agent_history_does_not_forward_runtime_options_to_custom_agent(self) -> None:
         agent = _StrictCustomAgent()
-        server = _make_server(agent, session_store=SessionStore(), history_source="agent")
+        server = _make_server(agent, session_store=SessionStore(), history_source="agent_managed")
 
         response = await _post(server, input_text="first", temperature=0.5)
 
@@ -2066,7 +2075,7 @@ class TestAgentSessionPersistence:
             default_options=OpenAIChatOptions(store=True) if explicit_store else None,
         )
         store = SessionStore()
-        server = _make_server(agent, session_store=store, history_source="agent")
+        server = _make_server(agent, session_store=store, history_source="agent_managed")
 
         first = await _post(server, input_text="first")
         second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
@@ -2086,7 +2095,7 @@ class TestAgentSessionPersistence:
         client = _ServiceStorageRecordingClient()
         agent = Agent(client=client, default_options=OpenAIChatOptions(store=False))
         store = SessionStore()
-        server = _make_server(agent, session_store=store, history_source="service")
+        server = _make_server(agent, session_store=store, history_source="inference_service")
 
         first = await _post(server, input_text="first")
         second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
@@ -2103,13 +2112,13 @@ class TestAgentSessionPersistence:
     async def test_async_agent_factory_reuses_private_service_session_across_requests(self) -> None:
         clients: list[_ServiceStorageRecordingClient] = []
 
-        async def create_agent() -> SupportsAgentRun:
+        async def create_agent(*, request: ResponsesRequest) -> SupportsAgentRun:
             client = _ServiceStorageRecordingClient()
             clients.append(client)
             return Agent(client=client, default_options=OpenAIChatOptions(store=True))
 
         store = SessionStore()
-        server = _make_server(create_agent, session_store=store, history_source="service")
+        server = _make_server(create_agent, session_store=store, history_source="inference_service")
         first = await _post(server, input_text="first")
         second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
 
@@ -2122,7 +2131,7 @@ class TestAgentSessionPersistence:
 
     async def test_service_history_rejects_second_child_of_provider_response(self) -> None:
         client = _ServiceStorageRecordingClient()
-        server = _make_server(Agent(client=client), session_store=SessionStore(), history_source="service")
+        server = _make_server(Agent(client=client), session_store=SessionStore(), history_source="inference_service")
         first = await _post(server, input_text="first")
         second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
         branch = await _post(server, input_text="fork", previous_response_id=first.json()["id"])
@@ -2135,7 +2144,7 @@ class TestAgentSessionPersistence:
     async def test_invalid_approval_does_not_consume_service_parent(self) -> None:
         client = _ServiceStorageRecordingClient()
         store = SessionStore()
-        server = _make_server(Agent(client=client), session_store=store, history_source="service")
+        server = _make_server(Agent(client=client), session_store=store, history_source="inference_service")
         first = await _post(server, input_text="first")
         parent_id = first.json()["id"]
 
@@ -2170,7 +2179,7 @@ class TestAgentSessionPersistence:
         history = InMemoryHistoryProvider()
         agent = Agent(client=client, context_providers=[history], default_options=OpenAIChatOptions(store=False))
         store = SessionStore()
-        server = _make_server(agent, session_store=store, history_source="agent")
+        server = _make_server(agent, session_store=store, history_source="agent_managed")
 
         first = await _post(server, input_text="first")
         second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
@@ -2186,7 +2195,7 @@ class TestAgentSessionPersistence:
         assert saved is not None and history.source_id in saved.state
         assert saved.service_session_id is None
 
-    @pytest.mark.parametrize("mode", ["agent_server", "service", "agent"])
+    @pytest.mark.parametrize("mode", ["host_managed", "inference_service", "agent_managed"])
     async def test_store_false_neither_saves_session_nor_stores_inner_response(self, mode: str) -> None:
         client = _ServiceStorageRecordingClient()
         agent = Agent(client=client, default_options=OpenAIChatOptions(store=True))
@@ -2209,13 +2218,13 @@ class TestAgentSessionPersistence:
     async def test_store_false_rejects_external_history_and_custom_agent(self) -> None:
         history = _PerServiceCallHistoryProvider()
         agent = Agent(client=_RecordingHistoryClient(), context_providers=[history])
-        server = _make_server(agent, history_source="agent")
+        server = _make_server(agent, history_source="agent_managed")
         response = await _post_json(server, {"input": "one shot", "store": False})
         assert response.json()["status"] == "failed"
         assert "external HistoryProvider" in response.json()["error"]["message"]
 
         custom = _StrictCustomAgent()
-        server = _make_server(custom, history_source="agent")
+        server = _make_server(custom, history_source="agent_managed")
         response = await _post_json(server, {"input": "one shot", "store": False})
         assert response.json()["status"] == "failed"
         assert "custom agent" in response.json()["error"]["message"]
@@ -2226,7 +2235,7 @@ class TestAgentSessionPersistence:
         server = _make_server(
             Agent(client=client, default_options=OpenAIChatOptions(store=True)),
             session_store=SessionStore(),
-            history_source="agent",
+            history_source="agent_managed",
         )
         first = await _post(server)
         request = CreateResponse(input="cannot resume", store=False, previous_response_id=first.json()["id"])
@@ -2290,7 +2299,7 @@ class TestAgentSessionPersistence:
         agent = _make_agent()
         server = _make_server(agent, prepare_options=prepare_options)
 
-        with caplog.at_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses"):
+        with caplog.at_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses_shared"):
             response = await _post_json(server, {"input": "one shot", "store": False})
 
         body = response.json()
@@ -2343,7 +2352,7 @@ class TestAgentSessionPersistence:
                 client=OpenAIChatClient(model="test-model", async_client=openai),
                 default_options=cast(Any, {"extra_body": {"store": True}}),
             )
-            legacy_server = _make_server(legacy_default, history_source="agent")
+            legacy_server = _make_server(legacy_default, history_source="agent_managed")
             rejected_default = await _post_json(legacy_server, {"input": "unsafe", "store": False})
             assert rejected_default.json()["status"] == "failed"
             assert "default extra_body" in rejected_default.json()["error"]["message"]
@@ -2362,7 +2371,7 @@ class TestAgentSessionPersistence:
 
     async def test_unsupported_options_policy_rejects_custom_agent(self) -> None:
         agent = _StrictCustomAgent()
-        server = _make_server(agent, history_source="agent", unsupported_options="error")
+        server = _make_server(agent, history_source="agent_managed", unsupported_options="error")
         response = await _post_json(server, {"input": "hello", "temperature": 0.8})
 
         assert response.json()["status"] == "failed"
@@ -2374,7 +2383,7 @@ class TestAgentSessionPersistence:
         self, policy: str, warn: bool, caplog: pytest.LogCaptureFixture
     ) -> None:
         agent = _StrictCustomAgent()
-        server = _make_server(agent, history_source="agent", unsupported_options=policy)
+        server = _make_server(agent, history_source="agent_managed", unsupported_options=policy)
 
         with caplog.at_level(logging.WARNING):
             response = await _post(server, temperature=0.5)
@@ -2484,8 +2493,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=SessionStore(),
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -2544,8 +2553,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=store,
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -2553,7 +2562,7 @@ class TestAgentSessionPersistence:
         context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
         ):
             events = [event async for event in server._handle_response(request, context, asyncio.Event())]
 
@@ -2574,7 +2583,7 @@ class TestAgentSessionPersistence:
             stream_updates=[AgentResponseUpdate(contents=[Content.from_text("next")], role="assistant")]
         )
         next_agent.client.STORES_BY_DEFAULT = True
-        next_server = _make_server(next_agent, session_store=store, history_source="service")
+        next_server = _make_server(next_agent, session_store=store, history_source="inference_service")
         next_context = ResponseContext(response_id="outer-next", mode_flags=MagicMock())
         with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
             next_events = [
@@ -2618,8 +2627,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=store,
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -2628,7 +2637,7 @@ class TestAgentSessionPersistence:
         )
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
         ):
             events = [
                 event
@@ -2654,8 +2663,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=SessionStore(),
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -2697,8 +2706,8 @@ class TestAgentSessionPersistence:
         first_server = _make_server(
             first_agent,
             session_store=store,
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -2709,7 +2718,7 @@ class TestAgentSessionPersistence:
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
             patch(
-                "agent_framework_foundry_hosting._responses.asyncio.sleep",
+                "agent_framework_foundry_hosting._responses_agent.asyncio.sleep",
                 new=AsyncMock(side_effect=ResponseExitForRecovery()),
             ),
             pytest.raises(ResponseExitForRecovery),
@@ -2729,8 +2738,8 @@ class TestAgentSessionPersistence:
         resumed_server = _make_server(
             resumed_agent,
             session_store=store,
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -2738,7 +2747,7 @@ class TestAgentSessionPersistence:
         recovered_context.is_recovery = True
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
         ):
             events = [
                 event async for event in resumed_server._handle_response(request, recovered_context, asyncio.Event())
@@ -2779,8 +2788,8 @@ class TestAgentSessionPersistence:
             monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
             return _make_server(
                 agent,
-                history_source="service",
-                background_source="provider",
+                history_source="inference_service",
+                background_source="inference_service",
                 options=ResponsesServerOptions(resilient_background=True),
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
@@ -2793,7 +2802,7 @@ class TestAgentSessionPersistence:
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
             patch(
-                "agent_framework_foundry_hosting._responses.asyncio.sleep",
+                "agent_framework_foundry_hosting._responses_agent.asyncio.sleep",
                 new=AsyncMock(side_effect=ResponseExitForRecovery()),
             ),
             pytest.raises(ResponseExitForRecovery),
@@ -2816,7 +2825,7 @@ class TestAgentSessionPersistence:
         recovered_host = make_host()
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
         ):
             events = [
                 event async for event in recovered_host._handle_response(request, recovered_context, asyncio.Event())
@@ -2865,8 +2874,8 @@ class TestAgentSessionPersistence:
             monkeypatch.setattr(agent, "run", MagicMock(side_effect=provider_run))
             return _make_server(
                 agent,
-                history_source="service",
-                background_source="provider",
+                history_source="inference_service",
+                background_source="inference_service",
                 options=ResponsesServerOptions(resilient_background=True),
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
@@ -2885,7 +2894,7 @@ class TestAgentSessionPersistence:
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
             patch.object(FoundryAgentSessionStore, "set", new=crash_after_head_write),
-            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
             pytest.raises(ResponseExitForRecovery),
         ):
             async for event in server._handle_response(request, context, asyncio.Event()):
@@ -2928,7 +2937,7 @@ class TestAgentSessionPersistence:
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
             patch.object(FoundryAgentSessionStore, "get", new=claim_after_recovery_read),
-            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
         ):
             events = [event async for event in recovered_host._handle_response(request, recovered, asyncio.Event())]
 
@@ -3055,8 +3064,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=store,
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -3072,7 +3081,7 @@ class TestAgentSessionPersistence:
             ),
             patch.object(client.client.responses.with_raw_response, "create", new=create),
             patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
-            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
         ):
             handler = cast(
                 AsyncGenerator[Any, None],
@@ -3198,8 +3207,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=store,
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -3215,7 +3224,7 @@ class TestAgentSessionPersistence:
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
             patch.object(ResponseContext, "exit_for_recovery", new=exit_for_recovery),
-            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=sleep),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=sleep),
             caplog.at_level(logging.WARNING),
         ):
             task = asyncio.create_task(collect_events())
@@ -3314,8 +3323,8 @@ class TestAgentSessionPersistence:
             monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
             return _make_server(
                 agent,
-                history_source="service",
-                background_source="provider",
+                history_source="inference_service",
+                background_source="inference_service",
                 options=ResponsesServerOptions(resilient_background=True),
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
@@ -3326,7 +3335,7 @@ class TestAgentSessionPersistence:
         response_store = FileResponseStore(storage_dir=tmp_path)
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
         ):
             handler = cast(AsyncGenerator[Any, None], server._handle_response(request, context, asyncio.Event()))
             crashed = False
@@ -3423,8 +3432,8 @@ class TestAgentSessionPersistence:
             return _make_server(
                 agent,
                 session_store=store,
-                history_source="service",
-                background_source="provider",
+                history_source="inference_service",
+                background_source="inference_service",
                 options=ResponsesServerOptions(resilient_background=True),
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
@@ -3440,8 +3449,10 @@ class TestAgentSessionPersistence:
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
             patch.object(ResponseContext, "exit_for_recovery", new=AsyncMock(side_effect=ResponseExitForRecovery())),
-            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
-            patch("agent_framework_foundry_hosting._responses._agent_response_updates", new=shutdown_before_output),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
+            patch(
+                "agent_framework_foundry_hosting._responses_agent._agent_response_updates", new=shutdown_before_output
+            ),
             pytest.raises(ResponseExitForRecovery),
         ):
             _ = [event async for event in server._handle_response(request, context, asyncio.Event())]
@@ -3458,7 +3469,7 @@ class TestAgentSessionPersistence:
         recovered.is_recovery = True
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
         ):
             events = [event async for event in make_host()._handle_response(request, recovered, asyncio.Event())]
 
@@ -3500,8 +3511,8 @@ class TestAgentSessionPersistence:
         server = _make_server(
             agent,
             session_store=FailingTokenStore() if phase == "save" else SessionStore(),
-            history_source="service",
-            background_source="provider",
+            history_source="inference_service",
+            background_source="inference_service",
             options=ResponsesServerOptions(resilient_background=True),
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
@@ -3509,7 +3520,7 @@ class TestAgentSessionPersistence:
         context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
             caplog.at_level(logging.WARNING),
         ):
             events = [event async for event in server._handle_response(request, context, asyncio.Event())]
@@ -3519,7 +3530,7 @@ class TestAgentSessionPersistence:
         assert "private-provider-token" not in str(events)
         assert "private-provider-token" not in caplog.text
         for record in caplog.records:
-            if record.name == "agent_framework_foundry_hosting._responses" and record.exc_info:
+            if record.name == "agent_framework_foundry_hosting._responses_shared" and record.exc_info:
                 exception = record.exc_info[1]
                 assert exception is not None and exception.__cause__ is None and exception.__context__ is None
 
@@ -3618,7 +3629,7 @@ class TestAgentSessionPersistence:
             return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
         agent.run = MagicMock(side_effect=run)
-        server = _make_server(agent, history_source="service")
+        server = _make_server(agent, history_source="inference_service")
         if existing_head:
             seed_store = server._session_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
                 config=server.config, platform_context=get_request_context()
@@ -3681,7 +3692,7 @@ class TestAgentSessionPersistence:
                 _raising_updates("provider timed out"), finalizer=AgentResponse.from_updates
             )
         )
-        server = _make_server(agent, session_store=store, history_source="service")
+        server = _make_server(agent, session_store=store, history_source="inference_service")
         conversation_id = "failed-service-conversation"
 
         async def collect(response_id: str) -> list[Any]:
@@ -3719,7 +3730,7 @@ class TestAgentSessionPersistence:
             yield AgentResponseUpdate(contents=[Content.from_text("too late")], role="assistant")
 
         agent.run = MagicMock(side_effect=lambda **kwargs: ResponseStream(blocked()))
-        server = _make_server(agent, session_store=store, history_source="service")
+        server = _make_server(agent, session_store=store, history_source="inference_service")
         conversation_id = "cancelled-service-conversation"
         context = ResponseContext(
             response_id="cancelled-dispatch", conversation_id=conversation_id, mode_flags=MagicMock()
@@ -3791,7 +3802,7 @@ class TestAgentSessionPersistence:
     async def test_http_outer_storage_is_independent_of_inner_service_history(self) -> None:
         client = _ServiceStorageRecordingClient()
         store = SessionStore()
-        server = _make_server(Agent(client=client), history_source="service", session_store=store)
+        server = _make_server(Agent(client=client), history_source="inference_service", session_store=store)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as http:
             stored = await http.post("/responses", json={"input": "remember me", "store": True})
             stored_id = stored.json()["id"]
@@ -3808,11 +3819,11 @@ class TestAgentSessionPersistence:
         assert saved is not None and saved.service_session_id == "service-thread-1"
         assert await store.get(unstored.json()["id"]) is None
 
-    @pytest.mark.parametrize("mode", ["service", "agent"])
+    @pytest.mark.parametrize("mode", ["inference_service", "agent_managed"])
     async def test_http_outer_background_polling_is_independent_of_history_source(self, mode: str) -> None:
         client = _ServiceStorageRecordingClient()
-        history = [InMemoryHistoryProvider()] if mode == "agent" else []
-        default_options = OpenAIChatOptions(store=False) if mode == "agent" else None
+        history = [InMemoryHistoryProvider()] if mode == "agent_managed" else []
+        default_options = OpenAIChatOptions(store=False) if mode == "agent_managed" else None
         server = _make_server(
             Agent(client=client, context_providers=history, default_options=default_options),
             session_store=SessionStore(),
@@ -3833,7 +3844,7 @@ class TestAgentSessionPersistence:
 
         assert final.json()["id"] == response_id
         assert "service-thread-1" not in str(final.json())
-        assert client.store_options == ([True] if mode == "service" else [False])
+        assert client.store_options == ([True] if mode == "inference_service" else [False])
         assert rejected.status_code == 400
 
     async def test_http_background_polling_and_unstored_stream_use_outer_response_id(self) -> None:
@@ -3890,7 +3901,7 @@ class TestAgentSessionPersistence:
             default_options={"store": False},
         )
         store = SessionStore()
-        server = _make_server(agent, session_store=store, history_source="agent")
+        server = _make_server(agent, session_store=store, history_source="agent_managed")
 
         first = await _post(server, input_text="first")
         second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
@@ -8543,61 +8554,7 @@ class TestFunctionApprovalRoundTrip:
 
 # endregion
 
-
-# region Checkpoint context validation
-
-
-class TestCheckpointContextValidation:
-    @pytest.mark.parametrize(
-        ("context_field", "bad_id"),
-        [
-            ("previous_response_id", "../../escape"),
-            ("conversation_id", "foo/bar"),
-            ("response_id", "..\\..\\escape"),
-        ],
-    )
-    async def test_workflow_rejects_invalid_checkpoint_scope(
-        self,
-        context_field: str,
-        bad_id: str,
-    ) -> None:
-        agent = _WorkflowAgentMock()
-        agent.run = MagicMock()
-        agent.context_providers = []
-        agent.workflow = MagicMock()
-        agent.workflow.name = "workflow"
-        agent.workflow._runner_context.has_checkpointing.return_value = False
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
-
-        context_kwargs: dict[str, Any] = {"response_id": "response-current", "mode_flags": MagicMock()}
-        request = CreateResponse(model="m", input="hi")
-        if context_field == "previous_response_id":
-            request = CreateResponse(model="m", input="hi", previous_response_id=bad_id)
-            context_kwargs["previous_response_id"] = bad_id
-        else:
-            context_kwargs[context_field] = bad_id
-
-        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
-            events = [
-                event
-                async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
-                    request,
-                    ResponseContext(**context_kwargs),
-                    asyncio.Event(),
-                )
-            ]
-
-        failed_events = [
-            event for event in events if isinstance(event, Mapping) and event.get("type") == "response.failed"
-        ]
-        assert len(failed_events) == 1
-        failed_event = cast(Mapping[str, Any], failed_events[0])
-        response = cast(Mapping[str, Any], failed_event["response"])
-        error = cast(Mapping[str, Any], response["error"])
-        assert "Invalid context id" in error["message"]
-        agent.run.assert_not_called()
-
-    # endregion
+# endregion
 
 
 # region Agent lifecycle (lazy entry & OAuth consent surfacing)
@@ -8732,10 +8689,112 @@ class TestOAuthConsentLinkPolicy:
 
 
 class TestAgentLifecycle:
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("async_factory", [False, True])
+    async def test_rejects_factory_workflow_agent_before_dispatch(self, stream: bool, async_factory: bool) -> None:
+        agent = _WorkflowAgentMock()
+
+        def create(*, request: ResponsesRequest) -> WorkflowAgent:
+            return agent
+
+        async def create_async(*, request: ResponsesRequest) -> WorkflowAgent:
+            return agent
+
+        server = _make_server(create_async if async_factory else create)
+        result = await _post(server, input_text="hello", stream=stream)
+        body = _parse_sse_events(result.text)[-1]["data"]["response"] if stream else result.json()
+        assert body["status"] == "failed"
+        assert body["output"] == []
+        agent.run.assert_not_called()
+        agent.create_session.assert_not_called()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("async_factory", [False, True])
+    @pytest.mark.parametrize("configured_factory", [False, True])
+    async def test_factory_receives_current_request_input_scope_and_options(
+        self, stream: bool, async_factory: bool, configured_factory: bool
+    ) -> None:
+        requests: list[ResponsesRequest] = []
+        input_texts: list[str | None] = []
+        agents: list[MagicMock] = []
+
+        def create_agent(request: ResponsesRequest) -> MagicMock:
+            requests.append(request)
+            assert request.options["temperature"] == 0.7
+            assert request.options["max_tokens"] == 17
+            assert request.response_id
+            assert request.scope.session_id
+            agent = _make_agent(response=AgentResponse(messages=[Message("assistant", request.request["input"])]))
+            agents.append(agent)
+            return agent
+
+        async def create_agent_async(request: ResponsesRequest) -> MagicMock:
+            input_texts.append(await request.get_input_text())
+            return create_agent(request)
+
+        def configured_agent(model: str = "gpt-4", *, request: ResponsesRequest, temperature: float = 0.7) -> MagicMock:
+            assert model == "gpt-4"
+            assert temperature == 0.7
+            return create_agent(request)
+
+        async def configured_agent_async(
+            model: str = "gpt-4", *, request: ResponsesRequest, temperature: float = 0.7
+        ) -> MagicMock:
+            assert model == "gpt-4"
+            assert temperature == 0.7
+            return await create_agent_async(request)
+
+        factory = (
+            (configured_agent_async if async_factory else configured_agent)
+            if configured_factory
+            else (create_agent_async if async_factory else create_agent)
+        )
+        server = _make_server(
+            factory,
+            prepare_options=lambda request, options: {**options, "temperature": 0.2},
+        )
+        for text in ("first", "second"):
+            result = await _post(server, input_text=text, temperature=0.7, max_output_tokens=17, stream=stream)
+            assert result.status_code == 200
+            body = (
+                next(
+                    event["data"]["response"]
+                    for event in _parse_sse_events(result.text)
+                    if event["event"] == "response.completed"
+                )
+                if stream
+                else result.json()
+            )
+            assert body["status"] == "completed"
+            assert body["output"][0]["content"][0]["text"] == text
+
+        assert [request.request["input"] for request in requests] == ["first", "second"]
+        assert requests[0] is not requests[1]
+        assert [request.options["temperature"] for request in requests] == [0.2, 0.2]
+        assert input_texts == (["first", "second"] if async_factory else [])
+        assert [agent.__aenter__.await_count for agent in agents] == [1, 1]
+        assert [agent.__aexit__.await_count for agent in agents] == [1, 1]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_request_factory_type_error_is_not_retried_without_request(self, stream: bool) -> None:
+        requests: list[ResponsesRequest] = []
+
+        def create_agent(*, request: ResponsesRequest) -> MagicMock:
+            requests.append(request)
+            raise TypeError("factory construction failed")
+
+        result = await _post(_make_server(create_agent), stream=stream)
+        if stream:
+            assert any(event["event"] == "response.failed" for event in _parse_sse_events(result.text))
+        else:
+            assert result.json()["status"] == "failed"
+        assert len(requests) == 1
+        assert isinstance(requests[0], ResponsesRequest)
+
     async def test_factory_agent_is_entered_and_exited_for_each_request(self) -> None:
         agents: list[MagicMock] = []
 
-        def create_agent() -> MagicMock:
+        def create_agent(*, request: ResponsesRequest) -> MagicMock:
             agent = _make_agent(
                 response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
             )
@@ -9357,16 +9416,6 @@ class TestIncompleteFinishReasonSurfacing:
         assert body.get("incomplete_details") is None
         assert body.get("metadata") == {"source": "client"}
 
-    async def test_workflow_agent_content_filter_marks_response_incomplete(self) -> None:
-        workflow_agent = _build_text_workflow_agent("filtered by workflow", finish_reason="content_filter")
-        server = _make_server(workflow_agent)
-
-        resp = await _post(server, input_text="hi", stream=False)
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "incomplete"
-        assert body["incomplete_details"] == {"reason": "content_filter"}
-
 
 class TestResponseFailedSurfacing:
     """Tests that exceptions raised by the hosted agent are converted into
@@ -9532,35 +9581,6 @@ class TestResponseFailedSurfacing:
             "total_tokens": 11,
         }
 
-    async def test_workflow_agent_run_failure_emits_response_failed(self) -> None:
-        """Exceptions raised by a hosted ``WorkflowAgent`` are converted into a
-        terminal ``response.failed`` event in the same way as the regular
-        agent path.
-        """
-        workflow_agent = _build_text_workflow_agent("ignored")
-        private_error_detail = "workflow-secret at C:\\sensitive\\workflow.py"
-
-        def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
-            del args, kwargs
-            return ResponseStream(
-                _raising_updates(private_error_detail),
-                finalizer=AgentResponse.from_updates,
-            )
-
-        # Patch the public ``run`` to fail. ``_handle_inner_workflow`` only
-        # invokes the agent once (no checkpoint to restore on a fresh
-        # request), so this is the call that will raise.
-        with patch.object(workflow_agent, "run", side_effect=run_failure):
-            server = _make_server(workflow_agent)
-            resp = await _post(server, input_text="hello", stream=False)
-
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "failed"
-        error: dict[str, Any] = body.get("error") or {}
-        assert error.get("message") == "An internal server error occurred."
-        assert private_error_detail not in resp.text
-
     @pytest.mark.parametrize("sensitive_data", [False, True])
     async def test_failure_diagnostics_respect_sensitive_data(
         self,
@@ -9585,7 +9605,7 @@ class TestResponseFailedSurfacing:
         agent.run = MagicMock(side_effect=run_failure)
         server = _make_server(agent)
 
-        with caplog.at_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses"):
+        with caplog.at_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses_shared"):
             resp = await _post(server, input_text="hello", stream=True)
 
         body = _parse_sse_events(resp.text)[-1]["data"]["response"]
@@ -9599,7 +9619,7 @@ class TestResponseFailedSurfacing:
         records = [
             record
             for record in caplog.records
-            if record.name == "agent_framework_foundry_hosting._responses"
+            if record.name == "agent_framework_foundry_hosting._responses_shared"
             and "phase=response production" in record.getMessage()
         ]
         assert len(records) == 1
@@ -9607,978 +9627,6 @@ class TestResponseFailedSurfacing:
 
 
 # endregion
-
-# region Workflow agent hosting (end-to-end)
-
-
-class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
-    """Inner agent for a hosted ``WorkflowAgent`` whose first run emits a
-    ``FunctionApprovalRequestContent`` and whose follow-up run (after
-    receiving a ``FunctionApprovalResponseContent`` in its inputs) returns a
-    final assistant text response.
-
-    Mirrors a real agent whose tool invocation requires user approval. Used
-    here to exercise the full HTTP pipeline through ``ResponsesHostServer``
-    when the hosted agent is a ``WorkflowAgent`` containing a tool-approval
-    flow.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        *,
-        tool_name: str = "delete_file",
-        tool_arguments: dict[str, Any] | None = None,
-        approval_request_ids: Sequence[str] | None = None,
-        final_text: str = "done",
-    ) -> None:
-        self.id = str(uuid.uuid4())
-        self.name = name
-        self.description: str | None = None
-        self._tool_name = tool_name
-        self._tool_arguments = tool_arguments or {"path": "/tmp/example"}
-        self._approval_request_ids: list[str] = list(approval_request_ids) if approval_request_ids else []
-        self._final_text = final_text
-        self.run_count = 0
-        self.last_run_messages: list[Message] = []
-
-    def create_session(self, **kwargs: Any) -> AgentSession:
-        del kwargs
-        return AgentSession()
-
-    def get_session(self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
-        del service_session_id, session_id
-        return AgentSession()
-
-    def _next_request_id(self) -> str:
-        # Stable across calls: when the workflow checkpoint round-trips through
-        # restore, ``AgentExecutor`` re-invokes the inner agent during replay.
-        # We must surface the *same* approval request id on each invocation so
-        # the workflow's pending-request id matches the id the test echoes
-        # back as ``mcp_approval_response``.
-        if self._approval_request_ids:
-            return self._approval_request_ids[0]
-        return str(uuid.uuid4())
-
-    def _build_approval_request(self) -> Content:
-        request_id = self._next_request_id()
-        function_call = Content.from_function_call(
-            call_id=request_id,
-            name=self._tool_name,
-            arguments=self._tool_arguments,
-            additional_properties={"server_label": "test_server"},
-        )
-        return Content.from_function_approval_request(id=request_id, function_call=function_call)
-
-    @overload
-    def run(
-        self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = ...,
-        *,
-        stream: Literal[False] = ...,
-        session: AgentSession | None = ...,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse[Any]]: ...
-
-    @overload
-    def run(
-        self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = ...,
-        *,
-        stream: Literal[True],
-        session: AgentSession | None = ...,
-        **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
-
-    def run(
-        self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
-        *,
-        stream: bool = False,
-        session: AgentSession | None = None,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
-        del session
-        assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
-        return self._run_stream(messages=messages, **kwargs)
-
-    @staticmethod
-    def _normalize(
-        messages: str | Content | Message | Sequence[str | Content | Message] | None,
-    ) -> list[Message]:
-        if messages is None:
-            return []
-        if isinstance(messages, str):
-            return [Message(role="user", contents=[Content.from_text(text=messages)])]
-        if isinstance(messages, Message):
-            return [messages]
-        if isinstance(messages, Content):
-            return [Message(role="user", contents=[messages])]
-        result: list[Message] = []
-        for item in messages:
-            if isinstance(item, Message):
-                result.append(item)
-            elif isinstance(item, Content):
-                result.append(Message(role="user", contents=[item]))
-            else:
-                result.append(Message(role="user", contents=[Content.from_text(text=item)]))
-        return result
-
-    @staticmethod
-    def _approval_responses_in(messages: list[Message]) -> list[Content]:
-        return [c for m in messages for c in m.contents if c.type == "function_approval_response"]
-
-    def _run_stream(
-        self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
-        **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
-        del kwargs
-        normalized = self._normalize(messages)
-        self.last_run_messages = normalized
-        self.run_count += 1
-        approvals = self._approval_responses_in(normalized)
-
-        async def _iter() -> AsyncIterator[AgentResponseUpdate]:
-            if approvals:
-                yield AgentResponseUpdate(
-                    contents=[Content.from_text(text=self._final_text)],
-                    role="assistant",
-                    author_name=self.name,
-                )
-                return
-            yield AgentResponseUpdate(
-                contents=[self._build_approval_request()],
-                role="assistant",
-                author_name=self.name,
-            )
-
-        return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
-
-
-def _build_text_workflow_agent(text: str, *, finish_reason: FinishReasonLiteral | None = None) -> WorkflowAgent:
-    """Build a minimal ``WorkflowAgent`` whose inner agent emits a fixed text."""
-
-    class _TextAgent(SupportsAgentRun):
-        def __init__(self, name: str, text: str, finish_reason: FinishReasonLiteral | None) -> None:
-            self.id = str(uuid.uuid4())
-            self.name = name
-            self.description: str | None = None
-            self._text = text
-            self._finish_reason: FinishReasonLiteral | None = finish_reason
-
-        def create_session(self, **kwargs: Any) -> AgentSession:
-            del kwargs
-            return AgentSession()
-
-        def get_session(
-            self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None
-        ) -> AgentSession:
-            del service_session_id, session_id
-            return AgentSession()
-
-        @overload
-        def run(
-            self,
-            messages: Any = ...,
-            *,
-            stream: Literal[False] = ...,
-            session: AgentSession | None = ...,
-            **kwargs: Any,
-        ) -> Awaitable[AgentResponse[Any]]: ...
-
-        @overload
-        def run(
-            self,
-            messages: Any = ...,
-            *,
-            stream: Literal[True],
-            session: AgentSession | None = ...,
-            **kwargs: Any,
-        ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
-
-        def run(
-            self,
-            messages: Any = None,
-            *,
-            stream: bool = False,
-            session: AgentSession | None = None,
-            **kwargs: Any,
-        ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
-            del messages, session, kwargs
-            assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
-            text = self._text
-            name = self.name
-            finish_reason = self._finish_reason
-
-            async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
-                yield AgentResponseUpdate(
-                    contents=[Content.from_text(text=text)],
-                    role="assistant",
-                    author_name=name,
-                    finish_reason=finish_reason,
-                )
-
-            return ResponseStream(_aiter(), finalizer=AgentResponse.from_updates)
-
-    inner = _TextAgent("text-agent", text, finish_reason)
-
-    @executor
-    async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
-        await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
-
-    workflow = WorkflowBuilder(start_executor=start).add_edge(start, inner).build()
-    return WorkflowAgent(workflow=workflow, name="Text Workflow Agent")
-
-
-class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
-    """Inner agent that streams one update per text in a single ``run`` call, and tracks ``run_count``."""
-
-    def __init__(self, name: str, texts: Sequence[str], *, gate: asyncio.Event | None = None) -> None:
-        self.id = str(uuid.uuid4())
-        self.name = name
-        self.description: str | None = None
-        self._texts = list(texts)
-        self._gate = gate
-        self.run_count = 0
-        self.started = asyncio.Event()
-        self.cancelled = asyncio.Event()
-
-    def create_session(self, **kwargs: Any) -> AgentSession:
-        del kwargs
-        return AgentSession()
-
-    def get_session(self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
-        del service_session_id, session_id
-        return AgentSession()
-
-    @overload
-    def run(
-        self,
-        messages: Any = ...,
-        *,
-        stream: Literal[False] = ...,
-        session: AgentSession | None = ...,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse[Any]]: ...
-
-    @overload
-    def run(
-        self,
-        messages: Any = ...,
-        *,
-        stream: Literal[True],
-        session: AgentSession | None = ...,
-        **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
-
-    def run(
-        self,
-        messages: Any = None,
-        *,
-        stream: bool = False,
-        session: AgentSession | None = None,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
-        del messages, session, kwargs
-        assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
-        self.run_count += 1
-        texts = self._texts
-        name = self.name
-        gate = self._gate
-
-        async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
-            self.started.set()
-            if gate is not None:
-                try:
-                    await gate.wait()  # Simulates a stuck model/tool call for preemption tests.
-                except asyncio.CancelledError:
-                    self.cancelled.set()
-                    raise
-            for text in texts:
-                yield AgentResponseUpdate(
-                    contents=[Content.from_text(text=text)],
-                    role="assistant",
-                    author_name=name,
-                )
-
-        return ResponseStream(_aiter(), finalizer=AgentResponse.from_updates)
-
-
-def _build_multi_update_workflow_agent(
-    texts: Sequence[str], *, gate: asyncio.Event | None = None
-) -> tuple[WorkflowAgent, _MultiUpdateWorkflowAgentMock]:
-    """Build a ``WorkflowAgent`` whose inner agent streams one update per text in ``texts``."""
-    inner = _MultiUpdateWorkflowAgentMock("multi-update-agent", texts, gate=gate)
-
-    @executor
-    async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
-        await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
-
-    workflow = WorkflowBuilder(name="multi-update-workflow", start_executor=start).add_edge(start, inner).build()
-    return WorkflowAgent(workflow=workflow, name="Multi Update Workflow Agent"), inner
-
-
-@asynccontextmanager
-async def _pending_workflow_event(
-    handler: AsyncGenerator[Any], started: asyncio.Event
-) -> AsyncGenerator[asyncio.Future[Any]]:
-    pending = asyncio.ensure_future(anext(handler))
-    started_wait = asyncio.ensure_future(started.wait())
-    try:
-        # Startup uses pytest's test timeout; only preemption has a short deadline.
-        await asyncio.wait([pending, started_wait], return_when=asyncio.FIRST_COMPLETED)
-        if pending.done():
-            pytest.fail(f"Workflow returned before reaching the blocked call: {pending.result()!r}")
-        yield pending
-    finally:
-        started_wait.cancel()
-        pending.cancel()
-        await asyncio.gather(started_wait, pending, return_exceptions=True)
-        await handler.aclose()
-
-
-def _build_approval_workflow_agent(
-    *,
-    approval_request_id: str,
-    tool_name: str = "delete_file",
-    tool_arguments: dict[str, Any] | None = None,
-    final_text: str = "done",
-) -> tuple[WorkflowAgent, _ToolApprovalWorkflowAgentMock]:
-    """Build a ``WorkflowAgent`` whose inner agent emits a tool approval request."""
-    mock_agent = _ToolApprovalWorkflowAgentMock(
-        name="approval-agent",
-        tool_name=tool_name,
-        tool_arguments=tool_arguments or {"path": "/tmp/secret.txt"},
-        approval_request_ids=[approval_request_id],
-        final_text=final_text,
-    )
-
-    @executor
-    async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
-        await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
-
-    workflow = WorkflowBuilder(start_executor=start).add_edge(start, mock_agent).build()
-    workflow_agent = WorkflowAgent(workflow=workflow, name="Approval Workflow Agent")
-    return workflow_agent, mock_agent
-
-
-class TestWorkflowAgentHosting:
-    """End-to-end HTTP tests for ``ResponsesHostServer`` hosting a ``WorkflowAgent``.
-
-    These tests drive ``_handle_inner_workflow`` through the ASGI stack:
-    they exercise checkpoint write/restore (multi-turn) and the
-    tool-approval round-trip path, which is the primary differentiator
-    relative to the regular agent path.
-    """
-
-    async def test_async_factory_creates_workflow_agent_for_each_request(self) -> None:
-        created: list[tuple[WorkflowAgent, _MultiUpdateWorkflowAgentMock]] = []
-
-        async def create_agent() -> WorkflowAgent:
-            agent, inner = _build_multi_update_workflow_agent(["hello"])
-            created.append((agent, inner))
-            return agent
-
-        server = _make_server(create_agent)
-
-        first = await _post(server, input_text="one")
-        second = await _post(server, input_text="two")
-
-        assert first.status_code == 200
-        assert second.status_code == 200
-        assert len(created) == 2
-        assert created[0][0].workflow is not created[1][0].workflow
-        assert [inner.run_count for _, inner in created] == [1, 1]
-
-    async def test_factory_workflow_restores_checkpoint_for_same_conversation(self) -> None:
-        runs: list[MagicMock] = []
-
-        def create_agent() -> WorkflowAgent:
-            agent, _ = _build_multi_update_workflow_agent(["hello"])
-            run = MagicMock(wraps=agent.run)
-            cast(Any, agent).run = run
-            runs.append(run)
-            return agent
-
-        checkpoint_storage = InMemoryCheckpointStorage()
-        checkpoint_provider = MagicMock(spec=CheckpointStoreProvider)
-        checkpoint_provider.get_store.return_value = checkpoint_storage
-        server = _make_server(create_agent, checkpoint_store_provider=checkpoint_provider)
-
-        first = await _post(server, input_text="one", conversation_id="conversation-1")
-        second = await _post(server, input_text="two", conversation_id="conversation-1")
-
-        assert first.status_code == 200
-        assert second.status_code == 200
-        assert [run.call_count for run in runs] == [1, 2]
-
-    async def test_basic_text_response(self) -> None:
-        workflow_agent = _build_text_workflow_agent("hello from workflow")
-        server = _make_server(workflow_agent)
-
-        resp = await _post(server, input_text="hi", stream=False)
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "completed"
-
-        text_found = any(
-            part.get("type") == "output_text" and part.get("text") == "hello from workflow"
-            for item in body["output"]
-            if item["type"] == "message"
-            for part in item.get("content", [])
-        )
-        assert text_found, f"Expected workflow output text in {body['output']}"
-
-    async def test_basic_text_response_streaming(self) -> None:
-        workflow_agent = _build_text_workflow_agent("hello stream")
-        server = _make_server(workflow_agent)
-
-        resp = await _post(server, input_text="hi", stream=True)
-        assert resp.status_code == 200
-        events = _parse_sse_events(resp.text)
-        types = _sse_event_types(events)
-        assert types[0] == "response.created"
-        assert types[-1] == "response.completed"
-        assert "response.output_text.delta" in types
-        text_done = [e for e in events if e["event"] == "response.output_text.done"]
-        assert any(e["data"]["text"] == "hello stream" for e in text_done)
-
-    async def test_cancellation_signal_stops_main_loop_without_completing(self) -> None:
-        """Explicit-cancel: the workflow's main loop must break promptly, and the handler must not
-        emit a ``response.completed`` terminal for a run it didn't finish (regression for #8564)."""
-        workflow_agent, inner = _build_multi_update_workflow_agent(["one", "two", "three"])
-        server = _make_server(workflow_agent)
-        request = CreateResponse(model="m", input="hi", stream=True)
-        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
-        cancellation_signal = asyncio.Event()
-
-        with (
-            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
-        ):
-            handler = cast(
-                AsyncGenerator[Any, None],
-                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
-            )
-            events: list[Any] = []
-            async for event in handler:
-                events.append(event)
-                if isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
-                    break
-            # Cancellation arrives after the first delta, via the explicit /cancel endpoint (both
-            # the signal and its cause flag fire together); the loop must not process "two"/"three".
-            context.client_cancelled = True
-            cancellation_signal.set()
-            events.extend([event async for event in handler])
-
-        types = [event.get("type") for event in events if isinstance(event, Mapping)]
-        assert types.count("response.output_text.delta") == 1
-        assert "response.completed" not in types
-        assert types[-1] == "response.output_text.delta"
-        assert inner.run_count == 1
-
-    async def test_cancellation_signal_preempts_stuck_workflow_call(self) -> None:
-        """Explicit-cancel must interrupt the workflow's inner agent call stuck awaiting a slow
-        model/tool response, not merely be checked between already-produced updates."""
-        gate = asyncio.Event()  # Never set: simulates a model/tool call that never returns.
-        workflow_agent, inner = _build_multi_update_workflow_agent(["too late"], gate=gate)
-        server = _make_server(workflow_agent)
-        request = CreateResponse(model="m", input="hi", stream=True)
-        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
-        cancellation_signal = asyncio.Event()
-
-        with (
-            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
-        ):
-            handler = cast(
-                AsyncGenerator[Any, None],
-                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
-            )
-            await anext(handler)  # response.created
-            await anext(handler)  # response.in_progress
-
-            async with _pending_workflow_event(handler, inner.started) as pending:
-                context.client_cancelled = True
-                cancellation_signal.set()  # Fires while the inner agent is stuck awaiting `gate`.
-
-                async def _drain() -> list[Any]:
-                    events: list[Any] = []
-                    try:
-                        events.append(await pending)
-                    except StopAsyncIteration:
-                        return events
-                    events.extend([event async for event in handler])
-                    return events
-
-                # Bounded well below `gate` never being set: proves cancellation preempted the stuck
-                # call instead of only being observed after it (eventually) produced an update.
-                events = await asyncio.wait_for(_drain(), timeout=1.0)
-                assert inner.cancelled.is_set()
-
-        types = [event.get("type") for event in events if isinstance(event, Mapping)]
-        assert "response.output_text.delta" not in types
-        assert "response.completed" not in types
-        assert inner.run_count == 1
-
-    async def test_shutdown_signal_preempts_stuck_workflow_call(self, tmp_path: Path) -> None:
-        """Shutdown must interrupt the workflow's inner agent call stuck awaiting a slow model/tool
-        response, not merely be checked between already-produced updates, and must trigger
-        ``exit_for_recovery()`` because it actually preempted the loop -- not on natural completion."""
-        gate = asyncio.Event()  # Never set: simulates a model/tool call that never returns.
-        workflow_agent, inner = _build_multi_update_workflow_agent(["too late"], gate=gate)
-        server = _make_server(
-            workflow_agent,
-            response_store=FileResponseStore(storage_dir=tmp_path),
-            options=ResponsesServerOptions(resilient_background=True),
-        )
-        request = CreateResponse(model="m", input="hi", stream=True)
-        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
-        cancellation_signal = asyncio.Event()
-
-        with (
-            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
-            patch.object(ResponseContext, "exit_for_recovery", new=AsyncMock(side_effect=ResponseExitForRecovery())),
-        ):
-            handler = cast(
-                AsyncGenerator[Any, None],
-                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
-            )
-            await anext(handler)  # response.created
-            await anext(handler)  # response.in_progress
-
-            async with _pending_workflow_event(handler, inner.started) as pending:
-                context.shutdown.set()  # Fires while the inner agent is stuck awaiting `gate`.
-
-                # Bounded well below `gate` never being set: proves shutdown preempted the stuck call
-                # instead of only being observed after it (eventually) produced an update.
-                with pytest.raises(ResponseExitForRecovery):
-                    await asyncio.wait_for(pending, timeout=1.0)
-                assert inner.cancelled.is_set()
-
-        assert inner.run_count == 1
-
-    async def test_cancellation_signal_set_before_turn_skips_new_input(self) -> None:
-        """Explicit-cancel: cancellation set before a continuation turn starts must skip that turn's new
-        input entirely, whether caught by the restore-loop's own check or the standalone check
-        guarding the start of a brand new workflow run."""
-        workflow_agent, inner = _build_multi_update_workflow_agent(["hello"])
-        server = _make_server(workflow_agent)
-
-        first = await _post(server, conversation_id="conv-1", stream=False)
-        assert first.status_code == 200
-        run_count_after_first_turn = inner.run_count
-        assert run_count_after_first_turn == 1
-
-        request = CreateResponse(model="m", input="hi again", stream=True)
-        context = ResponseContext(response_id="response-2", mode_flags=MagicMock(), conversation_id="conv-1")
-        cancellation_signal = asyncio.Event()
-        context.client_cancelled = True  # Explicit cancel already present before the turn even starts.
-        cancellation_signal.set()
-
-        with (
-            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
-        ):
-            handler = cast(
-                AsyncGenerator[Any, None],
-                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
-            )
-            events = [event async for event in handler]
-
-        types = [event.get("type") for event in events if isinstance(event, Mapping)]
-        assert "response.output_text.delta" not in types
-        assert "response.completed" not in types
-        assert types[-1] == "response.in_progress"
-        # At most the restore-only replay call happened; the new-turn call (which would deliver
-        # "hi again") must never fire.
-        assert inner.run_count <= run_count_after_first_turn + 1
-
-    async def test_shutdown_signal_set_before_restore_only_triggers_recovery(self, tmp_path: Path) -> None:
-        """Shutdown observed while resuming a checkpoint (whether during the restore-only replay or
-        the standalone check guarding the start of a brand new workflow run) must trigger
-        ``exit_for_recovery()`` -- proving the post-loop ``signalled`` check (not a blind re-check of
-        the flag) correctly gates this action so it doesn't also fire on a replay that merely
-        finished naturally."""
-        workflow_agent, inner = _build_multi_update_workflow_agent(["hello"])
-        server = _make_server(
-            workflow_agent,
-            response_store=FileResponseStore(storage_dir=tmp_path),
-            options=ResponsesServerOptions(resilient_background=True),
-        )
-
-        first = await _post(server, conversation_id="conv-1", stream=False)
-        assert first.status_code == 200
-        run_count_after_first_turn = inner.run_count
-        assert run_count_after_first_turn == 1
-
-        request = CreateResponse(model="m", input="hi again", stream=True)
-        context = ResponseContext(response_id="response-2", mode_flags=MagicMock(), conversation_id="conv-1")
-        cancellation_signal = asyncio.Event()
-        context.shutdown.set()  # Fires before the continuation turn even starts.
-
-        with (
-            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
-            patch.object(ResponseContext, "exit_for_recovery", new=AsyncMock(side_effect=ResponseExitForRecovery())),
-        ):
-            handler = cast(
-                AsyncGenerator[Any, None],
-                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
-            )
-            with pytest.raises(ResponseExitForRecovery):
-                _ = [event async for event in handler]
-
-        # Only the restore-only replay call may have happened; the new-turn call must never fire.
-        assert inner.run_count <= run_count_after_first_turn + 1
-
-    async def test_previous_response_requires_existing_workflow_checkpoint(self) -> None:
-        """A previous_response_id naming a scope with no checkpoint must fail loudly rather than
-        silently starting a fresh workflow run (which could repeat side effects or misinterpret a
-        continuation as a new request)."""
-        workflow_agent, inner = _build_multi_update_workflow_agent(["hello"])
-        server = _make_server(workflow_agent)
-        request = CreateResponse(model="m", input="hi", previous_response_id="response-missing")
-        context = ResponseContext(response_id="response-current", mode_flags=MagicMock())
-
-        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
-            handler = server._handle_response(request, context, asyncio.Event())  # pyright: ignore[reportPrivateUsage]
-            events = [event async for event in handler]
-
-        failed_events = [
-            event for event in events if isinstance(event, Mapping) and event.get("type") == "response.failed"
-        ]
-        assert len(failed_events) == 1
-        failed_event = cast(Mapping[str, Any], failed_events[0])
-        response = cast(Mapping[str, Any], failed_event["response"])
-        error = cast(Mapping[str, Any], response["error"])
-        assert (
-            "Cannot find an existing workflow checkpoint for previous_response_id=response-missing." in error["message"]
-        )
-        assert inner.run_count == 0
-
-    async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
-        workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_ns")
-        server = _make_server(workflow_agent)
-
-        resp = await _post(server, stream=False)
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "completed"
-
-        approval_items = [it for it in body["output"] if it["type"] == "mcp_approval_request"]
-        assert len(approval_items) == 1
-        assert approval_items[0]["name"] == "delete_file"
-        assert approval_items[0]["server_label"] == "test_server"
-        approval_request_id = approval_items[0]["id"]
-
-        # The id surfaced over the wire is generated by the response stream
-        # builder; the original approval ``Content`` (carrying the inner
-        # ``function_call``) must be persisted under that id so the next
-        # turn can reconstruct it.
-        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config, platform_context=get_request_context()
-        ).load_approval_request(approval_request_id)
-        assert loaded.type == "function_approval_request"
-        assert loaded.function_call is not None
-        assert loaded.function_call.name == "delete_file"
-        assert mock_agent.run_count == 1
-
-    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
-        workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_st")
-        server = _make_server(workflow_agent)
-
-        resp = await _post(server, stream=True)
-        assert resp.status_code == 200
-
-        events = _parse_sse_events(resp.text)
-        types = _sse_event_types(events)
-        assert types[0] == "response.created"
-        assert types[-1] == "response.completed"
-
-        approval_request_id: str | None = None
-        for e in events:
-            if e["event"] != "response.output_item.added":
-                continue
-            item: dict[str, Any] = e["data"].get("item") or {}
-            if item.get("type") == "mcp_approval_request":
-                approval_request_id = item.get("id")
-                break
-        assert approval_request_id is not None
-
-        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config, platform_context=get_request_context()
-        ).load_approval_request(approval_request_id)
-        assert loaded.type == "function_approval_request"
-        assert mock_agent.run_count == 1
-
-    async def test_round_trip_approval_response_resumes_workflow_agent(self) -> None:
-        """Two-turn HTTP round-trip:
-
-        Turn 1 emits ``mcp_approval_request`` and writes a workflow
-        checkpoint under the response id. Turn 2 sends the
-        ``mcp_approval_response`` with ``previous_response_id`` set, so the
-        host restores the checkpoint, the WorkflowAgent routes the
-        approval response back to the paused inner agent, and the inner
-        agent emits the final assistant text.
-        """
-        workflow_agent, mock_agent = _build_approval_workflow_agent(
-            approval_request_id="apr_wf_rt",
-            final_text="done with approval",
-        )
-        server = _make_server(workflow_agent)
-        checkpoint_provider = server._checkpoint_storage_provider  # pyright: ignore[reportPrivateUsage]
-
-        with patch.object(checkpoint_provider, "get_store", wraps=checkpoint_provider.get_store) as get_store:
-            first = await _post(server, stream=False)
-            assert first.status_code == 200
-            first_body = first.json()
-            first_response_id = first_body["id"]
-            approval_items = [it for it in first_body["output"] if it["type"] == "mcp_approval_request"]
-            assert len(approval_items) == 1
-            approval_request_id = approval_items[0]["id"]
-            assert mock_agent.run_count == 1
-
-            second_payload: dict[str, Any] = {
-                "model": "test-model",
-                "input": [
-                    {
-                        "type": "mcp_approval_response",
-                        "approval_request_id": approval_request_id,
-                        "approve": True,
-                    }
-                ],
-                "stream": False,
-                "previous_response_id": first_response_id,
-            }
-            second = await _post_json(server, second_payload)
-        assert second.status_code == 200
-        second_body = second.json()
-        assert second_body["status"] == "completed"
-        assert [call.kwargs["context_id"] for call in get_store.call_args_list] == [
-            first_response_id,
-            second_body["id"],
-            first_response_id,
-        ]
-
-        # The inner agent must have been resumed (restore replay + new turn).
-        # Restore call is a no-op for the mock (no input); the new-turn call
-        # delivers the approval response, so run_count grows by at least 1.
-        assert mock_agent.run_count >= 2
-
-        # The final assistant text from the resumed inner agent surfaces in
-        # the HTTP output.
-        text_pieces = [
-            part.get("text", "")
-            for item in second_body["output"]
-            if item["type"] == "message"
-            for part in item.get("content", [])
-            if part.get("type") == "output_text"
-        ]
-        assert any("done with approval" in t for t in text_pieces), (
-            f"expected resumed workflow output, got {second_body['output']}"
-        )
-
-        # The new-turn invocation of the inner agent must have received the
-        # approval response routed back through WorkflowAgent.
-        approval_responses = [
-            c for m in mock_agent.last_run_messages for c in m.contents if c.type == "function_approval_response"
-        ]
-        assert len(approval_responses) == 1
-        assert approval_responses[0].approved is True
-
-    async def test_round_trip_approval_response_streaming(self) -> None:
-        """Streaming variant of the round-trip: turn 2 is requested with
-        ``stream=true`` and surfaces the resumed text as SSE events."""
-        workflow_agent, mock_agent = _build_approval_workflow_agent(
-            approval_request_id="apr_wf_rt_st",
-            final_text="streamed-done",
-        )
-        server = _make_server(workflow_agent)
-
-        first = await _post(server, stream=False)
-        first_body = first.json()
-        first_response_id = first_body["id"]
-        approval_request_id = next(it["id"] for it in first_body["output"] if it["type"] == "mcp_approval_request")
-
-        second = await _post_json(
-            server,
-            {
-                "model": "test-model",
-                "input": [
-                    {
-                        "type": "mcp_approval_response",
-                        "approval_request_id": approval_request_id,
-                        "approve": True,
-                    }
-                ],
-                "stream": True,
-                "previous_response_id": first_response_id,
-            },
-        )
-        assert second.status_code == 200
-        events = _parse_sse_events(second.text)
-        types = _sse_event_types(events)
-        assert types[0] == "response.created"
-        assert types[-1] == "response.completed"
-
-        text_done = [e for e in events if e["event"] == "response.output_text.done"]
-        assert any("streamed-done" in e["data"]["text"] for e in text_done)
-        assert mock_agent.run_count >= 2
-
-    async def test_round_trip_approval_response_rejected(self) -> None:
-        """Sending ``approve=False`` must surface as ``approved=False`` to the
-        inner agent on resume."""
-        workflow_agent, mock_agent = _build_approval_workflow_agent(
-            approval_request_id="apr_wf_reject",
-            final_text="acknowledged",
-        )
-        server = _make_server(workflow_agent)
-
-        first = await _post(server, stream=False)
-        first_body = first.json()
-        first_response_id = first_body["id"]
-        approval_request_id = next(it["id"] for it in first_body["output"] if it["type"] == "mcp_approval_request")
-
-        second = await _post_json(
-            server,
-            {
-                "model": "test-model",
-                "input": [
-                    {
-                        "type": "mcp_approval_response",
-                        "approval_request_id": approval_request_id,
-                        "approve": False,
-                    }
-                ],
-                "stream": False,
-                "previous_response_id": first_response_id,
-            },
-        )
-        assert second.status_code == 200
-
-        approval_responses = [
-            c for m in mock_agent.last_run_messages for c in m.contents if c.type == "function_approval_response"
-        ]
-        assert len(approval_responses) == 1
-        assert approval_responses[0].approved is False
-
-
-# endregion
-
-
-# region Resilient background checkpointing
-
-
-class TestResilientBackgroundCheckpointing:
-    """``ResponseEventStream.checkpoint()`` only persists when its returned event is ``yield``-ed, so
-    ``_handle_inner_workflow`` fetches the latest saved workflow checkpoint and yields it after every update
-    when resilient_background is enabled.
-    """
-
-    async def test_workflow_yields_checkpoint_event_when_resilient_background(self, tmp_path: Path) -> None:
-        workflow_agent = _build_text_workflow_agent("hello from workflow")
-        server = _make_server(
-            workflow_agent,
-            response_store=FileResponseStore(storage_dir=tmp_path),
-            options=ResponsesServerOptions(resilient_background=True),
-        )
-        request = CreateResponse(model="m", input="hi", background=True, stream=True, store=True)
-        context = ResponseContext(response_id="response-current", mode_flags=MagicMock())
-
-        events = [
-            event
-            async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
-                request, context, asyncio.Event()
-            )
-        ]
-
-        checkpoint_events = [e for e in events if isinstance(e, ResponseCheckpointEvent)]
-        assert checkpoint_events, "expected at least one checkpoint event yielded for a resilient background run"
-
-    async def test_signalled_iterator_stamps_items_when_produced(self) -> None:
-        """The stamp reflects state as of production, not consumption.
-
-        The driver runs one item ahead: once the consumer holds item k, the wrapped iterator may
-        already have resumed and created a checkpoint after it. The stamp taken right after item k
-        was produced must not see that later checkpoint.
-        """
-        checkpoints: list[int] = []
-
-        async def produce() -> AsyncIterator[int]:
-            for k in range(1, 4):
-                yield k
-                # Runs when the iterator is resumed to produce the next item, i.e. after item k
-                # was handed over, mirroring the runner checkpointing at the end of a superstep.
-                checkpoints.append(k)
-
-        async def stamp() -> int:
-            return len(checkpoints)
-
-        seen: list[tuple[int, int, int]] = []
-        it = _SignalledIterator(produce(), asyncio.Event(), stamp=stamp)
-        async with aclosing(it):
-            async for item in it:
-                # Give the driver every chance to run ahead before we look at the stamp.
-                for _ in range(5):
-                    await asyncio.sleep(0)
-                seen.append((item, it.stamp, len(checkpoints)))
-
-        assert [(item, stamped) for item, stamped, _ in seen] == [(1, 0), (2, 1), (3, 2)]
-        # Consumption-time state had already moved past the stamped one for every item.
-        assert all(consumed > stamped for _, stamped, consumed in seen)
-
-    async def test_snapshots_pair_output_with_the_checkpoint_it_follows(self, tmp_path: Path) -> None:
-        """Every persisted snapshot must contain exactly the output emitted before it, and the final
-        snapshot must carry the full output and the incomplete reason.
-        """
-        workflow_agent = _build_text_workflow_agent("filtered by workflow", finish_reason="content_filter")
-        server = _make_server(
-            workflow_agent,
-            response_store=FileResponseStore(storage_dir=tmp_path),
-            options=ResponsesServerOptions(resilient_background=True),
-        )
-        request = CreateResponse(model="m", input="hi", background=True, stream=True, store=True)
-        context = ResponseContext(response_id="response-current", mode_flags=MagicMock())
-
-        emitted_text = ""
-        snapshots: list[tuple[str, dict[str, Any]]] = []
-        async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
-            request, context, asyncio.Event()
-        ):
-            if isinstance(event, ResponseCheckpointEvent):
-                # The event references the live response; copy it as it is at persistence time.
-                snapshots.append((emitted_text, copy.deepcopy(dict(event.response))))
-            elif isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
-                emitted_text += str(event.get("delta", ""))
-
-        assert emitted_text == "filtered by workflow"
-        assert snapshots, "expected the completed workflow to be snapshotted"
-        checkpoint_ids: list[str] = []
-        for text_before, response in snapshots:
-            internal = response["internal_metadata"]
-            checkpoint_ids.append(internal[_LATEST_CHECKPOINT_ID_KEY])
-            snapshot_text = "".join(
-                part["text"]
-                for item in response["output"]
-                if item["type"] == "message"
-                for part in item["content"]
-                if part["type"] == "output_text"
-            )
-            assert snapshot_text == text_before
-        assert len(set(checkpoint_ids)) == len(checkpoint_ids), "each checkpoint is snapshotted once"
-
-        # The last snapshot is paired with the workflow's final checkpoint and carries everything.
-        final_text, final_response = snapshots[-1]
-        assert final_text == "filtered by workflow"
-        assert final_response["internal_metadata"][_INCOMPLETE_REASON_KEY] == "content_filter"
-        assert final_response["status"] == "in_progress"
-
-
-# endregion
-
 
 # region Parallel pre-model reads (_load_request_messages)
 
@@ -10594,8 +9642,8 @@ class TestParallelRequestReads:
             del approval_storage
             return list(items)
 
-        monkeypatch.setattr("agent_framework_foundry_hosting._responses._items_to_messages", _passthrough)
-        monkeypatch.setattr("agent_framework_foundry_hosting._responses._output_items_to_messages", _passthrough)
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses_agent._items_to_messages", _passthrough)
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses_agent._output_items_to_messages", _passthrough)
 
     async def test_reads_overlap_and_preserve_order(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._identity_converters(monkeypatch)

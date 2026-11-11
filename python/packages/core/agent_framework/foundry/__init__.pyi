@@ -49,6 +49,15 @@ from agent_framework_foundry_hosting import (
     WorkflowTurn,
     response_input_messages,
 )
+from agent_framework_foundry_hosting import (
+    InvocationsWorkflowHostServer as InvocationsWorkflowHostServer,
+)
+from agent_framework_foundry_hosting import (
+    ResponsesRequest as ResponsesRequest,
+)
+from agent_framework_foundry_hosting import (
+    ResponsesWorkflowHostServer as ResponsesWorkflowHostServer,
+)
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
     FoundryLocalClient,
@@ -87,12 +96,15 @@ __all__ = [
     "FunctionApprovalStoreProvider",
     "GeneratedEvaluatorRef",
     "InvocationsHostServer",
+    "InvocationsWorkflowHostServer",
     "RawAnthropicFoundryClient",
     "RawFoundryAgent",
     "RawFoundryAgentChatClient",
     "RawFoundryChatClient",
     "RawFoundryEmbeddingClient",
     "ResponsesHostServer",
+    "ResponsesRequest",
+    "ResponsesWorkflowHostServer",
     "StoreProvider",
     "WorkflowSource",
     "WorkflowTurn",

@@ -1,6 +1,7 @@
 # Resilient native Responses workflow
 
-This sample runs a typed countdown as a native workflow and opts into the
+This sample uses `ResponsesWorkflowHostServer` with a required request-aware factory
+and parser, runs a typed countdown as a native workflow, and opts into the
 AgentServer resilient task subsystem. Each acknowledged MAF checkpoint is paired
 with the exact caller-visible Responses output and usage produced from it.
 Recovery therefore resumes the same outer `response.id` from that pair rather

@@ -42,7 +42,7 @@ def main() -> None:
 
     server = ResponsesHostServer(
         agent=agent,
-        history_source="agent_server",
+        history_source="host_managed",
         log_level="DEBUG",
     )
     server.run()

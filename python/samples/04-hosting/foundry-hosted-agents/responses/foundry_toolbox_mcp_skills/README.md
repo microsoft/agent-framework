@@ -43,7 +43,7 @@ arbitrary skill scripts or external actions.
 The factory's client context closes its owned SDK transports and credential
 after completion, failed tool entry or cancellation. Local runs use
 `AzureCliCredential`; hosted runs use managed identity.
-`history_source="agent_server"` owns conversation history and disables inner
+`history_source="host_managed"` owns conversation history and disables inner
 model storage. Scope the configured Toolbox/skill resources and RBAC to the
 intended project; a fresh provider is not an external authorization boundary.
 

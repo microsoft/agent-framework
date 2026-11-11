@@ -28,7 +28,7 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 | 16 | [Using deployed agent](responses/using_deployed_agent.py) | Invoke an agent already deployed to Foundry using either a service-created or user-created hosted session, then delete the session after use. |
 
 The integration examples use **request-owned factories** and the current
-`history_source="agent_server"` API. Use the current workspace, or a hosting
+`history_source="host_managed"` API. Use the current workspace, or a hosting
 release containing that API; before the coordinated beta is published, older
 PyPI wheels are not evidence that the examples include these behaviors.
 Toolbox/skills connections inherit the current request's call ID and are closed
