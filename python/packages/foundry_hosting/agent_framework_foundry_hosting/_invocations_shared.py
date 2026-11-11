@@ -59,7 +59,6 @@ from ._shared import (
     WorkflowTurn,
     foreground_agent_run_kwargs,
     is_agent,
-    reject_removed_host_settings,
     resolve_agent,
     validate_agent_background_options,
     validate_agent_source,
@@ -340,24 +339,21 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
         prepare_options: InvocationOptionsHook | None = None,
         unsupported_options: UnsupportedOptions = "warn",
         sse_keep_alive_interval_seconds: int | None = None,
-        **kwargs: Any,
+        **agent_server_kwargs: Any,
     ) -> None:
         """Initialize shared protocol plumbing after the public host selects its execution model."""
-        reject_removed_host_settings(kwargs)
         if forbidden := {
             "max_history_items",
             "history_source",
             "background_source",
             "enable_background_recovery",
             "shutdown_grace_period_seconds",
-        }.intersection(kwargs):
+        }.intersection(agent_server_kwargs):
             raise TypeError(
                 f"Responses-only settings are not supported by Invocations: {', '.join(sorted(forbidden))}."
             )
         validate_sse_keep_alive_interval(sse_keep_alive_interval_seconds)
         unsupported_options = validate_unsupported_options(unsupported_options)
-        if "parse_request" in kwargs:
-            raise TypeError("parse_request was renamed to parse_input.")
         if agent is not None and workflow is not None:
             raise TypeError("Provide exactly one of agent or workflow.")
         if agent is None and workflow is None:
@@ -385,7 +381,7 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
         self._workflow_resolver: WorkflowResolver[Request] | None = (
             WorkflowResolver(workflow) if workflow is not None else None
         )
-        super().__init__(openapi_spec=openapi_spec, **kwargs)
+        super().__init__(openapi_spec=openapi_spec, **agent_server_kwargs)
         if sse_keep_alive_interval_seconds is not None:
             self.config.sse_keepalive_interval = sse_keep_alive_interval_seconds
         self._agent = agent
@@ -558,8 +554,9 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
         )
 
     async def _options(self, request: Request, parsed: InvocationRun) -> dict[str, Any]:
-        options = deepcopy(dict(parsed.options))
+        options: dict[str, Any] = {}
         if self._prepare_options is not None:
+            options = deepcopy(dict(parsed.options))
             result = self._prepare_options(request, options)
             if inspect.isawaitable(result):
                 result = await result

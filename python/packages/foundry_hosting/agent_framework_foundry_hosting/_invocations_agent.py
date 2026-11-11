@@ -31,7 +31,7 @@ class InvocationsHostServer(_InvocationsHostServer):
         prepare_options: InvocationOptionsHook | None = None,
         unsupported_options: UnsupportedOptions = "warn",
         sse_keep_alive_interval_seconds: int | None = None,
-        **kwargs: Any,
+        **agent_server_kwargs: Any,
     ) -> None:
         """Create an agent host with session-backed application turns.
 
@@ -51,14 +51,17 @@ class InvocationsHostServer(_InvocationsHostServer):
             parse_input: Sync or async parser returning `InvocationRun`. Without a parser, accept JSON
                 `message`, optional `options`, and `stream`.
             prepare_options: Sync or async hook receiving the request and a copy of caller generation
-                options, for streaming and non-streaming requests. Return the replacement mapping.
+                options. Return the replacement mapping.
                 Hosting validates protected fields after the hook and before resolving the factory,
-                unlike Responses factories which run before the hook. Removing a caller ``model``
-                retains the agent/client inference default. Defaults are not mutated.
+                unlike Responses factories which run before the hook. Defaults are not mutated.
             unsupported_options: Policy for agents without runtime options: `"warn"`, `"ignore"`, or `"error"`.
             sse_keep_alive_interval_seconds: Positive streaming heartbeat interval. If omitted, use a positive
                 `SSE_KEEPALIVE_INTERVAL`, otherwise disable heartbeats. Not a request/model timeout.
-            **kwargs: Additional AgentServer host settings forwarded to the SDK.
+            **agent_server_kwargs: Additional AgentServer SDK constructor arguments, such as
+                `asyncapi_spec_json` and `asyncapi_spec_yaml`. The host settings listed above (`agent`,
+                `openapi_spec`, `agent_session_store_provider`, `parse_input`, `prepare_options`,
+                `unsupported_options`, and `sse_keep_alive_interval_seconds`) are handled directly by this host.
+                Use `InvocationsWorkflowHostServer` for native workflow settings.
 
         Raises:
             TypeError: If the agent source, parser/hook, or heartbeat type is invalid, or removed,
@@ -66,8 +69,6 @@ class InvocationsHostServer(_InvocationsHostServer):
             ValueError: If the heartbeat interval is nonpositive, raw legacy output requests heartbeats,
                 or an injected agent has unsupported background or transport defaults.
         """
-        if {"workflow", "checkpoint_store_provider"}.intersection(kwargs):
-            raise TypeError("Use InvocationsWorkflowHostServer for native workflows and checkpoint storage.")
         super().__init__(
             agent=agent,
             openapi_spec=openapi_spec,
@@ -76,5 +77,5 @@ class InvocationsHostServer(_InvocationsHostServer):
             prepare_options=prepare_options,
             unsupported_options=unsupported_options,
             sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
-            **kwargs,
+            **agent_server_kwargs,
         )

@@ -150,7 +150,6 @@ def test_agent_hosts_reject_ambiguous_factories_before_sdk_construction(protocol
         ("Invocations", "agent_session_store_provider"),
         ("Invocations", "prepare_options"),
         ("Invocations", "unsupported_options"),
-        ("Invocations", "legacy_wire_format"),
     ],
 )
 def test_workflow_hosts_reject_agent_settings_before_sdk_construction(protocol: str, setting: str) -> None:
@@ -189,11 +188,9 @@ def test_legacy_responses_request_name_is_not_exported() -> None:
     ("name", "legacy"),
     [
         ("ResponsesWorkflowHostServer", "parse_response"),
-        ("InvocationsHostServer", "parse_request"),
-        ("InvocationsWorkflowHostServer", "parse_request"),
     ],
 )
-def test_legacy_parser_names_are_not_silently_forwarded_to_sdk(name: str, legacy: str) -> None:
+def test_legacy_parser_name_is_not_silently_forwarded_to_sdk(name: str, legacy: str) -> None:
     host = getattr(hosting, name)
     source = "workflow" if "Workflow" in name else "agent"
     values = {source: lambda _: None, "parse_input": lambda _: None, legacy: lambda _: None}

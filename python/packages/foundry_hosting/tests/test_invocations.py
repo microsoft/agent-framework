@@ -667,7 +667,6 @@ class TestInit:
             ("parse_input", 42, "parse_input must be a callable"),
             ("prepare_options", 42, "prepare_options must be a callable"),
             ("unsupported_options", "discard", "unsupported_options"),
-            ("legacy_wire_format", True, "legacy_wire_format is no longer a supported host setting"),
         ],
     )
     def test_rejects_invalid_configuration(self, parameter: str, value: Any, error: str) -> None:
@@ -827,7 +826,7 @@ class TestParsedRequests:
     )
     async def test_reserved_options_are_rejected_before_agent_run(self, options: dict[str, Any]) -> None:
         agent = _make_agent(response_text="ok")
-        server = InvocationsHostServer(agent)
+        server = InvocationsHostServer(agent, prepare_options=lambda _request, options: options)
         with _request_context(session_id="options"):
             response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
                 _make_request({"message": "hi", "options": options})
@@ -870,7 +869,7 @@ class TestParsedRequests:
             parse_input=(lambda _request: InvocationRun(messages="hi", options=options, stream=stream))
             if source == "parser"
             else None,
-            prepare_options=(lambda _request, _options: options) if source == "hook" else None,
+            prepare_options=lambda _request, parsed_options: options if source == "hook" else parsed_options,
         )
         with _request_context(session_id="unsafe-options"):
             response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
@@ -899,6 +898,7 @@ class TestParsedRequests:
                 agent,
                 agent_session_store_provider=provider,
                 unsupported_options=policy,
+                prepare_options=lambda _request, options: options,
             )
 
         server = create_host()
@@ -938,7 +938,9 @@ class TestParsedRequests:
         self, policy: Literal["ignore", "warn", "error"], stream: bool, caplog: pytest.LogCaptureFixture
     ) -> None:
         agent = _NoOptionsAgent()
-        server = InvocationsHostServer(agent, unsupported_options=policy)
+        server = InvocationsHostServer(
+            agent, unsupported_options=policy, prepare_options=lambda _request, options: options
+        )
         with _request_context(session_id="unsupported"):
             response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
                 _make_request({"message": "hello", "options": {"temperature": 0.8}, "stream": stream})
@@ -960,6 +962,7 @@ class TestParsedRequests:
             lambda request: _NoOptionsAgent(),
             agent_session_store_provider=provider,
             unsupported_options="error",
+            prepare_options=lambda _request, options: options,
         )
         with _request_context(session_id="factory-options"):
             response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
