@@ -56,6 +56,35 @@ public sealed class InterpreterResolutionTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void Constructors_RejectPathsWithoutExtensionOnWindows(bool validationDisabled)
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "File extensions are only required on Windows.");
+
+        // Arrange
+        var directory = Directory.CreateTempSubdirectory("localcodeact-python-path-");
+        try
+        {
+            var executablePath = Path.Combine(directory.FullName, "python");
+            File.WriteAllText(executablePath, string.Empty);
+            var options = CreateOptions(validationDisabled);
+
+            // Act
+            var providerError = Assert.Throws<ArgumentException>(() => new LocalCodeActProvider(executablePath, options));
+            var functionError = Assert.Throws<ArgumentException>(() => new LocalExecuteCodeFunction(executablePath, options));
+
+            // Assert
+            Assert.Equal("pythonExecutablePath", providerError.ParamName);
+            Assert.Equal("pythonExecutablePath", functionError.ParamName);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void Constructors_RejectMissingAbsolutePaths(bool validationDisabled)
     {
         // Arrange
@@ -80,15 +109,17 @@ public sealed class InterpreterResolutionTests
         var directory = Directory.CreateTempSubdirectory("localcodeact-python-path-");
         try
         {
+            // Give the folder an extension so Windows reaches the existence check.
+            var folderPath = directory.CreateSubdirectory("python.exe").FullName;
             var options = CreateOptions(validationDisabled);
 
             // Act
-            var providerError = Assert.Throws<FileNotFoundException>(() => new LocalCodeActProvider(directory.FullName, options));
-            var functionError = Assert.Throws<FileNotFoundException>(() => new LocalExecuteCodeFunction(directory.FullName, options));
+            var providerError = Assert.Throws<FileNotFoundException>(() => new LocalCodeActProvider(folderPath, options));
+            var functionError = Assert.Throws<FileNotFoundException>(() => new LocalExecuteCodeFunction(folderPath, options));
 
             // Assert
-            Assert.Equal(directory.FullName, providerError.FileName);
-            Assert.Equal(directory.FullName, functionError.FileName);
+            Assert.Equal(folderPath, providerError.FileName);
+            Assert.Equal(folderPath, functionError.FileName);
         }
         finally
         {

@@ -144,12 +144,14 @@ public sealed class ShellSessionTests
     public void TryFindOnPath_SkipsRelativeEntries()
     {
         // Arrange
-        var root = Path.Combine(Path.GetTempPath(), "af-shell-path-" + Guid.NewGuid().ToString("N"));
+        // Create the folders under the current directory so the planted entry stays relative on any drive layout.
+        var rootName = "af-shell-path-" + Guid.NewGuid().ToString("N");
+        var root = Path.Combine(Directory.GetCurrentDirectory(), rootName);
         var plantedDir = Directory.CreateDirectory(Path.Combine(root, "planted")).FullName;
         var trustedDir = Directory.CreateDirectory(Path.Combine(root, "trusted")).FullName;
         File.WriteAllText(Path.Combine(plantedDir, "setsid"), string.Empty);
         File.WriteAllText(Path.Combine(trustedDir, "setsid"), string.Empty);
-        var relativePlantedDir = Path.GetRelativePath(Directory.GetCurrentDirectory(), plantedDir);
+        var relativePlantedDir = Path.Combine(rootName, "planted");
 
         try
         {

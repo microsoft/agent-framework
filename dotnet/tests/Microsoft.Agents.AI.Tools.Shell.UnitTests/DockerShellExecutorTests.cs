@@ -65,7 +65,7 @@ public sealed class DockerShellExecutorTests : IDisposable
     public void Ctor_RejectsMissingFile()
     {
         // Arrange
-        var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "docker");
+        var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "docker.exe");
 
         // Act & Assert
         var exception = Assert.Throws<FileNotFoundException>(() => new DockerShellExecutor(missing));
@@ -76,11 +76,44 @@ public sealed class DockerShellExecutorTests : IDisposable
     public void Ctor_RejectsDirectory()
     {
         // Arrange
-        var directory = Path.GetTempPath();
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".exe")).FullName;
 
-        // Act & Assert
-        var exception = Assert.Throws<FileNotFoundException>(() => new DockerShellExecutor(directory));
-        Assert.Equal(directory, exception.FileName);
+        try
+        {
+            // Act & Assert
+            var exception = Assert.Throws<FileNotFoundException>(() => new DockerShellExecutor(directory));
+            Assert.Equal(directory, exception.FileName);
+        }
+        finally
+        {
+            Directory.Delete(directory);
+        }
+    }
+
+    [Fact]
+    public async Task Ctor_RejectsPathWithoutExtensionOnWindowsAsync()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "File extensions are only required on Windows.");
+
+        // Arrange
+        var directory = Directory.CreateTempSubdirectory("af-docker-path-").FullName;
+        var dockerBinaryPath = Path.Combine(directory, "docker");
+        File.WriteAllText(dockerBinaryPath, string.Empty);
+
+        try
+        {
+            // Act
+            var ctorException = Assert.Throws<ArgumentException>(() => new DockerShellExecutor(dockerBinaryPath));
+            var probeException = await Assert.ThrowsAsync<ArgumentException>(() => DockerShellExecutor.IsAvailableAsync(dockerBinaryPath));
+
+            // Assert
+            Assert.Equal("dockerBinaryPath", ctorException.ParamName);
+            Assert.Equal("dockerBinaryPath", probeException.ParamName);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]
@@ -328,7 +361,7 @@ public sealed class DockerShellExecutorTests : IDisposable
     public async Task IsAvailableAsync_NonExistentBinary_ReturnsFalseAsync()
     {
         // Arrange
-        var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "docker");
+        var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "docker.exe");
 
         // Act
         var ok = await DockerShellExecutor.IsAvailableAsync(missing);

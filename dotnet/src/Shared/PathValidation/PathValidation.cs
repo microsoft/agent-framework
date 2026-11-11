@@ -3,11 +3,14 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+#if !NET
+using System.Runtime.InteropServices;
+#endif
 
 namespace Microsoft.Shared.Diagnostics;
 
 /// <summary>
-/// Validates caller-supplied file paths that must name one fixed file.
+/// Validates caller-supplied file paths that must name one fixed file, such as an executable to start.
 /// </summary>
 /// <remarks>
 /// A fully qualified path never depends on the current directory or on a search such as <c>PATH</c>.
@@ -18,21 +21,49 @@ namespace Microsoft.Shared.Diagnostics;
 internal static class PathValidation
 {
     /// <summary>
-    /// Ensures that <paramref name="path"/> is a fully qualified path to an existing file.
+    /// Ensures that <paramref name="path"/> is a fully qualified path to an existing executable file.
     /// </summary>
     /// <param name="path">The path to validate.</param>
     /// <param name="paramName">The name of the parameter that supplied <paramref name="path"/>.</param>
     /// <param name="fileDescription">A short description of the file used in error messages, such as <c>Python executable</c>.</param>
     /// <exception cref="ArgumentNullException"><paramref name="path"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><paramref name="path"/> is empty, whitespace, or not fully qualified.</exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="path"/> is empty, whitespace, or not fully qualified, or on Windows has no file extension.
+    /// </exception>
     /// <exception cref="FileNotFoundException">No file exists at <paramref name="path"/>.</exception>
-    public static void ValidateFullyQualifiedPathToExistingFile([NotNull] string? path, string paramName, string fileDescription)
+    public static void ValidateFullyQualifiedPathToExistingExecutable([NotNull] string? path, string paramName, string fileDescription)
     {
-        ValidateFullyQualifiedPath(path, paramName, fileDescription);
+        ValidateFullyQualifiedExecutablePath(path, paramName, fileDescription);
 
         if (!File.Exists(path))
         {
             throw new FileNotFoundException($"The {fileDescription} file was not found.", path);
+        }
+    }
+
+    /// <summary>
+    /// Ensures that <paramref name="path"/> is a fully qualified path that names exactly one executable file.
+    /// Does not check whether anything exists at the path.
+    /// </summary>
+    /// <remarks>
+    /// On Windows, starting a path with no file extension, such as <c>C:\tools\docker</c>, can run a
+    /// different file, such as <c>C:\tools\docker.exe</c>. Requiring an extension on Windows ensures the
+    /// file that is checked is the file that is started.
+    /// </remarks>
+    /// <param name="path">The path to validate.</param>
+    /// <param name="paramName">The name of the parameter that supplied <paramref name="path"/>.</param>
+    /// <param name="fileDescription">A short description of the file used in error messages, such as <c>Python executable</c>.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="path"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="path"/> is empty, whitespace, or not fully qualified, or on Windows has no file extension.
+    /// </exception>
+    public static void ValidateFullyQualifiedExecutablePath([NotNull] string? path, string paramName, string fileDescription)
+    {
+        ValidateFullyQualifiedPath(path, paramName, fileDescription);
+
+        if (IsWindows && !Path.HasExtension(path))
+        {
+            throw new ArgumentException($"The {fileDescription} path must include a file extension, such as .exe, on Windows.", paramName);
         }
     }
 
@@ -98,7 +129,11 @@ internal static class PathValidation
 #endif
     }
 
-#if !NET
+#if NET
+    private static bool IsWindows => OperatingSystem.IsWindows();
+#else
+    private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
     private static bool IsWindowsDirectorySeparator(char c) => c is '\\' or '/';
 #endif
 }

@@ -111,17 +111,17 @@ public sealed class DockerShellExecutor : ShellExecutor
     /// <param name="dockerBinaryPath">
     /// Fully qualified path to the Docker-compatible container runtime executable, for example
     /// <c>/usr/bin/docker</c>, <c>/usr/bin/podman</c>, or
-    /// <c>C:\Program Files\Docker\Docker\resources\bin\docker.exe</c>. On Windows, include the
-    /// file extension so the path names exactly one file. The same file is used for every
-    /// runtime command this executor starts.
+    /// <c>C:\Program Files\Docker\Docker\resources\bin\docker.exe</c>. On Windows, the path must
+    /// include the file extension (such as <c>.exe</c>) so it names exactly one file. The same file is
+    /// used for every runtime command this executor starts.
     /// </param>
     /// <param name="options">Configuration. <see langword="null"/> selects defaults.</param>
     /// <exception cref="ArgumentNullException"><paramref name="dockerBinaryPath"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><paramref name="dockerBinaryPath"/> is empty, whitespace, or not fully qualified.</exception>
+    /// <exception cref="ArgumentException"><paramref name="dockerBinaryPath"/> is empty, whitespace, or not fully qualified, or on Windows has no file extension.</exception>
     /// <exception cref="FileNotFoundException">No file exists at <paramref name="dockerBinaryPath"/>.</exception>
     public DockerShellExecutor(string dockerBinaryPath, DockerShellExecutorOptions? options = null)
     {
-        PathValidation.ValidateFullyQualifiedPathToExistingFile(dockerBinaryPath, nameof(dockerBinaryPath), "Docker executable");
+        PathValidation.ValidateFullyQualifiedPathToExistingExecutable(dockerBinaryPath, nameof(dockerBinaryPath), "Docker executable");
         options ??= new DockerShellExecutorOptions();
         _ = Throw.IfNull(options.Image);
         if (options.MaxOutputBytes <= 0)
@@ -318,15 +318,15 @@ public sealed class DockerShellExecutor : ShellExecutor
     /// <c>docker version</c> succeeds within ~5 seconds.
     /// </summary>
     /// <param name="dockerBinaryPath">
-    /// Fully qualified path to the Docker-compatible container runtime executable. Bare names and
-    /// relative paths are rejected for the same reason as in the constructor.
+    /// Fully qualified path to the Docker-compatible container runtime executable. Bare names,
+    /// relative paths, and on Windows paths without a file extension are rejected, as in the constructor.
     /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <exception cref="ArgumentNullException"><paramref name="dockerBinaryPath"/> is <see langword="null"/>.</exception>
-    /// <exception cref="ArgumentException"><paramref name="dockerBinaryPath"/> is empty, whitespace, or not fully qualified.</exception>
+    /// <exception cref="ArgumentException"><paramref name="dockerBinaryPath"/> is empty, whitespace, or not fully qualified, or on Windows has no file extension.</exception>
     public static async Task<bool> IsAvailableAsync(string dockerBinaryPath, CancellationToken cancellationToken = default)
     {
-        PathValidation.ValidateFullyQualifiedPath(dockerBinaryPath, nameof(dockerBinaryPath), "Docker executable");
+        PathValidation.ValidateFullyQualifiedExecutablePath(dockerBinaryPath, nameof(dockerBinaryPath), "Docker executable");
         if (!File.Exists(dockerBinaryPath))
         {
             return false;
