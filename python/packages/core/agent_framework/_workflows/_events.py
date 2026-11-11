@@ -11,6 +11,7 @@ from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
+from types import UnionType
 from typing import Any, Generic, Literal, cast
 
 from ._typing_utils import deserialize_type, serialize_type
@@ -236,7 +237,7 @@ class WorkflowEvent(Generic[DataT]):
         request_id: str | None = None,
         source_executor_id: str | None = None,
         request_type: builtins.type[Any] | None = None,
-        response_type: builtins.type[Any] | None = None,
+        response_type: builtins.type[Any] | UnionType | None = None,
         # SUPERSTEP event fields
         iteration: int | None = None,
     ) -> None:
@@ -324,7 +325,7 @@ class WorkflowEvent(Generic[DataT]):
         request_id: str,
         source_executor_id: str,
         request_data: DataT,
-        response_type: builtins.type[Any],
+        response_type: builtins.type[Any] | UnionType,
     ) -> WorkflowEvent[DataT]:
         """Create a 'request_info' event when an executor requests external information."""
         return cls(
@@ -416,11 +417,11 @@ class WorkflowEvent(Generic[DataT]):
         return self._request_type
 
     @property
-    def response_type(self) -> builtins.type[Any]:
+    def response_type(self) -> builtins.type[Any] | UnionType:
         """Get response_type for request_info events.
 
         Returns:
-            The response data type as a non-None type object.
+            The response type as a non-None type object (possibly a union, e.g. ``int | str``).
 
         Raises:
             RuntimeError: If called on an event that is not a request_info event,
