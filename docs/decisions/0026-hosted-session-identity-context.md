@@ -1,5 +1,5 @@
 ---
-status: superseded by [ADR-0030](0030-hosted-platform-context-agentserver-2.0.md)
+status: superseded by [ADR-0034](0034-hosted-platform-context-agentserver-2.0.md)
 contact: rogerbarreto
 date: 2026-06-29
 deciders: rogerbarreto
@@ -9,7 +9,7 @@ informed: []
 
 # Hosted session identity context for Foundry Hosting
 
-> **Superseded by [ADR-0030](0030-hosted-platform-context-agentserver-2.0.md).** `Azure.AI.AgentServer.*` 2.0.0 (responses protocol `2.0.0`) replaced `ResponseContext.Isolation` (`UserIsolationKey` / `ChatIsolationKey`, headers `x-agent-user-isolation-key` / `x-agent-chat-isolation-key`) with `ResponseContext.PlatformContext` (`UserIdKey` / `CallId`, headers `x-agent-user-id` / `x-agent-foundry-call-id`). The chat isolation key was removed and `HostedSessionContext` is now user-only. This ADR is retained as the historical record of the original design.
+> **Superseded by [ADR-0034](0034-hosted-platform-context-agentserver-2.0.md).** `Azure.AI.AgentServer.*` 2.0.0 (responses protocol `2.0.0`) replaced `ResponseContext.Isolation` (`UserIsolationKey` / `ChatIsolationKey`, headers `x-agent-user-isolation-key` / `x-agent-chat-isolation-key`) with `ResponseContext.PlatformContext` (`UserIdKey` / `CallId`, headers `x-agent-user-id` / `x-agent-foundry-call-id`). The chat isolation key was removed and `HostedSessionContext` is now user-only. This ADR is retained as the historical record of the original design.
 
 ## Context and Problem Statement
 

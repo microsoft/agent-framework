@@ -59,6 +59,7 @@ from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from .._feature_usage import FeatureIndex
 from ._capture import _ProcessOutput  # pyright: ignore[reportPrivateUsage] - shared shell capture
 from ._policy import ShellPolicy, ShellRequest
+from ._resolve import resolve_executable
 from ._session import ShellSession
 from ._truncate import _validate_output_limit  # pyright: ignore[reportPrivateUsage] - shared limit validation
 from ._types import (
@@ -92,7 +93,15 @@ class DockerNotAvailableError(RuntimeError):
 
 
 def is_docker_available(binary: str = "docker") -> bool:
-    """Return ``True`` if ``binary`` is on PATH and the daemon responds."""
+    """Return ``True`` if ``binary`` is on PATH and the daemon responds.
+
+    On Windows, a bare ``binary`` is looked up only in the fully qualified entries of ``PATH``. The
+    current directory is never searched.
+    """
+    try:
+        binary = resolve_executable(binary)
+    except FileNotFoundError:
+        return False
     if shutil.which(binary) is None:
         return False
     try:
@@ -278,7 +287,11 @@ class DockerShellTool:
             with the default isolation flags and a trusted runtime — is
             the intended boundary rather than approval.
         on_command: Audit hook fired for every allowed command.
-        docker_binary: Override (e.g. ``"podman"``).
+        docker_binary: Override (e.g. ``"podman"``). On Windows, a bare name is
+            looked up only in the fully qualified entries of ``PATH``; the current
+            directory is never searched. Pass an absolute path to select a specific
+            executable. A path, like a ``PATH`` match, shows only that the file
+            exists, not that it can be trusted.
         shell: Shell binary to invoke inside the container. Defaults to
             ``"bash"``; pass ``"sh"`` for minimal images such as Alpine
             that don't ship bash. Anything else must be present on
@@ -338,6 +351,7 @@ class DockerShellTool:
         self._binary = docker_binary
         self._shell = shell
 
+        self._resolved_binary: str | None = None
         self._session: ShellSession | None = None
         self._container_started = False
         self._lifecycle_lock: asyncio.Lock | None = None
@@ -347,10 +361,24 @@ class DockerShellTool:
             self._lifecycle_lock = asyncio.Lock()
         return self._lifecycle_lock
 
+    def _runtime_path(self) -> str:
+        """Return the container runtime to launch, resolved once for this instance.
+
+        Resolving once keeps every launch of one instance on the same executable, so the runtime that
+        started a container is also the one that stops it.
+        """
+        if self._resolved_binary is None:
+            self._resolved_binary = resolve_executable(self._binary)
+        return self._resolved_binary
+
     # ------------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
-        """Pull/start the container and (if persistent) the inner shell session."""
+        """Pull/start the container and (if persistent) the inner shell session.
+
+        Raises:
+            FileNotFoundError: If the container runtime executable cannot be found.
+        """
         # Stateless mode never uses the long-lived container — every call goes
         # through ``docker run --rm`` — so start()/close() are no-ops.
         if self._mode == "stateless":
@@ -363,7 +391,7 @@ class DockerShellTool:
             await self._start_container()
             self._container_started = True
             argv = build_exec_argv(
-                binary=self._binary,
+                binary=self._runtime_path(),
                 container_name=self._container_name,
                 interactive=True,
                 shell=self._shell,  # nosec B604 - 'shell' is the binary name kwarg, not subprocess shell=True
@@ -439,7 +467,7 @@ class DockerShellTool:
         """Run a single command in a fresh ``docker run --rm`` container."""
         per_call_name = f"af-shell-{secrets.token_hex(6)}"
         argv = [
-            self._binary,
+            self._runtime_path(),
             "run",
             "--rm",
             "-i",
@@ -484,7 +512,7 @@ class DockerShellTool:
         try:
             try:
                 await output.wait(timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 timed_out = True
                 await self._terminate_stateless(proc, per_call_name)
                 await output.finish()
@@ -510,7 +538,7 @@ class DockerShellTool:
         # Stopping the local client alone does not stop its container.
         try:
             killer = await asyncio.create_subprocess_exec(
-                self._binary,
+                self._runtime_path(),
                 "kill",
                 "--signal",
                 "KILL",
@@ -522,11 +550,11 @@ class DockerShellTool:
             try:
                 try:
                     kill_ok = await asyncio.wait_for(killer.wait(), timeout=5.0) == 0
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     killer.kill()
                     try:
                         await asyncio.wait_for(killer.wait(), timeout=5.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning("docker kill client for %s did not exit after termination", name)
             finally:
                 if killer.returncode is None:
@@ -534,7 +562,7 @@ class DockerShellTool:
             if not kill_ok:
                 logger.warning("docker kill of %s did not succeed; attempting docker rm -f", name)
                 reaper = await asyncio.create_subprocess_exec(
-                    self._binary,
+                    self._runtime_path(),
                     "rm",
                     "-f",
                     name,
@@ -545,7 +573,7 @@ class DockerShellTool:
                 try:
                     try:
                         await diagnostic.wait(5.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         reaper.kill()
                         await diagnostic.finish()
                         logger.error("docker rm -f %s timed out; container may be leaked", name)
@@ -570,7 +598,7 @@ class DockerShellTool:
 
     async def _start_container(self) -> None:
         argv = build_run_argv(
-            binary=self._binary,
+            binary=self._runtime_path(),
             image=self._image,
             container_name=self._container_name,
             user=self._user,
@@ -606,7 +634,7 @@ class DockerShellTool:
         async def _attempt(timeout: float) -> tuple[int | None, str]:
             """Run a single ``docker rm -f`` attempt. Returns (rc, stderr)."""
             proc = await asyncio.create_subprocess_exec(
-                self._binary,
+                self._runtime_path(),
                 "rm",
                 "-f",
                 self._container_name,
@@ -616,7 +644,7 @@ class DockerShellTool:
             try:
                 _, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
                 return proc.returncode, err.decode("utf-8", errors="replace").strip()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 with contextlib.suppress(Exception):
                     await proc.wait()

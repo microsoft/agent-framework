@@ -349,9 +349,49 @@ async def test_get_latest_breaks_ties_between_unsuperseded_checkpoints_by_id(
     assert latest.checkpoint_id == "leaf-b"
 
 
+@pytest.mark.parametrize("storage_kind", ["memory", "file"])
+async def test_get_latest_with_mixed_naive_and_aware_timestamps(tmp_path: Path, storage_kind: str) -> None:
+    storage = InMemoryCheckpointStorage() if storage_kind == "memory" else FileCheckpointStorage(tmp_path)
+    # Checkpoints with naive and timezone-aware timestamps
+    await storage.save(
+        WorkflowCheckpoint(
+            workflow_name="w",
+            graph_signature_hash="h",
+            checkpoint_id="older-naive",
+            timestamp="2026-01-01T00:00:00",
+        )
+    )
+    await storage.save(
+        WorkflowCheckpoint(
+            workflow_name="w",
+            graph_signature_hash="h",
+            checkpoint_id="newer-aware",
+            timestamp="2026-01-02T00:00:00+00:00",
+        )
+    )
+
+    latest = await storage.get_latest(workflow_name="w")
+    assert latest is not None
+    assert latest.checkpoint_id == "newer-aware"
+
+    # Save a newer naive checkpoint to verify naive-as-UTC selection
+    await storage.save(
+        WorkflowCheckpoint(
+            workflow_name="w",
+            graph_signature_hash="h",
+            checkpoint_id="newest-naive",
+            timestamp="2026-01-03T00:00:00",
+        )
+    )
+
+    latest = await storage.get_latest(workflow_name="w")
+    assert latest is not None
+    assert latest.checkpoint_id == "newest-naive"
+
+
 async def test_workflow_checkpoint_chaining_via_previous_checkpoint_id():
     """Test that consecutive checkpoints created by a workflow are properly chained via previous_checkpoint_id."""
-    from typing_extensions import Never
+    from typing import Never
 
     from agent_framework import WorkflowBuilder, WorkflowContext, handler
     from agent_framework._workflows._executor import Executor
@@ -405,7 +445,7 @@ async def test_workflow_checkpoint_chaining_via_previous_checkpoint_id():
 
 async def test_workflow_checkpoint_ancestry_preserved_after_resume():
     """Resuming from a checkpoint must preserve ancestry: future checkpoints chain back to the resumed one."""
-    from typing_extensions import Never
+    from typing import Never
 
     from agent_framework import WorkflowBuilder, WorkflowContext, handler
     from agent_framework._workflows._executor import Executor
@@ -502,7 +542,7 @@ async def test_workflow_entry_checkpoint_records_input_and_replays():
     re-delivers that input to the start executor, so the entire run - including the start executor -
     replays and produces the same output.
     """
-    from typing_extensions import Never
+    from typing import Never
 
     from agent_framework import WorkflowBuilder, WorkflowContext, handler
     from agent_framework._workflows._const import INTERNAL_SOURCE_ID
@@ -568,7 +608,7 @@ async def test_workflow_one_checkpoint_per_superstep_lineage_and_replay():
     - Lineage: the entry checkpoint has no parent and every later checkpoint chains to its predecessor.
     - Replay: restoring any non-terminal checkpoint on a fresh instance reproduces the final output.
     """
-    from typing_extensions import Never
+    from typing import Never
 
     from agent_framework import WorkflowBuilder, WorkflowContext, handler
     from agent_framework._workflows._executor import Executor
@@ -650,7 +690,7 @@ async def test_workflow_response_entry_checkpoint_records_response_and_replays()
     chains from it and carries the delivered response as an in-flight message (with no pending
     requests). Resuming from it on a fresh instance re-delivers the response and reproduces the output.
     """
-    from typing_extensions import Never
+    from typing import Never
 
     from agent_framework import WorkflowBuilder, WorkflowContext, WorkflowRunState, handler, response_handler
     from agent_framework._workflows._executor import Executor
@@ -1154,7 +1194,7 @@ async def test_workflow_resume_restores_partially_filled_fan_in_buffer():
     lives only in the fan-in buffer - the runner context drained it on delivery - so a
     checkpoint that omits the buffer strands the workflow with a fan-in that never fires.
     """
-    from typing_extensions import Never
+    from typing import Never
 
     from agent_framework import WorkflowBuilder, WorkflowContext, handler
     from agent_framework._workflows._const import EDGE_STATE_KEY
@@ -2635,7 +2675,7 @@ def test_file_checkpoint_storage_abandoned_loop_does_not_own_destination_forever
             try:
                 await asyncio.wait_for(later_storage.save(make("later")), timeout=10)
                 outcome["saved"] = True
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 outcome["saved"] = False
 
         asyncio.run(main())
@@ -3189,7 +3229,7 @@ def test_file_checkpoint_storage_abandoned_loop_while_queued_releases_the_destin
             try:
                 await asyncio.wait_for(storage.save(make("later")), timeout=10)
                 outcome["saved"] = True
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 outcome["saved"] = False
 
         asyncio.run(main())
@@ -3369,7 +3409,7 @@ def test_file_checkpoint_storage_abandonment_mid_chain_keeps_the_queue_ordered(t
                 try:
                     await asyncio.wait_for(storage.save(make("successor")), timeout=25)
                     successor["saved"] = True
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     successor["saved"] = False
 
             asyncio.run(main())

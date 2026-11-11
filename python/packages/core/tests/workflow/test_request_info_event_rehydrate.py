@@ -5,6 +5,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -49,6 +50,32 @@ class SlottedApproval:
 @dataclass
 class TimedApproval:
     issued_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@pytest.mark.parametrize(
+    ("request_data", "response_type"),
+    [(1, int), (None, str), ("payload", type(None))],
+)
+def test_workflow_event_from_dict_roundtrips_none_type(request_data: Any, response_type: type[Any]) -> None:
+    """A request whose data or response is ``None`` survives a to_dict/from_dict round trip.
+
+    ``type(None)`` serializes as ``builtins.NoneType``, a name the ``builtins`` module does not
+    bind, so reconstructing the event used to raise AttributeError.
+    """
+    event = WorkflowEvent.request_info(
+        request_id="request-123",
+        source_executor_id="review_gateway",
+        request_data=request_data,
+        response_type=response_type,
+    )
+
+    restored = WorkflowEvent.from_dict(event.to_dict())
+
+    assert restored.request_id == "request-123"
+    assert restored.source_executor_id == "review_gateway"
+    assert restored.data == request_data
+    assert restored.request_type is type(request_data)
+    assert restored.response_type is response_type
 
 
 def test_workflow_event_from_dict_accepts_explicit_allowed_types() -> None:

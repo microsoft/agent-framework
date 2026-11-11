@@ -78,7 +78,7 @@ async def run_stateless(
     try:
         try:
             await output.wait(timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timed_out = True
             await kill_process_tree(proc)
             await output.finish()

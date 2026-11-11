@@ -24,6 +24,14 @@ maturity. Check current package status and public docstrings before making compa
 - Allowlist external destinations and register only resources the definition may invoke.
 - Review the documented HTTP body limits and handler ownership rules; use a custom handler when host policy requires
   different authentication, retries, SSRF controls, or transport behavior.
+- `DefaultMCPToolHandler` opens and closes a fresh MCP session per invocation, including `tools/list`.
+  Instantiate it normally, not with `async with`; it has no `cache_max_size` or `aclose()`.
+  Its optional `client_provider` may return a borrowed, reusable HTTP client, but protocol state is never shared.
+  Cancel and await active calls before closing borrowed clients. Implicit server state does not survive later calls,
+  approval waits, or checkpoint resumes; use explicit remote state handles or a custom scoped handler if needed.
+  Setup, connection, discovery, and transport exceptions fail the workflow action, including after approval.
+  Remote tool error responses remain error results; custom handlers must raise infrastructure failures rather than
+  returning them as tool output.
 
 ## Validation
 

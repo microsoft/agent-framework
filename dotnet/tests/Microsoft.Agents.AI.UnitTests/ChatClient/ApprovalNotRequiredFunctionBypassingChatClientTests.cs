@@ -814,6 +814,52 @@ public class ApprovalNotRequiredFunctionBypassingChatClientTests
 
     #endregion
 
+    #region Settled Auto-Approval Tests
+
+    [Fact]
+    public void RemoveSettledAutoApprovals_RemovesOnlySettledCalls()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey,
+            new List<ToolApprovalRequestContent>
+            {
+                new("req1", new FunctionCallContent("call1", "toolA")),
+                new("req2", new FunctionCallContent("call2", "toolB")),
+            },
+            AgentJsonUtilities.DefaultOptions);
+
+        // Act
+        ApprovalNotRequiredFunctionBypassingChatClient.RemoveSettledAutoApprovals(session, new HashSet<string>(StringComparer.Ordinal) { "call1" });
+
+        // Assert
+        Assert.True(session.StateBag.TryGetValue<List<ToolApprovalRequestContent>>(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey, out var stored, AgentJsonUtilities.DefaultOptions));
+        var remaining = Assert.Single(stored!);
+        Assert.Equal("call2", remaining.ToolCall.CallId);
+    }
+
+    [Fact]
+    public void RemoveSettledAutoApprovals_AllSettled_RemovesState()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey,
+            new List<ToolApprovalRequestContent> { new("req1", new FunctionCallContent("call1", "toolA")) },
+            AgentJsonUtilities.DefaultOptions);
+
+        // Act
+        ApprovalNotRequiredFunctionBypassingChatClient.RemoveSettledAutoApprovals(session, new HashSet<string>(StringComparer.Ordinal) { "call1" });
+
+        // Assert
+        Assert.False(session.StateBag.TryGetValue<List<ToolApprovalRequestContent>>(
+            ApprovalNotRequiredFunctionBypassingChatClient.StateBagKey, out _, AgentJsonUtilities.DefaultOptions));
+    }
+
+    #endregion
+
     #region Usage Pass-Through Tests
 
     /// <summary>

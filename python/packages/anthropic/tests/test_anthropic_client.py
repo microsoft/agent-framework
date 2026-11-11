@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import json
 import logging
 import os
 import re
 from pathlib import Path
+from types import MappingProxyType
 from typing import Annotated, Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -39,11 +41,19 @@ from agent_framework.exceptions import (
 )
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic.types.beta import (
+    BetaCitationCharLocation,
+    BetaCitationsDelta,
+    BetaCitationsWebSearchResultLocation,
     BetaMessage,
     BetaMessageDeltaUsage,
+    BetaRawContentBlockDeltaEvent,
+    BetaRawContentBlockStartEvent,
+    BetaRawMessageStreamEvent,
     BetaRedactedThinkingBlock,
     BetaServerToolUseBlock,
     BetaTextBlock,
+    BetaTextDelta,
+    BetaThinkingBlock,
     BetaToolUseBlock,
     BetaUsage,
     BetaWebSearchResultBlock,
@@ -665,6 +675,27 @@ def test_prepare_message_for_anthropic_text_reasoning_with_signature(
     assert result["content"][0]["signature"] == "sig_abc123"
 
 
+def test_prepare_message_for_anthropic_unsigned_native_thinking_is_thinking(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """An unsigned Anthropic thinking block still replays as thinking, not as text.
+
+    Parsed thinking items carry a generated Content.id, which is also used for
+    provider reasoning summaries. The native block marker keeps the two apart.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=client._parse_contents_from_anthropic([
+            BetaThinkingBlock(type="thinking", thinking="Visible summary.", signature="")
+        ]),
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"] == [{"type": "thinking", "thinking": "Visible summary."}]
+
+
 def test_prepare_message_for_anthropic_provider_reasoning_without_signature_is_text(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -728,6 +759,171 @@ def test_prepare_message_for_anthropic_empty_signed_thinking_is_replayed(
     }
     assert result["content"][1]["type"] == "tool_use"
     assert result["content"][1]["id"] == "toolu_test"
+
+
+def test_prepare_message_for_anthropic_redacted_thinking_with_tool_use(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Redacted reasoning round-trips unchanged before a tool call.
+
+    Anthropic requires the thinking blocks of the last assistant turn, including
+    ``redacted_thinking``, to be replayed unmodified while tool use continues.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=client._parse_contents_from_anthropic([
+            BetaRedactedThinkingBlock(type="redacted_thinking", data="synthetic-opaque-data"),
+            BetaToolUseBlock(type="tool_use", id="toolu_test", name="lookup", input={}),
+        ]),
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"] == [
+        {"type": "redacted_thinking", "data": "synthetic-opaque-data"},
+        {"type": "tool_use", "id": "toolu_test", "name": "lookup", "input": {}},
+    ]
+
+
+def test_parse_then_replay_anthropic_redacted_thinking_preserves_payload(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Persisted history replays redacted reasoning without its raw SDK representation."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=client._parse_contents_from_anthropic([
+            BetaRedactedThinkingBlock(type="redacted_thinking", data="synthetic-opaque-data"),
+            BetaToolUseBlock(type="tool_use", id="toolu_test", name="lookup", input={}),
+        ]),
+    )
+
+    restored = Message.from_dict(message.to_dict())
+    prepared = client._prepare_message_for_anthropic(restored)
+
+    assert prepared["content"] == [
+        {"type": "redacted_thinking", "data": "synthetic-opaque-data"},
+        {"type": "tool_use", "id": "toolu_test", "name": "lookup", "input": {}},
+    ]
+
+
+def test_prepare_message_for_anthropic_thinking_then_redacted_thinking_with_tool_use(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A normal thinking block and a redacted thinking block stay separate blocks."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=client._parse_contents_from_anthropic([
+            BetaThinkingBlock(type="thinking", thinking="Visible summary.", signature="synthetic-signature"),
+            BetaRedactedThinkingBlock(type="redacted_thinking", data="synthetic-opaque-data"),
+            BetaToolUseBlock(type="tool_use", id="toolu_test", name="lookup", input={}),
+        ]),
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert [block["type"] for block in result["content"]] == ["thinking", "redacted_thinking", "tool_use"]
+    assert result["content"][0] == {
+        "type": "thinking",
+        "thinking": "Visible summary.",
+        "signature": "synthetic-signature",
+    }
+    assert result["content"][1] == {"type": "redacted_thinking", "data": "synthetic-opaque-data"}
+
+
+def test_prepare_message_for_anthropic_redacted_thinking_without_payload_raises(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A marked redacted reasoning item without its opaque payload fails loudly instead of vanishing."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text_reasoning(
+                id="reasoning-test",
+                additional_properties={"anthropic": {"reasoning_block": "redacted_thinking"}},
+            ),
+            Content.from_function_call(call_id="toolu_test", name="lookup", arguments={}),
+        ],
+    )
+
+    with pytest.raises(ContentError, match="redacted thinking"):
+        client._prepare_message_for_anthropic(message)
+
+
+def test_streaming_replay_preserves_redacted_thinking_block(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Streamed redacted reasoning stays its own reasoning item and is replayed before tool_use.
+
+    Offline synthetic SDK events — no network. Regression for microsoft/agent-framework#10104.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    events: list[BetaRawMessageStreamEvent] = [
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": "Visible summary.", "signature": ""},
+        }),
+        BetaRawContentBlockDeltaEvent.model_validate({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "signature_delta", "signature": "synthetic-signature"},
+        }),
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "redacted_thinking", "data": "synthetic-opaque-data"},
+        }),
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 2,
+            "content_block": {"type": "tool_use", "id": "toolu_test", "name": "lookup", "input": {}},
+        }),
+    ]
+
+    updates = [client._process_stream_event(event) for event in events]
+    response = ChatResponse.from_updates([update for update in updates if update is not None])
+    message = response.messages[0]
+    reasoning = [content for content in message.contents if content.type == "text_reasoning"]
+    assert len(reasoning) == 2
+
+    prepared = client._prepare_message_for_anthropic(message)
+    assert [block["type"] for block in prepared["content"]] == ["thinking", "redacted_thinking", "tool_use"]
+    assert prepared["content"][0]["signature"] == "synthetic-signature"
+    assert prepared["content"][1]["data"] == "synthetic-opaque-data"
+
+
+def test_streaming_replay_preserves_only_redacted_thinking_block(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A streamed response containing only a redacted thinking block still replays it."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    events: list[BetaRawMessageStreamEvent] = [
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "redacted_thinking", "data": "synthetic-opaque-data"},
+        }),
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "tool_use", "id": "toolu_test", "name": "lookup", "input": {}},
+        }),
+    ]
+
+    updates = [client._process_stream_event(event) for event in events]
+    response = ChatResponse.from_updates([update for update in updates if update is not None])
+
+    prepared = client._prepare_message_for_anthropic(response.messages[0])
+    assert prepared["content"] == [
+        {"type": "redacted_thinking", "data": "synthetic-opaque-data"},
+        {"type": "tool_use", "id": "toolu_test", "name": "lookup", "input": {}},
+    ]
 
 
 def test_streaming_replay_preserves_empty_signed_thinking_block(
@@ -906,6 +1102,251 @@ def test_prepare_message_for_anthropic_mcp_server_tool_result_none_output(
     assert result["content"][0]["type"] == "mcp_tool_result"
     assert result["content"][0]["tool_use_id"] == "mcp_call_789"
     assert result["content"][0]["content"] == ""
+
+
+def test_prepare_message_for_anthropic_mcp_server_tool_result_content_list(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """List-based MCP results must replay as text blocks, not Content objects."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_mcp_server_tool_result(
+                call_id="mcp_call_list",
+                output=[
+                    Content.from_text("Found 3 results."),
+                    {"type": "text", "text": "Second block."},
+                    Content.from_uri("https://example.com/a.png", media_type="image/png"),
+                ],
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["role"] == "user"
+    assert len(result["content"]) == 1
+    assert result["content"][0]["type"] == "mcp_tool_result"
+    assert result["content"][0]["content"] == [
+        {"type": "text", "text": "Found 3 results."},
+        {"type": "text", "text": "Second block."},
+    ]
+    # The request body must remain JSON serializable.
+    json.dumps(result)
+
+
+def test_prepare_message_for_anthropic_mcp_server_tool_result_top_level_text_mapping(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A top-level text-block mapping must replay as a text block, not a Python repr."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_mcp_server_tool_result(
+                call_id="mcp_call_top_level",
+                output={"type": "text", "text": "top-level"},
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"][0]["content"] == [{"type": "text", "text": "top-level"}]
+    json.dumps(result)
+
+
+def test_prepare_message_for_anthropic_mcp_server_tool_result_top_level_non_text_mapping(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A non-dict Mapping must be JSON-encoded rather than stringified as a Python repr."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_mcp_server_tool_result(
+                call_id="mcp_call_json",
+                output=MappingProxyType({"result": "ok", "count": 2}),
+            )
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert json.loads(result["content"][0]["content"]) == {"result": "ok", "count": 2}
+    json.dumps(result)
+
+
+def test_parse_then_replay_anthropic_mcp_tool_result_list_content(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A parsed list-content MCP result must be replayed as serializable text blocks."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_text_block = MagicMock()
+    mock_text_block.type = "text"
+    mock_text_block.text = "Result text"
+
+    mock_block = MagicMock()
+    mock_block.type = "mcp_tool_result"
+    mock_block.tool_use_id = "call_123"
+    mock_block.content = [mock_text_block]
+
+    parsed = client._parse_contents_from_anthropic([mock_block])
+    result = client._prepare_message_for_anthropic(Message(role="tool", contents=parsed))
+
+    assert result["content"][0]["type"] == "mcp_tool_result"
+    assert result["content"][0]["content"] == [{"type": "text", "text": "Result text"}]
+    json.dumps(result)
+
+
+def test_prepare_message_for_anthropic_mcp_server_tool_result_after_round_trip(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Persisted MCP results must replay after Content.from_dict rebuilds nested Content."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_mcp_server_tool_result(
+                call_id="mcp_call_roundtrip",
+                output=[Content.from_text("round-trip output")],
+            )
+        ],
+    )
+    restored = Message.from_dict(message.to_dict())
+
+    result = client._prepare_message_for_anthropic(restored)
+
+    assert result["content"][0]["type"] == "mcp_tool_result"
+    assert result["content"][0]["content"] == [{"type": "text", "text": "round-trip output"}]
+    json.dumps(result)
+
+
+def _mcp_tool_result_block(*, is_error: bool | None, text: str = "Result text") -> MagicMock:
+    text_block = MagicMock()
+    text_block.type = "text"
+    text_block.text = text
+
+    block = MagicMock()
+    block.type = "mcp_tool_result"
+    block.tool_use_id = "call_123"
+    block.content = [text_block]
+    block.is_error = is_error
+    return block
+
+
+def test_parse_then_replay_anthropic_mcp_tool_result_preserves_is_error(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """The provider error status must survive parsing, persistence, and replay."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    block = _mcp_tool_result_block(is_error=True, text="failed result")
+
+    parsed = client._parse_contents_from_anthropic([block])
+    restored = Message.from_dict(Message(role="tool", contents=parsed).to_dict())
+    result = client._prepare_message_for_anthropic(restored)
+
+    assert result["content"][0]["content"] == [{"type": "text", "text": "failed result"}]
+    assert result["content"][0]["is_error"] is True
+
+
+def test_process_stream_event_anthropic_mcp_tool_result_preserves_is_error(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Streaming MCP results must keep is_error through the real stream-event path."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    block = _mcp_tool_result_block(is_error=True, text="streamed failure")
+
+    event = MagicMock()
+    event.type = "content_block_start"
+    event.content_block = block
+
+    update = client._process_stream_event(event)
+    assert update is not None
+
+    restored = Message.from_dict(Message(role="tool", contents=update.contents).to_dict())
+    result = client._prepare_message_for_anthropic(restored)
+
+    assert result["content"][0]["content"] == [{"type": "text", "text": "streamed failure"}]
+    assert result["content"][0]["is_error"] is True
+
+
+def test_parse_then_replay_anthropic_mcp_tool_result_preserves_false_after_persistence(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A false MCP error status must survive message persistence and replay."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    parsed = client._parse_contents_from_anthropic([_mcp_tool_result_block(is_error=False)])
+    restored = Message.from_dict(Message(role="tool", contents=parsed).to_dict())
+
+    result = client._prepare_message_for_anthropic(restored)
+
+    assert result["content"][0]["is_error"] is False
+
+
+def test_parse_then_replay_anthropic_mcp_tool_result_without_is_error(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """An absent provider error field must remain absent in the replay payload."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    text_block = MagicMock()
+    text_block.type = "text"
+    text_block.text = "result"
+
+    block = MagicMock()
+    block.type = "mcp_tool_result"
+    block.tool_use_id = "call_without_error_flag"
+    block.content = [text_block]
+    # Deliberately do not set is_error; the parser must omit the metadata.
+
+    parsed = client._parse_contents_from_anthropic([block])
+    result = client._prepare_message_for_anthropic(Message(role="tool", contents=parsed))
+
+    assert "is_error" not in result["content"][0]
+
+
+@pytest.mark.parametrize(("is_error", "expected"), [(False, False), (None, None)])
+def test_prepare_message_for_anthropic_mcp_server_tool_result_is_error_optional(
+    mock_anthropic_client: MagicMock,
+    is_error: bool | None,
+    expected: bool | None,
+) -> None:
+    """A false status is preserved; a missing status is omitted."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    parsed = client._parse_contents_from_anthropic([_mcp_tool_result_block(is_error=is_error)])
+
+    result = client._prepare_message_for_anthropic(Message(role="tool", contents=parsed))
+
+    if expected is None:
+        assert "is_error" not in result["content"][0]
+    else:
+        assert result["content"][0]["is_error"] is expected
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        object(),
+        b"binary",
+        Content.from_text("single content"),
+        MappingProxyType({"value": object()}),
+    ],
+)
+def test_prepare_message_for_anthropic_rejects_unsupported_mcp_tool_result_output(
+    mock_anthropic_client: MagicMock,
+    output: Any,
+) -> None:
+    """Unsupported MCP output shapes fail explicitly instead of being stringified."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="tool",
+        contents=[Content.from_mcp_server_tool_result(call_id="mcp_call", output=output)],
+    )
+
+    with pytest.raises(ContentError):
+        client._prepare_message_for_anthropic(message)
 
 
 def test_prepare_messages_for_anthropic_with_system(
@@ -2115,10 +2556,10 @@ def test_parse_contents_from_anthropic_text(mock_anthropic_client: MagicMock) ->
     assert result[0].text == "Hello!"
 
 
-def test_parse_contents_records_dropped_redacted_thinking(
+def test_parse_contents_preserves_redacted_thinking(
     mock_anthropic_client: MagicMock,
 ) -> None:
-    """Dropped native blocks remain visible to the pause-turn replay guard."""
+    """Redacted reasoning is kept as an opaque reasoning item instead of being dropped."""
     client = create_test_anthropic_client(mock_anthropic_client)
     request_state = _AnthropicRequestState()
 
@@ -2127,8 +2568,12 @@ def test_parse_contents_records_dropped_redacted_thinking(
         request_state,
     )
 
-    assert result == []
-    assert request_state.dropped_content_types == {"redacted_thinking"}
+    assert len(result) == 1
+    assert result[0].type == "text_reasoning"
+    assert result[0].text is None
+    assert result[0].protected_data == "opaque"
+    assert result[0].additional_properties["anthropic"]["reasoning_block"] == "redacted_thinking"
+    assert request_state.dropped_content_types == set()
 
 
 def test_parse_contents_from_anthropic_tool_use(
@@ -3203,7 +3648,13 @@ def test_process_stream_event_message_start_sets_assistant_role(mock_anthropic_c
     assert result.role == "assistant"
 
 
-def _usage_message_start_event(*, input_tokens: int, output_tokens: int) -> MagicMock:
+def _usage_message_start_event(
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cache_creation_input_tokens: int | None = None,
+    cache_read_input_tokens: int | None = None,
+) -> MagicMock:
     event = MagicMock()
     event.type = "message_start"
     event.message.id = "msg_usage"
@@ -3211,7 +3662,12 @@ def _usage_message_start_event(*, input_tokens: int, output_tokens: int) -> Magi
     event.message.model = "claude-3-5-sonnet-20241022"
     event.message.content = []
     event.message.stop_reason = None
-    event.message.usage = BetaUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+    event.message.usage = BetaUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+    )
     return event
 
 
@@ -3280,6 +3736,48 @@ def test_streaming_usage_delta_input_not_double_counted(mock_anthropic_client: M
     assert response.usage_details is not None
     assert response.usage_details["output_token_count"] == 25
     assert response.usage_details["input_token_count"] == 12
+
+
+def test_streaming_usage_preserves_cache_tokens_across_delta(mock_anthropic_client: MagicMock) -> None:
+    """message_delta omitting cache_* must keep cache tokens in input_token_count.
+
+    Anthropic often reports cache_creation/cache_read only on message_start. A later
+    message_delta with a higher input_tokens and omitted cache fields must still include
+    the last-seen cache components so incremental conversion reconstructs
+    input + cache_creation + cache_read (e.g. 120+20+30=170), not bare input (120).
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+    emitted: dict[str, int] = {}
+    raw_carry: dict[str, int] = {}
+    updates = [
+        u
+        for u in (
+            client._process_stream_event(
+                _usage_message_start_event(
+                    input_tokens=100,
+                    output_tokens=1,
+                    cache_creation_input_tokens=20,
+                    cache_read_input_tokens=30,
+                ),
+                emitted,
+                raw_usage_carry=raw_carry,
+            ),
+            client._process_stream_event(
+                _usage_message_delta_event(input_tokens=120, output_tokens=25),
+                emitted,
+                raw_usage_carry=raw_carry,
+            ),
+        )
+        if u is not None
+    ]
+
+    response = ChatResponse.from_updates(updates)
+
+    assert response.usage_details is not None
+    assert response.usage_details["output_token_count"] == 25
+    assert response.usage_details["input_token_count"] == 170
+    assert response.usage_details["cache_creation_input_token_count"] == 20
+    assert response.usage_details["cache_read_input_token_count"] == 30
 
 
 def test_process_stream_event_message_start_role_prevents_tool_use_collapse() -> None:
@@ -3638,11 +4136,11 @@ async def test_streaming_mcp_pause_turn_is_not_auto_continued(
     assert response.messages[0].contents[0].parse_arguments() == {}
 
 
-async def test_non_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
+async def test_non_streaming_redacted_thinking_pause_turn_continues(
     mock_anthropic_client: MagicMock,
 ) -> None:
-    """Dropped redacted reasoning prevents an incomplete continuation transcript."""
-    message = BetaMessage(
+    """Redacted reasoning is replayed faithfully, so a paused turn is continued."""
+    paused = BetaMessage(
         id="msg_redacted_pause",
         content=[
             BetaRedactedThinkingBlock(type="redacted_thinking", data="opaque"),
@@ -3654,7 +4152,22 @@ async def test_non_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
         type="message",
         usage=BetaUsage(input_tokens=1, output_tokens=1),
     )
-    mock_anthropic_client.beta.messages.create.return_value = message
+    finished = BetaMessage(
+        id="msg_finished",
+        content=[BetaTextBlock(type="text", text="Finished.")],
+        model="claude-test",
+        role="assistant",
+        stop_reason="end_turn",
+        type="message",
+        usage=BetaUsage(input_tokens=2, output_tokens=1),
+    )
+    requests: list[dict[str, Any]] = []
+
+    async def create(**kwargs: Any) -> BetaMessage:
+        requests.append(kwargs)
+        return [paused, finished][len(requests) - 1]
+
+    mock_anthropic_client.beta.messages.create.side_effect = create
     client = create_test_anthropic_client(mock_anthropic_client)
 
     response = await client._inner_get_response(  # type: ignore[attr-defined]
@@ -3662,17 +4175,21 @@ async def test_non_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
         options={"max_tokens": 64},
     )
 
-    assert mock_anthropic_client.beta.messages.create.call_count == 1
-    assert response.finish_reason == "pause_turn"
-    assert response.text == "Still working."
+    assert len(requests) == 2
+    assert requests[1]["messages"][1]["content"] == [
+        {"type": "redacted_thinking", "data": "opaque"},
+        {"type": "text", "text": "Still working."},
+    ]
+    assert response.finish_reason == "stop"
+    assert [message.text for message in response.messages] == ["Still working.", "Finished."]
 
 
-async def test_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
+async def test_streaming_redacted_thinking_pause_turn_continues(
     mock_anthropic_client: MagicMock,
 ) -> None:
-    """Streaming also retains pause_turn when redacted reasoning was dropped."""
+    """Streaming keeps redacted reasoning replayable, so a paused turn is continued."""
 
-    async def events() -> Any:
+    async def paused_events() -> Any:
         yield _message_start_event("msg_redacted_pause")
         redacted_start = MagicMock()
         redacted_start.type = "content_block_start"
@@ -3691,7 +4208,27 @@ async def test_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
         yield _message_delta_event("pause_turn")
         yield _message_stop_event()
 
-    mock_anthropic_client.beta.messages.create.return_value = events()
+    async def final_events() -> Any:
+        yield _message_start_event("msg_finished")
+        text_start = MagicMock()
+        text_start.type = "content_block_start"
+        text_start.index = 0
+        text_start.content_block.type = "text"
+        text_start.content_block.text = "Finished."
+        text_start.content_block.citations = None
+        yield text_start
+        yield _content_block_stop_event(index=0)
+        yield _message_delta_event("end_turn")
+        yield _message_stop_event()
+
+    requests: list[dict[str, Any]] = []
+    streams = [paused_events(), final_events()]
+
+    async def create(**kwargs: Any) -> Any:
+        requests.append(kwargs)
+        return streams[len(requests) - 1]
+
+    mock_anthropic_client.beta.messages.create.side_effect = create
     client = create_test_anthropic_client(mock_anthropic_client)
     stream = client._inner_get_response(  # type: ignore[attr-defined]
         messages=[Message(role="user", contents=["Think carefully."])],
@@ -3703,9 +4240,13 @@ async def test_streaming_redacted_thinking_pause_turn_is_not_auto_continued(
     _ = [update async for update in stream]
     response = await stream.get_final_response()
 
-    assert mock_anthropic_client.beta.messages.create.call_count == 1
-    assert response.finish_reason == "pause_turn"
-    assert response.text == "Still working."
+    assert len(requests) == 2
+    assert requests[1]["messages"][1]["content"] == [
+        {"type": "redacted_thinking", "data": "opaque"},
+        {"type": "text", "text": "Still working."},
+    ]
+    assert response.finish_reason == "stop"
+    assert [message.text for message in response.messages] == ["Still working.", "Finished."]
 
 
 async def test_anthropic_pause_turn_limit_preserves_finish_reason(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4886,7 +5427,8 @@ def test_parse_usage_with_cache_tokens(mock_anthropic_client: MagicMock) -> None
     assert result is not None
     result_dict = cast("dict[str, Any]", result)
     assert result["output_token_count"] == 50
-    assert result["input_token_count"] == 100
+    # 100 input + 20 cache_creation + 30 cache_read
+    assert result["input_token_count"] == 150
     assert result_dict["anthropic.cache_creation_input_tokens"] == 20
     assert result_dict["anthropic.cache_read_input_tokens"] == 30
     assert result["cache_creation_input_token_count"] == 20
@@ -5370,6 +5912,89 @@ def test_parse_citations_search_result_location(
 
     assert result is not None
     assert len(result) > 0
+
+
+def test_parse_citations_char_location_uses_document_title(mock_anthropic_client: MagicMock) -> None:
+    """A real char_location citation exposes ``document_title``; parsing must not read a missing ``title``."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    citation = BetaCitationCharLocation(
+        type="char_location",
+        cited_text="The sky is blue.",
+        document_index=0,
+        document_title="Facts",
+        start_char_index=0,
+        end_char_index=16,
+        file_id=None,
+    )
+    block = BetaTextBlock(type="text", text="The sky is blue.", citations=[citation])
+
+    result = client._parse_citations_from_anthropic(block)
+
+    assert result is not None
+    assert len(result) == 1
+    assert result[0]["title"] == "Facts"
+    assert result[0]["snippet"] == "The sky is blue."
+    assert result[0]["annotated_regions"] == [{"type": "text_span", "start_index": 0, "end_index": 16}]
+
+
+async def test_streaming_citations_delta_surfaces_annotations(mock_anthropic_client: MagicMock) -> None:
+    """Citations streamed as citations_delta events end up as annotations on the text, like non-streaming."""
+    char_citation = BetaCitationCharLocation(
+        type="char_location",
+        cited_text="Paris is sunny today.",
+        document_index=0,
+        document_title="Weather report",
+        start_char_index=0,
+        end_char_index=21,
+        file_id=None,
+    )
+    web_citation = BetaCitationsWebSearchResultLocation(
+        type="web_search_result_location",
+        url="https://example.com/paris",
+        title="Paris weather",
+        cited_text="Paris is sunny today.",
+        encrypted_index="enc-1",
+    )
+
+    async def events() -> Any:
+        yield _message_start_event("msg_cited")
+        yield BetaRawContentBlockStartEvent(
+            type="content_block_start", index=0, content_block=BetaTextBlock(type="text", text="", citations=None)
+        )
+        for citation in (char_citation, web_citation):
+            yield BetaRawContentBlockDeltaEvent(
+                type="content_block_delta",
+                index=0,
+                delta=BetaCitationsDelta(type="citations_delta", citation=citation),
+            )
+        yield BetaRawContentBlockDeltaEvent(
+            type="content_block_delta", index=0, delta=BetaTextDelta(type="text_delta", text="It is sunny in Paris.")
+        )
+        yield _content_block_stop_event()
+        yield _message_delta_event("end_turn")
+        yield _message_stop_event()
+
+    async def create(**kwargs: Any) -> Any:
+        return events()
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.side_effect = create
+    stream = client.get_response([Message(role="user", contents=["Weather in Paris?"])], stream=True)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    assert response.text == "It is sunny in Paris."
+    annotations = [
+        annotation
+        for message in response.messages
+        for content in message.contents
+        if content.type == "text"
+        for annotation in content.annotations or []
+    ]
+    assert [annotation["title"] for annotation in annotations] == ["Weather report", "Paris weather"]
+    assert annotations[1]["url"] == "https://example.com/paris"
+    assert all(annotation["snippet"] == "Paris is sunny today." for annotation in annotations)
 
 
 @pytest.mark.parametrize(

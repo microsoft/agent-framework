@@ -394,6 +394,11 @@ class ToolApprovalMiddleware(AgentMiddleware):
         upgraded agent may use an improved version of a tool for which the old
         approval is still appropriate. The developer must decide whether each
         standing approval should carry over to the changed tool.
+
+        The rules are not tied to a caller either. Callers that share a session
+        share its standing approvals, for example when one ``AgentExecutor``
+        serves several callers. Give each caller its own session, or its own
+        workflow and executors.
     """
 
     def __init__(
@@ -431,6 +436,19 @@ class ToolApprovalMiddleware(AgentMiddleware):
         mark_feature_used(FeatureIndex.CORE_TOOL_APPROVAL)
         if context.session is None:
             raise RuntimeError("ToolApprovalMiddleware requires an AgentSession.")
+
+        from .._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
+
+        # Claim this middleware's session-state key for the run. Agent tools that share the session, such as
+        # Agent.as_tool(propagate_session=True), keep claimed keys isolated, including for middleware that is
+        # supplied for one run instead of at agent construction. As for the other readers of this private channel,
+        # only a frozenset is an existing claim; any other value is no claim.
+        invocation_kwargs = context.function_invocation_kwargs
+        claim = invocation_kwargs.get(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY)
+        claimed_source_ids: frozenset[str] = (
+            cast("frozenset[str]", claim) if isinstance(claim, frozenset) else frozenset()
+        )
+        invocation_kwargs[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = claimed_source_ids | {self.source_id}
 
         state = _get_state(context.session, source_id=self.source_id)
         session_budget = context.session.state.setdefault(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, {})
@@ -562,6 +580,14 @@ class ToolApprovalMiddleware(AgentMiddleware):
                         remaining_update = copy.copy(update)
                         remaining_update.contents = remaining_contents
                         yield remaining_update
+                    elif update.additional_properties:
+                        metadata_update = copy.copy(update)
+                        metadata_update.contents = []
+                        metadata_update.role = None
+                        metadata_update.author_name = None
+                        metadata_update.message_id = None
+                        metadata_update.merge_mode = None
+                        yield metadata_update
                 if not all_auto_approved or has_other_user_input:
                     return
                 context.messages = []

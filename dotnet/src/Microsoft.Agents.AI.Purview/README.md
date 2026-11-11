@@ -384,6 +384,16 @@ content are serialized to text. Only `UsageContent` is skipped, because it carri
 than user data. Text annotations such as citations, `ErrorContent.Details` and `DataContent.Name`
 are submitted as additional text entries.
 
+### Binary content uses text activities
+
+Both the agent and chat middleware evaluate all prompt content as `UploadText` and all response content
+as `DownloadText`, including binary content. The middleware cannot reliably distinguish a file
+attachment from inline binary content. Sending bytes as Purview binary content does not change the
+activity to `UploadFile` or `DownloadFile`.
+
+Configure DLP policies for `UploadText` and `DownloadText` to cover this content. Policies that block
+only `UploadFile` or `DownloadFile` do not block binary content through this integration.
+
 ### Remote references are not dereferenced
 
 Purview classifies the content it is handed; a reference to content is not the content.

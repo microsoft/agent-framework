@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+from typing import Never
 
 from agent_framework import WorkflowBuilder, WorkflowContext, executor
-from typing_extensions import Never
 
 """
 Sample: Workflow Cancellation

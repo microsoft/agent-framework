@@ -6,8 +6,7 @@ Please install this package via pip:
 pip install agent-framework-declarative
 ```
 
-The package currently advertises Python 3.11–3.13 support. Python 3.10
-installation remains permitted, but compatibility is not guaranteed. Python 3.14 and
+The package currently advertises Python 3.11–3.13 support. Python 3.14 and
 3.15 can install the package, but Power Fx expressions are unavailable because
 the `powerfx` dependency requires a `pythonnet` build that does not support
 those Python versions.
@@ -73,22 +72,41 @@ on HTTPX internals. Compatibility tests cover HTTPX 0.27.0 and 0.28.1.
 
 ## MCP handler session lifetime
 
-`DefaultMCPToolHandler()` reuses MCP sessions through a bounded LRU cache.
-When configured with `client_provider`, it instead invokes the provider and
-creates a fresh MCP tool/session for every invocation, including `tools/list`.
-Sessions are never reused in this mode, even if the provider returns `None`
-or the same `httpx.AsyncClient` instance.
+**Security fix:** `DefaultMCPToolHandler` creates and closes a fresh MCP
+tool/session for every invocation, including `tools/list`. Independently
+constructed workflows may safely share a handler without sharing MCP protocol
+state, even with identical endpoint and header configuration. There is no
+initialized-client or discovery cache.
 
 Each invocation closes its tool/session on success, failure, or cancellation.
-Internally created fallback HTTP clients are also closed; caller-supplied HTTP
-clients remain caller-owned and are never closed by the handler. Calling
-`aclose()` rejects new invocations and waits for active provider-backed
-invocations to finish cleaning up. Calling it from an active invocation's
-context (including provider callbacks, inherited child tasks, and cleanup)
-raises `RuntimeError` before changing handler state, rather than waiting on
-itself. Close the handler outside that context or after the invocation completes.
+Internally created HTTP clients are also closed. The optional `client_provider`
+is called once per invocation and may return a reusable `httpx.AsyncClient`
+to share an HTTP connection pool, not an MCP session. Returned clients are
+borrowed and never closed by the handler. Returning `None` selects an internally
+owned client.
 
-This intentionally incurs connection and initialization overhead and does not
-retain server session state between provider-backed invocations. Applications
-that require shared session ownership must implement an explicitly scoped
-custom `MCPToolHandler`; there is no provider-backed session-cache opt-in.
+Provider, connection, discovery, and transport failures raise exceptions and fail
+the workflow action, including after approval. Remote tool error responses still
+produce `MCPToolResult(is_error=True)` and populate `output.result` with an error
+string. Custom handlers should return error results only for tool-level errors;
+raised exceptions are not converted into workflow results.
+
+The legacy `cache_max_size` parameter is accepted for compatibility, but is
+deprecated and ignored. Passing any non-`None` value emits `DeprecationWarning`;
+the value is not validated. Omitting it or passing `None` emits no warning.
+It cannot restore session caching or sharing.
+
+The handler no longer implements `aclose()` or an async context manager.
+Replace `async with DefaultMCPToolHandler() as handler:`
+with `handler = DefaultMCPToolHandler()` and remove handler shutdown calls.
+Continue to manage caller-owned HTTP clients with their own context manager.
+Hosts must cancel and await active invocations before closing borrowed clients;
+admission limits and deadlines also belong to the host.
+
+This intentionally adds connection and initialization overhead. Implicit
+server-side state does not persist across tool calls, approval waits, or
+checkpoint resumes. Workflow checkpoints and approval verification are
+unchanged; no request-scope migration flag is required. Applications that need
+MCP session continuity must provide an explicitly scoped custom `MCPToolHandler`
+or pass explicit remote state handles as tool arguments. See the
+[decision record](../../../docs/decisions/0053-python-invocation-owned-mcp-sessions.md).

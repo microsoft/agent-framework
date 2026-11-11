@@ -9,7 +9,6 @@ pip install agent-framework-ag-ui
 ```
 
 The base package and optional A2UI integration support Python 3.11–3.15.
-Python 3.10 installation remains permitted, but compatibility is not guaranteed.
 
 Install the optional A2UI integration with:
 
@@ -66,9 +65,15 @@ app = FastAPI()
 add_agent_framework_fastapi_endpoint(app, workflow, "/", single_user=True)
 ```
 
+One workflow instance serves every request, so its executors keep their state across callers. A shared workflow that
+holds an `AgentExecutor` (its `AgentSession` keeps history, pending approvals, and standing approval rules) serves only
+the first authorization scope that runs it. Use `workflow_factory`, as shown next, to serve several scopes.
+
 ### Server (Thread-Scoped WorkflowBuilder)
 
-Use `workflow_factory` when your workflow keeps runtime state (for example pending `request_info` interrupts) and must be isolated per AG-UI thread:
+Use `workflow_factory` when your workflow keeps runtime state (for example pending `request_info` interrupts or
+`AgentExecutor` sessions) and must be isolated per authorization scope and AG-UI thread. Build the workflow and its
+executors inside the factory:
 
 ```python
 from fastapi import FastAPI
@@ -77,7 +82,7 @@ from agent_framework.ag_ui import AgentFrameworkWorkflow, add_agent_framework_fa
 
 
 def build_workflow_for_thread(thread_id: str) -> Workflow:
-    # Build a fresh workflow instance for each thread id.
+    # Build a fresh workflow instance, including new AgentExecutor instances, for each thread id.
     return WorkflowBuilder(start_executor=...).build()
 
 
@@ -350,6 +355,40 @@ Every AG-UI endpoint must choose an authorization mode:
 Authentication in the separate `dependencies` list can allow or reject a request, but its return value does not scope
 server-side state. Do not combine authentication-only dependencies with `single_user=True` when different authenticated
 callers can reach the endpoint.
+
+### Workflows That Hold Agent Sessions
+
+An `AgentExecutor` keeps one `AgentSession` between runs. Conversation history, pending approval requests, and
+standing "always approve" rules live there, and the session is not tied to a caller. An endpoint therefore binds each
+`AgentExecutor`, and the session it holds, to the first authorization scope that runs it. A shared `Workflow` or
+`WorkflowAgent` that holds one serves only that scope. A run in another scope ends with a `WORKFLOW_SCOPE_CONFLICT`
+`RUN_ERROR` before it reaches the model. A run without a scope owns what it runs in the same way, so a workflow that ran
+locally is not handed to a scope later. A snapshot replay starts no workflow and does not take ownership. Pass
+`AgentFrameworkWorkflow(workflow_factory=...)` with a factory that builds a new workflow, including new `AgentExecutor`
+and `AgentSession` instances, for every call to serve several scopes. A factory that returns a workflow, an executor, or
+a session it shares with another scope is refused the same way. Workflows without an `AgentExecutor` are not bound to a
+scope; their pending interrupts stay fenced to the scope and thread that raised them.
+
+With `single_user=True`, or with a resolver that returns one constant scope, a shared workflow keeps one conversation
+state for every thread. Use `workflow_factory` when threads must stay independent.
+
+The endpoint follows live `AgentExecutor` and `AgentSession` objects. It cannot see state that a factory loads from
+storage into a new object. For example, `AgentSession.from_dict()` and `SessionStore.get()` return new objects with the
+same session id and state, so two scopes that load one stored session share its history. The factory receives only the
+thread id, and it runs once for each scope and thread. AG-UI does not pass it the authorization scope. A factory must
+therefore start every session with fresh, independent state. Do not restore session state that is keyed by the thread
+id alone. To continue a conversation, use `checkpoint_storage`: AG-UI restores a checkpoint only for the scope and
+thread that saved it. The rule does not cover executors that are not `AgentExecutor`, or state that sessions share
+outside the session object, for example a `state` dictionary or a `service_session_id`.
+
+AG-UI does not support an agent that exposes a `WorkflowAgent` as a tool (`WorkflowAgent.as_tool()`), however the tool
+gets into the agent, because every caller of that agent would reach the same workflow and its executor sessions. AG-UI
+rejects what it can see. `add_agent_framework_fastapi_endpoint` raises `ValueError` for an agent or workflow that lists
+one, with `single_user=True` as well. When a workflow factory builds one, the run ends with a
+`WORKFLOW_AGENT_TOOL_UNSUPPORTED` `RUN_ERROR` before it reaches the model. AG-UI cannot see a workflow tool that a
+context provider adds while a run is prepared, or a tool function of your own that calls a workflow. Those stay
+unsupported, and AG-UI does not isolate their callers. Serve the workflow with
+`AgentFrameworkWorkflow(workflow_factory=...)`, or build the workflow inside the tool function for every call.
 
 ### Stable Single-User Scope
 
