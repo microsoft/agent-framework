@@ -106,7 +106,7 @@ def build_workflow(request: ResponsesRequest) -> Workflow:
 
 
 async def parse_input(request: ResponsesRequest) -> WorkflowTurn[list[Message]]:
-    """Use the explicit current-turn message migration helper; checkpoints retain prior workflow state."""
+    """Use the explicit current-turn message helper; checkpoints retain prior workflow state."""
     return WorkflowTurn(input=await response_input_messages(request))
 
 

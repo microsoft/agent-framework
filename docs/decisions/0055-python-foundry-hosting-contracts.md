@@ -44,12 +44,13 @@ See the [Foundry Hosting README](../../python/packages/foundry_hosting/README.md
 Use `ResponsesHostServer` and `InvocationsHostServer` for agents, and
 `ResponsesWorkflowHostServer` and `InvocationsWorkflowHostServer` for native workflows.
 Agent hosts reject `WorkflowAgent`; workflow hosts require a factory returning a native `Workflow`.
-Do not silently unwrap agents, migrate their state, or retain a combined-host compatibility shim.
+Do not silently unwrap agents or migrate their state.
 
 Workflow hosts expose checkpoint storage rather than agent-session storage or agent history settings.
-The Responses workflow host owns native execution directly. Share the Invocations engine between its
-public hosts rather than duplicating it. Group each protocol into agent, workflow, and shared modules,
-with cross-protocol request contracts and factory resolution in a central shared module.
+Each of the four hosts owns its own construction, execution, and validation. Do not route agent and workflow
+execution through a shared host with mode switches; that couples their validation rules. Group each protocol into
+agent and workflow modules. Shared modules hold only protocol-neutral utilities, such as request contracts,
+factory resolution, and SSE framing.
 
 Keep all hosts in one package. Responses is the initial stable-surface target; Invocations and Toolbox
 remain experimental. Separate classes do not require separate distribution packages.
@@ -57,10 +58,10 @@ remain experimental. Separate classes do not require separate distribution packa
 ### Request adaptation and construction
 
 Use `parse_input` for custom input adaptation across both protocols. Agent parsers return `InvocationRun`;
-workflow parsers return `WorkflowTurn` containing either typed start input or pending replies.
+workflow parsers return `WorkflowTurn` containing either typed start input or pending replies. Workflow hosts
+always require a parser; there is no default input conversion.
 Parsing does not replace the host's checkpoint binding or the workflow runtime's reply validation.
 Use `ResponsesRequest` for the Responses wrapper, including factory and option-hook inputs.
-Do not retain aliases for the former parser keywords or request-type name.
 
 Agent hosts accept an instance or a sync/async factory implementing a named-request callable protocol.
 Factories must declare a required `request` parameter and are called as `factory(request=request)`.
@@ -74,12 +75,12 @@ before `prepare_options`. Invocations agent factories receive the Starlette `Req
 and option preparation. Preserve these protocol-specific timings rather than forcing identical signatures
 or inventing a shared options-precedence policy.
 
-Caller model-run options are opt-in for Responses agents, Responses workflows, and Invocations agents.
-Without `prepare_options`, do not forward caller generation settings; preserve developer defaults and
-host-owned storage/background controls. With a hook, forward only its returned, validated mapping.
-This does not prevent application code from inspecting the original request. Responses agent factories
-see translated options before the hook. Native Responses workflow factories run after the hook and
-see its selected options, or an empty option mapping when no hook is configured.
+By default, agent hosts forward only the caller's messages. Do not forward caller generation settings; the
+agent's own `default_options` apply unchanged, together with host-owned storage/background controls. An
+optional `prepare_options` callable on agent hosts is the opt-in customization path; forward only its returned,
+validated mapping. This does not prevent application code from inspecting the original request. Responses
+agent factories see translated options before the hook. Workflow hosts have no option hook: the parser forwards
+model options explicitly through `WorkflowTurn` client kwargs.
 
 Native workflow factories are request-aware and must allocate fresh workflows, executors, agents,
 clients, providers, and mutable tools. A new graph wrapper around shared executors is not isolation.
@@ -109,8 +110,8 @@ Keep three storage decisions distinct:
 
 Use `history_source="host_managed"` by default, with `"agent_managed"` and `"inference_service"`
 as explicit alternatives. `agent_managed` permits developer-owned history providers or downstream
-service storage; it is not restricted to `HistoryProvider`. Remove the constructor `store=` alias,
-including acceptance of `None`, without changing the wire flag or downstream storage controls.
+service storage; it is not restricted to `HistoryProvider`. The constructor selects the backend only through
+`response_store`; this does not change the wire flag or downstream storage controls.
 
 ### Background execution and recovery
 
@@ -168,7 +169,7 @@ from that request, and consumes it. The host stores only a translation map from 
 the original request in that session's state. This map does not authorize execution. Native workflows use
 `request_info` and their exact checkpoint; the host translates wire IDs to request IDs in its checkpoint binding.
 There is no separate public approval-store API, no conditional-write capability for custom session stores, and no
-silent migration of old separate-store approvals.
+import of approvals recorded outside session state.
 
 Do not preflight approval replies before the response starts. The host drops a reply with an unknown wire ID
 with a warning, and the framework does not execute a reply that matches no pending request. A turn whose input
@@ -209,7 +210,7 @@ These decisions do not redesign Core, concurrency, checkpoints, retries, or exte
 - Public signatures identify execution models and their state owners.
 - Shared internals avoid duplicate engines without obscuring public contracts.
 - Request-aware factories support identity-dependent resources but require deliberate isolation and cleanup.
-- The API migration breaks combined-host construction, wrapper hosting, unnamed or zero-argument agent factories, old parser/request names, source literals, and the storage-backend alias.
+- Agent and workflow hosts have separate constructors and validation; wrapper hosting and unnamed or zero-argument agent factories are not supported.
 - Settings, authority, and consent changes require their own implementation and correctness validation; recording a decision does not establish that it has shipped.
 
 ## Validation

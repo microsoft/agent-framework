@@ -1897,29 +1897,12 @@ class TestResponsesHostServerInit:
         with pytest.raises(ValueError, match="history_source='inference_service'"):
             _make_server(agent, background_source="inference_service")
 
-    @pytest.mark.parametrize("old_store", [None, InMemoryResponseProvider()])
-    @pytest.mark.parametrize("with_response_store", [False, True])
-    def test_removed_store_alias_is_rejected_before_sdk_construction(
-        self, old_store: Any, with_response_store: bool
-    ) -> None:
-        agent = _make_agent()
-        kwargs: dict[str, Any] = {"store": old_store}
-        if with_response_store:
-            kwargs["response_store"] = InMemoryResponseProvider()
-        with patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize:
-            with pytest.raises(TypeError, match="store= alias was removed; use response_store="):
-                ResponsesHostServer(agent, **kwargs)
-            initialize.assert_not_called()
-        assert agent.context_providers == []
-
     def test_history_and_background_sources_reject_invalid_values(self) -> None:
         agent = _make_agent()
         with pytest.raises(ValueError, match="history_source"):
             _make_server(agent, history_source="host")
         with pytest.raises(ValueError, match="background_source"):
             _make_server(agent, background_source="host")
-        with pytest.raises(ValueError, match="unsupported_options"):
-            _make_server(agent, unsupported_options="silent")
 
     @pytest.mark.parametrize(
         ("setting", "value"),
@@ -1931,7 +1914,7 @@ class TestResponsesHostServerInit:
             ("background_source", "provider"),
         ],
     )
-    def test_legacy_source_literals_are_rejected(self, setting: str, value: str) -> None:
+    def test_unknown_source_literals_are_rejected(self, setting: str, value: str) -> None:
         with pytest.raises(ValueError, match=setting):
             _make_server(_make_agent(), **{setting: value})
 
@@ -2630,12 +2613,12 @@ class TestAgentSessionPersistence:
             assert "Nested extra_body" in rejected.json()["error"]["message"]
             assert outbound == []
 
-            legacy_default = Agent(
+            default_store_agent = Agent(
                 client=OpenAIChatClient(model="test-model", async_client=openai),
                 default_options=cast(Any, {"extra_body": {"store": True}}),
             )
-            legacy_server = _make_server(legacy_default, history_source="agent_managed")
-            rejected_default = await _post_json(legacy_server, {"input": "unsafe", "store": False})
+            default_store_server = _make_server(default_store_agent, history_source="agent_managed")
+            rejected_default = await _post_json(default_store_server, {"input": "unsafe", "store": False})
             assert rejected_default.json()["status"] == "failed"
             assert "default extra_body" in rejected_default.json()["error"]["message"]
             assert outbound == []
@@ -2651,37 +2634,27 @@ class TestAgentSessionPersistence:
         assert outbound[0]["temperature"] == 0.1
         assert "extra_body" not in outbound[0]
 
-    async def test_unsupported_options_policy_rejects_custom_agent(self) -> None:
+    async def test_custom_agent_runs_messages_only_without_prepare_options(self) -> None:
         agent = _StrictCustomAgent()
-        server = _make_server(
-            agent,
-            history_source="agent_managed",
-            unsupported_options="error",
-            prepare_options=lambda _request, options: options,
-        )
-        response = await _post_json(server, {"input": "hello", "temperature": 0.8})
+        server = _make_server(agent, history_source="agent_managed")
 
-        assert response.json()["status"] == "failed"
-        assert "does not accept caller runtime options" in response.json()["error"]["message"]
-        assert agent.calls == []
-
-    @pytest.mark.parametrize(("policy", "warn"), [("warn", True), ("ignore", False)])
-    async def test_custom_agent_unsupported_options_warning_policy(
-        self, policy: str, warn: bool, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        agent = _StrictCustomAgent()
-        server = _make_server(
-            agent,
-            history_source="agent_managed",
-            unsupported_options=policy,
-            prepare_options=lambda _request, options: options,
-        )
-
-        with caplog.at_level(logging.WARNING):
-            response = await _post(server, temperature=0.5)
+        response = await _post(server, temperature=0.5)
 
         assert response.json()["status"] == "completed"
-        assert ("Agent doesn't support runtime options" in caplog.text) is warn
+        assert len(agent.calls) == 1
+
+    async def test_prepare_options_fails_for_agent_without_options_parameter(self) -> None:
+        agent = _StrictCustomAgent()
+        server = _make_server(
+            agent,
+            history_source="agent_managed",
+            prepare_options=lambda _request, options: {**options, "temperature": 0.8},
+        )
+        response = await _post_json(server, {"input": "hello"})
+
+        assert response.json()["status"] == "failed"
+        assert "does not accept the run options returned by prepare_options" in response.json()["error"]["message"]
+        assert agent.calls == []
 
     @pytest.mark.parametrize(
         ("finish_reason", "expected_status"),
@@ -3828,63 +3801,6 @@ class TestAgentSessionPersistence:
             if record.name == "agent_framework_foundry_hosting._responses_shared" and record.exc_info:
                 exception = record.exc_info[1]
                 assert exception is not None and exception.__cause__ is None and exception.__context__ is None
-
-    async def test_steering_keeps_superseded_snapshot_without_replacing_conversation_head(self) -> None:
-        store = SessionStore()
-        await store.set("conversation-head", AgentSession())
-        first_continues = asyncio.Event()
-        calls = 0
-        agent = _make_agent()
-
-        def run_with_state(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
-            nonlocal calls
-            del args
-            calls += 1
-            turn = calls
-            kwargs["session"].state["turn"] = turn
-
-            async def updates() -> AsyncIterator[AgentResponseUpdate]:
-                yield AgentResponseUpdate(contents=[Content.from_text(f"turn {turn}")], role="assistant")
-                if turn == 1:
-                    await first_continues.wait()
-                    yield AgentResponseUpdate(contents=[Content.from_text("stale")], role="assistant")
-
-            return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
-
-        agent.run = MagicMock(side_effect=run_with_state)
-        server = _make_server(agent, session_store=store)
-        # Exercise the handler's superseded-turn snapshot invariant without starting SDK steering.
-        server._host_options = ResponsesServerOptions(steerable_conversations=True)  # pyright: ignore[reportPrivateUsage]
-        first = ResponseContext(
-            response_id="first-response", conversation_id="conversation-head", mode_flags=MagicMock()
-        )
-        second = ResponseContext(
-            response_id="second-response", conversation_id="conversation-head", mode_flags=MagicMock()
-        )
-        first_signal = asyncio.Event()
-        with (
-            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
-        ):
-            first_handler = server._handle_response(CreateResponse(input="first"), first, first_signal)
-            async for event in first_handler:
-                if isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
-                    break
-            newer = [
-                event
-                async for event in server._handle_response(CreateResponse(input="second"), second, asyncio.Event())
-            ]
-            first_signal.set()
-            older = [event async for event in first_handler]
-
-        assert isinstance(newer[-1], Mapping) and newer[-1]["type"] == "response.completed"
-        assert isinstance(older[-1], Mapping) and older[-1]["type"] == "response.completed"
-        first_snapshot = await store.get("first-response")
-        second_snapshot = await store.get("second-response")
-        conversation_head = await store.get("conversation-head")
-        assert first_snapshot is not None and first_snapshot.state["turn"] == 1
-        assert second_snapshot is not None and second_snapshot.state["turn"] == 2
-        assert conversation_head is not None and conversation_head.state["turn"] == 2
 
     @pytest.mark.parametrize("existing_head", [False, True])
     async def test_service_conversation_claim_prevents_parallel_provider_dispatch(self, existing_head: bool) -> None:

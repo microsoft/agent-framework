@@ -59,7 +59,7 @@ from agent_framework_foundry_hosting import (
     WorkflowSource,
     WorkflowTurn,
 )
-from agent_framework_foundry_hosting._invocations_shared import _workflow_output, _WorkflowOutputError
+from agent_framework_foundry_hosting._invocations_workflow import _workflow_output, _WorkflowOutputError
 from agent_framework_foundry_hosting._state_store import FoundryCheckpointStore
 from agent_framework_foundry_hosting._workflow_state import FoundryWorkflowBindingStore, WorkflowHead
 
@@ -1245,11 +1245,11 @@ class TestNativeWorkflowStreamingLifecycle:
         byte_limit = 4096 if limit_kind == "events" else 128
         with (
             patch(
-                "agent_framework_foundry_hosting._invocations_shared._MAX_WORKFLOW_SNAPSHOT_EVENTS",
+                "agent_framework_foundry_hosting._invocations_workflow._MAX_WORKFLOW_SNAPSHOT_EVENTS",
                 event_limit,
             ),
             patch(
-                "agent_framework_foundry_hosting._invocations_shared._MAX_WORKFLOW_SNAPSHOT_BYTES",
+                "agent_framework_foundry_hosting._invocations_workflow._MAX_WORKFLOW_SNAPSHOT_BYTES",
                 byte_limit,
             ),
         ):

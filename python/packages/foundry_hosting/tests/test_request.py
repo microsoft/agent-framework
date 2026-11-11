@@ -18,7 +18,6 @@ from agent_framework_foundry_hosting._shared import (
     response_run_options,
     validate_default_transport_options,
     validate_request_options,
-    validate_unsupported_options,
 )
 
 
@@ -151,16 +150,6 @@ def test_default_transport_cannot_override_host_storage_or_identity() -> None:
         validate_default_transport_options({"extra_body": {"extra_body": {"store": True}}}, allow_agent_store=True)
     validate_default_transport_options({"extra_body": {"store": True}}, allow_agent_store=True)
     validate_default_transport_options({"extra_body": {"temperature": 0.5}}, allow_agent_store=False)
-
-
-@pytest.mark.parametrize("mode", ["ignore", "warn", "error"])
-def test_supported_unsupported_option_modes(mode: str) -> None:
-    assert validate_unsupported_options(mode) == mode
-
-
-def test_unknown_unsupported_option_mode_fails_at_construction() -> None:
-    with pytest.raises(ValueError, match="unsupported_options"):
-        validate_unsupported_options("silent")
 
 
 def test_invocation_run_accepts_typed_messages_with_independent_defaults() -> None:

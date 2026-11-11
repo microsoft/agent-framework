@@ -19,13 +19,13 @@ def _agent_factory(*, request: ResponsesRequest) -> SupportsAgentRun:
 def main() -> None:
     """Confirm that the constructor rejects steering before creating an agent or host."""
     try:
-        ResponsesHostServer(agent=_agent_factory, steerable_conversations=True)
+        ResponsesHostServer(agent=_agent_factory, steerable_conversations=True)  # type: ignore[call-arg]
     except TypeError as exc:
-        if "steerable_conversations is no longer a supported host setting" not in str(exc):
+        if "steerable_conversations" not in str(exc):
             raise
         print("Steering is temporarily unavailable; no agent or host was started.")
         return
-    raise RuntimeError("Steering guard was removed; restore end-to-end and queue-overflow verification.")
+    raise RuntimeError("The host accepted steering; restore end-to-end and queue-overflow verification.")
 
 
 if __name__ == "__main__":

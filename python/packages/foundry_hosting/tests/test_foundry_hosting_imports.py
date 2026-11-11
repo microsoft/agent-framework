@@ -6,7 +6,7 @@ import inspect
 import subprocess
 import sys
 import textwrap
-from typing import Any, cast
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -94,17 +94,13 @@ def test_host_signatures_expose_only_the_selected_execution_model(protocol: str)
     assert workflow_parameters["workflow"].default is inspect.Parameter.empty
     assert workflow_parameters[parser].default is inspect.Parameter.empty
     assert workflow_parameters[parser].kind is inspect.Parameter.KEYWORD_ONLY
-    for legacy in ("parse_response", "parse_request"):
-        assert legacy not in agent_parameters
-        assert legacy not in workflow_parameters
     assert "checkpoint_store_provider" in workflow_parameters
     assert "checkpoint_store_provider" not in agent_parameters
-    for name in ("agent", "agent_session_store_provider", "history_source", "background_source", "unsupported_options"):
+    for name in ("agent", "agent_session_store_provider", "history_source", "background_source", "prepare_options"):
         assert name not in workflow_parameters
-    assert ("prepare_options" in workflow_parameters) is (protocol == "Responses")
+    assert "prepare_options" in agent_parameters
     if protocol == "Responses":
         assert "response_store" in agent_parameters
-        assert "store" not in agent_parameters
 
 
 @pytest.mark.parametrize("protocol", ["Responses", "Invocations"])
@@ -136,31 +132,15 @@ def test_agent_hosts_reject_ambiguous_factories_before_sdk_construction(protocol
         initialize.assert_not_called()
 
 
+@pytest.mark.parametrize("protocol", ["Responses", "Invocations"])
 @pytest.mark.parametrize(
-    ("protocol", "setting"),
-    [
-        ("Responses", "agent"),
-        ("Responses", "agent_session_store_provider"),
-        ("Responses", "function_approval_store_provider"),
-        ("Responses", "history_source"),
-        ("Responses", "background_source"),
-        ("Responses", "unsupported_options"),
-        ("Responses", "store"),
-    ],
+    "setting",
+    ["agent_session_store_provider", "history_source", "background_source", "max_history_items", "prepare_options"],
 )
-def test_workflow_hosts_reject_agent_settings_before_sdk_construction(protocol: str, setting: str) -> None:
+def test_workflow_hosts_do_not_accept_agent_settings(protocol: str, setting: str) -> None:
     workflow_host = getattr(hosting, f"{protocol}WorkflowHostServer")
-    parser = "parse_input"
-    values: dict[str, Any] = {parser: lambda _: None, setting: None}
-    base = (
-        "azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost"
-        if protocol == "Responses"
-        else "azure.ai.agentserver.invocations.InvocationAgentServerHost"
-    )
-    with patch(f"{base}.__init__", return_value=None) as initialize:
-        with pytest.raises(TypeError, match=setting):
-            workflow_host(workflow=lambda _: None, **values)
-        initialize.assert_not_called()
+    with pytest.raises(TypeError, match=setting):
+        workflow_host(workflow=lambda request: None, parse_input=lambda _: None, **{setting: None})
 
 
 @pytest.mark.parametrize("protocol", ["Responses", "Invocations"])
@@ -171,23 +151,3 @@ def test_workflow_hosts_validate_factories_and_parsers_at_construction(protocol:
         workflow_host(workflow=lambda _: None, **{parser: None})
     with pytest.raises(TypeError, match="one request"):
         workflow_host(workflow=lambda: None, **{parser: lambda _: None})
-
-
-def test_legacy_responses_request_name_is_not_exported() -> None:
-    assert "HostedResponseRequest" not in hosting.__all__
-    assert "HostedResponseRequest" not in dir(hosting)
-    with pytest.raises(AttributeError, match="HostedResponseRequest"):
-        hosting.__getattr__("HostedResponseRequest")
-
-
-def test_responses_workflow_host_rejects_agent_history_limit_even_when_none() -> None:
-    with (
-        patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize,
-        pytest.raises(TypeError, match="max_history_items"),
-    ):
-        cast(Any, hosting.ResponsesWorkflowHostServer)(
-            workflow=lambda _: None,
-            parse_input=lambda _: None,
-            max_history_items=None,
-        )
-    initialize.assert_not_called()

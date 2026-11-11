@@ -1,7 +1,7 @@
 # Long-running Responses agent (steering temporarily unavailable)
 
-**Steering is currently gated.** `ResponsesHostServer` rejects the removed
-`steerable_conversations` setting with `TypeError` during construction rather than starting a
+**Steering is currently gated.** `ResponsesHostServer` has no
+`steerable_conversations` setting and raises `TypeError` during construction rather than starting a
 TaskManager that can retain unbounded futures after rejected steering requests. The upstream fix is
 [Azure/azure-sdk-for-python#49233](https://github.com/Azure/azure-sdk-for-python/pull/49233);
 steering will be re-enabled only after a patched official `azure-ai-agentserver-core` wheel is released,

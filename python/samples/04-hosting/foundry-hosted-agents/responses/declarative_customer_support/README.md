@@ -5,7 +5,7 @@ using `InvokeAzureAgent`, `ConditionGroup`, `SendActivity`, and Power Fx
 expressions. [`main.py`](main.py) hosts the built declarative `Workflow`
 directly through `ResponsesWorkflowHostServer(workflow=..., parse_input=...)`.
 
-The parser uses the explicit `response_input_messages()` migration helper for
+The parser uses the explicit `response_input_messages()` helper for
 the declarative workflow's `list[Message]` start contract. The host restores the
 exact scoped MAF checkpoint first; it does not silently unwrap a
 `WorkflowAgent`, rebuild outer Responses history as workflow state, or reuse a
@@ -13,9 +13,8 @@ downstream service session.
 
 Every request-aware factory call creates fresh agents, Foundry clients,
 credentials, and a fresh graph while the stable IDs in `workflow.yaml` preserve
-checkpoint compatibility. Start a fresh Responses chain when migrating from
-the legacy `.as_agent()` hosting path because old unscoped checkpoints are not
-safe across Foundry sandboxes.
+checkpoint compatibility. Unscoped checkpoints are not safe across Foundry
+sandboxes, so this host does not read them.
 
 Example:
 

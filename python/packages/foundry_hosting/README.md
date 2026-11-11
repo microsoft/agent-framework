@@ -14,47 +14,34 @@ under `agent_framework.foundry`. The package is currently in beta, so its public
 experimental. Responses hosting is the target for an initial stable release, subject to
 qualification. Invocations hosting and `FoundryToolbox` remain experimental.
 
-**Breaking migration:** replace `ResponsesHostServer(workflow=..., parse_response=...)` with
-`ResponsesWorkflowHostServer(workflow=..., parse_input=...)`, and replace
-`InvocationsHostServer(workflow=..., parse_request=...)` with
-`InvocationsWorkflowHostServer(workflow=..., parse_input=...)`.
-There is no combined-host compatibility shim. Agent host construction still uses `agent=`.
-All custom parsers now use `parse_input`, including agent parsers on `InvocationsHostServer`.
-Rename `HostedResponseRequest` imports and annotations to `ResponsesRequest`, including factories and option hooks.
-`InvocationRun` and `WorkflowTurn` are unchanged. Workflow parsers still adapt either typed start input
-or a complete batch of pending replies; they are not limited to initial input or raw JSON deserialization.
-The old parser keywords and request-type name have no compatibility aliases.
+Agent hosts accept `agent=` and an optional `parse_input` (Invocations) or no parser (Responses).
+Workflow hosts accept `workflow=` and a required `parse_input`. Agent parsers return `InvocationRun`;
+workflow parsers return `WorkflowTurn`, with either typed start input or a complete batch of pending replies.
+Factories and option hooks on Responses hosts receive a `ResponsesRequest`.
 
-**Caller-options migration:** caller model-run options are no longer forwarded by default.
-For Responses agents, Responses workflows, and Invocations agents, configure `prepare_options`
-to select the options the application accepts. Only the hook's returned, validated mapping is forwarded.
-Without a hook, agent/client defaults still apply. Responses agent factories see translated caller
-options before the hook; native Responses workflow factories see options after the hook.
-The original request remains available to application code.
+**Caller options are opt-in.** By default an agent host forwards only the caller's messages. The agent's own
+`default_options` and client defaults apply unchanged. To accept caller generation settings, configure
+`prepare_options` on an agent host. Only the mapping that the hook returns, after validation, is forwarded.
+Workflow hosts have no option hook: the parser forwards model options explicitly through
+`WorkflowTurn(client_kwargs={"options": ...})`. The original request remains available to application code.
 
-Agent history/background source literals also change without aliases:
+Agent history and background sources use these literals:
 
-| Setting | Previous literal | New literal |
+| Setting | Values | Default |
 | --- | --- | --- |
-| `history_source` | `"agent_server"` | `"host_managed"` |
-| `history_source` | `"agent"` | `"agent_managed"` |
-| `history_source` | `"service"` | `"inference_service"` |
-| `background_source` | `"agent_server"` | `"host_managed"` |
-| `background_source` | `"provider"` | `"inference_service"` |
+| `history_source` | `"host_managed"`, `"agent_managed"`, `"inference_service"` | `"host_managed"` |
+| `background_source` | `"host_managed"`, `"inference_service"` | `"host_managed"` |
 
-These are terminology changes only. The default remains host-managed history and background execution.
-`agent_managed` retains developer-owned provider **or** service storage, not just `HistoryProvider` storage.
-`response_store=` and the wire-level `store` flag keep their existing meanings.
-The deprecated constructor `store=` backend alias is removed. Replace it with `response_store=`;
-even `store=None` is rejected. This does not rename the caller's per-request `store` flag.
+`agent_managed` covers developer-owned provider **or** service storage, not just `HistoryProvider` storage.
+`response_store=` selects the response store backend; the caller's per-request `store` flag is separate.
 
-`WorkflowSource` now describes a factory only; passing a built workflow fails at construction,
-including local one-shot use. Move graph and executor construction inside the factory;
+`WorkflowSource` is a factory; passing a built workflow fails at construction,
+including local one-shot use. Build graphs and executors inside the factory;
 returning a new wrapper around shared executors does not isolate execution state.
 
 Workflow hosts expose checkpoint storage, not agent-session storage or agent history/background
-policies. Responses workflows retain `prepare_options`; Invocations workflows use the parser's
-explicit workflow kwargs instead. Agent approval persistence follows the
+policies. Both workflow hosts take model options only from the parser's explicit `WorkflowTurn`
+kwargs. Agent approval persistence follows the
 [session-store contract below](#function-approvals).
 Agent hosts reject `WorkflowAgent`, whether supplied directly or returned by a factory.
 `checkpoint_store_provider` is available only on workflow hosts.
@@ -83,25 +70,18 @@ server = ResponsesHostServer(
 ```
 
 Explicit integer settings reject booleans and non-integers with `TypeError`, and nonpositive values with
-`ValueError`. A positive history cap in another agent history mode emits a warning and is ignored. Workflow hosts reject
-`max_history_items`, including explicit `None`; they do not use outer transcript history caps.
-Invocations hosts reject the Responses-only settings `history_source`, `background_source`,
-`max_history_items`, `shutdown_grace_period_seconds`, and `enable_background_recovery`, even when `None`.
-The existing upstream Invocations `graceful_shutdown_timeout` passthrough is a separate setting.
+`ValueError`. A positive history cap in another agent history mode emits a warning and is ignored.
+Each host accepts only the settings listed for it; any other keyword raises `TypeError` at construction.
+The upstream Invocations `graceful_shutdown_timeout` passthrough is a separate setting.
 
 An explicit positive SSE interval takes precedence over a positive environment value. However, the SDK parses
 `SSE_KEEPALIVE_INTERVAL` before applying that override: malformed values, including an empty string, still raise
 `ValueError` even with an explicit interval. Heartbeats do not set a request timeout.
 
-The public `ResponsesServerOptions` bag is no longer accepted through `options=`. Removed host settings
-`default_fetch_history_count`, `default_model`, `create_span_hook`, `additional_server_version`,
-`steerable_conversations`, and `resilient_background` also raise `TypeError`, including when `None`.
-Use the first-class settings above, agent/client defaults, and Agent Framework observability instead.
-
 | Host | Continuation state | `prepare_options` | Background recovery |
 | --- | --- | --- | --- |
 | `ResponsesHostServer` | Agent session plus the selected history source | Sync or async | Eligible inference-service background only |
-| `ResponsesWorkflowHostServer` | Exact native workflow checkpoint | Sync or async, before `parse_input` | Checkpoint-backed outer recovery |
+| `ResponsesWorkflowHostServer` | Exact native workflow checkpoint | Not supported; use `WorkflowTurn` kwargs | Checkpoint-backed outer recovery |
 | `InvocationsHostServer` | Agent session; application-owned model history | Sync or async | No provider-background recovery |
 | `InvocationsWorkflowHostServer` | Exact native workflow checkpoint | Not supported; use `WorkflowTurn` kwargs | No provider-background recovery |
 
@@ -145,8 +125,8 @@ general-purpose MCP approval policy.
 `SupportsAgentRun`, and is invoked once for each request as `factory(request=request)`.
 Factories must declare a required parameter named `request`, either keyword-only or positional-or-keyword.
 Additional parameters may have defaults, and the factory may ignore the request.
-Zero-argument factories and factories with only optional configuration parameters are rejected at construction;
-add a required `request` parameter when migrating them. Responses factories receive a
+Zero-argument factories and factories with only optional configuration parameters are rejected at construction.
+Responses factories receive a
 `ResponsesRequest`, with trusted scope, current-turn input helpers, and translated caller options.
 They run before `prepare_options`; the hook can subsequently replace those options.
 Invocations factories receive the Starlette `Request` after parsing and option preparation.
@@ -174,7 +154,7 @@ outside `AgentSession`. Agent hosts continue agents through their session stores
 instance fields persistent; state
 needed by later requests must remain in the supported stores.
 
-### Migrate `WorkflowAgent` hosting
+### Host workflows natively
 
 `ResponsesHostServer` and `InvocationsHostServer` reject `WorkflowAgent` instances and factory results.
 Host the workflow natively with a request-aware factory returning a built `Workflow`, not `workflow.as_agent()`.
@@ -188,8 +168,8 @@ server = ResponsesWorkflowHostServer(workflow=build_workflow, parse_input=parse_
 ```
 
 Build fresh workflows, executors, and agents for every request. Keep the workflow name and executor IDs stable so
-later requests can find and restore checkpoints. Existing wrapper history, context providers, and event semantics
-are not automatically unwrapped or migrated.
+later requests can find and restore checkpoints. Wrapper history, context providers, and event semantics
+are not unwrapped.
 
 ## Native Responses workflows
 
@@ -255,18 +235,18 @@ fresh factory when its model overrides are already materialized in unchanged
 defaults and a storing client explicitly defaults to `store=False`. Private
 provider continuation is rejected before output is paired or committed.
 
-For legacy message-input workflows, `response_input_messages(request)` converts
+For message-input workflows, `response_input_messages(request)` converts
 only the current Responses turn to `list[Message]`. It does not load outer
-history or decode pending replies. `agent=workflow.as_agent()` is no longer supported.
+history or decode pending replies. Agent hosts reject `workflow.as_agent()`.
 Wrapper context providers, history, event projection, and request-info translation are
-not silently unwrapped. See [Migrate `WorkflowAgent` hosting](#migrate-workflowagent-hosting).
+not silently unwrapped. See [Host workflows natively](#host-workflows-natively).
 
 With `enable_background_recovery=True`, the application must also enable the
 AgentServer resilient task subsystem. Host-owned checkpoint/output pairs
 recover emitted output and usage without selecting newer unpaired workflow
 state. This is not an exactly-once guarantee for external tools: make
-side-effecting operations idempotent. Legacy unscoped workflow state is not
-read; migration starts a fresh Responses chain.
+side-effecting operations idempotent. Unscoped workflow state is not
+read; start a fresh Responses chain.
 
 ### Factory resource lifecycle
 
@@ -399,18 +379,13 @@ background values set by application agent/chat middleware, and adds no Core int
 Factory and developer defaults still undergo background validation before execution. A nested
 `extra_body["background"]` in caller options is rejected before the Responses hook, even when it is `False`.
 
-Native workflows keep a separate checkpoint contract: inner provider background is unsupported, and their
-option hook cannot select it. Outer workflow `background=True` does not enable it for constituent agents.
+Native workflows keep a separate checkpoint contract: inner provider background is unsupported, and parser
+options cannot select it. Outer workflow `background=True` does not enable it for constituent agents.
 A native `WorkflowTurn` rejects client-level and run-level `middleware`.
 Its existing native agent options middleware validates transport controls, storage, and unfinished provider
 responses to preserve checkpoint ownership; that multipurpose policy remains in place.
 
-**Steering is unavailable.** `steerable_conversations` and the other removed `ResponsesServerOptions` settings are
-not host parameters; passing them raises `TypeError` during host construction. The AgentServer SDK can retain
-unbounded futures for rejected turns when its steering queue fills
-([Azure/azure-sdk-for-python#49233](https://github.com/Azure/azure-sdk-for-python/pull/49233)). Any future
-steering support needs a published SDK fix, a dependency update, and a concurrent queue-overflow regression.
-No future SDK version is assumed. Agent background polling without steering is unchanged.
+**Steering is unavailable.** The hosts do not enable AgentServer steerable conversations.
 
 ### Preparing caller options
 
@@ -435,9 +410,9 @@ This works for streaming and non-streaming requests.
 Responses agent ordering is translation, factory resolution and configuration checks, hook, then protected-option
 validation before execution. The factory therefore sees translated options **before** the hook. Invocations
 agent ordering is parser, hook, protected-option validation, factory, then default validation before entering
-the agent. Do not rely on identical HTTP error timing between protocols. Responses workflows run their hook
-before factory resolution and `parse_input`; without a hook their factories see an empty `request.options`,
-but can still inspect `request.request`. Invocations workflows have no option hook.
+the agent. Do not rely on identical HTTP error timing between protocols. Workflow hosts have no option hook;
+a Responses workflow parser can read translated caller options from `request.options` and forward the ones it
+accepts through `WorkflowTurn(client_kwargs={"options": ...})`.
 
 Native request-envelope controls such as identity, storage, and continuation fields are not forwarded as
 generation options. Putting those controls inside `extra_body` raises `ValueError`
@@ -724,17 +699,14 @@ workflow runtime rejects before its first superstep, such as an unknown request 
 fails the turn and leaves the lineage head unchanged, so a valid reply can be retried. A failure after a
 superstep starts blocks that lineage.
 
-**Migration/reset:** pending approvals from the old separate function-approval store are not
-migrated. Start a fresh conversation without an old `previous_response_id` or conversation ID and
-obtain fresh approvals. Do not copy legacy approval records into session state.
-The public `FunctionApprovalStore`, `FoundryFunctionApprovalStore`, and `FunctionApprovalStoreProvider`
-exports and the `function_approval_store_provider=` constructor setting are removed.
+Pending approvals live in session state. Approvals recorded elsewhere cannot be resumed; start a fresh
+conversation and obtain fresh approvals.
 
 ## Native Invocations workflows
 
 Host a native workflow with an explicit application parser rather than wrapping it
 with `workflow.as_agent()`, which agent hosts reject (see
-[Migrate `WorkflowAgent` hosting](#migrate-workflowagent-hosting)):
+[Host workflows natively](#host-workflows-natively)):
 
 ```python
 from agent_framework_foundry_hosting import CheckpointStoreProvider, InvocationsWorkflowHostServer
@@ -822,9 +794,8 @@ including the verified `agent_session_id` query alternative when the platform
 does not configure `FOUNDRY_AGENT_SESSION_ID`. Body/header IDs cannot establish
 sandbox routing or select private checkpoints. The agent path still uses its
 separate `invocation_sessions` store, existing hooks/defaults and JSON/`delta` SSE
-contract. Agent-only `prepare_options` and
-`agent_session_store_provider` are rejected for native workflows rather than
-silently reinterpreted.
+contract. The workflow host does not accept agent-only settings such as
+`prepare_options` or `agent_session_store_provider`.
 
 See the [typed Ticket/review example](../../samples/04-hosting/foundry-hosted-agents/invocations/basic/README.md#native-workflow-with-typed-tickets)
 for the parser, stable graph, checkpoint type allowlist, pending replies,

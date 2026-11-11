@@ -42,8 +42,6 @@ from typing_extensions import TypeVar
 
 from ._scope import FoundryRequestScope
 
-UnsupportedOptions: TypeAlias = Literal["ignore", "warn", "error"]
-
 
 def validate_sse_keep_alive_interval(value: int | None) -> None:
     """Validate an explicit heartbeat interval without replacing SDK environment resolution."""
@@ -54,23 +52,12 @@ def validate_sse_keep_alive_interval(value: int | None) -> None:
             raise ValueError("sse_keep_alive_interval_seconds must be positive when supplied.")
 
 
-def build_response_server_options(
+def _validate_shared_response_settings(
     *,
-    is_workflow: bool,
-    history_source: Literal["host_managed", "agent_managed", "inference_service"] = "host_managed",
-    background_source: Literal["host_managed", "inference_service"] = "host_managed",
-    max_history_items: int | None = None,
-    sse_keep_alive_interval_seconds: int | None = None,
-    shutdown_grace_period_seconds: int = 10,
-    enable_background_recovery: bool = False,
-) -> ResponsesServerOptions:
-    """Validate supported settings and build SDK options without host initialization.
-
-    Omit an unset history limit so the installed SDK supplies its own default.
-    Leave heartbeat environment resolution to the SDK: an explicit positive
-    interval wins over a positive ``SSE_KEEPALIVE_INTERVAL``, otherwise disabled.
-    Neither SDK ``from_env`` history overrides nor host model defaults are loaded.
-    """
+    sse_keep_alive_interval_seconds: int | None,
+    shutdown_grace_period_seconds: int,
+    enable_background_recovery: bool,
+) -> None:
     validate_sse_keep_alive_interval(sse_keep_alive_interval_seconds)
     if isinstance(shutdown_grace_period_seconds, bool) or not isinstance(shutdown_grace_period_seconds, int):
         raise TypeError("shutdown_grace_period_seconds must be an integer.")
@@ -78,18 +65,38 @@ def build_response_server_options(
         raise ValueError("shutdown_grace_period_seconds must be positive.")
     if not isinstance(enable_background_recovery, bool):
         raise TypeError("enable_background_recovery must be a boolean.")
+
+
+def build_agent_response_server_options(
+    *,
+    history_source: Literal["host_managed", "agent_managed", "inference_service"],
+    background_source: Literal["host_managed", "inference_service"],
+    max_history_items: int | None,
+    sse_keep_alive_interval_seconds: int | None,
+    shutdown_grace_period_seconds: int,
+    enable_background_recovery: bool,
+) -> ResponsesServerOptions:
+    """Validate Responses agent host settings and build SDK options without host initialization.
+
+    Omit an unset history limit so the installed SDK supplies its own default.
+    Leave heartbeat environment resolution to the SDK: an explicit positive
+    interval wins over a positive ``SSE_KEEPALIVE_INTERVAL``, otherwise disabled.
+    """
+    _validate_shared_response_settings(
+        sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
+        shutdown_grace_period_seconds=shutdown_grace_period_seconds,
+        enable_background_recovery=enable_background_recovery,
+    )
     if history_source not in ("host_managed", "agent_managed", "inference_service"):
         raise ValueError("history_source must be 'host_managed', 'agent_managed', or 'inference_service'.")
     if background_source not in ("host_managed", "inference_service"):
         raise ValueError("background_source must be 'host_managed' or 'inference_service'.")
-    if background_source == "inference_service" and (is_workflow or history_source != "inference_service"):
-        raise ValueError(
-            "Inference-service background requires a regular agent with history_source='inference_service'."
-        )
-    if enable_background_recovery and not is_workflow and background_source != "inference_service":
+    if background_source == "inference_service" and history_source != "inference_service":
+        raise ValueError("background_source='inference_service' requires history_source='inference_service'.")
+    if enable_background_recovery and background_source != "inference_service":
         raise ValueError(
             "enable_background_recovery=True requires history_source='inference_service' and "
-            "background_source='inference_service' for regular agents."
+            "background_source='inference_service'."
         )
     kwargs: dict[str, Any] = {}
     if max_history_items is not None:
@@ -97,11 +104,11 @@ def build_response_server_options(
             raise TypeError("max_history_items must be an integer or None.")
         if max_history_items <= 0:
             raise ValueError("max_history_items must be positive when supplied.")
-        if is_workflow or history_source != "host_managed":
+        if history_source != "host_managed":
             warnings.warn(
-                "max_history_items is ignored unless used with a regular agent and history_source='host_managed'.",
+                "max_history_items is ignored unless history_source='host_managed'.",
                 UserWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
         else:
             kwargs["default_fetch_history_count"] = max_history_items
@@ -111,6 +118,26 @@ def build_response_server_options(
         resilient_background=enable_background_recovery,
         steerable_conversations=False,
         **kwargs,
+    )
+
+
+def build_workflow_response_server_options(
+    *,
+    sse_keep_alive_interval_seconds: int | None,
+    shutdown_grace_period_seconds: int,
+    enable_background_recovery: bool,
+) -> ResponsesServerOptions:
+    """Validate Responses workflow host settings and build SDK options without host initialization."""
+    _validate_shared_response_settings(
+        sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
+        shutdown_grace_period_seconds=shutdown_grace_period_seconds,
+        enable_background_recovery=enable_background_recovery,
+    )
+    return ResponsesServerOptions(
+        sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
+        shutdown_grace_period_seconds=shutdown_grace_period_seconds,
+        resilient_background=enable_background_recovery,
+        steerable_conversations=False,
     )
 
 
@@ -412,13 +439,6 @@ def validate_default_transport_options(defaults: Mapping[str, Any], *, allow_age
         )
 
 
-def validate_unsupported_options(mode: str) -> UnsupportedOptions:
-    """Reject misspelled unsupported-options policies at host construction."""
-    if mode not in ("ignore", "warn", "error"):
-        raise ValueError("unsupported_options must be 'ignore', 'warn', or 'error'.")
-    return mode
-
-
 RequestT = TypeVar("RequestT")
 AgentRequestT = TypeVar("AgentRequestT", contravariant=True)
 
@@ -498,38 +518,41 @@ WorkflowSource: TypeAlias = Callable[[RequestT], Workflow | Awaitable[Workflow]]
 _MAX_STRONG_RESOURCE_IDENTITIES = 1024
 
 
-_CLIENT_CONTROLS = frozenset({
-    "additional_function_arguments",
-    "agent",
-    "background",
-    "call_id",
-    "checkpoint_id",
-    "checkpoint_storage",
-    "client_kwargs",
-    "continuation_token",
-    "conversation",
-    "conversation_id",
-    "extra_body",
-    "function_invocation_kwargs",
-    "fresh_factory",
-    "input",
-    "instructions",
-    "messages",
-    "middleware",
-    "previous_response_id",
-    "response_id",
-    "responses",
-    "service_session_id",
-    "session",
-    "session_id",
-    "agent_session_id",
-    "store",
-    "stream",
-    "tokenizer",
-    "tools",
-    "user",
-    "user_id",
-})
+_CLIENT_CONTROLS = (
+    frozenset({
+        "additional_function_arguments",
+        "agent",
+        "background",
+        "call_id",
+        "checkpoint_id",
+        "checkpoint_storage",
+        "client_kwargs",
+        "continuation_token",
+        "conversation",
+        "conversation_id",
+        "extra_body",
+        "function_invocation_kwargs",
+        "fresh_factory",
+        "input",
+        "instructions",
+        "messages",
+        "middleware",
+        "previous_response_id",
+        "response_id",
+        "responses",
+        "service_session_id",
+        "session",
+        "session_id",
+        "agent_session_id",
+        "store",
+        "stream",
+        "tokenizer",
+        "tools",
+        "user",
+        "user_id",
+    })
+    | _RUN_CONTROLLED_FIELDS
+)
 
 
 class _NativeAgentOptions(AgentMiddleware):
@@ -585,7 +608,6 @@ def prepare_workflow_kwargs(
     turn: WorkflowTurn[Any],
     scope: FoundryRequestScope,
     *,
-    options: Mapping[str, Any] | None = None,
     stored: bool = True,
     fresh_factory: bool = False,
 ) -> tuple[WorkflowInvocationKwargs, WorkflowInvocationKwargs]:
@@ -622,9 +644,6 @@ def prepare_workflow_kwargs(
             values["options"] = validate_values(values["options"])
             if _CLIENT_CONTROLS.intersection(values["options"]):
                 raise ValueError("Workflow model options cannot override hosting, agent, or transport controls.")
-    model_options = validate_values(options or {})
-    if _CLIENT_CONTROLS.intersection(model_options):
-        raise ValueError("Workflow model options cannot override hosting, agent, or transport controls.")
 
     identity = {"session_id": scope.session_id, "user_id": scope.user_id, "call_id": scope.call_id}
     global_client["additional_function_arguments"] = identity
@@ -656,7 +675,7 @@ def prepare_workflow_kwargs(
         ):
             raise ValueError("store=false cannot disable an external workflow HistoryProvider.")
         values = specific_client.setdefault(executor_id, {})
-        effective = {**global_model_options, **values.get("options", {}), **model_options}
+        effective = {**global_model_options, **values.get("options", {})}
         values["additional_function_arguments"] = identity
         if isinstance(agent_value, Agent):
             if stores:

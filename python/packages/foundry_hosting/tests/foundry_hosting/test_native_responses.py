@@ -916,13 +916,12 @@ async def test_native_agent_executor_applies_options_without_mutating_defaults_o
         return _build(AgentExecutor(agent, id="model"))
 
     async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
-        return WorkflowTurn(input=[Message("user", await request.get_input_text() or "")])
+        return WorkflowTurn(
+            input=[Message("user", await request.get_input_text() or "")],
+            client_kwargs={"options": dict(request.options)} if forward_options else None,
+        )
 
-    server = _server(
-        create,
-        parser=parse,
-        prepare_options=(lambda _request, options: options) if forward_options else None,
-    )
+    server = _server(create, parser=parse)
     first = await _post(server, "one", temperature=0.7, max_output_tokens=12, store=True)
     assert first["status"] == "completed", first
     second = await _post(server, "two", temperature=0.4, store=False, call="call-two")
@@ -953,8 +952,11 @@ async def test_registry_backed_executor_gets_native_options_and_resource_lifecyc
         )
         return _build(_RegistryExecutor(agent))
 
+    async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
+        return WorkflowTurn(input=await request.get_input_text(), client_kwargs={"options": dict(request.options)})
+
     response = await _post(
-        _server(create, parser=_parse_text, prepare_options=lambda _request, options: options),
+        _server(create, parser=parse),
         "hello",
         temperature=0.7,
     )
@@ -1034,9 +1036,12 @@ async def test_raw_agent_fresh_factory_matches_explicit_defaults(stored: bool, s
         return _build(AgentExecutor(agent, id="raw"))
 
     async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
-        return WorkflowTurn(input=[Message("user", await request.get_input_text() or "")])
+        return WorkflowTurn(
+            input=[Message("user", await request.get_input_text() or "")],
+            client_kwargs={"options": dict(request.options)},
+        )
 
-    server = _server(create, parser=parse, prepare_options=lambda _request, options: options)
+    server = _server(create, parser=parse)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
         response = await client.post(
             "/responses",

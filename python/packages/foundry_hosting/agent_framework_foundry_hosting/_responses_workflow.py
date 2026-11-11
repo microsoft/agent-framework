@@ -58,16 +58,13 @@ from ._responses_shared import (
 )
 from ._scope import FoundryRequestScope
 from ._shared import (
-    OptionsHook,
     ResponsesRequest,
     WorkflowResolver,
     WorkflowSource,
     WorkflowTurn,
-    build_response_server_options,
-    prepare_response_options,
+    build_workflow_response_server_options,
     prepare_workflow_kwargs,
     response_run_options,
-    validate_request_options,
     validate_workflow_source,
     workflow_agents,
 )
@@ -333,7 +330,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
         prefix: str = "",
         response_store: ResponseProviderProtocol | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
-        prepare_options: OptionsHook | None = None,
         allowed_oauth_consent_origins: Sequence[str] | None = None,
         sse_keep_alive_interval_seconds: int | None = None,
         shutdown_grace_period_seconds: int = 10,
@@ -355,10 +351,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
             response_store: Backend for caller-facing Responses persistence, not the wire-level `store` flag.
             checkpoint_store_provider: Scoped checkpoint storage. Defaults to `CheckpointStoreProvider`.
                 Native workflow history and pending replies are checkpoint-owned, not agent-session-owned.
-            prepare_options: Sync or async hook receiving the hosted request and a copy of caller model
-                options before factory resolution and parsing. Return the replacement mapping; hosting validates it.
-                Without a hook, caller options are omitted.
-                This does not enable inner provider background or service-owned history.
             allowed_oauth_consent_origins: Optional exact HTTPS origins for consent links. Omission retains
                 safe-HTTPS validation; an empty sequence rejects all origins.
             sse_keep_alive_interval_seconds: Positive streaming heartbeat interval. If omitted, the SDK
@@ -367,33 +359,17 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
                 for response persistence. Defaults to 10 seconds.
             enable_background_recovery: Allow checkpoint-backed outer workflow recovery. Defaults to `False`.
                 Outer background execution does not enable provider background on workflow agents.
-            **kwargs: Additional AgentServer host settings forwarded to the SDK.
+            **kwargs: Additional AgentServer SDK constructor arguments.
 
         Raises:
-            TypeError: If the workflow is not a request-aware factory, the parser is not callable, or an
-                agent-only setting is supplied.
+            TypeError: If the workflow is not a request-aware factory or the parser is not callable.
             ValueError: If a supported setting has an invalid value.
         """
-        forbidden = {
-            "agent",
-            "agent_session_store_provider",
-            "function_approval_store_provider",
-            "history_source",
-            "background_source",
-            "unsupported_options",
-            "max_history_items",
-            "store",
-        }.intersection(kwargs)
-        if forbidden:
-            raise TypeError(f"Unsupported native workflow host settings: {', '.join(sorted(forbidden))}.")
         validate_workflow_source(workflow)
         if not callable(parse_input):
             raise TypeError("parse_input must be a callable.")
-        if prepare_options is not None and not callable(prepare_options):
-            raise TypeError("prepare_options must be a callable.")
         allowed_origins = _normalize_allowed_oauth_consent_origins(allowed_oauth_consent_origins)
-        options = build_response_server_options(
-            is_workflow=True,
+        options = build_workflow_response_server_options(
             sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
             shutdown_grace_period_seconds=shutdown_grace_period_seconds,
             enable_background_recovery=enable_background_recovery,
@@ -404,7 +380,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
         self._checkpoint_store_provider = (
             CheckpointStoreProvider() if checkpoint_store_provider is None else checkpoint_store_provider
         )
-        self._prepare_options = prepare_options
         self._resilient_background = enable_background_recovery
         self._allowed_origins = allowed_origins
         self._bind_streaming_route(
@@ -506,8 +481,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
                 self.config, platform_context, local_session_id=context.response_id
             )
             hosted = ResponsesRequest(request, context, scope, response_run_options(request))
-            await prepare_response_options(hosted, self._prepare_options)
-            validate_request_options(hosted.options)
             workflow = await self._resolver.resolve(hosted)
             resources = AsyncExitStack()
             await resources.__aenter__()
@@ -564,7 +537,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
                 workflow,
                 turn,
                 scope,
-                options=hosted.options,
                 stored=run.stored,
                 fresh_factory=True,
             )

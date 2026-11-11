@@ -22,7 +22,8 @@ from agent_framework_foundry_hosting import (
 from agent_framework_foundry_hosting._scope import FoundryRequestScope
 from agent_framework_foundry_hosting._shared import (
     _NativeAgentOptions,
-    build_response_server_options,
+    build_agent_response_server_options,
+    build_workflow_response_server_options,
     prepare_response_options,
     response_run_options,
     validate_agent_background_options,
@@ -31,17 +32,35 @@ from agent_framework_foundry_hosting._shared import (
 
 from .options_helpers import OptionCallbacks, OptionsClient
 
+_AGENT_DEFAULTS: dict[str, Any] = {
+    "history_source": "host_managed",
+    "background_source": "host_managed",
+    "max_history_items": None,
+    "sse_keep_alive_interval_seconds": None,
+    "shutdown_grace_period_seconds": 10,
+    "enable_background_recovery": False,
+}
+_WORKFLOW_DEFAULTS: dict[str, Any] = {
+    "sse_keep_alive_interval_seconds": None,
+    "shutdown_grace_period_seconds": 10,
+    "enable_background_recovery": False,
+}
+
+
+def _agent_options(**settings: Any) -> ResponsesServerOptions:
+    return build_agent_response_server_options(**{**_AGENT_DEFAULTS, **settings})
+
 
 def test_history_default_is_omitted_instead_of_forced_unlimited(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEFAULT_FETCH_HISTORY_ITEM_COUNT", "7")
     with patch("agent_framework_foundry_hosting._shared.ResponsesServerOptions", wraps=ResponsesServerOptions) as sdk:
-        result = build_response_server_options(is_workflow=False)
+        result = _agent_options()
     assert "default_fetch_history_count" not in sdk.call_args.kwargs
     assert result.default_fetch_history_count == ResponsesServerOptions().default_fetch_history_count
     assert result.default_model is None
     assert result.steerable_conversations is False
     assert result.resilient_background is False
-    assert build_response_server_options(is_workflow=False, max_history_items=7).default_fetch_history_count == 7
+    assert _agent_options(max_history_items=7).default_fetch_history_count == 7
 
 
 @pytest.mark.parametrize(
@@ -64,32 +83,43 @@ def test_history_default_is_omitted_instead_of_forced_unlimited(monkeypatch: pyt
         ({"background_source": "wrong"}, ValueError),
     ],
 )
-def test_invalid_settings_fail_before_sdk_options_construction(
+def test_invalid_agent_settings_fail_before_sdk_options_construction(
     settings: dict[str, Any], error: type[Exception]
 ) -> None:
     with patch("agent_framework_foundry_hosting._shared.ResponsesServerOptions") as sdk, pytest.raises(error):
-        build_response_server_options(is_workflow=False, **settings)
+        _agent_options(**settings)
     sdk.assert_not_called()
 
 
-def test_recovery_and_workflow_history_eligibility() -> None:
-    assert build_response_server_options(
-        is_workflow=False,
+@pytest.mark.parametrize(
+    ("settings", "error"),
+    [
+        ({"sse_keep_alive_interval_seconds": 0}, ValueError),
+        ({"shutdown_grace_period_seconds": True}, TypeError),
+        ({"enable_background_recovery": 1}, TypeError),
+    ],
+)
+def test_invalid_workflow_settings_fail_before_sdk_options_construction(
+    settings: dict[str, Any], error: type[Exception]
+) -> None:
+    with patch("agent_framework_foundry_hosting._shared.ResponsesServerOptions") as sdk, pytest.raises(error):
+        build_workflow_response_server_options(**{**_WORKFLOW_DEFAULTS, **settings})
+    sdk.assert_not_called()
+
+
+def test_recovery_and_history_limit_eligibility() -> None:
+    assert _agent_options(
         history_source="inference_service",
         background_source="inference_service",
         enable_background_recovery=True,
     ).resilient_background
-    assert build_response_server_options(is_workflow=True, enable_background_recovery=True).resilient_background
+    assert build_workflow_response_server_options(**{
+        **_WORKFLOW_DEFAULTS,
+        "enable_background_recovery": True,
+    }).resilient_background
     with pytest.warns(UserWarning, match="max_history_items is ignored"):
-        workflow_options = build_response_server_options(is_workflow=True, max_history_items=2)
-    assert workflow_options.default_fetch_history_count == ResponsesServerOptions().default_fetch_history_count
-    with pytest.warns(UserWarning, match="max_history_items is ignored"):
-        agent_managed_options = build_response_server_options(
-            is_workflow=False, history_source="agent_managed", max_history_items=2
-        )
+        agent_managed_options = _agent_options(history_source="agent_managed", max_history_items=2)
     assert agent_managed_options.default_fetch_history_count == ResponsesServerOptions().default_fetch_history_count
-    with pytest.raises(ValueError, match="regular agent"):
-        build_response_server_options(is_workflow=True, background_source="inference_service")
 
 
 @pytest.mark.parametrize("env", [None, "0", "-2", "3"])

@@ -18,7 +18,7 @@ import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from itertools import product
-from typing import Any, Literal, cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -301,7 +301,7 @@ class _EchoExecutor(Executor):
 
 
 def _make_workflow_agent() -> WorkflowAgent:
-    return WorkflowBuilder(name="legacy", start_executor=_EchoExecutor()).build().as_agent()
+    return WorkflowBuilder(name="wrapped", start_executor=_EchoExecutor()).build().as_agent()
 
 
 async def _invoke_text(server: InvocationsHostServer, message: str) -> str:
@@ -666,7 +666,6 @@ class TestInit:
         [
             ("parse_input", 42, "parse_input must be a callable"),
             ("prepare_options", 42, "prepare_options must be a callable"),
-            ("unsupported_options", "discard", "unsupported_options"),
         ],
     )
     def test_rejects_invalid_configuration(self, parameter: str, value: Any, error: str) -> None:
@@ -885,10 +884,7 @@ class TestParsedRequests:
         assert provider.contexts == []
 
     @pytest.mark.parametrize("stream", [False, True])
-    @pytest.mark.parametrize("policy", ["ignore", "warn", "error"])
-    async def test_http_route_rejects_tool_context_options_under_every_options_policy(
-        self, stream: bool, policy: Literal["ignore", "warn", "error"]
-    ) -> None:
+    async def test_http_route_rejects_tool_context_options(self, stream: bool) -> None:
         agent = _make_agent(response_text="ok", stream_texts=["ok"])
         provider = _SessionStoreProvider(_mock_session_store())
         agent.default_options = {"additional_function_arguments": {"user_id": "trusted", "tenant_id": "trusted"}}
@@ -897,7 +893,6 @@ class TestParsedRequests:
             return InvocationsHostServer(
                 agent,
                 agent_session_store_provider=provider,
-                unsupported_options=policy,
                 prepare_options=lambda _request, options: options,
             )
 
@@ -933,35 +928,35 @@ class TestParsedRequests:
         assert agent.calls == []
 
     @pytest.mark.parametrize("stream", [False, True])
-    @pytest.mark.parametrize("policy", ["ignore", "warn", "error"])
-    async def test_unsupported_options_policy(
-        self, policy: Literal["ignore", "warn", "error"], stream: bool, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_hook_options_for_agent_without_options_are_rejected_before_streaming(self, stream: bool) -> None:
         agent = _NoOptionsAgent()
-        server = InvocationsHostServer(
-            agent, unsupported_options=policy, prepare_options=lambda _request, options: options
-        )
-        with _request_context(session_id="unsupported"):
+        server = InvocationsHostServer(agent, prepare_options=lambda _request, options: options)
+        with _request_context(session_id="no-options"):
             response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
                 _make_request({"message": "hello", "options": {"temperature": 0.8}, "stream": stream})
             )
-            if policy == "error":
-                assert response.status_code == 400
-                assert not isinstance(response, StreamingResponse)
-                assert "does not accept" in json.loads(bytes(response.body))["error"]
-                assert agent.calls == []
-            else:
-                assert await _success_text(response) == "ok"
-                assert agent.calls[-1]["options"] is None
+        assert response.status_code == 400
+        assert not isinstance(response, StreamingResponse)
+        assert "does not accept" in json.loads(bytes(response.body))["error"]
+        assert agent.calls == []
 
-        assert ("Agent doesn't support runtime options" in caplog.text) is (policy == "warn")
+    async def test_caller_options_are_not_forwarded_without_hook(self) -> None:
+        agent = _make_agent(response_text="ok")
+        agent.default_options = {"temperature": 0.1}
+        server = InvocationsHostServer(agent)
+        with _request_context(session_id="defaults-only"):
+            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                _make_request({"message": "hello", "options": {"temperature": 0.9, "model": "other"}})
+            )
+        assert await _success_text(response) == "ok"
+        assert agent.calls[-1]["options"] is None
+        assert agent.default_options == {"temperature": 0.1}
 
     async def test_factory_options_failure_is_framed_before_first_delta(self) -> None:
         provider = _SessionStoreProvider(_mock_session_store())
         server = InvocationsHostServer(
             lambda request: _NoOptionsAgent(),
             agent_session_store_provider=provider,
-            unsupported_options="error",
             prepare_options=lambda _request, options: options,
         )
         with _request_context(session_id="factory-options"):
@@ -973,8 +968,8 @@ class TestParsedRequests:
                 (
                     "error",
                     {
-                        "message": "The hosted agent does not accept caller runtime options.",
-                        "code": "unsupported_options",
+                        "message": "The hosted agent does not accept the run options returned by prepare_options.",
+                        "code": "invalid_request",
                         "status": 400,
                     },
                 )
@@ -1895,7 +1890,7 @@ class TestHandleInvoke:
         with (
             _request_context(call_id="call-1", session_id="sess-1", user_id="user-1"),
             patch(
-                "agent_framework_foundry_hosting._invocations_shared.AgentSession", wraps=AgentSession
+                "agent_framework_foundry_hosting._invocations_agent.AgentSession", wraps=AgentSession
             ) as session_factory,
         ):
             for _ in range(2):

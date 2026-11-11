@@ -4,7 +4,7 @@
 
 The agent is asked to count down from a target number, pacing its own output with a short remark
 before each number so a response takes a while to fully generate. This sample currently runs
-without steering; the hosting layer rejects the removed ``steerable_conversations`` setting until a patched
+without steering; the hosting layer does not accept a ``steerable_conversations`` setting until a patched
 AgentServer SDK is released and verified.
 
 Environment variables:

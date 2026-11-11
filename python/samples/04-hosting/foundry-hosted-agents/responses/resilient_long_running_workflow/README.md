@@ -27,8 +27,8 @@ Do not delete shared state as part of a sample or test. Use an isolated
 `AGENTSERVER_STATE_ROOT` when experimenting with crashes.
 
 The Foundry sandbox, the Responses continuation, and the MAF checkpoint remain
-separate identities. Existing legacy unscoped workflow sessions are not read;
-start a fresh response chain when migrating from `agent=workflow.as_agent()`.
+separate identities. Unscoped workflow sessions are not read;
+start a fresh response chain for this host.
 
 For Foundry deployment instructions, see the
 [parent README](../../README.md#deploying-the-agent-to-foundry).

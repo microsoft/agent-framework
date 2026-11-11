@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import (
     AsyncGenerator,
@@ -84,8 +85,7 @@ from ._shared import (
     AgentSource,
     OptionsHook,
     ResponsesRequest,
-    UnsupportedOptions,
-    build_response_server_options,
+    build_agent_response_server_options,
     is_agent,
     prepare_response_options,
     resolve_agent,
@@ -94,7 +94,6 @@ from ._shared import (
     validate_agent_source,
     validate_default_transport_options,
     validate_request_options,
-    validate_unsupported_options,
 )
 from ._state_store import (
     AgentSessionStoreProvider,
@@ -255,7 +254,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         shutdown_grace_period_seconds: int = 10,
         enable_background_recovery: bool = False,
         prepare_options: OptionsHook | None = None,
-        unsupported_options: UnsupportedOptions = "warn",
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -309,20 +307,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 DELETE waits for response persistence. Defaults to 10 seconds.
             enable_background_recovery: Allow eligible provider-background work to recover after shutdown.
                 Defaults to `False`; it does not enable background execution or guarantee exactly-once effects.
-            prepare_options: Developer hook selecting caller model options after factory resolution.
-                Only its returned, validated mapping is forwarded. Without a hook, caller options are omitted.
+            prepare_options: Optional sync or async hook selecting run options after factory resolution.
+                Without a hook, only the caller's input messages reach the agent and the agent's own
+                `default_options` apply unchanged. With a hook, only its returned, validated mapping is
+                forwarded; an agent whose `run` cannot accept `options` fails the request.
                 A returned `background` value is application-owned on ordinary runs. Host-selected provider
                 background submission and polling retain `background=True`.
-            unsupported_options: `"warn"` (default), `"error"`, or `"ignore"` when a custom agent
-                cannot accept runtime model options.
-            **kwargs: Additional keyword arguments.
+            **kwargs: Additional AgentServer SDK constructor arguments.
 
         Note:
             The *caller* controls outer persistence with `POST /responses` `store=True/False`.
             `store=False` writes no host-managed session or approval state and forces supported
             inner clients not to store, regardless of `history_source`. The constructor's
             `response_store=` argument selects the outer response-store backend.
-            The former constructor `store=` alias is rejected. Outer `response.id` is the polling/continuation handle;
+            Outer `response.id` is the polling/continuation handle;
             any inner `service_session_id` is private and never replaces it.
 
             1. Context providers must not keep required state only on their Python instances,
@@ -337,29 +335,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                For provider background, only a saved private continuation token can be polled after a crash;
                a crash before the token is saved cannot be replayed safely.
                Other regular-agent runs are not crash-recoverable.
-            4. Steering is unavailable. The upstream `options` bag and steering settings are not host parameters.
-            5. A stored, named `"inference_service"` or `"agent_managed"` conversation is claimed in the scoped
+            4. A stored, named `"inference_service"` or `"agent_managed"` conversation is claimed in the scoped
                session store before the agent runs. Conditional writes prevent a concurrent turn from mutating the same
                provider thread. If the turn fails or is cancelled, start a new conversation instead of
                reusing a potentially changed downstream thread.
 
         Raises:
-            TypeError: If the agent is a `WorkflowAgent`, or native workflow settings are supplied.
-            ValueError: If the history, background, or unsupported-options policy is invalid.
+            TypeError: If the agent is a `WorkflowAgent` or `prepare_options` is not callable.
+            ValueError: If the history or background settings are invalid.
             RuntimeError: If the agent configuration conflicts with the selected history or background source.
         """
-        if "function_approval_store_provider" in kwargs:
-            raise TypeError("Approval state is managed by agent_session_store_provider.")
-        if "store" in kwargs:
-            raise TypeError("The constructor store= alias was removed; use response_store= instead.")
-        if {"workflow", "parse_input", "parse_response", "checkpoint_store_provider"}.intersection(kwargs):
-            raise TypeError("Use ResponsesWorkflowHostServer for native workflows and checkpoint storage.")
         validate_agent_source(agent)
         if prepare_options is not None and not callable(prepare_options):
             raise TypeError("prepare_options must be a callable.")
-        unsupported_options = validate_unsupported_options(unsupported_options)
-        options = build_response_server_options(
-            is_workflow=False,
+        options = build_agent_response_server_options(
             history_source=history_source,
             background_source=background_source,
             max_history_items=max_history_items,
@@ -395,7 +384,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self._history_source: _HistorySource = history_source
         self._background_source: Literal["host_managed", "inference_service"] = background_source
         self._prepare_options = prepare_options
-        self._unsupported_options = unsupported_options
         self._host_options = options
         self._uses_agent_server_history = (
             configuration.agent_server_history if configuration is not None else history_source == "host_managed"
@@ -497,6 +485,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             await prepare_response_options(hosted_request, self._prepare_options)
             try:
                 validate_request_options(hosted_request.options, allow_background=True)
+                run_method: Any = agent.run
+                if hosted_request.options and not isinstance(cast(object, agent), RawAgent):
+                    try:
+                        inspect.signature(run_method).bind_partial(options=hosted_request.options)
+                    except TypeError:
+                        raise TypeError(
+                            "The hosted agent does not accept the run options returned by prepare_options."
+                        ) from None
                 _validate_agent_defaults(
                     agent,
                     provider_background=provider_background,
@@ -1034,13 +1030,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             ):
                 chat_options["store"] = False
 
-            if isinstance(agent, RawAgent):
+            if isinstance(agent, RawAgent) or are_options_set:
                 run_kwargs["options"] = chat_options
-            elif are_options_set:
-                if self._unsupported_options == "error":
-                    raise _PublicResponseFailure(TypeError("The hosted agent does not accept caller runtime options."))
-                if self._unsupported_options == "warn":
-                    logger.warning("Agent doesn't support runtime options. They will be ignored.")
 
             if previous_response_id is not None and context.conversation_id is None and not context.is_recovery:
                 if (
@@ -1219,9 +1210,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         )
                     )
                 )
-                superseded_by_steering = bool(self._host_options and self._host_options.steerable_conversations) and (
-                    cancellation_signal.is_set() and not context.client_cancelled and not context.shutdown.is_set()
-                )
                 if stored and session_storage is not None and not stored_output_violation and final_provider_state:
                     if context.conversation_id is not None:
                         session.state[_HOSTED_SOURCE_CONVERSATION_KEY] = context.conversation_id
@@ -1229,7 +1217,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     if (
                         context.conversation_id is not None
                         and not conversation_already_committed
-                        and not superseded_by_steering
                         and not request_interrupted
                         and request_failure is None
                         and (

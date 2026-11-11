@@ -111,4 +111,4 @@ deprecation warning. For **stored** requests, `"agent_managed"` passes only new 
 developer-owned defaults may choose either a HistoryProvider **or downstream service storage**.
 `history_source="inference_service"` explicitly requires service-managed history and overrides the agent's
 `store` default on stored requests. The constructor accepts `response_store=` for the outer storage
-*backend*, not `store=`. The removed alias does not affect the caller's per-request `store` flag.
+*backend*; the caller's per-request `store` flag is separate.
