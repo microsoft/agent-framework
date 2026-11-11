@@ -54,7 +54,6 @@ from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpo
 from ._approvals import SessionApprovalState, _InvalidApproval  # pyright: ignore[reportPrivateUsage]
 from ._feature_usage import FeatureIndex
 from ._responses_preflight import (
-    _InvalidApprovalInput,  # pyright: ignore[reportPrivateUsage]
     approval_controls,
     bind_approval_preflight,
     has_unresolved_input,
@@ -441,24 +440,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         session_id = context.conversation_id or previous
         if session_id is None:
             if ids:
-                raise _InvalidApprovalInput("The approval has no pending agent session.")
+                raise _InvalidApproval("The approval has no pending agent session.")
             return
         storage = self._session_storage_provider.get_store(config=self.config, platform_context=platform_context)
         session = await storage.get(session_id)
         if session is None:
             if ids:
-                raise _InvalidApprovalInput("The approval is unavailable in this agent session.")
+                raise _InvalidApproval("The approval is unavailable in this agent session.")
             return
         state = SessionApprovalState(session, storage)
-        try:
-            claim = await state.preflight(ids)
-        except _InvalidApproval as exc:
-            raise _InvalidApprovalInput(str(exc)) from exc
+        claim = await state.preflight(ids)
         if claim is not None:
             if request.get("store") is False:
-                raise _InvalidApprovalInput("Approval continuation requires store=true.")
+                raise _InvalidApproval("Approval continuation requires store=true.")
             if len(items) != len(ids) or has_unresolved_input(request, items):
-                raise _InvalidApprovalInput("Pending MCP approvals cannot be mixed with other input.")
+                raise _InvalidApproval("Pending MCP approvals cannot be mixed with other input.")
 
     async def _ensure_agent_ready(self) -> None:
         """Lazily enter the agent's async context exactly once.
@@ -961,10 +957,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 approval_claim = await approval_storage.preflight(approval_ids)
                 if approval_claim is not None:
                     if not stored:
-                        raise _InvalidApprovalInput("Approval continuation requires store=true.")
+                        raise _InvalidApproval("Approval continuation requires store=true.")
                     if len(input_items) != len(approval_ids) or has_unresolved_input(request, input_items):
-                        raise _InvalidApprovalInput("Pending MCP approvals cannot be mixed with other input.")
-            except (_InvalidApproval, _InvalidApprovalInput) as exc:
+                        raise _InvalidApproval("Pending MCP approvals cannot be mixed with other input.")
+            except _InvalidApproval as exc:
                 raise _PublicResponseFailure(exc) from None
             approval_ready.set_result(approval_storage)
             provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
