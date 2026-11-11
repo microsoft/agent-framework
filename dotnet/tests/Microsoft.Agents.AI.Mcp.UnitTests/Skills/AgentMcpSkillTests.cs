@@ -1216,7 +1216,7 @@ public sealed partial class AgentMcpSkillTests
     public async Task GetContentAsync_ResourceLimit_EnforcesExactDefaultBoundaryAsync(int excessBytes)
     {
         // Arrange
-        string content = SkillContent + new string('x', 1_048_576 - Encoding.UTF8.GetByteCount(SkillContent) + excessBytes);
+        string content = SkillContent + new string('x', 16_777_216 - Encoding.UTF8.GetByteCount(SkillContent) + excessBytes);
         await using var server = CreateServer((uri, _) => ValueTask.FromResult(Text(uri, content)));
         await using var client = await server.CreateClientAsync();
         var skill = CreateSkill(client, content: excessBytes > 0 ? SkillContent : content);
@@ -1229,7 +1229,7 @@ public sealed partial class AgentMcpSkillTests
         else
         {
             var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
-            Assert.Contains("maximum allowed size (1048576 bytes)", exception.Message);
+            Assert.Contains("maximum allowed size (16777216 bytes)", exception.Message);
             Assert.Contains(SkillUri, exception.Message);
         }
     }
@@ -1245,7 +1245,7 @@ public sealed partial class AgentMcpSkillTests
     {
         // Arrange
         const string Uri = SkillRootUri + "references/checklist.md";
-        byte[] bytes = Encoding.UTF8.GetBytes(new string('x', 1_048_576 + excessBytes));
+        byte[] bytes = Encoding.UTF8.GetBytes(new string('x', 16_777_216 + excessBytes));
         await using var server = CreateServer((uri, _) =>
             ValueTask.FromResult(binary
                 ? new ReadResourceResult { Contents = [BlobResourceContents.FromBytes(bytes, uri)] }
@@ -1263,7 +1263,7 @@ public sealed partial class AgentMcpSkillTests
         else
         {
             var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetResourceAsync("references/checklist.md"));
-            Assert.Contains("maximum allowed size (1048576 bytes)", exception.Message);
+            Assert.Contains("maximum allowed size (16777216 bytes)", exception.Message);
             Assert.Contains(Uri, exception.Message);
         }
     }

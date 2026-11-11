@@ -25,7 +25,7 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// Fetches and validates all <c>skills/list</c> pages before creating and publishing skill objects.
 /// The source checks server support before accessing the catalog.
-/// Configured limits bound discovery and resource sizes.
+/// Configured limits bound discovery and the number and combined size of resources per skill.
 /// </para>
 /// <para>
 /// The list is cached until any page expires, then fetched again on the next <see cref="GetSkillsAsync"/> call.
@@ -58,6 +58,7 @@ internal sealed partial class McpSkillsCatalog
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The MCP client is supplied and owned by the caller, who is responsible for disposing it.")]
     private readonly McpClient _client;
     private readonly ILogger _logger;
+    private readonly int _maxResourceCount;
     private readonly long _maxResourceSizeBytes;
     private readonly int _maxPageCount;
     private readonly int _maxSkillCount;
@@ -70,7 +71,7 @@ internal sealed partial class McpSkillsCatalog
     /// Initializes a new instance of the <see cref="McpSkillsCatalog"/> class.
     /// </summary>
     /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c>. The caller retains ownership of the client and is responsible for disposing it.</param>
-    /// <param name="options">Optional TTL resolver and limits for listing pages, skill counts, and resource sizes.</param>
+    /// <param name="options">Optional settings for cache duration, discovery, and resource limits.</param>
     /// <param name="logger">Optional logger for skill validation diagnostics.</param>
     /// <param name="timeProvider">Optional clock for checking expiration.</param>
     /// <param name="hasIsolationKey">Whether this catalog belongs to a cache partition key.</param>
@@ -80,12 +81,14 @@ internal sealed partial class McpSkillsCatalog
     {
         this._client = Throw.IfNull(client);
         this._logger = logger ?? NullLogger.Instance;
+        this._maxResourceCount = options?.ResourceMaxCount ?? AgentMcpSkill.DefaultMaxResourceCount;
         this._maxResourceSizeBytes = options?.ListedResourceMaxSizeBytes ?? AgentMcpSkill.DefaultMaxResourceSizeBytes;
         this._maxPageCount = options?.ListedMaxPageCount ?? DefaultMaxPageCount;
         this._maxSkillCount = options?.ListedMaxSkillCount ?? DefaultMaxSkillCount;
         this._timeProvider = timeProvider ?? TimeProvider.System;
         this._ttlResolver = options?.TtlResolver;
         this._hasIsolationKey = hasIsolationKey;
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceCount, nameof(options.ResourceMaxCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
@@ -255,7 +258,7 @@ internal sealed partial class McpSkillsCatalog
             this.ValidateResourceManifest(entry.Uri, manifest.Entries);
         }
 
-        return new AgentMcpSkill(frontmatter, entry.Frontmatter.OriginalJson, entry.Uri, entry.Resources, this._client, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver, this._hasIsolationKey);
+        return new AgentMcpSkill(frontmatter, entry.Frontmatter.OriginalJson, entry.Uri, entry.Resources, this._client, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver, this._hasIsolationKey, maxResourceCount: this._maxResourceCount);
     }
 
     /// <summary>
@@ -426,14 +429,21 @@ internal sealed partial class McpSkillsCatalog
     }
 
     /// <summary>
-    /// Checks the server's resource list, including the required <c>SKILL.md</c> entry.
+    /// Checks that the resource list includes <c>SKILL.md</c> and stays within the count and size limits.
     /// </summary>
     private void ValidateResourceManifest(string skillUri, IReadOnlyList<McpSkillResourceEntry> manifest)
     {
+        if (manifest.Count > this._maxResourceCount)
+        {
+            throw new InvalidOperationException($"Skill '{skillUri}' lists {manifest.Count} resources, exceeding the maximum of {this._maxResourceCount}.");
+        }
+
         // skill://unit-converter/SKILL.md -> skill://unit-converter/ (keep the trailing slash).
         string skillRootUri = skillUri[..^"SKILL.md".Length];
 
         HashSet<string> resourceUris = new(StringComparer.Ordinal);
+
+        long remainingSize = this._maxResourceSizeBytes;
 
         foreach (McpSkillResourceEntry? resource in manifest)
         {
@@ -444,6 +454,13 @@ internal sealed partial class McpSkillsCatalog
             {
                 throw new InvalidOperationException($"Skill '{skillUri}' contains a duplicate resource URI '{resource.Uri}'.");
             }
+
+            if (resource.Size > remainingSize)
+            {
+                throw new InvalidOperationException($"Skill '{skillUri}' lists resources exceeding the maximum combined size ({this._maxResourceSizeBytes} bytes).");
+            }
+
+            remainingSize -= resource.Size;
         }
 
         if (!resourceUris.Contains(skillUri))

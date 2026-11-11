@@ -156,11 +156,14 @@ untrustworthy server could return adversarial content designed to manipulate the
 prompt injection) or to exfiltrate data through skill instructions/scripts. Only connect `UseMcpSkills`
 to MCP servers you have vetted and trust.
 
-Listed resources, including `SKILL.md`, default to a maximum of **1 MiB (1,048,576 bytes)** each.
-Discovery rejects oversized advertised sizes, and reads check actual UTF-8 text and decoded binary
-sizes before encoding text or decoding blobs for integrity verification.
+By default, each skill can have at most **512 resources**, including `SKILL.md`. Their combined size defaults to
+a maximum of **16 MiB (16,777,216 bytes)**. Discovery rejects resource lists that exceed either limit
+before reading any resource. Reads check actual UTF-8 text and decoded binary sizes before encoding
+text or decoding blobs for integrity verification.
 
-Configure the resource limit with `AgentMcpSkillsSourceOptions.ListedResourceMaxSizeBytes` passed to
-`UseMcpSkills`; the limit must be positive.
+A read that would exceed either limit fails.
+
+Configure the resource count and combined size limits with `AgentMcpSkillsSourceOptions.ResourceMaxCount`
+and `ListedResourceMaxSizeBytes` passed to `UseMcpSkills`; both limits must be positive.
 
 These checks do not limit incoming messages before the supplied client receives and parses them.

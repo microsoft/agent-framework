@@ -86,7 +86,7 @@ namespace Microsoft.Agents.AI;
 /// Refreshes happen only on request, not in the background.
 /// </para>
 /// <para>
-/// <see cref="AgentMcpSkillsSourceOptions"/> limits listing pages, skill counts, and resource sizes.
+/// <see cref="AgentMcpSkillsSourceOptions"/> limits discovery and the number and combined size of resources per skill.
 /// Invalid pages, repeated cursors, and exceeded limits fail the request rather than returning a partial list.
 /// These limits do not bound incoming message size or total memory use. Configure input-size limits
 /// in the MCP client, transport, or host as needed.
@@ -126,7 +126,7 @@ public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     /// Initializes a new instance of the <see cref="AgentMcpSkillsSource"/> class.
     /// </summary>
     /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c>. The caller retains ownership of the client and is responsible for disposing it.</param>
-    /// <param name="options">Optional cache partitioning and retention settings, TTL resolver, and limits for listing pages, skill counts, and resource sizes.</param>
+    /// <param name="options">Optional settings for caching, discovery, and resource limits.</param>
     /// <param name="loggerFactory">Optional factory for diagnostic logging.</param>
     /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A configured limit is not positive.</exception>

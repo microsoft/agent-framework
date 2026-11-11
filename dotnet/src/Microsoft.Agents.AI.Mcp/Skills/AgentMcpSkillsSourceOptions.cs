@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 /// <remarks>
 /// Listed discovery limits bound page counts and total skill counts.
-/// The listed resource size limit separately bounds resource content processed by this source.
+/// Resource limits bound the number and combined size of resources per skill.
 /// These limits do not bound incoming message size, list-response JSON size, or total memory consumption.
 /// Application developers are responsible for evaluating server trustworthiness and configuring appropriate
 /// input-size and resource limits through their chosen MCP client, transport, or hosting environment.
@@ -118,15 +118,30 @@ public sealed class AgentMcpSkillsSourceOptions
     public int? ListedMaxSkillCount { get; set; }
 
     /// <summary>
-    /// Gets or sets the maximum size, in bytes, of a resource discovered through <c>skills/list</c>,
-    /// including <c>SKILL.md</c>.
+    /// Gets or sets the maximum number of resources per skill, including <c>SKILL.md</c>.
     /// </summary>
     /// <remarks>
-    /// When <see langword="null"/>, defaults to <c>1 MiB</c> (<c>1,048,576</c> bytes).
-    /// Must be positive. Discovery rejects resources whose advertised sizes exceed the limit.
-    /// Reads also check actual UTF-8 text and decoded binary sizes before encoding text or decoding
-    /// blobs for integrity verification.
-    /// There is no combined resource-size limit per skill.
+    /// <para>
+    /// When <see langword="null"/>, defaults to <c>512</c>. Must be positive.
+    /// </para>
+    /// <para>
+    /// Discovery rejects skills whose resource lists exceed this limit.
+    /// Resource reads also fail if caching another resource would exceed the limit.
+    /// </para>
+    /// </remarks>
+    public int? ResourceMaxCount { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum combined size, in bytes, of a skill's resources, including <c>SKILL.md</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When <see langword="null"/>, defaults to <c>16 MiB</c> (<c>16,777,216</c> bytes). Must be positive.
+    /// </para>
+    /// <para>
+    /// Discovery rejects skills whose listed resources exceed this combined size.
+    /// Resource reads also fail if caching the content would exceed the limit.
+    /// </para>
     /// </remarks>
     public long? ListedResourceMaxSizeBytes { get; set; }
 

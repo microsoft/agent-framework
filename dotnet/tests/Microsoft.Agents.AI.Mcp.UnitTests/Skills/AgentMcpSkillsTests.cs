@@ -372,27 +372,77 @@ public sealed partial class AgentMcpSkillsTests
         Assert.Contains("skill count (1)", exception.Message);
     }
 
-    [Fact]
-    public async Task GetSkillsAsync_LargeResourceManifest_HasNoSeparateResourceCountLimitAsync()
+    [Theory]
+    [InlineData(null, 0)]
+    [InlineData(null, 1)]
+    [InlineData(1, 0)]
+    [InlineData(1, 1)]
+    [InlineData(3, 0)]
+    [InlineData(3, 1)]
+    [InlineData(513, 0)]
+    [InlineData(513, 1)]
+    public async Task GetSkillsAsync_ResourceCountLimit_IncludesInstructionsAsync(int? configuredLimit, int excessResources)
     {
         // Arrange
+        int limit = configuredLimit ?? AgentMcpSkill.DefaultMaxResourceCount;
         JsonObject entry = Entry();
-        var resources = Assert.IsType<JsonArray>(entry["resources"]);
-        for (int i = 0; i < 101; i++)
+        var resources = new JsonArray(Resource(SkillUri));
+        entry["resources"] = resources;
+        while (resources.Count < limit + excessResources)
         {
-            resources.Add(Resource($"skill://unit-converter/file-{i}.txt"));
+            resources.Add(Resource($"skill://unit-converter/file-{resources.Count}.txt"));
         }
 
         var client = CreateSkillsClient();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = ListResult(entry) });
-        using var source = new AgentMcpSkillsSource(client.Object);
+        using var source = new AgentMcpSkillsSource(client.Object, new() { ResourceMaxCount = configuredLimit });
+
+        // Act & Assert
+        if (excessResources == 0)
+        {
+            Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        }
+        else
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+            Assert.Contains($"lists {limit + 1} resources, exceeding the maximum of {limit}", exception.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    [InlineData(513)]
+    public async Task GetSkillsAsync_DynamicResourceCountLimit_UsesConfiguredLimitAsync(int limit)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry["resources"] = "dynamic";
+        int reads = 0;
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)), (uri, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult(Text(uri, uri == SkillUri ? SkillContent : "x"));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client, new() { ResourceMaxCount = limit });
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        await skill.GetContentAsync();
+        for (int i = 1; i < limit; i++)
+        {
+            Assert.NotNull(await skill.GetResourceAsync($"references/file-{i}.md"));
+        }
 
         // Act
-        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetResourceAsync("references/one-too-many.md"));
+        string instructions = await skill.GetContentAsync();
 
         // Assert
-        Assert.Single(skills);
+        Assert.Contains($"limit of {limit} entries", exception.Message);
+        Assert.Equal(SkillContent, instructions);
+        Assert.Equal(limit + 1, reads);
     }
 
     [Theory]
@@ -400,6 +450,8 @@ public sealed partial class AgentMcpSkillsTests
     [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxPageCount), -1)]
     [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxSkillCount), 0)]
     [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxSkillCount), -1)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.ResourceMaxCount), 0)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.ResourceMaxCount), -1)]
     public void Constructor_InvalidDiscoveryLimit_Throws(string option, int limit)
     {
         // Arrange
@@ -408,6 +460,7 @@ public sealed partial class AgentMcpSkillsTests
         {
             ListedMaxPageCount = option == nameof(AgentMcpSkillsSourceOptions.ListedMaxPageCount) ? limit : null,
             ListedMaxSkillCount = option == nameof(AgentMcpSkillsSourceOptions.ListedMaxSkillCount) ? limit : null,
+            ResourceMaxCount = option == nameof(AgentMcpSkillsSourceOptions.ResourceMaxCount) ? limit : null,
         };
 
         // Act
@@ -919,8 +972,8 @@ public sealed partial class AgentMcpSkillsTests
     }
 
     [Theory]
-    [InlineData(0, 1_048_577L)]
-    [InlineData(1, 1_048_577L)]
+    [InlineData(0, 16_777_217L)]
+    [InlineData(1, 16_777_217L)]
     [InlineData(0, long.MaxValue)]
     [InlineData(1, long.MaxValue)]
     public async Task GetSkillsAsync_OversizedResource_ThrowsWithoutReadingAsync(int resourceIndex, long size)
@@ -941,50 +994,41 @@ public sealed partial class AgentMcpSkillsTests
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
 
         // Assert
-        Assert.Contains("maximum allowed size (1048576 bytes)", exception.Message);
+        Assert.Contains("maximum allowed size (16777216 bytes)", exception.Message);
         Assert.Contains(entry["resources"]![resourceIndex]!["uri"]!.GetValue<string>(), exception.Message);
         Assert.Empty(reads);
     }
 
     [Theory]
-    [InlineData(200L)]
-    [InlineData(2_097_152L)]
-    public async Task GetSkillsAsync_ConfiguredResourceLimit_AcceptsBoundaryAndRejectsLargerAsync(long limit)
+    [InlineData(null, 0)]
+    [InlineData(null, 1)]
+    [InlineData(200L, 0)]
+    [InlineData(200L, 1)]
+    [InlineData(2_097_152L, 0)]
+    [InlineData(2_097_152L, 1)]
+    public async Task GetSkillsAsync_ResourceLimit_AppliesToCombinedSizeAsync(long? configuredLimit, int excessBytes)
     {
         // Arrange
+        long limit = configuredLimit ?? 16_777_216L;
         JsonObject entry = Entry();
-        entry["resources"]![0]!["size"] = limit;
-        entry["resources"]![1]!["size"] = limit;
-        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry.DeepClone())));
-        await using var client = await server.CreateClientAsync();
-        using var source = new AgentMcpSkillsSource(client, new() { ListedResourceMaxSizeBytes = limit });
 
-        // Act
-        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
-        entry["resources"]![1]!["size"] = limit + 1;
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
-
-        // Assert
-        Assert.Single(skills);
-        Assert.Contains($"maximum allowed size ({limit} bytes)", exception.Message);
-    }
-
-    [Fact]
-    public async Task GetSkillsAsync_ResourceLimit_HasNoCombinedSkillLimitAsync()
-    {
-        // Arrange
-        JsonObject entry = Entry();
-        entry["resources"]![0]!["size"] = 1_048_576L;
-        entry["resources"]![1]!["size"] = 1_048_576L;
+        // Split the limit between SKILL.md and the checklist; the icon (4 bytes) and empty.txt (0 bytes) stay unchanged.
+        entry["resources"]![0]!["size"] = limit / 2;
+        entry["resources"]![1]!["size"] = limit - (limit / 2) - 4 + excessBytes;
         await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)));
         await using var client = await server.CreateClientAsync();
-        using var source = new AgentMcpSkillsSource(client);
+        using var source = new AgentMcpSkillsSource(client, new() { ListedResourceMaxSizeBytes = configuredLimit });
 
-        // Act
-        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
-
-        // Assert
-        Assert.Single(skills);
+        // Act & Assert
+        if (excessBytes == 0)
+        {
+            Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        }
+        else
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+            Assert.Contains($"maximum combined size ({limit} bytes)", exception.Message);
+        }
     }
 
     [Theory]
@@ -993,7 +1037,8 @@ public sealed partial class AgentMcpSkillsTests
     public async Task GetSkillsAsync_ConfiguredResourceLimit_IsAppliedToReadsAsync(bool instructions)
     {
         // Arrange
-        long limit = Encoding.UTF8.GetByteCount(SkillContent);
+        // The limit covers the listed sizes: SKILL.md, the checklist (10 bytes), and the icon (4 bytes).
+        long limit = Encoding.UTF8.GetByteCount(SkillContent) + 14;
         await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())),
             (uri, _) => ValueTask.FromResult(Text(uri, new string('x', (int)limit + 1))));
         await using var client = await server.CreateClientAsync();

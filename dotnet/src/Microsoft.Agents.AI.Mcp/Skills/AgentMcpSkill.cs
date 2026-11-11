@@ -32,6 +32,10 @@ namespace Microsoft.Agents.AI;
 /// All reads enforce size limits and cache-sharing rules, and supporting-resource requests stay within the skill's directory.
 /// </para>
 /// <para>
+/// Each skill limits the number and combined size of resources, including <c>SKILL.md</c>.
+/// Reads that would exceed a limit throw without changing the cache.
+/// </para>
+/// <para>
 /// With a manifest, only listed resources are loaded, and their content is checked against the expected sizes and content hashes.
 /// Dynamic resources have no list, so any resource within the skill's directory can be requested, and those checks are not possible.
 /// </para>
@@ -50,7 +54,9 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 internal sealed partial class AgentMcpSkill : AgentSkill
 {
-    internal const long DefaultMaxResourceSizeBytes = 1024 * 1024;
+    internal const long DefaultMaxResourceSizeBytes = 16 * 1024 * 1024;
+
+    internal const int DefaultMaxResourceCount = 512;
 
     private const int MaxResourceNameDecodingDepth = 32;
 
@@ -75,13 +81,14 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// <param name="resources">The server's file list with expected sizes and hashes, or an indication that resources are dynamic.</param>
     /// <param name="client">The MCP client used to fetch <c>SKILL.md</c> and supporting resources.</param>
     /// <param name="logger">Optional logger for validation diagnostics.</param>
-    /// <param name="maxResourceSizeBytes">The maximum allowed resource size in bytes.</param>
+    /// <param name="maxResourceSizeBytes">The maximum combined size, in bytes, of cached resources, including <c>SKILL.md</c>.</param>
     /// <param name="timeProvider">Optional clock for resource expiration.</param>
     /// <param name="metadataLifetime">Optional lifetime for skill metadata. Defaults to no independent expiration; the catalog lifetime controls refreshes.</param>
     /// <param name="ttlResolver">Optional callback to override the server's resource TTLs.</param>
     /// <param name="hasIsolationKey">Whether the skill belongs to a cache partition key.</param>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxResourceSizeBytes"/> is not positive.</exception>
-    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, JsonElement frontmatterJson, string uri, McpSkillResources resources, McpClient client, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null, bool hasIsolationKey = false)
+    /// <param name="maxResourceCount">The maximum number of cached resources, including <c>SKILL.md</c>.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxResourceSizeBytes"/> or <paramref name="maxResourceCount"/> is not positive.</exception>
+    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, JsonElement frontmatterJson, string uri, McpSkillResources resources, McpClient client, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null, bool hasIsolationKey = false, int maxResourceCount = DefaultMaxResourceCount)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
         this.Uri = Throw.IfNullOrWhitespace(uri);
@@ -92,10 +99,15 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         this._hasIsolationKey = hasIsolationKey;
         this._timeProvider = timeProvider ?? TimeProvider.System;
         this._ttlResolver = ttlResolver;
-        this._resourceCache = new(this._timeProvider, StringComparer.Ordinal);
-        this._logger = logger ?? NullLogger.Instance;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxResourceSizeBytes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxResourceCount);
         this._maxResourceSizeBytes = maxResourceSizeBytes;
+        this._resourceCache = new(this._timeProvider, StringComparer.Ordinal, new McpCacheOptions
+        {
+            MaxEntryCount = maxResourceCount,
+            MaxTotalSize = maxResourceSizeBytes,
+        });
+        this._logger = logger ?? NullLogger.Instance;
 
         this._frontmatterJson = frontmatterJson;
     }
@@ -126,7 +138,8 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// A size or content hash mismatch returns previously verified content if available and queues a skill refresh.
     /// </remarks>
     /// <exception cref="InvalidOperationException">The <c>SKILL.md</c> resource is missing or invalid,
-    /// exceeds the size limit, has different frontmatter,
+    /// has different frontmatter,
+    /// would exceed the skill's resource count or size limit,
     /// fails the size or content hash check without cached content to return,
     /// or is private and no cache partition key is set.</exception>
     public override async ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
@@ -157,7 +170,8 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// resources the server reports as not found, or <c>SKILL.md</c>.
     /// A size or content hash mismatch returns previously verified content if available and queues a skill refresh.
     /// </remarks>
-    /// <exception cref="InvalidOperationException">The resource response is invalid, exceeds the size limit,
+    /// <exception cref="InvalidOperationException">The resource response is invalid,
+    /// would exceed the skill's resource count or size limit,
     /// fails the size or content hash check without cached content to return,
     /// or is private and no cache partition key is set.</exception>
     public override async ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
@@ -255,7 +269,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             // When the resource's size or digest changes, the cached content becomes stale but still matches this skill's held manifest.
             // A skill refresh is queued, so keep the cached content indefinitely to avoid fetching the changed resource again.
             // A refresh creates a new skill object with the updated manifest and a separate resource cache.
-            return new(cached.Value, McpCacheLifetime.Infinite);
+            return new(cached.Value, GetResourceSizeBytes(cached.Value), McpCacheLifetime.Infinite);
         }
 
         // Verify all frontmatter fields before the SKILL.md instructions can enter the resource cache.
@@ -264,7 +278,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
             this.VerifyInstructions(content);
         }
 
-        return new(value: content, lifetime: McpCacheLifetime.Create(receivedTimestamp, response.TimeToLive, this._ttlResolver));
+        return new(content, GetResourceSizeBytes(content), McpCacheLifetime.Create(receivedTimestamp, response.TimeToLive, this._ttlResolver));
     }
 
     /// <summary>
@@ -313,31 +327,8 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// </summary>
     private static bool TryVerifyResourceIntegrity(McpSkillResourceEntry resource, ResourceContents content, [NotNullWhen(false)] out string? mismatch)
     {
-        int byteSize;
-
-        switch (content)
-        {
-            case TextResourceContents text:
-            {
-                byteSize = Encoding.UTF8.GetByteCount(text.Text);
-
-                break;
-            }
-            case BlobResourceContents blob:
-            {
-                // Base64 validity and the decoded size limit were already checked by DecodeBinaryContent
-                // when GetValidatedResourceContent loaded the binary content.
-                byteSize = blob.DecodedData.Length;
-
-                break;
-            }
-
-            default:
-                throw new InvalidOperationException($"The MCP server returned unsupported content for resource '{resource.Uri}'.");
-        }
-
         // Reject a size mismatch before encoding text or hashing decoded binary content.
-        if (byteSize != resource.Size)
+        if (GetResourceSizeBytes(content) != resource.Size)
         {
             mismatch = "byte size";
             return false;
@@ -362,6 +353,19 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         mismatch = null;
         return true;
     }
+
+    /// <summary>
+    /// Returns the resource's size in bytes.
+    /// </summary>
+    private static long GetResourceSizeBytes(ResourceContents content) => content switch
+    {
+        TextResourceContents text => Encoding.UTF8.GetByteCount(text.Text),
+
+        // DecodeBinaryContent already decoded the Base64 data and checked its size.
+        BlobResourceContents binary => binary.DecodedData.Length,
+
+        _ => throw new InvalidOperationException($"The MCP server returned unsupported content for resource '{content.Uri}'."),
+    };
 
     /// <summary>
     /// Checks every fetched frontmatter field against the metadata advertised for this skill.
