@@ -30,7 +30,7 @@ curl -i -X POST http://localhost:8088/invocations \
   -d '{"prompt": "Hi", "options": {"temperature": 0.3}}'
 ```
 
-The default wire format is JSON, for example:
+Non-streaming success is JSON, for example:
 
 ```http
 HTTP/1.1 200 OK
@@ -74,11 +74,7 @@ for scope and retention details.
 Malformed requests return JSON client errors. Streaming failures produce
 `event: error` instead of `done`; a competing host's session write is reported
 as a conflict, not silently overwritten. Do not blindly retry calls with
-non-idempotent tools. Existing clients that still require the old plain-text
-response and raw text-chunk stream can set `legacy_wire_format=True` on the
-host temporarily; the host warns once and the mode is deprecated. Migrate
-clients to JSON and framed SSE before removing that opt-in in a deliberate
-breaking change.
+non-idempotent tools.
 
 Follow the [parent deployment guide](../../README.md#deploying-the-agent-to-foundry)
 when deploying this example to Foundry.
@@ -152,9 +148,7 @@ If the connection drops after commit, retry the request with the same trusted
 user, sandbox and platform call ID to replay the complete stored response
 without executing the ticket workflow again.
 Failures produce `error`, not `done`. Non-streaming pauses expose the same
-`request_info` data in the JSON event list. Native workflows do not support
-`legacy_wire_format=True`; the old plain-text/raw-chunk opt-in applies only
-to the agent entrypoint.
+`request_info` data in the JSON event list.
 
 ### Checkpoints, fresh factories and pending replies
 
