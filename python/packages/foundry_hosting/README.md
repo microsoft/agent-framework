@@ -56,6 +56,56 @@ Agent hosts reject `WorkflowAgent`, whether supplied directly or returned by a f
 `checkpoint_store_provider` is available only on workflow hosts.
 No stored state is converted between native workflow and agent execution models.
 
+## Explicit host configuration
+
+Configure inference defaults on the agent or client, not on the host. Supported hosting settings are:
+
+| Setting and default | Applies to | Meaning |
+| --- | --- | --- |
+| `max_history_items=None` | Responses agents | A positive integer caps prior outer history items, only with `history_source="host_managed"`. `None` leaves the installed SDK default unchanged; it does not mean unlimited. |
+| `sse_keep_alive_interval_seconds=None` | All four hosts with framed SSE | A positive integer sets the heartbeat interval in seconds. `None` inherits a positive `SSE_KEEPALIVE_INTERVAL`; an absent or nonpositive environment value disables heartbeats. |
+| `shutdown_grace_period_seconds=10` | Both Responses hosts | A positive integer sets shutdown waiting in seconds. The SDK also uses it when DELETE waits for response persistence. It is not a model or request timeout. |
+| `enable_background_recovery=False` | Both Responses hosts | A boolean permits eligible background recovery. It does not select background execution or guarantee exactly-once effects. |
+
+For example, after defining the [request-aware factory below](#agent-instances-and-factories):
+
+```python
+server = ResponsesHostServer(
+    agent=create_agent,
+    max_history_items=100,
+    sse_keep_alive_interval_seconds=15,
+    shutdown_grace_period_seconds=20,
+)
+```
+
+Explicit integer settings reject booleans and non-integers with `TypeError`, and nonpositive values with
+`ValueError`. A positive history cap in another history mode raises `ValueError`. Workflow hosts reject
+`max_history_items`, including explicit `None`; they do not use outer transcript history caps.
+Invocations hosts reject the Responses-only settings `history_source`, `background_source`,
+`max_history_items`, `shutdown_grace_period_seconds`, and `enable_background_recovery`, even when `None`.
+The existing upstream Invocations `graceful_shutdown_timeout` passthrough is a separate setting.
+
+An explicit positive SSE interval takes precedence over a positive environment value. However, the SDK parses
+`SSE_KEEPALIVE_INTERVAL` before applying that override: malformed values, including an empty string, still raise
+`ValueError` even with an explicit interval. Heartbeats do not set a request timeout. Invocations agent
+`legacy_wire_format=True` disables inherited heartbeats because its stream is raw text; combining that mode
+with an explicit interval raises `ValueError`.
+
+The public `ResponsesServerOptions` bag is no longer accepted through `options=`. Removed host settings
+`default_fetch_history_count`, `default_model`, `create_span_hook`, `additional_server_version`,
+`steerable_conversations`, and `resilient_background` also raise `TypeError`, including when `None`.
+Use the first-class settings above, agent/client defaults, and Agent Framework observability instead.
+
+| Host | Continuation state | `prepare_options` | Background recovery |
+| --- | --- | --- | --- |
+| `ResponsesHostServer` | Agent session plus the selected history source | Sync or async | Eligible inference-service background only |
+| `ResponsesWorkflowHostServer` | Exact native workflow checkpoint | Sync or async, before `parse_input` | Checkpoint-backed outer recovery |
+| `InvocationsHostServer` | Agent session; application-owned model history | Sync or async | No provider-background recovery |
+| `InvocationsWorkflowHostServer` | Exact native workflow checkpoint | Not supported; use `WorkflowTurn` kwargs | No provider-background recovery |
+
+These are API support boundaries, not live deployment qualification or a promotion of the experimental
+surfaces described above.
+
 ## Responses route prefix
 
 `ResponsesHostServer` and `ResponsesWorkflowHostServer` pass `prefix` to the
@@ -333,6 +383,20 @@ next token is saved can still repeat the tool on recovery; use idempotent tools 
 for side-effecting local tools. This mechanism does not provide exactly-once tool execution.
 Regular agent runs without this opt-in are not crash-replayable.
 
+The supported regular-agent combinations are:
+
+| `history_source` | `background_source` | Provider background | `enable_background_recovery=True` |
+| --- | --- | --- | --- |
+| `"host_managed"` | `"host_managed"` | No; outer background only | Rejected |
+| `"agent_managed"` | `"host_managed"` | No; outer background only | Rejected |
+| `"inference_service"` | `"host_managed"` | No; outer background only | Rejected |
+| `"inference_service"` | `"inference_service"` | Only when the outer request has `background=true` | Supported for saved private tokens |
+
+`background_source="inference_service"` with either other history mode is rejected. All background requests
+require outer `store=true`. For checkpoint-backed native Responses workflow recovery, use
+`enable_background_recovery=True` and enable the AgentServer resilient task subsystem; agent history/background
+source settings do not apply. This does not enable provider background on workflow agents.
+
 Provider background is selected only by the host. A provider call may use `background=True` only for an outer
 background request with both `history_source="inference_service"` and `background_source="inference_service"`.
 A top-level `background` of `False` or `None` is allowed in every mode. A nested `extra_body["background"]` is
@@ -355,16 +419,34 @@ unbounded futures for rejected turns when its steering queue fills
 steering support needs a published SDK fix, a dependency update, and a concurrent queue-overflow regression.
 No future SDK version is assumed. Agent background polling without steering is unchanged.
 
-Native CreateResponse generation fields become MAF runtime options (notably `max_output_tokens` -> `max_tokens` and
-`parallel_tool_calls` -> `allow_multiple_tool_calls`). Flattened OpenAI `extra_body` fields overlay translated keys
-**last**. A sync or async `prepare_options(request: ResponsesRequest, options: dict)` hook can remove or replace
-*caller* options before `Agent.run`; removed values fall back to the developer's unchanged agent defaults. Hosting
-filters caller platform IDs and private continuation/storage controls from model options and rejects attempts to
-reintroduce them through the hook. Nested `extra_body` transport overrides are rejected for both caller
-input and developer hooks, because they could override the host's `store=False` after the OpenAI SDK merges
-the body. Developer defaults also cannot use this transport channel for host-controlled fields on
-explicit history modes or unstored requests. A custom agent cannot accept MAF runtime options: choose
-`unsupported_options` as `"ignore"`, `"warn"` (default), or `"error"` for that case. See the
+### Preparing caller options
+
+Native CreateResponse generation fields become MAF runtime options, notably `max_output_tokens` -> `max_tokens`
+and `parallel_tool_calls` -> `allow_multiple_tool_calls`. Precedence, from lowest to highest, is:
+native generation fields, flattened unknown generation fields, generation fields inside a literal `extra_body`
+mapping, then the `prepare_options` replacement. The OpenAI client normally flattens its `extra_body` into the
+wire request; a literal nested mapping is also accepted for generation settings.
+
+A sync or async `prepare_options(request: ResponsesRequest, options: dict[str, Any])` hook receives a fresh
+deep copy of this turn's effective caller options. It must return a replacement mapping with string keys;
+the host deep-copies that result again. Mutating the argument without returning a mapping is invalid.
+Removing `"model"` lets the developer's unchanged agent/client model default apply, while other caller
+settings such as `"temperature"` remain. This works for streaming and non-streaming requests.
+
+Responses agent ordering is translation, factory resolution and configuration checks, hook, then protected-option
+validation before execution. The factory therefore sees translated options **before** the hook. Invocations
+agent ordering is parser, hook, protected-option validation, factory, then default validation before entering
+the agent. Do not rely on identical HTTP error timing between protocols. Responses workflows retain their
+hook before `parse_input`; Invocations workflows have no option hook.
+
+Native request-envelope controls such as identity, storage, and continuation fields are not forwarded as
+generation options. Putting those controls or agent execution controls inside `extra_body` raises `ValueError`
+before the hook; the host does not silently strip them. Hook results also cannot contain host controls,
+`extra_body`, or execution controls such as `client_kwargs`, `middleware`, `session`, and tool-invocation kwargs.
+Responses native `instructions` and `tools` remain supported; Invocations agent options additionally reject both.
+Developer defaults cannot use nested transport controls to bypass storage or background policy.
+For a custom agent that cannot accept MAF runtime options, choose
+`unsupported_options` as `"ignore"`, `"warn"` (default), or `"error"`. See the
 [agent history and options samples](../../samples/04-hosting/foundry-hosted-agents/responses/basic/).
 
 ### OAuth consent origin allowlist
@@ -388,8 +470,9 @@ belong on the emitted consent link, not in the configuration.
 
 ### Invocation-time OAuth consent
 
-When a Foundry Toolbox MCP `tools/call` reports that the user must give OAuth consent, the Responses agent host
-does not end the run with an opaque error. The response has status `incomplete`, and its output contains:
+With `history_source="host_managed"` or `"agent_managed"` and `store=true`, a Foundry Toolbox MCP `tools/call`
+that requires OAuth consent produces a structured continuation rather than an opaque error.
+The Responses agent response has status `incomplete`, and its output contains:
 
 - the `function_call` for the protected tool;
 - a `function_call_output` for that call, whose text says that OAuth consent is required;
@@ -416,6 +499,8 @@ Failure boundaries:
 - Consent continuation requires `store=true`. If the request has `store=false`, the response fails and the host
   exposes no consent or approval output. Consent appears during tool execution, after the response has started, so
   this is a failed response, not an HTTP 400 rejection.
+- Invocation-time consent is unsupported with `history_source="inference_service"`: the response fails explicitly
+  rather than publishing a continuation that the service-owned history cannot safely resume.
 - Consent at connection time (`tools/list`) behaves as before.
 
 Limits:
@@ -529,9 +614,9 @@ and file-based storage locally. Responses sessions use the `agent_sessions` logi
 Invocations sessions use the separate `invocation_sessions` store.
 
 Each stored agent turn saves a snapshot under its **own** outer `response.id`. For a named `conversation`, a
-separate mutable conversation-head key is also updated. Loaded MAF sessions use PR1's ETag condition for that key:
-a competing turn that advanced the head causes a visible conflict rather than a stale overwrite. A superseded
-steered turn saves its response snapshot but skips the head update. In `"inference_service"` or `"agent_managed"` history mode, a
+separate mutable conversation-head key is also updated. Loaded MAF sessions use that key's loaded revision:
+a competing turn that advanced the head causes a visible conflict rather than a stale overwrite. In
+`"inference_service"` or `"agent_managed"` history mode, a
 stored named-conversation turn first claims that head with a conditional write *before* calling the inner agent.
 Another request that read the old head loses the CAS; one that reads the claim fails before touching the provider.
 The claim is cleared when the winning turn successfully commits the new head. If a dispatched turn fails or is
@@ -627,6 +712,8 @@ Native workflow pending replies remain checkpoint-owned, not agent-session appro
 **Migration/reset:** pending approvals from the old separate function-approval store are not
 migrated. Start a fresh conversation without an old `previous_response_id` or conversation ID and
 obtain fresh approvals. Do not copy legacy approval records into session state.
+The public `FunctionApprovalStore`, `FoundryFunctionApprovalStore`, and `FunctionApprovalStoreProvider`
+exports and the `function_approval_store_provider=` constructor setting are removed.
 Missing or expired authority fails closed, even when a snapshot still contains the historical
 request. Retained approval history does not authorize another tool execution.
 
@@ -666,10 +753,26 @@ Reply to the complete pending approval batch. Approvals and rejections may be mi
 duplicate, stale, or foreign controls are invalid. Publishing pending authority requires
 `store=true`; `store=false` cannot publish or resume host-managed approvals.
 
+Both Responses hosts perform a read-only MCP approval preflight. Invalid or incomplete batches return
+HTTP 400 before headers, `response.created`, parsing, or protected execution, without consuming usable
+authority. A conversation with pending approvals also rejects a plain new turn; finish its pending batch
+instead. Unsupported state formats, missing conditional-store capability, and storage failures are not
+classified as invalid approval controls.
+
+The handler independently revalidates the batch and claims it only after other input/options checks and
+reservations. A competing request can win between preflight and claim: the losing request can therefore
+fail after streaming starts, but does not dispatch protected work.
+Supplying a duplicate response ID through `x-agent-response-id` or body `response_id` does not bypass
+preflight. After a successful claim, repeating the complete approval continuation is rejected with HTTP 400,
+not replayed as another execution. Non-approval redelivery still delegates to AgentServer; this is not a
+general idempotency guarantee.
+
 Claiming a batch is an irreversible conditional transition before protected execution. It does
 not provide exactly-once tool side effects: a crash after a successful claim can lose work.
 A failed or cancelled claim write may already have committed. Do not reopen the batch or
 automatically dispatch the protected work after an uncertain result.
+Reconcile any external effects before deciding what to retry; start a fresh conversation and obtain fresh
+approvals for new work rather than reusing consumed or uncertain authority.
 
 Approval history is bounded to 1,024 requests and 1 MiB of serialized approval-content JSON.
 Exceeding either bound fails explicitly and requires a fresh conversation; history is not silently

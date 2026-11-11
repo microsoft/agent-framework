@@ -146,26 +146,42 @@ or other request-option precedence.
 ### Approvals and consent
 
 Use session-backed authority for regular-agent approvals rather than a separate public approval-store API.
-Native workflow pending authority remains checkpoint-owned. Canonical pending state, conditional consumption,
-persistence ordering, custom-store capabilities, and failure semantics require a complete design before
-replacing existing approval storage.
+Native workflow pending authority remains checkpoint-owned. Keep one canonical pending batch in the configured
+session store; response and conversation aliases retain history and a link, not independent permission.
+Require structural `get_with_revision` and `compare_and_set` methods with create-only and exact-revision
+semantics. Foundry-managed storage uses AgentServer's create-only and conditional-write primitives without
+assumptions about its underlying topology. Custom providers must coordinate all writers; a process-local
+lock does not provide cross-process approval authority. Old separate-store approvals require a fresh
+conversation, not a silent migration.
 
 Reject incomplete hosted MCP approval sets with HTTP 400 before streaming, response headers,
 `response.created`, or protected dispatch, without consuming pending authority.
 A complete batch may mix approvals and rejections.
+Revalidate and claim authority after other reservations and before protected dispatch. A race after preflight
+can still fail after streaming starts. A consumed or uncertain claim is not reopened automatically, including
+when the client repeats the same response ID. Non-approval redelivery retains the SDK's behavior.
+No claim provides exactly-once external side effects.
 
 Represent invocation-time OAuth consent as structured consent with incomplete response status.
 Pair each emitted function call with one terminal result, preserve completed sibling results, and stop
 later protected calls. Require `store=true` so continuation can retain the required state;
 do not support ephemeral consent under `store=false`.
+Buffer authority-bearing output until authority and snapshots are saved. Invocation-time consent with
+inference-service history is unsupported and fails explicitly; connection-time consent remains separate.
+A consent failure after execution starts is a failed response, not a pre-header HTTP 400.
+
+### Caller options
+
+Preserve protocol-specific option ordering. Responses translates generation fields before factory resolution
+and its hook; Invocations parses and applies its hook before factory resolution. Deep-copy per-run hook input
+and replacement mappings without changing developer defaults. Protect hosting and execution controls after
+the hook, and reject those controls inside nested transport options. The host split does not authorize
+removing existing hooks or applying workflow-only assumptions to regular agents.
 
 ### Unresolved boundaries
 
 Do not infer a single-target restriction or a multi-target router without a documented Foundry platform
 contract. Request `model` is not implicitly an agent selector.
-
-Broader option precedence and validation details require separate design. The host split does not
-authorize removing existing hooks or applying workflow-only assumptions to regular agents.
 
 Keep current dependency requirements and the steering guard until published-wheel compatibility and
 concurrent queue-overflow behavior are verified. An upstream merge alone is not release evidence.
