@@ -349,6 +349,7 @@ def create_harness_agent(
     loop_should_continue: ShouldContinueCallable | None = None,
     loop_next_message: NextMessageCallable | None = None,
     loop_max_iterations: int | None = DEFAULT_MAX_ITERATIONS,
+    loop_return_final_only: bool = False,
     otel_provider_name: str | None = None,
     context_providers: Sequence[ContextProvider] | None = None,
     middleware: Sequence[MiddlewareTypes] | None = None,
@@ -534,6 +535,10 @@ def create_harness_agent(
             a positive integer caps the loop (defaults to the loop middleware's default cap). Only
             takes effect when ``loop_should_continue`` is set (otherwise no loop is added and this
             is ignored).
+        loop_return_final_only: When True, return only the final loop iteration's response for
+            non-streaming runs. When False (default), aggregate all iterations and injected loop
+            prompts. Streaming runs still yield every iteration's updates. Only takes effect when
+            ``loop_should_continue`` is set; otherwise this is ignored.
         otel_provider_name: Custom OpenTelemetry provider/source name for telemetry.
         context_providers: Additional context providers to include after the built-in ones.
         middleware: Additional middleware to include.
@@ -673,6 +678,7 @@ def create_harness_agent(
                 loop_should_continue,
                 max_iterations=loop_max_iterations,
                 next_message=loop_next_message,
+                return_final_only=loop_return_final_only,
             ),
         )
     # Message injection is always on. It is a no-op when no messages are queued for the session,

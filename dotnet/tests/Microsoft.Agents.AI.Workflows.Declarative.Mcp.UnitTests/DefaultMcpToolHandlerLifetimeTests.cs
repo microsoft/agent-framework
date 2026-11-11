@@ -79,6 +79,47 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         Assert.Equal(1, primaryHandlersCreated);
     }
 
+    [Fact]
+    public async Task LoopbackServer_RequestFailureDuringShutdown_IsNotSuppressedAsync()
+    {
+        // Arrange
+        InvalidOperationException failure = new("request processing failed");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        using SemaphoreSlim started = new(0);
+        TaskCompletionSource<bool> shutdown = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        ProtocolStub stub = new()
+        {
+            BeforeOperationAsync = async token =>
+            {
+                using CancellationTokenRegistration registration = token.Register(() => shutdown.SetResult(true));
+                started.Release();
+                await shutdown.Task;
+                throw failure;
+            }
+        };
+
+        // Act
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await using LoopbackMcpServer server = new(stub);
+            using TcpClient client = new();
+            await client.ConnectAsync(IPAddress.Loopback, new Uri(server.Endpoint).Port);
+            using NetworkStream stream = client.GetStream();
+            const string Body = """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""";
+            byte[] request = Encoding.ASCII.GetBytes(
+                $"POST /mcp HTTP/1.1\r\nHost: localhost\r\nContent-Length: {Body.Length}\r\n\r\n{Body}");
+#if NET
+            await stream.WriteAsync(request, timeout.Token);
+#else
+            await stream.WriteAsync(request, 0, request.Length, timeout.Token);
+#endif
+            await started.WaitAsync(timeout.Token);
+        });
+
+        // Assert
+        Assert.Same(failure, error);
+    }
+
     [Theory]
     [InlineData(null, 2)]
     [InlineData("2025-11-25", 0)]
@@ -815,7 +856,19 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             {
                 while (true)
                 {
-                    using TcpClient client = await this._listener.AcceptTcpClientAsync();
+                    TcpClient acceptedClient;
+                    try
+                    {
+                        acceptedClient = await this._listener.AcceptTcpClientAsync();
+                    }
+                    catch (InvalidOperationException exception) when (cancellationToken.IsCancellationRequested)
+                    {
+                        // Shutdown can stop the listener before the next accept begins.
+                        Trace.WriteLine($"Loopback MCP server stopped: {exception.Message}");
+                        return;
+                    }
+
+                    using TcpClient client = acceptedClient;
                     using CancellationTokenRegistration closeClient = cancellationToken.Register(client.Close);
                     using NetworkStream stream = client.GetStream();
                     string requestLine = await ReadLineAsync(stream, cancellationToken);

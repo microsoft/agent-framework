@@ -620,7 +620,8 @@ def test_parse_usage_surfaces_cache_tokens() -> None:
     })
 
     assert details is not None
-    assert details["input_token_count"] == 10
+    # inputTokens (10) + cacheReadInputTokens (8) + cacheWriteInputTokens (3) = 21
+    assert details["input_token_count"] == 21
     assert details["cache_read_input_token_count"] == 8
     assert details["cache_creation_input_token_count"] == 3
 

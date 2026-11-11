@@ -140,6 +140,19 @@ async def test_batch_crud_preserves_key_order_and_upserts(collection: DuckDBColl
     await collection.delete([])
 
 
+async def test_key_retrieval_rejects_skip(collection: DuckDBCollection[Any, Any]) -> None:
+    """skip with key lookup is rejected, not silently ignored.
+
+    The other key-retrieval connectors (MongoDB, Qdrant, Oracle) raise for
+    skip+keys; silently ignoring it made the same portable call succeed on
+    DuckDB and fail elsewhere.
+    """
+    with pytest.raises(ValueError, match="cannot be combined with skip"):
+        await collection.get(["first"], skip=1)
+    # skip stays valid for filtered listing
+    assert await collection.get(skip=1) == []
+
+
 async def test_typed_model_roundtrips_and_searches(tmp_path):
     @vectorstoremodel(collection_name="articles")
     @dataclass

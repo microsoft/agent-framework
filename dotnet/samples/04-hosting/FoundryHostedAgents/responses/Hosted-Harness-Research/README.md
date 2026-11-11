@@ -2,7 +2,7 @@
 
 This sample hosts a research `HarnessAgent` with web search, a public-network browsing tool, planning, a bounded todo loop, and session-scoped file memory. It links the browsing tool from `dotnet/samples/02-agents/Harness/Harness_Step01_Research` instead of maintaining a second implementation.
 
-The project references the framework **source in this repository** so it exercises the local Foundry hosting fix. `AddFoundryResponses(agent)` keeps the default `AllowStoredOutputEnabled = false`. The model must not store a second copy of the response; the harness's local history marker is not a service conversation ID.
+The project references the framework **source in this repository** so it exercises the local Foundry hosting fix. `AddFoundryResponses(agent)` keeps the default `InferenceStoredOutputAllowed = false`. The model must not store a second copy of the response; the harness's local history marker is not a service conversation ID.
 
 Deployment uses a **source ZIP**, with no Dockerfile or container registry. The preparation step copies the linked browsing tool into a standalone source folder. Foundry restores the packages and publishes the .NET 10 application from that folder.
 
