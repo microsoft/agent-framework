@@ -9,8 +9,6 @@ import logging
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
-    Awaitable,
-    Callable,
     Generator,
     Mapping,
     Sequence,
@@ -21,15 +19,9 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from agent_framework import (
-    AgentContext,
-    AgentMiddleware,
-    AgentMiddlewareLayer,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
-    ChatContext,
-    ChatMiddleware,
-    ChatMiddlewareLayer,
     ChatOptions,
     ContextProvider,
     FinishReason,
@@ -99,8 +91,8 @@ from ._shared import (
     OptionsHook,
     ResponsesRequest,
     UnsupportedOptions,
+    background_agent_run_kwargs,
     build_response_server_options,
-    foreground_agent_run_kwargs,
     is_agent,
     prepare_response_options,
     reject_removed_host_settings,
@@ -109,7 +101,6 @@ from ._shared import (
     validate_agent_background_options,
     validate_agent_source,
     validate_default_transport_options,
-    validate_provider_background_options,
     validate_request_options,
     validate_unsupported_options,
 )
@@ -151,52 +142,6 @@ class _DeferredOutput:
     events: list[ResponseStreamEvent | ResponseCheckpointEvent] = field(
         default_factory=lambda: list[ResponseStreamEvent | ResponseCheckpointEvent]()
     )
-
-
-def _validate_selected_provider_background(options: Mapping[str, Any], kwargs: Mapping[str, Any]) -> None:
-    validate_provider_background_options(options, provider_background=True)
-    validate_provider_background_options(kwargs, provider_background=True)
-    if options.get("background") is not True or ("background" in kwargs and kwargs["background"] is not True):
-        raise ValueError("A selected provider-background request must retain background=True.")
-
-
-class _ProviderBackgroundChatOptions(ChatMiddleware):
-    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
-        _validate_selected_provider_background(context.options or {}, context.kwargs)
-        await call_next()
-
-
-_PROVIDER_BACKGROUND_CHAT_OPTIONS = _ProviderBackgroundChatOptions()
-
-
-def _append_provider_background_chat_options(agent: RawAgent[Any], client_kwargs: dict[str, Any]) -> None:
-    if not isinstance(agent.client, ChatMiddlewareLayer):
-        return
-    middleware = client_kwargs.get("middleware", ())
-    if not isinstance(middleware, Sequence) or isinstance(middleware, (str, bytes)):
-        raise TypeError("Client middleware must be a sequence.")
-    client_kwargs["middleware"] = [*middleware, _PROVIDER_BACKGROUND_CHAT_OPTIONS]
-
-
-class _ProviderBackgroundAgentOptions(AgentMiddleware):
-    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-        agent = context.agent
-        validate_agent_background_options(agent, provider_background=True)
-        _validate_selected_provider_background(context.options or {}, context.client_kwargs)
-        if isinstance(agent, RawAgent):
-            _append_provider_background_chat_options(cast(RawAgent[Any], agent), context.client_kwargs)
-        await call_next()
-
-
-_PROVIDER_BACKGROUND_AGENT_OPTIONS = _ProviderBackgroundAgentOptions()
-
-
-def _provider_background_run_kwargs(agent: RawAgent[Any]) -> dict[str, Any]:
-    if isinstance(agent, AgentMiddlewareLayer):
-        return {"middleware": [_PROVIDER_BACKGROUND_AGENT_OPTIONS]}
-    kwargs: dict[str, Any] = {}
-    _append_provider_background_chat_options(agent, kwargs)
-    return {"client_kwargs": kwargs} if kwargs else {}
 
 
 def _validate_agent_defaults(agent: SupportsAgentRun, *, provider_background: bool, allow_agent_store: bool) -> None:
@@ -1139,7 +1084,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     logger.warning("Agent doesn't support runtime options. They will be ignored.")
 
             if not provider_background:
-                run_kwargs.update(foreground_agent_run_kwargs(cast(SupportsAgentRun, agent)))
+                run_kwargs.update(background_agent_run_kwargs(cast(SupportsAgentRun, agent), provider_background=False))
 
             if previous_response_id is not None and context.conversation_id is None and not context.is_recovery:
                 if (
@@ -1424,7 +1369,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     input_messages,
                     session=session,
                     options=options,
-                    **_provider_background_run_kwargs(agent),
+                    **background_agent_run_kwargs(agent, provider_background=True),
                 )
             except Exception as exc:
                 logger.warning("Inner provider background %s failed (%s).", phase, type(exc).__name__)

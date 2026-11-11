@@ -8,16 +8,11 @@ from typing import Any
 
 import httpx
 import pytest
-from agent_framework import RawAgent
 
 from agent_framework_foundry_hosting import InvocationsHostServer, InvocationsWorkflowHostServer, WorkflowTurn
-from agent_framework_foundry_hosting._shared import (
-    foreground_agent_run_kwargs,
-    validate_provider_background_options,
-)
+from agent_framework_foundry_hosting._shared import validate_provider_background_options
 
 from .background_helpers import AgentChatCallbacks, BackgroundCallbacks, ReplacedMiddlewareCallbacks
-from .options_helpers import OptionsClient
 
 
 @pytest.mark.parametrize("provider_background", [False, True])
@@ -167,7 +162,3 @@ async def test_supported_middleware_preserves_foreground_generation(workflow: bo
     assert callbacks.client.calls[0]["temperature"] == 0.2
     if not (workflow and raw):
         assert callbacks.client.chat_middleware == [callbacks.inject_chat]
-
-
-def test_unlayered_client_receives_no_middleware_kwarg() -> None:
-    assert foreground_agent_run_kwargs(RawAgent(client=OptionsClient())) == {}

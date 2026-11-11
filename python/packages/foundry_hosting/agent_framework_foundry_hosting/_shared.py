@@ -404,47 +404,74 @@ def validate_provider_background_options(options: Mapping[str, Any], *, provider
         raise ValueError("Provider extra_body cannot set host-controlled fields: background.")
 
 
-class _ForegroundChatOptions(ChatMiddleware):
+def _validate_background_run(
+    options: Mapping[str, Any], kwargs: Mapping[str, Any], *, provider_background: bool
+) -> None:
+    validate_provider_background_options(options, provider_background=provider_background)
+    validate_provider_background_options(kwargs, provider_background=provider_background)
+    if provider_background and (
+        options.get("background") is not True or ("background" in kwargs and kwargs["background"] is not True)
+    ):
+        raise ValueError("A selected provider-background request must retain background=True.")
+
+
+class _BackgroundChatOptions(ChatMiddleware):
+    def __init__(self, *, provider_background: bool) -> None:
+        self._provider_background = provider_background
+
     async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
-        validate_provider_background_options(context.options or {}, provider_background=False)
-        validate_provider_background_options(context.kwargs, provider_background=False)
+        _validate_background_run(context.options or {}, context.kwargs, provider_background=self._provider_background)
         await call_next()
 
 
-_FOREGROUND_CHAT_OPTIONS = _ForegroundChatOptions()
+_FOREGROUND_CHAT_OPTIONS = _BackgroundChatOptions(provider_background=False)
+_PROVIDER_BACKGROUND_CHAT_OPTIONS = _BackgroundChatOptions(provider_background=True)
 
 
-def _append_foreground_chat_options(agent: SupportsAgentRun, client_kwargs: dict[str, Any]) -> None:
+def _append_background_chat_options(
+    agent: SupportsAgentRun, client_kwargs: dict[str, Any], *, provider_background: bool
+) -> None:
     if not isinstance(agent, RawAgent) or not isinstance(cast(RawAgent[Any], agent).client, ChatMiddlewareLayer):
         return
     middleware = client_kwargs.get("middleware", ())
     if not isinstance(middleware, Sequence) or isinstance(middleware, (str, bytes)):
         raise TypeError("Client middleware must be a sequence.")
-    client_kwargs["middleware"] = [*middleware, _FOREGROUND_CHAT_OPTIONS]
+    guard = _PROVIDER_BACKGROUND_CHAT_OPTIONS if provider_background else _FOREGROUND_CHAT_OPTIONS
+    client_kwargs["middleware"] = [*middleware, guard]
 
 
-class _ForegroundAgentOptions(AgentMiddleware):
+class _BackgroundAgentOptions(AgentMiddleware):
+    def __init__(self, *, provider_background: bool) -> None:
+        self._provider_background = provider_background
+
     async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-        validate_agent_background_options(context.agent, provider_background=False)
-        validate_provider_background_options(context.options or {}, provider_background=False)
-        validate_provider_background_options(context.client_kwargs, provider_background=False)
-        _append_foreground_chat_options(context.agent, context.client_kwargs)
+        validate_agent_background_options(context.agent, provider_background=self._provider_background)
+        _validate_background_run(
+            context.options or {}, context.client_kwargs, provider_background=self._provider_background
+        )
+        _append_background_chat_options(
+            context.agent, context.client_kwargs, provider_background=self._provider_background
+        )
         await call_next()
 
 
-_FOREGROUND_AGENT_OPTIONS = _ForegroundAgentOptions()
+_FOREGROUND_AGENT_OPTIONS = _BackgroundAgentOptions(provider_background=False)
+_PROVIDER_BACKGROUND_AGENT_OPTIONS = _BackgroundAgentOptions(provider_background=True)
 
 
-def foreground_agent_run_kwargs(agent: SupportsAgentRun) -> dict[str, Any]:
-    """Guard ordinary agent and chat middleware using request-local run arguments.
+def background_agent_run_kwargs(agent: SupportsAgentRun, *, provider_background: bool) -> dict[str, Any]:
+    """Guard agent and chat middleware using request-local run arguments.
 
     Custom clients and context-provider-contributed chat middleware must not
     enable provider background internally; they have no final hosting hook.
     """
+    if provider_background and not isinstance(agent, RawAgent):
+        return {}
     if isinstance(agent, AgentMiddlewareLayer):
-        return {"middleware": [_FOREGROUND_AGENT_OPTIONS]}
+        guard = _PROVIDER_BACKGROUND_AGENT_OPTIONS if provider_background else _FOREGROUND_AGENT_OPTIONS
+        return {"middleware": [guard]}
     kwargs: dict[str, Any] = {}
-    _append_foreground_chat_options(agent, kwargs)
+    _append_background_chat_options(agent, kwargs, provider_background=provider_background)
     return {"client_kwargs": kwargs} if kwargs else {}
 
 
@@ -621,7 +648,7 @@ class _NativeAgentOptions(AgentMiddleware):
             "user_id": self.scope.user_id,
             "call_id": self.scope.call_id,
         }
-        _append_foreground_chat_options(context.agent, context.client_kwargs)
+        _append_background_chat_options(context.agent, context.client_kwargs, provider_background=False)
 
         def check_result(result: AgentResponse[Any]) -> None:
             if context.session is not None and context.session.service_session_id is not None:
