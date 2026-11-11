@@ -39,7 +39,8 @@ using var provider = new LocalCodeActProvider("/usr/bin/python3", options);
 
 Both constructors require a fully qualified path to an existing Python executable
 on every platform. Bare names such as `python3` or `python.exe`, relative paths, and
-Windows drive-relative paths such as `C:python.exe` are rejected before scripts are
+Windows drive-relative paths such as `C:python.exe`, and Windows paths without a file
+extension such as `C:\Python312\python`, are rejected before scripts are
 extracted or processes are started. The same explicit path is used for validation
 and execution, without searching the current directory or PATH.
 

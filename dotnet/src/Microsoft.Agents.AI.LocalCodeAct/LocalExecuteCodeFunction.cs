@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.LocalCodeAct.Internal;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.LocalCodeAct;
 
@@ -38,14 +39,14 @@ public sealed class LocalExecuteCodeFunction : AIFunction
     /// <summary>Initializes a new instance of the <see cref="LocalExecuteCodeFunction"/> class.</summary>
     /// <param name="pythonExecutablePath">
     /// Fully qualified path to the Python interpreter used for execution and validation.
-    /// The file must exist in a trusted location.
+    /// The file must exist in a trusted location. On Windows, include the file extension, such as <c>.exe</c>.
     /// </param>
     /// <param name="options">Optional function configuration.</param>
-    /// <exception cref="ArgumentException">The interpreter path is empty or is not fully qualified.</exception>
+    /// <exception cref="ArgumentException">The interpreter path is empty, is not fully qualified, or on Windows has no file extension.</exception>
     /// <exception cref="System.IO.FileNotFoundException">The interpreter file does not exist.</exception>
     public LocalExecuteCodeFunction(string pythonExecutablePath, LocalCodeActProviderOptions? options = null)
     {
-        PythonExecutablePath.Validate(pythonExecutablePath);
+        PathValidation.ValidateFullyQualifiedPathToExistingExecutable(pythonExecutablePath, nameof(pythonExecutablePath), "Python executable");
         options ??= new LocalCodeActProviderOptions();
 
         var limits = options.ExecutionLimits ?? new ProcessExecutionLimits();
