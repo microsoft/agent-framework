@@ -99,14 +99,6 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
     public FoundryToolboxStartupStatus StartupStatus { get; private set; } = FoundryToolboxStartupStatus.Pending;
 
     /// <summary>
-    /// Gets the names used to report <see cref="FoundryToolboxStartupStatus.Unhealthy"/>.
-    /// The current implementation leaves this list empty: non-cancellation discovery failures
-    /// are recorded in <see cref="DeferredToolboxNames"/>, and startup cancellation propagates
-    /// to the host without adding failed names.
-    /// </summary>
-    public IReadOnlyList<string> FailedToolboxNames { get; private set; } = [];
-
-    /// <summary>
     /// Gets the names of pre-registered toolboxes whose tools could not be enumerated at
     /// startup because a tool source requires user OAuth consent. Such toolboxes keep the
     /// container routable (see <see cref="FoundryToolboxStartupStatus.ConsentRequired"/>); the
@@ -245,17 +237,15 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
             this._deferredToolboxNames.Add(name);
         }
 
-        this.FailedToolboxNames = [];
         this.RecomputeStatus();
     }
 
     /// <summary>
     /// Recomputes <see cref="StartupStatus"/> and refreshes <see cref="ConsentRequiredToolboxNames"/>
-    /// and <see cref="DeferredToolboxNames"/> from the current failed, pending-consent and deferred
-    /// sets. This is the single point that derives the public consent/deferred snapshots from
+    /// and <see cref="DeferredToolboxNames"/> from the current pending-consent and deferred sets.
+    /// This is the single point that derives the public consent/deferred snapshots from
     /// <c>_pendingConsents</c> and <c>_deferredToolboxNames</c>, so every mutation of those sets only
-    /// needs to call this method. A hard failure dominates; otherwise an outstanding consent
-    /// requirement keeps the container routable via
+    /// needs to call this method. An outstanding consent requirement keeps the container routable via
     /// <see cref="FoundryToolboxStartupStatus.ConsentRequired"/>; a deferred toolbox keeps it routable
     /// via <see cref="FoundryToolboxStartupStatus.Degraded"/>; otherwise Healthy.
     /// </summary>
@@ -264,13 +254,11 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
         this.ConsentRequiredToolboxNames = [.. this._pendingConsents.Keys];
         this.DeferredToolboxNames = [.. this._deferredToolboxNames];
 
-        this.StartupStatus = this.FailedToolboxNames.Count > 0
-            ? FoundryToolboxStartupStatus.Unhealthy
-            : this._pendingConsents.Count > 0
-                ? FoundryToolboxStartupStatus.ConsentRequired
-                : this._deferredToolboxNames.Count > 0
-                    ? FoundryToolboxStartupStatus.Degraded
-                    : FoundryToolboxStartupStatus.Healthy;
+        this.StartupStatus = this._pendingConsents.Count > 0
+            ? FoundryToolboxStartupStatus.ConsentRequired
+            : this._deferredToolboxNames.Count > 0
+                ? FoundryToolboxStartupStatus.Degraded
+                : FoundryToolboxStartupStatus.Healthy;
     }
 
     /// <summary>

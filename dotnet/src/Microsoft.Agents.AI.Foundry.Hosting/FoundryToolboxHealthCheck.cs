@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
@@ -14,7 +13,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Adapts <see cref="FoundryToolboxService.StartupStatus"/> to the AspNetCore
 /// HealthChecks pipeline so the <c>GET /readiness</c> probe (mapped by
 /// <see cref="EndpointRouteBuilderExtensions.MapFoundryResponses"/>) reflects toolbox startup status,
-/// not whether every pre-registered toolbox is usable. Pending and Unhealthy use the
+/// not whether every pre-registered toolbox is usable. Pending uses the
 /// registration's failure status; Healthy, NoEndpoint, ConsentRequired, and Degraded
 /// report <c>Healthy</c>. Registered automatically by
 /// <see cref="ServiceCollectionExtensions.AddFoundryToolboxService(IServiceCollection, TokenCredential, string[])"/>
@@ -60,16 +59,6 @@ internal sealed class FoundryToolboxHealthCheck : IHealthCheck
                 return Task.FromResult(new HealthCheckResult(
                     status: context.Registration.FailureStatus,
                     description: "Foundry toolbox: startup has not completed yet."));
-
-            case FoundryToolboxStartupStatus.Unhealthy:
-                var data = new Dictionary<string, object>(StringComparer.Ordinal)
-                {
-                    ["failedToolboxes"] = this._toolboxService.FailedToolboxNames,
-                };
-                return Task.FromResult(new HealthCheckResult(
-                    status: context.Registration.FailureStatus,
-                    description: $"Foundry toolbox: {this._toolboxService.FailedToolboxNames.Count} pre-registered toolbox(es) failed to open at startup.",
-                    data: data));
 
             default:
                 return Task.FromResult(new HealthCheckResult(

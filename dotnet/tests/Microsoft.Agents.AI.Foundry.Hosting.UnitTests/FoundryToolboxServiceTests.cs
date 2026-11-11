@@ -67,7 +67,6 @@ public class FoundryToolboxServiceTests
 
             Assert.Empty(service.Tools);
             Assert.Equal(FoundryToolboxStartupStatus.NoEndpoint, service.StartupStatus);
-            Assert.Empty(service.FailedToolboxNames);
         }
         finally
         {
@@ -101,7 +100,6 @@ public class FoundryToolboxServiceTests
             // Assert: open failed but the container stays routable (deferred, not bricked), and
             // the deferred name matches — i.e. we attempted the right toolbox.
             Assert.Equal(FoundryToolboxStartupStatus.Degraded, service.StartupStatus);
-            Assert.Empty(service.FailedToolboxNames);
             Assert.Single(service.DeferredToolboxNames);
             Assert.Equal("my-toolbox", service.DeferredToolboxNames[0]);
         }
@@ -196,7 +194,6 @@ public class FoundryToolboxServiceTests
 
         // Assert
         Assert.Equal(FoundryToolboxStartupStatus.Degraded, service.StartupStatus);
-        Assert.Empty(service.FailedToolboxNames);
         Assert.Single(service.DeferredToolboxNames);
         Assert.Equal("broken-toolbox", service.DeferredToolboxNames[0]);
         Assert.Empty(service.Tools);
@@ -235,7 +232,6 @@ public class FoundryToolboxServiceTests
         Assert.Equal(FoundryToolboxStartupStatus.Degraded, service.StartupStatus);
         Assert.Single(service.DeferredToolboxNames);
         Assert.Equal("broken-toolbox", service.DeferredToolboxNames[0]);
-        Assert.Empty(service.FailedToolboxNames);
         Assert.Empty(service.Tools);
     }
 
@@ -256,7 +252,6 @@ public class FoundryToolboxServiceTests
         await service.StartAsync(CancellationToken.None);
 
         Assert.Equal(FoundryToolboxStartupStatus.Healthy, service.StartupStatus);
-        Assert.Empty(service.FailedToolboxNames);
         Assert.Empty(service.Tools);
     }
 

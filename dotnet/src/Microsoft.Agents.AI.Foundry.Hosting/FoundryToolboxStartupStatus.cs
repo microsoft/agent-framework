@@ -15,7 +15,7 @@ internal enum FoundryToolboxStartupStatus
     /// <see cref="FoundryToolboxService.StartAsync"/> has not completed. If checked in this state,
     /// the toolbox health check reports its registration's failure status
     /// (<c>Unhealthy</c> by default). Cancellation or an exception that escapes startup leaves
-    /// this status unchanged; it is not converted to <see cref="Unhealthy"/>.
+    /// this status unchanged.
     /// </summary>
     Pending = 0,
 
@@ -25,16 +25,6 @@ internal enum FoundryToolboxStartupStatus
     /// <c>Healthy</c>.
     /// </summary>
     Healthy = 1,
-
-    /// <summary>
-    /// <see cref="FoundryToolboxService.FailedToolboxNames"/> contains one or more names.
-    /// The toolbox health check reports its registration's failure status (<c>Unhealthy</c>
-    /// by default) and includes those names under <c>failedToolboxes</c> in
-    /// <c>HealthCheckResult.Data</c>. The current service implementation does not populate
-    /// that list: non-cancellation discovery failures are deferred instead, so normal startup
-    /// does not produce this status.
-    /// </summary>
-    Unhealthy = 2,
 
     /// <summary>
     /// No project endpoint was resolved from the configured override or the
