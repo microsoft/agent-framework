@@ -10,7 +10,6 @@ Expected output: Steering is temporarily unavailable; no agent or host was start
 
 from agent_framework import SupportsAgentRun
 from agent_framework_foundry_hosting import ResponsesHostServer, ResponsesRequest
-from azure.ai.agentserver.responses import ResponsesServerOptions
 
 
 def _agent_factory(*, request: ResponsesRequest) -> SupportsAgentRun:
@@ -20,9 +19,9 @@ def _agent_factory(*, request: ResponsesRequest) -> SupportsAgentRun:
 def main() -> None:
     """Confirm that the constructor rejects steering before creating an agent or host."""
     try:
-        ResponsesHostServer(agent=_agent_factory, options=ResponsesServerOptions(steerable_conversations=True))
-    except RuntimeError as exc:
-        if "steerable_conversations=True is temporarily unavailable" not in str(exc):
+        ResponsesHostServer(agent=_agent_factory, steerable_conversations=True)
+    except TypeError as exc:
+        if "steerable_conversations is no longer a supported host setting" not in str(exc):
             raise
         print("Steering is temporarily unavailable; no agent or host was started.")
         return

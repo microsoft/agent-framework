@@ -110,6 +110,17 @@ Outer workflow background must not enable background on constituent agents. Nati
 background is unsupported. Do not introduce a per-agent workflow-host background switch.
 Recovery permission neither selects an execution mode nor guarantees exactly-once external side effects.
 
+Allow top-level `background` values of `False` or `None`, and reject nested `extra_body.background` in
+every mode. Validate caller options, hook results, and developer defaults before execution. Also check the
+effective options and client kwargs from ordinary agent middleware and client-level chat middleware before
+the provider call. For a native `RawAgent`, install the check after existing client middleware on the fresh
+client that the host owns. Make native `WorkflowTurn` reject client-level and run-level middleware. Report
+middleware violations as execution failures, not as client input errors.
+
+Do not claim universal interception and do not change Core for this check. Core can append chat middleware
+from context providers after the guard, so applications must not enable provider background there. Clients
+that internally force provider background are unsupported.
+
 ### Supported host settings
 
 Expose supported first-class settings and construct SDK options internally, without another framework

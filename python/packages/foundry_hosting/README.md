@@ -227,7 +227,7 @@ history or decode pending replies. `agent=workflow.as_agent()` is no longer supp
 Wrapper context providers, history, event projection, and request-info translation are
 not silently unwrapped. See [Migrate `WorkflowAgent` hosting](#migrate-workflowagent-hosting).
 
-With `resilient_background=True`, the application must also enable the
+With `enable_background_recovery=True`, the application must also enable the
 AgentServer resilient task subsystem. Host-owned checkpoint/output pairs
 recover emitted output and usage without selecting newer unpaired workflow
 state. This is not an exactly-once guarantee for external tools: make
@@ -318,7 +318,8 @@ Outer background work always uses the caller-visible `response.id` for polling; 
 background automatically. `background_source="host_managed"` (default) uses only the outer background worker.
 `background_source="inference_service"` is a separate opt-in for `history_source="inference_service"` with a storing
 Responses client. Its private continuation token is saved under the outer ID and never returned to the caller.
-Use `ResponsesServerOptions(resilient_background=True)` to permit recovery from a **saved** token; a crash before
+Set `enable_background_recovery=True` to permit recovery from a **saved** token; for regular agents it requires
+`history_source="inference_service"` and `background_source="inference_service"`. A crash before
 the token is saved cannot safely restart the inner job. Completed polling output, including local function calls,
 results, and usage, is saved together with the next token in the private response-ID snapshot before emission.
 Outer output checkpoints record which saved batches have been emitted, so recovery restores their usage and
@@ -330,15 +331,29 @@ Each poll retains the caller's generation options and `background=True`, so a to
 another background response and saves its next token. A crash after a local tool side effect but before that
 next token is saved can still repeat the tool on recovery; use idempotent tools or avoid provider background
 for side-effecting local tools. This mechanism does not provide exactly-once tool execution.
-Provider background and steering cannot be combined.
-Regular agent runs without this opt-in are not crash-replayable. **Steering is temporarily unavailable:**
-`steerable_conversations=True` fails during host construction, before enabling the process-wide TaskManager.
-The current AgentServer SDK retains unbounded futures for rejected turns when its steering queue fills. Do not
-use a queue-length precheck: another worker can append before it. The guard can be removed only after
-[Azure/azure-sdk-for-python#49233](https://github.com/Azure/azure-sdk-for-python/pull/49233) ships in an
-official `azure-ai-agentserver-core` wheel, the minimum dependency and `uv.lock` are updated, and a
-concurrent queue-overflow regression proves rejected turns leave no pending futures. No future SDK
-version is assumed. Non-steerable agent background polling is unchanged.
+Regular agent runs without this opt-in are not crash-replayable.
+
+Provider background is selected only by the host. A provider call may use `background=True` only for an outer
+background request with both `history_source="inference_service"` and `background_source="inference_service"`.
+A top-level `background` of `False` or `None` is allowed in every mode. A nested `extra_body["background"]` is
+always rejected, even when it is `False`. The host checks these values in caller options, the `prepare_options`
+result, and developer defaults before execution. It also checks the effective options and client kwargs that
+ordinary agent middleware and client-level chat middleware produce, before the provider call. Invocations hosts
+and native workflow constituent agents never use provider background, and an outer workflow `background=True` does
+not enable it for those agents. A native `WorkflowTurn` rejects client-level and run-level `middleware`.
+
+This guard does not intercept every path. Agent Framework Core can append chat middleware that a context provider
+contributes **after** the guard; that middleware must not enable provider background. Clients that internally
+force provider background are unsupported. Invalid defaults and request options fail before execution. A
+middleware violation is an application failure during execution: a non-streaming request returns HTTP 500, and a
+stream ends with a terminal error event.
+
+**Steering is unavailable.** `steerable_conversations` and the other removed `ResponsesServerOptions` settings are
+not host parameters; passing them raises `TypeError` during host construction. The AgentServer SDK can retain
+unbounded futures for rejected turns when its steering queue fills
+([Azure/azure-sdk-for-python#49233](https://github.com/Azure/azure-sdk-for-python/pull/49233)). Any future
+steering support needs a published SDK fix, a dependency update, and a concurrent queue-overflow regression.
+No future SDK version is assumed. Agent background polling without steering is unchanged.
 
 Native CreateResponse generation fields become MAF runtime options (notably `max_output_tokens` -> `max_tokens` and
 `parallel_tool_calls` -> `allow_multiple_tool_calls`). Flattened OpenAI `extra_body` fields overlay translated keys
