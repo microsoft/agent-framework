@@ -5592,8 +5592,7 @@ class TestStreaming:
             stream_updates=[
                 AgentResponseUpdate(
                     contents=[
-                        Content.from_function_call("call_2", "get_weather",
-                                                arguments='{"loc', merge_mode="append")
+                        Content.from_function_call("call_2", "get_weather", arguments='{"loc', merge_mode="append")
                     ],
                     role="assistant",
                 ),
