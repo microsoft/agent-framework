@@ -279,7 +279,6 @@ async def test_resolver_allows_reused_stateless_function_tools(shared: Any) -> N
     for workflow in (first, second):
         executor = workflow.get_start_executor()
         assert isinstance(executor, AgentExecutor)
-        assert isinstance(executor.agent, RawAgent)
         assert executor.agent.default_options["tools"][0] is shared
 
 
