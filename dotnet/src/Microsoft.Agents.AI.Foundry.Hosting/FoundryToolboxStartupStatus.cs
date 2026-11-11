@@ -6,23 +6,21 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <summary>
 /// Status of <see cref="FoundryToolboxService"/> startup, used by the
 /// <c>foundry-toolbox</c> health check on the <c>GET /readiness</c> probe.
-/// A healthy toolbox check does not guarantee that every pre-registered toolbox is available:
-/// consent requirements and non-cancellation discovery failures are retained for per-request resolution.
+/// Startup only resolves configuration; toolboxes are opened for each response, so a healthy
+/// toolbox check does not mean that a toolbox is reachable or usable by a particular caller.
 /// </summary>
 internal enum FoundryToolboxStartupStatus
 {
     /// <summary>
     /// <see cref="FoundryToolboxService.StartAsync"/> has not completed. If checked in this state,
     /// the toolbox health check reports its registration's failure status
-    /// (<c>Unhealthy</c> by default). Cancellation or an exception that escapes startup leaves
-    /// this status unchanged.
+    /// (<c>Unhealthy</c> by default). An exception that escapes startup leaves this status unchanged.
     /// </summary>
     Pending = 0,
 
     /// <summary>
-    /// Startup completed and either every pre-registered toolbox opened successfully or
-    /// no pre-registered toolboxes were configured. The health-check reports
-    /// <c>Healthy</c>.
+    /// Startup resolved the project endpoint and validated the configured toolbox names, or no
+    /// toolbox names were configured. The health check reports <c>Healthy</c>.
     /// </summary>
     Healthy = 1,
 
@@ -33,26 +31,4 @@ internal enum FoundryToolboxStartupStatus
     /// and the toolbox health check reports <c>Healthy</c>.
     /// </summary>
     NoEndpoint = 3,
-
-    /// <summary>
-    /// One or more pre-registered toolboxes could not enumerate their tools because a tool
-    /// source requires user OAuth consent (the proxy returned <c>CONSENT_REQUIRED</c> at
-    /// <c>tools/list</c> time). The health-check reports <c>Healthy</c> so the container stays
-    /// routable: the consent requirement is surfaced to the caller as a per-request
-    /// <c>oauth_consent_request</c>, and enumeration is retried once the user has consented.
-    /// </summary>
-    ConsentRequired = 4,
-
-    /// <summary>
-    /// One or more pre-registered toolboxes could not be enumerated at startup due to a non-consent,
-    /// non-cancellation error, and no startup consent requirements are pending
-    /// (otherwise the status is <see cref="ConsentRequired"/>). For example, a tool source may
-    /// require a per-user delegated identity, which is only available on a user request's egress.
-    /// The health-check reports <c>Healthy</c> so the container
-    /// stays routable: the toolbox is retried per-request via
-    /// <see cref="FoundryToolboxService.RetryDeferredToolboxesAsync"/>, where the per-user isolation key
-    /// is present. A retry can resolve tools or surface a consent prompt for that response;
-    /// other non-cancellation failures leave the toolbox deferred for later requests.
-    /// </summary>
-    Degraded = 5,
 }

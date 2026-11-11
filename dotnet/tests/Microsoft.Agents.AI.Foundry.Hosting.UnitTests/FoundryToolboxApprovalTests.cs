@@ -55,7 +55,8 @@ public sealed class FoundryToolboxApprovalTests
         await using var toolbox = await ToolboxServer.CreateAsync("""{"tool_configuration":{"require_approval":"always"}}""");
         await using var service = toolbox.CreateService();
         await service.StartAsync(CancellationToken.None);
-        var tool = Assert.IsAssignableFrom<AIFunction>(Assert.Single(service.Tools));
+        await using var scope = service.CreateRequestScope();
+        var tool = Assert.IsAssignableFrom<AIFunction>(Assert.Single((await scope.ResolveAsync(CancellationToken.None)).Tools));
         var calls = 0;
         ChatResponse NextResponse() => ++calls == 1 || calls == 3
             ? new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent(
@@ -120,10 +121,11 @@ public sealed class FoundryToolboxApprovalTests
         // Arrange
         await using var toolbox = await ToolboxServer.CreateAsync(metadata);
         await using var service = toolbox.CreateService();
+        await service.StartAsync(CancellationToken.None);
+        await using var scope = service.CreateRequestScope();
 
         // Act
-        await service.StartAsync(CancellationToken.None);
-        var tool = Assert.IsAssignableFrom<AIFunction>(Assert.Single(service.Tools));
+        var tool = Assert.IsAssignableFrom<AIFunction>(Assert.Single((await scope.ResolveAsync(CancellationToken.None)).Tools));
 
         // Assert
         Assert.Equal(requiresApproval, tool.GetService<ApprovalRequiredAIFunction>() is not null);
@@ -139,58 +141,39 @@ public sealed class FoundryToolboxApprovalTests
     }
 
     [Theory]
-    [InlineData("deferred")]
+    [InlineData("unavailable")]
     [InlineData("consent")]
-    public async Task RequestDiscoveredTool_RequiresApprovalAsync(string discoveryPath)
+    public async Task ResolveAsync_ToolboxRecoversForLaterResponse_RequiresApprovalAsync(string firstResponseFailure)
     {
-        // Arrange
+        // Arrange: discovery fails for one response, either transiently or because consent is required.
         await using var toolbox = await ToolboxServer.CreateAsync("""{"tool_configuration":{"require_approval":"always"}}""");
-        if (discoveryPath is "deferred")
-        {
-            toolbox.ListError = new JsonObject { ["code"] = -32603, ["message"] = "Try again" };
-        }
-        else if (discoveryPath is "consent")
-        {
-            toolbox.ListError = new JsonObject
+        toolbox.ListError = firstResponseFailure is "unavailable"
+            ? new JsonObject { ["code"] = -32603, ["message"] = "Try again" }
+            : new JsonObject
             {
                 ["code"] = -32006,
                 ["message"] = """tools/list failed {"errors":[{"name":"get_weather","type":"mcp","error":{"code":"CONSENT_REQUIRED","message":"https://auth.example.com/authorize"}}]}""",
             };
-        }
 
         await using var service = toolbox.CreateService();
         await service.StartAsync(CancellationToken.None);
-        Assert.Empty(service.Tools);
-        Assert.Equal(
-            discoveryPath is "deferred" ? FoundryToolboxStartupStatus.Degraded :
-            FoundryToolboxStartupStatus.ConsentRequired,
-            service.StartupStatus);
+        await using (var firstScope = service.CreateRequestScope())
+        {
+            var first = await firstScope.ResolveAsync(CancellationToken.None);
+            Assert.Empty(first.Tools);
+            Assert.Equal(firstResponseFailure is "consent", first.Consents.Count > 0);
+        }
+
         toolbox.ListError = null;
         await using var scope = service.CreateRequestScope();
-        var previousScope = HostedCallContext.ToolboxCacheScopeId;
-        HostedCallContext.ToolboxCacheScopeId = scope.Id;
-        try
-        {
-            // Act
-            if (discoveryPath is "deferred")
-            {
-                await service.RetryDeferredToolboxesAsync(CancellationToken.None);
-            }
-            else
-            {
-                Assert.Empty(await service.ResolvePendingConsentsAsync(CancellationToken.None));
-            }
 
-            // Assert
-            IReadOnlyList<AITool> tools = service.GetCurrentRequestTools();
-            Assert.NotNull(Assert.IsAssignableFrom<AIFunction>(Assert.Single(tools)).GetService<ApprovalRequiredAIFunction>());
-            Assert.Empty(service.Tools);
-            Assert.Equal(0, toolbox.InvocationCount);
-        }
-        finally
-        {
-            HostedCallContext.ToolboxCacheScopeId = previousScope;
-        }
+        // Act: the next response opens the toolbox again.
+        var resolution = await scope.ResolveAsync(CancellationToken.None);
+
+        // Assert
+        var tool = Assert.IsAssignableFrom<AIFunction>(Assert.Single(resolution.Tools));
+        Assert.NotNull(tool.GetService<ApprovalRequiredAIFunction>());
+        Assert.Equal(0, toolbox.InvocationCount);
     }
 
     [Fact]
@@ -202,7 +185,8 @@ public sealed class FoundryToolboxApprovalTests
         toolbox.CallError = new JsonObject { ["code"] = -32006, ["message"] = ConsentUrl };
         await using var service = toolbox.CreateService();
         await service.StartAsync(CancellationToken.None);
-        var tool = Assert.IsType<ApprovalRequiredAIFunction>(Assert.Single(service.Tools));
+        await using var scope = service.CreateRequestScope();
+        var tool = Assert.IsType<ApprovalRequiredAIFunction>(Assert.Single((await scope.ResolveAsync(CancellationToken.None)).Tools));
         using var cancellation = new CancellationTokenSource();
         var state = new RequestConsentState { CancellationSource = cancellation };
         var previous = McpConsentContext.Current.Value;

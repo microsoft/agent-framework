@@ -62,11 +62,10 @@ public class FoundryToolboxHealthCheckTests
     }
 
     [Fact]
-    public async Task CheckHealthAsync_DegradedStatus_StaysRoutableForDeferredToolboxAsync()
+    public async Task CheckHealthAsync_ConfiguredToolbox_ReportsHealthyWithoutConnectingAsync()
     {
-        // Arrange: a pre-registered toolbox at an unreachable endpoint forces StartAsync to defer
-        // the toolbox (non-consent failure). The container must stay routable so the toolbox can be
-        // retried per-request, where the platform injects the per-user isolation key on egress.
+        // Arrange: a configured toolbox at an unreachable endpoint. Startup opens no connection, so the
+        // container is routable; each response opens the toolbox and skips it if it cannot be reached.
         var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "http://127.0.0.1:1/unreachable",
@@ -81,11 +80,11 @@ public class FoundryToolboxHealthCheckTests
         // Act
         var result = await check.CheckHealthAsync(context);
 
-        // Assert: deferred toolbox keeps the container Healthy (routable), not bricked.
-        Assert.Equal(FoundryToolboxStartupStatus.Degraded, service.StartupStatus);
+        // Assert
+        Assert.Equal(FoundryToolboxStartupStatus.Healthy, service.StartupStatus);
         Assert.Equal(HealthStatus.Healthy, result.Status);
-        Assert.Equal("broken-toolbox", Assert.Single(service.DeferredToolboxNames));
-        Assert.Contains("deferred", result.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("1 toolbox(es) configured", result.Description, StringComparison.Ordinal);
+        Assert.Contains("each response", result.Description, StringComparison.Ordinal);
     }
 
     [Fact]

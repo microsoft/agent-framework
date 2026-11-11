@@ -13,9 +13,9 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Adapts <see cref="FoundryToolboxService.StartupStatus"/> to the AspNetCore
 /// HealthChecks pipeline so the <c>GET /readiness</c> probe (mapped by
 /// <see cref="EndpointRouteBuilderExtensions.MapFoundryResponses"/>) reflects toolbox startup status,
-/// not whether every pre-registered toolbox is usable. Pending uses the
-/// registration's failure status; Healthy, NoEndpoint, ConsentRequired, and Degraded
-/// report <c>Healthy</c>. Registered automatically by
+/// not whether a toolbox is reachable: toolboxes are opened for each response, never at startup.
+/// Pending uses the registration's failure status; Healthy and NoEndpoint report <c>Healthy</c>.
+/// Registered automatically by
 /// <see cref="ServiceCollectionExtensions.AddFoundryToolboxService(IServiceCollection, TokenCredential, string[])"/>
 /// and its overloads.
 /// </summary>
@@ -35,25 +35,11 @@ internal sealed class FoundryToolboxHealthCheck : IHealthCheck
         {
             case FoundryToolboxStartupStatus.Healthy:
                 return Task.FromResult(HealthCheckResult.Healthy(
-                    description: $"Foundry toolbox: {this._toolboxService.Tools.Count} tool(s) available."));
+                    description: $"Foundry toolbox: {this._toolboxService.ToolboxNames.Count} toolbox(es) configured; each response opens its own toolbox connections."));
 
             case FoundryToolboxStartupStatus.NoEndpoint:
                 return Task.FromResult(HealthCheckResult.Healthy(
                     description: "Foundry toolbox: neither FOUNDRY_PROJECT_ENDPOINT nor AZURE_AI_PROJECT_ENDPOINT is set; toolbox support disabled (local dev)."));
-
-            case FoundryToolboxStartupStatus.ConsentRequired:
-                // Report Healthy so the container stays routable. The consent requirement is
-                // surfaced to the caller per-request as an oauth_consent_request; enumeration is
-                // retried once the user has consented. Do not include consent URLs here.
-                return Task.FromResult(HealthCheckResult.Healthy(
-                    description: $"Foundry toolbox: {this._toolboxService.ConsentRequiredToolboxNames.Count} pre-registered toolbox(es) awaiting user OAuth consent."));
-
-            case FoundryToolboxStartupStatus.Degraded:
-                // Report Healthy so the container stays routable. The toolbox could not be enumerated
-                // at startup (no per-user context) and is retried per-request, where the platform
-                // injects the per-user isolation key on egress.
-                return Task.FromResult(HealthCheckResult.Healthy(
-                    description: $"Foundry toolbox: {this._toolboxService.DeferredToolboxNames.Count} pre-registered toolbox(es) deferred to per-request resolution."));
 
             case FoundryToolboxStartupStatus.Pending:
                 return Task.FromResult(new HealthCheckResult(

@@ -166,11 +166,13 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         // point below: AsyncLocal writes made in this streaming iterator are reverted across yield
         // boundaries, so a single up-front assignment would be lost before the toolbox/MCP calls run.
         var platformCallId = context.PlatformContext?.CallId;
+
+        // Every toolbox connection opened for this response belongs to this scope and ends with the response,
+        // so no MCP session is shared with another response or caller.
         var toolboxRequestScope = this._toolboxService?.CreateRequestScope()
-            ?? FoundryToolboxService.RequestToolboxScope.CreateInactive();
+            ?? FoundryToolboxService.ToolboxRequestScope.CreateInactive();
         await using var configuredToolboxRequestScope = toolboxRequestScope.ConfigureAwait(false);
         HostedCallContext.CallId = platformCallId;
-        HostedCallContext.ToolboxCacheScopeId = toolboxRequestScope?.Id;
 
         // Stamp/validate the hosted identity only when one was resolved. Locally (non-hosted) there is
         // no user identity, so there is nothing to partition or tamper-check and the session is shared.
@@ -255,19 +257,16 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
             this._options);
         chatOptions.Instructions = request.Instructions;
 
-        // Inject pre-registered Foundry Toolbox tools when the toolbox service is available.
+        // Open the pre-registered Foundry toolboxes for this response when the toolbox service is available.
         if (this._toolboxService is not null)
         {
             // Re-apply the call id: the EmitCreated/EmitInProgress yields above reverted the ambient
-            // value, and the toolbox tools/list + consent egress below must carry it per request.
+            // value, and the toolbox initialize and tools/list egress below must carry it.
             HostedCallContext.CallId = platformCallId;
-            HostedCallContext.ToolboxCacheScopeId = toolboxRequestScope?.Id;
 
-            var toolboxResolution = await this.ResolveToolboxToolsAsync(
-                this._toolboxService,
-                cancellationToken).ConfigureAwait(false);
+            var toolboxResolution = await toolboxRequestScope.ResolveAsync(cancellationToken).ConfigureAwait(false);
 
-            // A toolbox that still needs OAuth consent stops this turn instead of silently running
+            // A toolbox that needs this caller's OAuth consent stops the turn instead of silently running
             // without its tools: the user completes consent out of band, then re-sends the request.
             if (toolboxResolution.Consents.Count > 0)
             {
@@ -371,7 +370,6 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
                 // below revert the ambient AsyncLocal, but the MCP tools/call egress that happens
                 // inside MoveNextAsync must carry the platform call id on every request.
                 HostedCallContext.CallId = platformCallId;
-                HostedCallContext.ToolboxCacheScopeId = toolboxRequestScope?.Id;
 
                 bool shutdownDetected = false;
                 IReadOnlyList<McpConsentInfo>? pendingConsents = null;
@@ -717,49 +715,13 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
     }
 
     /// <summary>
-    /// Resolves the pre-registered Foundry toolbox tools to add to this request.
-    /// </summary>
-    /// <returns>
-    /// The tools to add, or the OAuth consents still outstanding.
-    /// </returns>
-    private async ValueTask<ToolboxRequestResolution> ResolveToolboxToolsAsync(
-        FoundryToolboxService toolboxService,
-        CancellationToken cancellationToken)
-    {
-        // Retry any pre-registered toolbox that was deferred at startup because it could not be
-        // enumerated without a per-user context (non-consent failure). The request's egress now
-        // carries the platform-injected per-user isolation key, so a delegated tool source can
-        // enumerate as the user — or report that it needs OAuth consent, which is then surfaced
-        // by ResolvePendingConsentsAsync below.
-        await toolboxService
-            .RetryDeferredToolboxesAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        // Resolve any pre-registered toolbox that was awaiting user OAuth consent at startup
-        // (CONSENT_REQUIRED at tools/list time). If consent is still outstanding, surface it to
-        // the caller as an oauth_consent_request and stop: the user completes consent out of band,
-        // then re-sends the request, at which point enumeration succeeds and the tools appear.
-        var pendingConsents = await toolboxService
-            .ResolvePendingConsentsAsync(cancellationToken)
-            .ConfigureAwait(false);
-        if (pendingConsents.Count > 0)
-        {
-            return new(Tools: [], Consents: pendingConsents);
-        }
-
-        return new(
-            Tools: [.. toolboxService.Tools, .. toolboxService.GetCurrentRequestTools()],
-            Consents: []);
-    }
-
-    /// <summary>
     /// Emits the terminal events for a turn that stops on OAuth consent: one <c>oauth_consent_request</c>
     /// item per consent, then <c>response.incomplete</c>.
     /// </summary>
     /// <remarks>
     /// When any consent link fails the consent link policy, only <c>response.failed</c> is emitted, so
-    /// no link from that turn is surfaced. A pre-registered toolbox that is awaiting consent stays
-    /// pending, so a later request retries it.
+    /// no link from that turn is surfaced. Every later response opens the toolbox again, so it discovers
+    /// the tools once the caller has consented.
     /// </remarks>
     private IEnumerable<ResponseStreamEvent> EmitConsentRequiredResponse(
         ResponseEventStream stream,
@@ -982,14 +944,6 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
 
         return agentName;
     }
-
-    /// <summary>
-    /// The toolbox outcome for one request. A non-empty <see cref="Consents"/> stops the turn for OAuth consent, and
-    /// <see cref="Tools"/> holds the toolbox tools to add to the run.
-    /// </summary>
-    private readonly record struct ToolboxRequestResolution(
-        IReadOnlyList<AITool> Tools,
-        IReadOnlyList<McpConsentInfo> Consents);
 
     [LoggerMessage(
         EventId = 0,

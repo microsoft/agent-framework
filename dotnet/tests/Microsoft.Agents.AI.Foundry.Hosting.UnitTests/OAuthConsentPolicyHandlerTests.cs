@@ -186,7 +186,7 @@ public class OAuthConsentPolicyHandlerTests
             toolboxNames: ["tb"],
             opener: (name, _) => Task.FromResult(
                 new FoundryToolboxService.ToolboxOpenResult(
-                    Cached: null,
+                    Connection: null,
                     Consents: [new McpConsentInfo(name, $"{name}.tool", consentLink)])));
 
     private static async Task<FoundryToolboxService> CreateStartedServiceAsync(
