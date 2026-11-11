@@ -4,7 +4,12 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 
 > [IMPORTANT] Migrating from Protocol version 1.0.0 to 2.0.0: Foundry Hosting Agents service has been updated to use Protocol version 2.0.0. If your application is using Protocol version 1.0.0, please upgrade to Protocol version 2.0.0 in your `agent.manifest.yaml` or `agent.yaml` and upgrade to the latest `agent-framework-foundry-hosting` package. `agent-framework-foundry-hosting==1.0.0a260625` is the last version that supports Protocol version 1.0.0.
 >
-> The `agent-framework-foundry-hosting` Python API surface is intended to remain stable, but protocol 1.0.0 and 2.0.0 are incompatible.
+> Protocol versions 1.0.0 and 2.0.0 are incompatible.
+
+The hosting package is currently in beta, so its public APIs are experimental. Responses hosting
+is the target for an initial stable release, subject to qualification. Invocations hosting and
+the `FoundryToolbox` integration remain experimental.
+
 ## Samples
 
 ### Responses API
@@ -73,6 +78,10 @@ by trusted platform user **and** sandbox, with per-key conditional writes.
 An opaque call ID correlates one request; it is not a storage namespace.
 
 ### Invocations API
+
+The Foundry-hosted Telegram integration is sample-only, not a built-in channel adapter in
+`agent-framework-foundry-hosting`. The sample uses Azure AgentServer's `InvocationAgentServerHost`
+directly, not Agent Framework's `InvocationsHostServer`.
 
 | # | Sample | Description |
 |---|--------|-------------|

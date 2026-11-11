@@ -2,6 +2,8 @@
 
 An [Agent Framework](https://github.com/microsoft/agent-framework) agent that uses **Foundry Toolbox** for tool discovery, hosted on Microsoft Foundry using the **Responses protocol**. Foundry Toolbox is a managed tool registry in Microsoft Foundry that lets you define tools centrally and share them across agents.
 
+The Agent Framework `FoundryToolbox` integration is experimental.
+
 ## Creating a Foundry Toolbox
 
 You can create a Foundry Toolbox by code. Refer to this sample for an example: [Foundry Toolbox CRUD Sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/toolboxes/sample_toolboxes_crud.py).

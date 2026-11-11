@@ -15,6 +15,10 @@ It is a complete learning deployment rather than a production reference architec
 polling, an app-owned FastAPI webhook, and in-memory state. This sample focuses on Foundry direct-code deployment,
 APIM ingress, managed identities, and durable history.
 
+The Foundry-hosted Telegram integration is sample-only, not a built-in channel adapter in
+`agent-framework-foundry-hosting`. This sample uses Azure AgentServer's `InvocationAgentServerHost`
+directly, not Agent Framework's `InvocationsHostServer`.
+
 ## What is deployed
 
 The self-contained Bicep templates create:

@@ -1,8 +1,11 @@
 # Custom session storage (Responses protocol)
 
 This sample implements custom **MAF agent-session persistence**, including user
-and sandbox isolation and optimistic concurrency. The outer Responses store and
-function-approval store remain host-managed. This is not a workflow example.
+and sandbox isolation and optimistic concurrency. The outer Responses store
+remains host-managed. The same custom store also holds the host's agent
+approval state, so it implements revision-based conditional writes (see
+[Approval state](#approval-state-and-revisioned-writes)). This is not a
+workflow example.
 
 ## Identity and storage keys
 
@@ -51,10 +54,55 @@ newer snapshot. An absent delete is idempotent. Missing ETags and mismatched
 stored scope fail closed; other Cosmos failures propagate without a local
 fallback.
 
-Local runs use isolated in-memory snapshots with the same conditional behavior.
-They are lost when the process exits and are **single-user development only**:
+Local runs use isolated in-memory snapshots with the same conditional behavior,
+but only inside **one process and event loop**. The local store gives no
+guarantee across workers or processes. Snapshots are lost when the process
+exits and are **single-user development only**:
 local headers/session selectors are not a trusted platform authentication
 boundary. Explicit local sessions have separate namespaces.
+
+## Approval state and revisioned writes
+
+The host keeps agent tool-approval state in the configured session store, not
+in a separate approval store. Each tool-approval request needs a single atomic
+claim. A custom store that holds approval state must therefore add two async
+methods next to `get`/`set`/`delete`:
+
+```python
+async def get_with_revision(self, session_id: str) -> tuple[AgentSession | None, str | None]: ...
+async def compare_and_set(
+    self, session_id: str, session: AgentSession, *, expected_revision: str | None
+) -> str: ...
+```
+
+The host detects these methods structurally. Do not import or subclass a
+private hosting type. The sample stores follow these rules:
+
+- `get_with_revision` returns an independent snapshot and an opaque, non-empty
+  revision for that exact stored version. An absent key returns
+  `(None, None)`. Revision reads do not change the per-request ETags that
+  `get`/`set` use.
+- `expected_revision=None` is an atomic **create-only** write. A revision means
+  an update only when the stored version still matches. A conflict raises
+  `RuntimeError`. The store never falls back to an upsert or retries the write
+  on its own. On success it returns the new revision.
+- Keys are opaque strings. They can differ from `AgentSession.session_id` and
+  can contain characters such as `/`. Cosmos item IDs hash the key.
+- Cosmos uses `create_item` and `replace_item` with the ETag and
+  `MatchConditions.IfNotModified`. The service enforces both conditions.
+  A write result without an ETag fails.
+- A write that fails or is cancelled may still have been committed. Reload the
+  state before you decide what to do next. Do not assume that the write did
+  not happen.
+
+The local store implements the same methods for development. Its conditional
+write is atomic only inside one process and event loop. Use a store with
+server-side conditional writes, such as Cosmos, when more than one worker or
+process can serve the same conversation.
+
+Without these methods, the host can still use the store for ordinary session
+history. A non-hosted request that needs approval state fails with a
+`RuntimeError` that names the missing methods.
 
 ## Cosmos prerequisites
 
