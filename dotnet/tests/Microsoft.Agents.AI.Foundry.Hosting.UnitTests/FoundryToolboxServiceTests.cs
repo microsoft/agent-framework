@@ -3,13 +3,16 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Net.Http;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -18,6 +21,10 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public class FoundryToolboxServiceTests
 {
     private const string TestEndpoint = "https://proj.example/api/projects/proj";
+    private const string ConsentLinkHost = "auth.example.com";
+    private const string MixedConsentFailure =
+        "tools/list failed for 2 tool source(s), succeeded for 0 tool source(s) " +
+        """{"errors":[{"name":"send_email","type":"mcp","error":{"code":"CONSENT_REQUIRED","message":"https://auth.example.com/authorize?state=caller-a"}},{"name":"search","type":"mcp","error":{"code":"UPSTREAM_ERROR","message":"Upstream returned 502."}}]}""";
 
     [Fact]
     public void TokenScope_DefaultsToAzurePublicCloud()
@@ -313,6 +320,51 @@ public class FoundryToolboxServiceTests
         var warning = Assert.Single(logs.Entries, entry => entry.Level == LogLevel.Warning);
         Assert.Equal("LogToolboxUnavailableForResponse", warning.EventId.Name);
         Assert.NotNull(warning.Exception);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResolveAsync_ConsentMixedWithOtherFailure_LogsNoConsentLinkAsync(bool nested)
+    {
+        // Arrange: one tool source needs the caller's OAuth consent and another fails, so consent alone cannot
+        // open the toolbox and it is skipped. The consent link is issued for this caller.
+        var logs = new RecordingLoggerFactory();
+        await using var server = await ToolboxLoopbackServer.StartAsync();
+        server.ToolsListErrorFor = static (_, _) => new JsonObject { ["code"] = -32603, ["message"] = MixedConsentFailure };
+        var options = new FoundryToolboxServiceOptions { EndpointOverride = server.Endpoint };
+        options.ToolboxNames.Add("mixed");
+        await using var service = new FoundryToolboxService(
+            options,
+            CreateCredential(),
+            logs.CreateLogger<FoundryToolboxService>())
+        {
+            ToolboxOpener = nested
+                ? (_, _, _) => Task.FromException<FoundryToolboxService.ToolboxOpenResult>(
+                    new InvalidOperationException("Toolbox discovery failed.", new McpProtocolException(MixedConsentFailure)))
+                : null,
+        };
+        await service.StartAsync(CancellationToken.None);
+        await using var scope = service.CreateRequestScope(callId: "call-a");
+
+        // Act
+        var resolution = await scope.ResolveAsync(CancellationToken.None);
+
+        // Assert: the toolbox is skipped, no log entry carries the link, and the failure stays diagnosable.
+        Assert.Empty(resolution.Tools);
+        Assert.Empty(resolution.Consents);
+        Assert.All(logs.Entries, entry =>
+        {
+            Assert.DoesNotContain(ConsentLinkHost, entry.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(ConsentLinkHost, entry.Exception?.ToString() ?? string.Empty, StringComparison.Ordinal);
+            Assert.All(entry.Properties, property => Assert.DoesNotContain(
+                ConsentLinkHost,
+                Convert.ToString(property.Value, CultureInfo.InvariantCulture) ?? string.Empty,
+                StringComparison.Ordinal));
+        });
+        var warning = Assert.Single(logs.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Contains("'mixed'", warning.Message, StringComparison.Ordinal);
+        Assert.Contains("send_email (CONSENT_REQUIRED), search (UPSTREAM_ERROR)", warning.Message, StringComparison.Ordinal);
     }
 
     [Fact]

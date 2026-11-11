@@ -54,19 +54,8 @@ internal static class ToolboxConsentParser
     {
         consents = [];
 
-        if (string.IsNullOrEmpty(exceptionMessage))
-        {
-            return false;
-        }
-
         // Fast pre-check: avoid JSON work unless the marker code is present.
-        if (exceptionMessage!.IndexOf(ConsentRequiredCode, StringComparison.Ordinal) < 0)
-        {
-            return false;
-        }
-
-        int jsonStart = exceptionMessage.IndexOf('{');
-        if (jsonStart < 0)
+        if (!ContainsConsentRequiredCode(exceptionMessage))
         {
             return false;
         }
@@ -74,9 +63,8 @@ internal static class ToolboxConsentParser
         var result = new List<McpConsentInfo>();
         try
         {
-            using var document = JsonDocument.Parse(exceptionMessage.AsSpan(jsonStart).ToString());
-            if (!document.RootElement.TryGetProperty("errors", out var errors)
-                || errors.ValueKind != JsonValueKind.Array)
+            using var document = ParseErrorsPayload(exceptionMessage!, out var errors);
+            if (document is null)
             {
                 return false;
             }
@@ -122,5 +110,152 @@ internal static class ToolboxConsentParser
 
         consents = result;
         return true;
+    }
+
+    /// <summary>
+    /// Describes, for a log entry, a toolbox failure that reports a <c>CONSENT_REQUIRED</c> tool source anywhere
+    /// in its exception chain, without the consent links the failure carries.
+    /// </summary>
+    /// <remarks>
+    /// A consent link is issued for one caller, and the package never logs one. When enumeration fails both for
+    /// consent and for another reason, <see cref="TryParseConsentRequired"/> rejects the error and the toolbox is
+    /// skipped, so logging the exception would write that link to the logs. The description names each failing
+    /// tool source and its error code only; a value that is not a plain identifier is replaced.
+    /// </remarks>
+    /// <param name="exception">The failure, including its inner exceptions.</param>
+    /// <param name="description">On success, the failing tool sources and their error codes.</param>
+    /// <returns>
+    /// <see langword="true"/> when any exception in the chain mentions <c>CONSENT_REQUIRED</c>, so the exception
+    /// must not be logged; otherwise <see langword="false"/>.
+    /// </returns>
+    public static bool TryDescribeConsentFailure(Exception exception, out string description)
+    {
+        description = string.Empty;
+        List<string> sources = [];
+        bool consentRequired = false;
+        foreach (var message in EnumerateMessages(exception))
+        {
+            if (!ContainsConsentRequiredCode(message))
+            {
+                continue;
+            }
+
+            consentRequired = true;
+            try
+            {
+                using var document = ParseErrorsPayload(message, out var errors);
+                if (document is null)
+                {
+                    continue;
+                }
+
+                foreach (var error in errors.EnumerateArray())
+                {
+                    string? name = error.ValueKind == JsonValueKind.Object
+                        && error.TryGetProperty("name", out var nameElement)
+                        && nameElement.ValueKind == JsonValueKind.String
+                            ? nameElement.GetString()
+                            : null;
+                    string? code = error.ValueKind == JsonValueKind.Object
+                        && error.TryGetProperty("error", out var errorBody)
+                        && errorBody.ValueKind == JsonValueKind.Object
+                        && errorBody.TryGetProperty("code", out var codeElement)
+                        && codeElement.ValueKind == JsonValueKind.String
+                            ? codeElement.GetString()
+                            : null;
+                    sources.Add($"{ToLoggableIdentifier(name)} ({ToLoggableIdentifier(code)})");
+                }
+            }
+            catch (JsonException)
+            {
+                // The payload cannot be read; the failure is still described without it.
+            }
+        }
+
+        if (!consentRequired)
+        {
+            return false;
+        }
+
+        description = sources.Count > 0 ? string.Join(", ", sources) : "unreadable";
+        return true;
+    }
+
+    private static bool ContainsConsentRequiredCode(string? message) =>
+        message?.IndexOf(ConsentRequiredCode, StringComparison.Ordinal) >= 0;
+
+    /// <summary>
+    /// Parses the JSON payload that follows the text of a <c>tools/list</c> failure message, and returns its
+    /// <c>errors</c> array.
+    /// </summary>
+    /// <returns>The parsed document, which owns <paramref name="errors"/>, or <see langword="null"/> when the
+    /// message has no payload with an <c>errors</c> array.</returns>
+    /// <exception cref="JsonException">The payload is not valid JSON.</exception>
+    private static JsonDocument? ParseErrorsPayload(string message, out JsonElement errors)
+    {
+        errors = default;
+        int jsonStart = message.IndexOf('{');
+        if (jsonStart < 0)
+        {
+            return null;
+        }
+
+        var document = JsonDocument.Parse(message.AsSpan(jsonStart).ToString());
+        if (document.RootElement.ValueKind != JsonValueKind.Object
+            || !document.RootElement.TryGetProperty("errors", out errors)
+            || errors.ValueKind != JsonValueKind.Array)
+        {
+            document.Dispose();
+            errors = default;
+            return null;
+        }
+
+        return document;
+    }
+
+    /// <summary>Yields the message of an exception and of every exception it wraps.</summary>
+    private static IEnumerable<string> EnumerateMessages(Exception exception)
+    {
+        // Bounded so a pathological chain cannot keep a failure path busy.
+        const int MaxExceptions = 32;
+        var pending = new Stack<Exception>();
+        pending.Push(exception);
+        for (int visited = 0; visited < MaxExceptions && pending.Count > 0; visited++)
+        {
+            var current = pending.Pop();
+            yield return current.Message;
+
+            if (current is AggregateException aggregate)
+            {
+                foreach (var inner in aggregate.InnerExceptions)
+                {
+                    pending.Push(inner);
+                }
+            }
+            else if (current.InnerException is { } inner)
+            {
+                pending.Push(inner);
+            }
+        }
+    }
+
+    /// <summary>Returns a value from the failure payload only when it is a plain identifier.</summary>
+    private static string ToLoggableIdentifier(string? value)
+    {
+        const int MaxLength = 128;
+        if (string.IsNullOrEmpty(value) || value!.Length > MaxLength)
+        {
+            return "unknown";
+        }
+
+        foreach (char c in value)
+        {
+            if (!(char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '.'))
+            {
+                return "unknown";
+            }
+        }
+
+        return value;
     }
 }

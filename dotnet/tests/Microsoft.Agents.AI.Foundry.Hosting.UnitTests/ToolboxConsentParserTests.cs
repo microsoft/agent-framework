@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 public class ToolboxConsentParserTests
@@ -160,5 +162,37 @@ public class ToolboxConsentParserTests
         // Assert
         Assert.False(parsed);
         Assert.Empty(consents);
+    }
+
+    [Fact]
+    public void TryDescribeConsentFailure_FailureWithoutConsent_ReturnsFalse()
+    {
+        // Arrange: an ordinary failure carries no consent link, so its exception can be logged as is.
+        var exception = new InvalidOperationException("Connection refused.", new TimeoutException("Timed out."));
+
+        // Act
+        var described = ToolboxConsentParser.TryDescribeConsentFailure(exception, out var description);
+
+        // Assert
+        Assert.False(described);
+        Assert.Empty(description);
+    }
+
+    [Fact]
+    public void TryDescribeConsentFailure_ValueIsNotAnIdentifier_ReplacesIt()
+    {
+        // Arrange: only plain identifiers from the external payload may reach a log entry.
+        const string Message =
+            "tools/list failed " +
+            "{\"errors\":[{\"name\":\"https://consent.example/login?data=xyz\",\"error\":{\"code\":\"CONSENT_REQUIRED\",\"message\":\"https://consent.example/login?data=xyz\"}}," +
+            "{\"name\":\"search\",\"error\":{\"message\":\"Upstream failed.\"}}]}";
+        var exception = new AggregateException(new InvalidOperationException("Other failure."), new InvalidOperationException(Message));
+
+        // Act
+        var described = ToolboxConsentParser.TryDescribeConsentFailure(exception, out var description);
+
+        // Assert
+        Assert.True(described);
+        Assert.Equal("unknown (CONSENT_REQUIRED), search (unknown)", description);
     }
 }
