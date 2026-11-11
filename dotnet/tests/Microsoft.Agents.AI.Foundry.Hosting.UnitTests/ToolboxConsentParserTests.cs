@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
@@ -194,5 +195,30 @@ public class ToolboxConsentParserTests
         // Assert
         Assert.True(described);
         Assert.Equal("unknown (CONSENT_REQUIRED), search (unknown)", description);
+    }
+
+    [Fact]
+    public void TryDescribeConsentFailure_UninspectedAggregateBranch_ReturnsSafeDescription()
+    {
+        // Arrange: the consent failure is wrapped in a branch beyond the inspection limit.
+        List<Exception> failures =
+        [
+            new InvalidOperationException(
+                "Wrapped failure.",
+                new InvalidOperationException("CONSENT_REQUIRED https://auth.example.com/authorize")),
+        ];
+        for (int i = 0; i < 32; i++)
+        {
+            failures.Add(new InvalidOperationException("Other failure."));
+        }
+
+        var exception = new AggregateException(failures);
+
+        // Act
+        var described = ToolboxConsentParser.TryDescribeConsentFailure(exception, out var description);
+
+        // Assert
+        Assert.True(described);
+        Assert.Equal("unreadable", description);
     }
 }

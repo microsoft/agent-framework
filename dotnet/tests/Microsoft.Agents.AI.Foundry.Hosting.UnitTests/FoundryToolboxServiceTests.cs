@@ -323,9 +323,11 @@ public class FoundryToolboxServiceTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ResolveAsync_ConsentMixedWithOtherFailure_LogsNoConsentLinkAsync(bool nested)
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(31)]
+    [InlineData(32)]
+    public async Task ResolveAsync_ConsentMixedWithOtherFailure_LogsNoConsentLinkAsync(int nestingDepth)
     {
         // Arrange: one tool source needs the caller's OAuth consent and another fails, so consent alone cannot
         // open the toolbox and it is skipped. The consent link is issued for this caller.
@@ -334,14 +336,19 @@ public class FoundryToolboxServiceTests
         server.ToolsListErrorFor = static (_, _) => new JsonObject { ["code"] = -32603, ["message"] = MixedConsentFailure };
         var options = new FoundryToolboxServiceOptions { EndpointOverride = server.Endpoint };
         options.ToolboxNames.Add("mixed");
+        Exception failure = new McpProtocolException(MixedConsentFailure);
+        for (int i = 0; i < nestingDepth; i++)
+        {
+            failure = new InvalidOperationException("Toolbox discovery failed.", failure);
+        }
+
         await using var service = new FoundryToolboxService(
             options,
             CreateCredential(),
             logs.CreateLogger<FoundryToolboxService>())
         {
-            ToolboxOpener = nested
-                ? (_, _, _) => Task.FromException<FoundryToolboxService.ToolboxOpenResult>(
-                    new InvalidOperationException("Toolbox discovery failed.", new McpProtocolException(MixedConsentFailure)))
+            ToolboxOpener = nestingDepth > 0
+                ? (_, _, _) => Task.FromException<FoundryToolboxService.ToolboxOpenResult>(failure)
                 : null,
         };
         await service.StartAsync(CancellationToken.None);
@@ -364,7 +371,10 @@ public class FoundryToolboxServiceTests
         });
         var warning = Assert.Single(logs.Entries, entry => entry.Level == LogLevel.Warning);
         Assert.Contains("'mixed'", warning.Message, StringComparison.Ordinal);
-        Assert.Contains("send_email (CONSENT_REQUIRED), search (UPSTREAM_ERROR)", warning.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            nestingDepth < 32 ? "send_email (CONSENT_REQUIRED), search (UPSTREAM_ERROR)" : "unreadable",
+            warning.Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]

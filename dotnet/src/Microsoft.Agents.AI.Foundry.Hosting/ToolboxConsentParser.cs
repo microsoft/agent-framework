@@ -113,8 +113,8 @@ internal static class ToolboxConsentParser
     }
 
     /// <summary>
-    /// Describes, for a log entry, a toolbox failure that reports a <c>CONSENT_REQUIRED</c> tool source anywhere
-    /// in its exception chain, without the consent links the failure carries.
+    /// Describes, for a log entry, a toolbox failure that reports a <c>CONSENT_REQUIRED</c> tool source or
+    /// cannot be fully inspected, without any consent links the failure may carry.
     /// </summary>
     /// <remarks>
     /// A consent link is issued for one caller, and the package never logs one. When enumeration fails both for
@@ -125,15 +125,16 @@ internal static class ToolboxConsentParser
     /// <param name="exception">The failure, including its inner exceptions.</param>
     /// <param name="description">On success, the failing tool sources and their error codes.</param>
     /// <returns>
-    /// <see langword="true"/> when any exception in the chain mentions <c>CONSENT_REQUIRED</c>, so the exception
-    /// must not be logged; otherwise <see langword="false"/>.
+    /// <see langword="true"/> when any exception in the chain mentions <c>CONSENT_REQUIRED</c> or the entire
+    /// chain cannot be inspected, so the exception must not be logged; otherwise <see langword="false"/>.
     /// </returns>
     public static bool TryDescribeConsentFailure(Exception exception, out string description)
     {
         description = string.Empty;
         List<string> sources = [];
         bool consentRequired = false;
-        foreach (var message in EnumerateMessages(exception))
+        bool inspectedAllExceptions;
+        foreach (var message in GetExceptionMessages(exception, out inspectedAllExceptions))
         {
             if (!ContainsConsentRequiredCode(message))
             {
@@ -172,7 +173,7 @@ internal static class ToolboxConsentParser
             }
         }
 
-        if (!consentRequired)
+        if (!consentRequired && inspectedAllExceptions)
         {
             return false;
         }
@@ -213,17 +214,18 @@ internal static class ToolboxConsentParser
         return document;
     }
 
-    /// <summary>Yields the message of an exception and of every exception it wraps.</summary>
-    private static IEnumerable<string> EnumerateMessages(Exception exception)
+    /// <summary>Reads the messages of an exception and the exceptions it wraps, up to a limit.</summary>
+    private static List<string> GetExceptionMessages(Exception exception, out bool inspectedAllExceptions)
     {
         // Bounded so a pathological chain cannot keep a failure path busy.
         const int MaxExceptions = 32;
         var pending = new Stack<Exception>();
+        List<string> messages = [];
         pending.Push(exception);
         for (int visited = 0; visited < MaxExceptions && pending.Count > 0; visited++)
         {
             var current = pending.Pop();
-            yield return current.Message;
+            messages.Add(current.Message);
 
             if (current is AggregateException aggregate)
             {
@@ -237,6 +239,9 @@ internal static class ToolboxConsentParser
                 pending.Push(inner);
             }
         }
+
+        inspectedAllExceptions = pending.Count == 0;
+        return messages;
     }
 
     /// <summary>Returns a value from the failure payload only when it is a plain identifier.</summary>

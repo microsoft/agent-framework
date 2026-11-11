@@ -602,8 +602,8 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 // An unreachable proxy, a timeout, or any other failure that is not this response's own
-                // cancellation removes only this toolbox from the response. A failure that also reports a
-                // consent requirement carries the caller's consent link, so only its tool sources are logged.
+                // cancellation removes only this toolbox from the response. A failure that reports consent, or
+                // whose exceptions cannot all be inspected, may carry a link, so only safe metadata is logged.
                 if (ToolboxConsentParser.TryDescribeConsentFailure(ex, out var toolSourceErrors))
                 {
                     LogToolboxUnavailableWithConsentLinksOmitted(owner._logger, toolboxName, ex.GetType().Name, toolSourceErrors);
@@ -667,7 +667,7 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
         string toolboxName,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Warning, "Toolbox '{ToolboxName}' could not be opened for this response; the response continues without its tools. Failed tool sources: {ToolSourceErrors}. The {ExceptionType} is not logged because it carries OAuth consent links.", EventId = 0)]
+    [LoggerMessage(LogLevel.Warning, "Toolbox '{ToolboxName}' could not be opened for this response; the response continues without its tools. Failed tool sources: {ToolSourceErrors}. The {ExceptionType} is not logged because it may carry OAuth consent links.", EventId = 0)]
     private static partial void LogToolboxUnavailableWithConsentLinksOmitted(
         ILogger logger,
         string toolboxName,
