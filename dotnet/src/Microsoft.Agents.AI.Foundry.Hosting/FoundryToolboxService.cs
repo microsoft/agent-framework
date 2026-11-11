@@ -298,6 +298,14 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
             // Streamable HTTP does not accept the server-selected message endpoint used by
             // the legacy SSE transport, so requests remain bound to the configured origin.
             TransportMode = HttpTransportMode.StreamableHttp,
+
+            // A connection lives for one response and its tools are discovered again by the next one, so
+            // unsolicited server messages such as list-changed notifications have no use. Messages that belong
+            // to a request still arrive on that request's own response stream.
+            EnableStandaloneGetStream = false,
+
+            // End the MCP session on the server when the response's connection is disposed.
+            OwnsSession = true,
         };
 
     /// <summary>

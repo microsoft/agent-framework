@@ -221,6 +221,8 @@ public class FoundryToolboxBearerTokenHandlerTests
         // Assert
         Assert.Equal(HttpTransportMode.StreamableHttp, options.TransportMode);
         Assert.Equal(endpoint, options.Endpoint);
+        Assert.False(options.EnableStandaloneGetStream);
+        Assert.True(options.OwnsSession);
     }
 
     [Fact]

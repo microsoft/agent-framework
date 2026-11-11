@@ -147,6 +147,24 @@ public sealed class FoundryToolboxRequestLifetimeTests
     }
 
     [Fact]
+    public async Task CreateAsync_OpensNoStandaloneServerStreamAsync()
+    {
+        // Arrange
+        await using var server = await ToolboxLoopbackServer.StartAsync();
+        await using var service = CreateService(server, "weather");
+        await service.StartAsync(CancellationToken.None);
+        var handler = CreateHandler(new ToolCallingAgent(), service);
+
+        // Act
+        await RunAsync(handler, callId: "call-a");
+
+        // Assert: a session that lives for one response has no use for unsolicited server messages, so it does
+        // not hold a pooled connection open for the standalone GET stream.
+        Assert.Single(server.RequestsFor("tools/call"));
+        Assert.DoesNotContain(server.Requests, static request => request.HttpMethod == "GET");
+    }
+
+    [Fact]
     public async Task CreateAsync_ConcurrentResponsesWithTheSameCallId_UseIndependentSessionsAsync()
     {
         // Arrange: recovery or duplicate delivery can run two responses with the same platform call id.
