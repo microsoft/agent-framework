@@ -208,12 +208,23 @@ def test_legacy_parser_names_are_not_silently_forwarded_to_sdk(name: str, legacy
         initialize.assert_not_called()
 
 
-def test_responses_workflow_host_preserves_steering_guard() -> None:
-    from azure.ai.agentserver.responses import ResponsesServerOptions
-
-    with pytest.raises(RuntimeError, match="steerable_conversations=True is temporarily unavailable"):
+def test_responses_workflow_host_rejects_removed_options() -> None:
+    with pytest.raises(TypeError, match="options is no longer a supported host setting"):
         cast(Any, hosting.ResponsesWorkflowHostServer)(
             workflow=lambda _: None,
             parse_input=lambda _: None,
-            options=ResponsesServerOptions(steerable_conversations=True),
+            options=None,
         )
+
+
+def test_responses_workflow_host_rejects_agent_history_limit_even_when_none() -> None:
+    with (
+        patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize,
+        pytest.raises(TypeError, match="max_history_items"),
+    ):
+        cast(Any, hosting.ResponsesWorkflowHostServer)(
+            workflow=lambda _: None,
+            parse_input=lambda _: None,
+            max_history_items=None,
+        )
+    initialize.assert_not_called()

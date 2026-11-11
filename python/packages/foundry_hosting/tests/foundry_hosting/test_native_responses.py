@@ -35,7 +35,7 @@ from agent_framework import (
 )
 from agent_framework._workflows._agent_utils import prepare_executor_run_kwargs
 from agent_framework._workflows._const import RESOLVED_WORKFLOW_RUN_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
-from azure.ai.agentserver.responses import FileResponseStore, InMemoryResponseProvider, ResponsesServerOptions
+from azure.ai.agentserver.responses import FileResponseStore, InMemoryResponseProvider
 from azure.ai.agentserver.responses._id_generator import IdGenerator
 from pydantic import BaseModel
 
@@ -486,7 +486,7 @@ async def test_unsupported_shared_workflow_is_not_cloned_or_unwrapped() -> None:
         ResponsesWorkflowHostServer(
             workflow=cast(Any, _build()),
             parse_input=_parse,
-            options=ResponsesServerOptions(resilient_background=True),
+            enable_background_recovery=True,
         )
 
 
@@ -1065,8 +1065,13 @@ async def test_real_sdk_shutdown_and_restart_recovers_exact_background_output(
 
     provider = FailingCheckpointStore(storage_dir=tmp_path / "responses")
     factory = _progress_factory(started, release, stopped)
-    options = ResponsesServerOptions(resilient_background=True, shutdown_grace_period_seconds=1)
-    server = _server(factory, parser=_parse_count, response_store=provider, options=options)
+    server = _server(
+        factory,
+        parser=_parse_count,
+        response_store=provider,
+        enable_background_recovery=True,
+        shutdown_grace_period_seconds=1,
+    )
     paired = asyncio.Event()
     original = HostedWorkflowRun.stage
 
@@ -1103,7 +1108,8 @@ async def test_real_sdk_shutdown_and_restart_recovers_exact_background_output(
             factory,
             parser=_parse_count,
             response_store=provider,
-            options=ResponsesServerOptions(resilient_background=True, shutdown_grace_period_seconds=1),
+            enable_background_recovery=True,
+            shutdown_grace_period_seconds=1,
         )
         async with (
             restarted.router.lifespan_context(restarted),

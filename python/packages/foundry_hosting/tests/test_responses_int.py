@@ -45,7 +45,7 @@ from agent_framework import (
 )
 from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
 from azure.ai.agentserver.core.tasks import set_resilient_tasks_enabled
-from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponsesServerOptions
+from azure.ai.agentserver.responses import InMemoryResponseProvider
 from azure.identity import AzureCliCredential
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
@@ -1069,7 +1069,7 @@ def _run_resilient_server(
     server = ResponsesWorkflowHostServer(
         workflow=lambda request: build_workflow(sleep_seconds),
         parse_input=parse_input,
-        options=ResponsesServerOptions(resilient_background=True),
+        enable_background_recovery=True,
     )
     server.run(host="127.0.0.1", port=port)
 
