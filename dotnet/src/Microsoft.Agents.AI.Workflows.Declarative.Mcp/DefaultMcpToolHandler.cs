@@ -65,10 +65,12 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
     /// and an application-provided HTTP message handler factory.
     /// </summary>
     /// <param name="allowedHosts">
+    /// The application-owned allowlist checked against each MCP server URL's host and effective port
+    /// before creating an HTTP client, including for tool discovery.
     /// The exact DNS names or IP literals, optionally including a port, the application permits.
     /// Omitted ports default to 443. Use brackets around IPv6 literals when specifying a port.
     /// Schemes, paths, and wildcards are not supported. An empty collection rejects all invocations.
-    /// The collection is copied and checked before creating an HTTP client, including for tool discovery.
+    /// The collection is copied at construction.
     /// Matching is case-insensitive, with internationalized names and trailing DNS dots normalized.
     /// Both HTTP and HTTPS are supported; authorization matches the host and effective port, not the scheme.
     /// DNS resolution and routing remain the responsibility of the HTTP transport.

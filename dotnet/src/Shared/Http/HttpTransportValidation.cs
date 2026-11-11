@@ -40,7 +40,12 @@ internal static class HttpTransportValidation
 #endif
         else
         {
-            throw new InvalidOperationException("The HTTP handler pipeline must use a supported primary HTTP handler.");
+            throw new InvalidOperationException(
+#if NET
+                "The HTTP handler pipeline must use a supported primary HTTP handler: HttpClientHandler or SocketsHttpHandler.");
+#else
+                "The HTTP handler pipeline must use a supported primary HTTP handler: HttpClientHandler.");
+#endif
         }
 
         if (allowAutoRedirect || useCookies)

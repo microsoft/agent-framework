@@ -245,6 +245,12 @@ public sealed class DefaultHttpRequestHandlerTests
         // Assert
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
         Assert.Contains("supported primary HTTP handler", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("HttpClientHandler", exception.Message, StringComparison.Ordinal);
+#if NET
+        Assert.Contains("SocketsHttpHandler", exception.Message, StringComparison.Ordinal);
+#else
+        Assert.DoesNotContain("SocketsHttpHandler", exception.Message, StringComparison.Ordinal);
+#endif
     }
 
     [Fact]
