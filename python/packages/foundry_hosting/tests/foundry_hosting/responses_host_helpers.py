@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from pathlib import Path
 from typing import Any
 
 from agent_framework import (
@@ -27,8 +26,6 @@ from agent_framework import (
     SessionStore,
 )
 from agent_framework.openai import OpenAIContinuationToken
-
-from .approval_helpers import SqliteSessionStore
 
 
 class BackgroundAgentMiddleware(AgentMiddleware):
@@ -146,41 +143,6 @@ class UnlayeredClient(BaseChatClient[Any]):
             return ChatResponse(messages=[Message("assistant", "done")], conversation_id="service")
 
         return ResponseStream(updates(), finalizer=ChatResponse.from_updates) if stream else response()
-
-
-class GatedApprovalStore(SqliteSessionStore):
-    def __init__(self, path: Path, *, fail_alias: bool = False) -> None:
-        super().__init__(path)
-        self.started = asyncio.Event()
-        self.release = asyncio.Event()
-        self.fail_alias = fail_alias
-
-    async def compare_and_set(self, session_id: str, session: AgentSession, *, expected_revision: str | None) -> str:
-        if session_id.startswith("__foundry_agent_approval/") and expected_revision is None:
-            self.started.set()
-            await self.release.wait()
-        return await super().compare_and_set(session_id, session, expected_revision=expected_revision)
-
-    async def set(self, session_id: str, session: AgentSession) -> None:
-        if self.fail_alias:
-            raise RuntimeError("response session snapshot failed")
-        await super().set(session_id, session)
-
-
-class GatedClaimStore(SqliteSessionStore):
-    def __init__(self, path: Path) -> None:
-        super().__init__(path)
-        self.started = asyncio.Event()
-        self.release = asyncio.Event()
-        self.claims = 0
-
-    async def compare_and_set(self, session_id: str, session: AgentSession, *, expected_revision: str | None) -> str:
-        if session_id.startswith("__foundry_agent_approval/") and expected_revision is not None:
-            self.claims += 1
-            if self.claims == 2:
-                self.started.set()
-            await self.release.wait()
-        return await super().compare_and_set(session_id, session, expected_revision=expected_revision)
 
 
 class GatedRequestRead:
