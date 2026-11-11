@@ -13,8 +13,7 @@ security model, middleware behavior, and API reference.
 | `repo_confidentiality_example.py` | Data exfiltration prevention | Confidentiality labels, Foundry-backed repository access, `max_allowed_confidentiality`, and approval before leaking private data |
 | `user_identity_security_example.py` | Principal-bound identity data | Canonical tenant/user principals, identity-scoped sources and destinations, and allowed versus blocked flows |
 | `github_mcp_example.py` | Remote MCP URL with local FIDES enforcement | `SecureMCPToolProxy(url=...)`, direct GitHub MCP access, tool auto-labeling, and post-tool-call policy enforcement |
-| `provider_labeling_example.py` | Provider trust boundaries | Simple wrappers that attach application-owned FIDES restrictions to ordinary history and context provider messages |
-| `provider_message_labeling_example.py` | Central context labeling | A final provider that inspects and labels every message added by earlier simple context providers |
+| `provider_message_labeling_example.py` | Central context labeling | `SecureAgentConfig.message_labeler` authoritatively classifies messages added by earlier context providers |
 
 ## Prerequisites
 
@@ -132,32 +131,12 @@ What to look for:
 - Untrusted tool output is tracked by FIDES label middleware
 - Attack-mode write attempts can trigger policy enforcement or approval
 
-### `provider_labeling_example.py`
-
-This sample wraps a read-only imported history provider and a simple external
-context provider. Both sources are labeled **UNTRUSTED + PRIVATE** before
-`SecureAgentConfig` processes them.
-
-Run it with:
-
-```bash
-uv run samples/02-agents/security/provider_labeling_example.py
-```
-
-What to look for:
-
-- The wrappers copy messages instead of mutating provider-owned objects
-- The application, not message role or shape, chooses the restriction label
-- The context adapter participates in FIDES replay classification
-- Providers with custom lifecycle or transcript-rewriting behavior must label
-  data inside their own implementation
-
 ### `provider_message_labeling_example.py`
 
-This sample uses two ordinary context providers, then runs one
-`ProviderMessageLabeler` immediately before `SecureAgentConfig`. The labeler
-inspects every message already added to `SessionContext`, applies a
-source-aware restriction label, and exposes one FIDES-classified message batch.
+This sample uses two ordinary context providers and configures
+`SecureAgentConfig.message_labeler` to classify every message they add. The
+callback receives the provider's authoritative `source_id` and returns the
+complete application-owned `ContentLabel`.
 
 Run it with:
 
@@ -167,12 +146,11 @@ uv run samples/02-agents/security/provider_message_labeling_example.py
 
 What to look for:
 
-- Provider order is part of the contract: producers, labeler, then FIDES
+- Provider order is part of the contract: message producers, then FIDES
 - Public external context becomes **UNTRUSTED + PUBLIC**
 - Private external context becomes **UNTRUSTED + PRIVATE**
-- Original source attribution is retained as descriptive metadata
-- Persistent history and providers with additional lifecycle behavior should
-  use the wrappers in `provider_labeling_example.py` or label internally
+- Provider message buckets and attribution remain unchanged
+- Providers with additional lifecycle behavior should classify data internally
 
 ## Where to find the details
 

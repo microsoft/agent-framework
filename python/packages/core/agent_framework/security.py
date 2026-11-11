@@ -135,6 +135,7 @@ _TOOL_POLICY_MAX_ALLOWED_CONFIDENTIALITY_KEY = "max_allowed_confidentiality"
 _TOOL_POLICY_SOURCE_INTEGRITY_KEY = "source_integrity"
 _MAX_REPLAY_CONTENT_DEPTH = 32
 _APPROVAL_REPLAY_AUTHORITY_KEY = "_agent_framework_core_fides_authenticated_approval_calls"
+_MESSAGE_LABEL_AUTHORITY_KEY = "_agent_framework_core_fides_provider_message_labels"
 _builtin_id = builtins.id
 _TOOL_SECURITY_POLICY_KEYS = frozenset({
     _TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY,
@@ -210,6 +211,24 @@ class _ApprovalReplayAuthority:
         if binding is None or binding[0] is not content or binding[1] != _approval_control_authority_token(content):
             return None
         return binding[2]
+
+
+class _MessageLabelAuthority:
+    """Bind application-classified provider messages to their authoritative labels."""
+
+    __slots__ = ("_labels",)
+
+    def __init__(self) -> None:
+        self._labels: dict[int, tuple[Message, ContentLabel]] = {}
+
+    def remember(self, message: Message, label: ContentLabel) -> None:
+        """Record one exact provider message and its application-owned label."""
+        self._labels[_builtin_id(message)] = (message, label)
+
+    def label_for(self, message: Message) -> ContentLabel | None:
+        """Return the authoritative label only for the exact classified message."""
+        binding = self._labels.get(_builtin_id(message))
+        return binding[1] if binding is not None and binding[0] is message else None
 
 
 def _get_additional_properties(obj: Any) -> dict[str, Any]:
@@ -1525,11 +1544,13 @@ class _ReplaySecurityChatMiddleware(ChatMiddleware):
         history_source_ids: set[str],
         *,
         approval_authority: _ApprovalReplayAuthority,
+        message_label_authority: _MessageLabelAuthority | None,
     ) -> None:
         self._scope = scope
         self._session = session
         self._history_source_ids = history_source_ids
         self._approval_authority = approval_authority
+        self._message_label_authority = message_label_authority
 
     def _history_source_id(self, message: Message) -> str | None:
         attribution = message.additional_properties.get("_attribution")
@@ -1551,12 +1572,13 @@ class _ReplaySecurityChatMiddleware(ChatMiddleware):
                 history_messages.setdefault(source_id, []).append(message)
         flattened_messages = [message for messages in history_messages.values() for message in messages]
         self._approval_authority.reauthenticate(flattened_messages)
-        SecureAgentConfig._fold_history_message_map(  # pyright: ignore[reportPrivateUsage]
+        SecureAgentConfig._fold_provider_message_map(  # pyright: ignore[reportPrivateUsage]
             self._scope,
             history_messages,
             session=self._session,
-            history_source_ids=self._history_source_ids,
+            source_ids=self._history_source_ids,
             approval_authority=self._approval_authority,
+            message_label_authority=self._message_label_authority,
         )
         await call_next()
 
@@ -4345,6 +4367,7 @@ class SecureAgentConfig(ContextProvider):
         quarantine_chat_client: SupportsChatGetResponse | None = None,
         source_id: str | None = None,
         *,
+        message_labeler: Callable[[str, Message], ContentLabel] | None = None,
         max_pending_approvals: int = _DEFAULT_MAX_PENDING_APPROVALS,
         pending_approval_ttl: timedelta | None = _DEFAULT_PENDING_APPROVAL_TTL,
     ) -> None:
@@ -4373,9 +4396,15 @@ class SecureAgentConfig(ContextProvider):
                 Defaults to "secure_agent".
 
         Keyword Args:
+            message_labeler: Optional application-owned classifier for messages added by earlier context providers.
+                The synchronous callback receives the provider's ``source_id`` and the framework-owned message copy,
+                and must return the authoritative ``ContentLabel`` for that message. When configured, this
+                ``SecureAgentConfig`` must follow every non-history context provider whose messages it classifies.
             max_pending_approvals: Maximum pending policy approvals retained per session.
             pending_approval_ttl: Maximum age of an unconsumed approval. ``None`` disables expiry.
         """
+        if message_labeler is not None and not callable(message_labeler):
+            raise TypeError("message_labeler must be callable or None.")
         if type(max_pending_approvals) is not int or max_pending_approvals < 1:
             raise ValueError("max_pending_approvals must be a positive integer.")
         if pending_approval_ttl is not None and pending_approval_ttl <= timedelta(0):
@@ -4392,6 +4421,7 @@ class SecureAgentConfig(ContextProvider):
         self._enable_audit_log = enable_audit_log
         self._max_pending_approvals = max_pending_approvals
         self._pending_approval_ttl = pending_approval_ttl
+        self._message_labeler = message_labeler
         self.enable_policy_enforcement = enable_policy_enforcement
         self.label_tracker = LabelTrackingFunctionMiddleware(
             auto_hide_untrusted=auto_hide_untrusted,
@@ -4498,18 +4528,19 @@ class SecureAgentConfig(ContextProvider):
         }
 
     @staticmethod
-    def _fold_history_message_map(
+    def _fold_provider_message_map(
         scope: _SecurityScope,
-        history_messages: Mapping[str, Sequence[Message]],
+        provider_messages: Mapping[str, Sequence[Message]],
         *,
         session: AgentSession,
-        history_source_ids: set[str],
+        source_ids: set[str],
         approval_authority: _ApprovalReplayAuthority,
+        message_label_authority: _MessageLabelAuthority | None = None,
     ) -> None:
-        """Fold replayed history messages conservatively into one FIDES scope."""
-        history_labels: list[ContentLabel] = []
-        for source_id in sorted(history_source_ids):
-            messages = history_messages.get(source_id, ())
+        """Fold provider messages into one FIDES scope."""
+        provider_labels: list[ContentLabel] = []
+        for source_id in sorted(source_ids):
+            messages = provider_messages.get(source_id, ())
             SecureAgentConfig._authenticated_core_approval_calls(
                 session,
                 messages,
@@ -4521,8 +4552,13 @@ class SecureAgentConfig(ContextProvider):
                 approval_authority=approval_authority,
             )
             for message in messages:
-                history_labels.append(
-                    _replayed_message_label(
+                authoritative_label = (
+                    message_label_authority.label_for(message) if message_label_authority is not None else None
+                )
+                provider_labels.append(
+                    authoritative_label
+                    if authoritative_label is not None
+                    else _replayed_message_label(
                         message,
                         reconstruct_unstamped=True,
                         scope=scope,
@@ -4530,8 +4566,8 @@ class SecureAgentConfig(ContextProvider):
                         bound_approval_call_keys=bound_call_keys,
                     )
                 )
-        if history_labels:
-            scope.context_label = combine_labels(scope.context_label, *history_labels)
+        if provider_labels:
+            scope.context_label = combine_labels(scope.context_label, *provider_labels)
 
     @staticmethod
     def _fold_history_labels(
@@ -4541,15 +4577,53 @@ class SecureAgentConfig(ContextProvider):
         session: AgentSession,
         history_source_ids: set[str],
         approval_authority: _ApprovalReplayAuthority,
+        message_label_authority: _MessageLabelAuthority | None,
     ) -> None:
         """Fold loaded history-provider messages into one FIDES scope."""
-        SecureAgentConfig._fold_history_message_map(
+        SecureAgentConfig._fold_provider_message_map(
             scope,
             context.context_messages,
             session=session,
-            history_source_ids=history_source_ids,
+            source_ids=history_source_ids,
             approval_authority=approval_authority,
+            message_label_authority=message_label_authority,
         )
+
+    def _label_provider_messages(
+        self,
+        agent: Any,
+        context: SessionContext,
+    ) -> tuple[set[str], _MessageLabelAuthority]:
+        """Apply application-owned labels to messages added by earlier providers."""
+        raw_providers = getattr(agent, "context_providers", None)
+        if not isinstance(raw_providers, Sequence):
+            raise ValueError("SecureAgentConfig with message_labeler requires an ordered context provider sequence.")
+        providers = cast(Sequence[Any], raw_providers)
+        try:
+            config_index = next(index for index, provider in enumerate(providers) if provider is self)
+        except StopIteration as exc:
+            raise ValueError(
+                "SecureAgentConfig with message_labeler must be registered as a context provider."
+            ) from exc
+        if any(not isinstance(provider, HistoryProvider) for provider in providers[config_index + 1 :]):
+            raise ValueError("SecureAgentConfig with message_labeler must follow every non-history context provider.")
+
+        authority = _MessageLabelAuthority()
+        context.metadata[_MESSAGE_LABEL_AUTHORITY_KEY] = authority
+        source_ids = set(context.context_messages)
+        for source_id, messages in context.context_messages.items():
+            for message in messages:
+                label = self._message_labeler(source_id, message) if self._message_labeler is not None else None
+                if not isinstance(label, ContentLabel):
+                    raise TypeError(
+                        f"message_labeler must return ContentLabel for source {source_id!r}, "
+                        f"got {type(label).__name__}."
+                    )
+                authoritative_label = ContentLabel.from_dict(deepcopy(label.to_dict()))
+                message.additional_properties = dict(message.additional_properties)
+                message.additional_properties["security_label"] = authoritative_label.to_dict()
+                authority.remember(message, authoritative_label)
+        return source_ids, authority
 
     async def after_context_loaded(
         self,
@@ -4568,12 +4642,17 @@ class SecureAgentConfig(ContextProvider):
             else _ApprovalReplayAuthority()
         )
         context.metadata[_APPROVAL_REPLAY_AUTHORITY_KEY] = approval_authority
+        raw_message_label_authority = context.metadata.get(_MESSAGE_LABEL_AUTHORITY_KEY)
+        message_label_authority = (
+            raw_message_label_authority if isinstance(raw_message_label_authority, _MessageLabelAuthority) else None
+        )
         self._fold_history_labels(
             _SecurityScope(state, scope_id=session.session_id),
             context,
             session=session,
             history_source_ids=history_source_ids,
             approval_authority=approval_authority,
+            message_label_authority=message_label_authority,
         )
 
     async def before_run(
@@ -4599,11 +4678,24 @@ class SecureAgentConfig(ContextProvider):
         scope = _SecurityScope(state, scope_id=session.session_id)
         middleware: list[FunctionMiddleware | ChatMiddleware] = [*self._middleware_for_scope(scope)]
         history_source_ids = self._history_source_ids(agent)
+        provider_source_ids: set[str] = set()
+        message_label_authority: _MessageLabelAuthority | None = None
+        if self._message_labeler is not None:
+            provider_source_ids, message_label_authority = self._label_provider_messages(agent, context)
         approval_authority = self._authenticated_core_approval_calls(
             session,
             context.input_messages,
         )
         context.metadata[_APPROVAL_REPLAY_AUTHORITY_KEY] = approval_authority
+        if provider_source_ids:
+            self._fold_provider_message_map(
+                scope,
+                context.context_messages,
+                session=session,
+                source_ids=provider_source_ids,
+                approval_authority=approval_authority,
+                message_label_authority=message_label_authority,
+            )
         input_bound_call_keys = _bound_approval_call_keys(
             context.input_messages,
             scope=scope,
@@ -4630,6 +4722,7 @@ class SecureAgentConfig(ContextProvider):
                 session,
                 history_source_ids,
                 approval_authority=approval_authority,
+                message_label_authority=message_label_authority,
             )
         )
         self._provider_state_used = True

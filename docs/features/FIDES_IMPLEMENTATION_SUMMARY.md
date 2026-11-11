@@ -4,9 +4,9 @@
 
 **FIDES**  is a comprehensive deterministic prompt injection defense system for the agent framework. The implementation provides label-based security mechanisms to defend against prompt injection attacks by tracking integrity and confidentiality of content throughout agent execution.
 
-FIDES enforces tool-result, hidden-variable, caller-replayed, and history-provider flows. Other `ContextProvider`
-implementations remain trusted plugins; provider-injected messages require an explicit provider/application trust
-boundary until a first-class provider-message labeling contract is defined.
+FIDES enforces tool-result, hidden-variable, caller-replayed, and history-provider flows. Applications can use
+`SecureAgentConfig.message_labeler` as the authoritative trust boundary for messages added by earlier
+`ContextProvider` implementations.
 
 **🚀 Key Features:**
 - **Context Provider Pattern** - `SecureAgentConfig` extends `ContextProvider`, injecting tools, instructions, and middleware automatically
@@ -370,5 +370,5 @@ cd python/packages/core && ../../.venv/bin/pytest tests/test_security.py -v
 The system hides FIDES-labeled untrusted tool output from the LLM context and policy-checks tool calls against the
 cumulative security state before execution. Newly supplied assistant/tool messages are conservatively labeled even
 when state was restored. Stored provider history is reconstructed conservatively whenever it is loaded; FIDES does not
-infer trust through transcript persistence, deduplication, compaction, or merging. Trusted non-history context providers
-remain responsible for adding restriction labels or hiding the data they inject.
+infer trust through transcript persistence, deduplication, compaction, or merging. Applications may instead configure
+`SecureAgentConfig.message_labeler` to authoritatively classify messages already added by their context providers.

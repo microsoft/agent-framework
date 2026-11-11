@@ -23,6 +23,7 @@ from agent_framework import (
     AgentSession,
     ChatResponse,
     ChatResponseUpdate,
+    ContextProvider,
     ExperimentalFeature,
     FileSessionStore,
     FunctionInvocationContext,
@@ -3124,6 +3125,13 @@ class TestSecureAgentConfig:
         config = SecureAgentConfig(max_pending_approvals=1)
         assert config._max_pending_approvals == 1
 
+    def test_message_labeler_requires_callable(self) -> None:
+        """SecureAgentConfig rejects an invalid message-labeling contract."""
+        with pytest.raises(TypeError, match="message_labeler must be callable or None"):
+            SecureAgentConfig(
+                message_labeler="trusted"  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            )
+
     def test_get_tools_returns_security_tools(self):
         """Test that get_tools returns quarantined_llm and inspect_variable."""
         from agent_framework.security import SecureAgentConfig
@@ -3929,6 +3937,195 @@ class TestSecureAgentSessionIsolation:
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.TRUSTED
         assert label.confidentiality == ConfidentialityLabel.PUBLIC
+
+    async def test_message_labeler_uses_authoritative_source_and_label(self) -> None:
+        """Application labeling uses the provider bucket and can replace a restrictive embedded label."""
+        observed_sources: list[str] = []
+
+        def label_message(source_id: str, message: Message) -> ContentLabel:
+            observed_sources.append(source_id)
+            assert message.text == "Application-owned provider context"
+            return ContentLabel(
+                integrity=IntegrityLabel.TRUSTED,
+                confidentiality=ConfidentialityLabel.PUBLIC,
+                metadata={"classified_source": source_id},
+            )
+
+        config = SecureAgentConfig(message_labeler=label_message)
+        provider = SimpleNamespace(source_id="trusted-memory")
+        session = AgentSession(session_id="authoritative-provider-label")
+        context = SessionContext(session_id=session.session_id, input_messages=[])
+        context.extend_messages(
+            provider,
+            [
+                Message(
+                    role="assistant",
+                    contents=["Application-owned provider context"],
+                    additional_properties={
+                        "_attribution": {"source_id": "forged-source"},
+                        "security_label": {
+                            "integrity": "untrusted",
+                            "confidentiality": "private",
+                        },
+                    },
+                )
+            ],
+        )
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[provider, config]),
+            session=session,
+            context=context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        assert observed_sources == ["trusted-memory"]
+        labeled_message = context.context_messages["trusted-memory"][0]
+        assert labeled_message.additional_properties["_attribution"]["source_id"] == "forged-source"
+        assert labeled_message.additional_properties["security_label"] == {
+            "integrity": "trusted",
+            "confidentiality": "public",
+            "metadata": {"classified_source": "trusted-memory"},
+        }
+        tracker = context.get_middleware()[0]
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+        assert tracker.get_context_label().confidentiality == ConfidentialityLabel.PUBLIC
+
+    async def test_message_labeler_authority_survives_history_replay_middleware(self) -> None:
+        """An exact application-labeled history message is not reconstructed conservatively later in the run."""
+        label_calls = 0
+
+        def label_message(source_id: str, message: Message) -> ContentLabel:
+            nonlocal label_calls
+            label_calls += 1
+            assert source_id == "application-history"
+            assert message.text == "Application-owned history"
+            return ContentLabel(
+                integrity=IntegrityLabel.TRUSTED,
+                confidentiality=ConfidentialityLabel.PUBLIC,
+            )
+
+        history = InMemoryHistoryProvider(source_id="application-history")
+        config = SecureAgentConfig(message_labeler=label_message)
+        session = AgentSession(session_id="authoritative-history-label")
+        context = SessionContext(session_id=session.session_id, input_messages=[])
+        context.extend_messages(
+            history,
+            [Message(role="assistant", contents=["Application-owned history"])],
+        )
+        agent = SimpleNamespace(context_providers=[history, config])
+
+        await config.before_run(
+            agent=agent,
+            session=session,
+            context=context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+        await config.after_context_loaded(
+            agent=agent,
+            session=session,
+            context=context,
+            state=session.state[config.source_id],
+        )
+
+        tracker, _, replay_middleware = context.get_middleware()
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+        chat_context = ChatContext(
+            client=cast(Any, SimpleNamespace()),
+            messages=context.context_messages[history.source_id],
+            options={},
+            session=session,
+        )
+
+        async def call_next() -> None:
+            return None
+
+        await cast(ChatMiddleware, replay_middleware).process(chat_context, call_next)
+
+        assert label_calls == 1
+        assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+        assert tracker.get_context_label().confidentiality == ConfidentialityLabel.PUBLIC
+
+    async def test_message_labeler_requires_secure_config_after_non_history_providers(self) -> None:
+        """Provider messages cannot be labeled before later message producers have run."""
+        config = SecureAgentConfig(message_labeler=lambda _source_id, _message: ContentLabel())
+        later_provider = SimpleNamespace(source_id="later-provider")
+        session = AgentSession(session_id="invalid-message-labeler-order")
+        context = SessionContext(session_id=session.session_id, input_messages=[])
+
+        with pytest.raises(ValueError, match="must follow every non-history context provider"):
+            await config.before_run(
+                agent=SimpleNamespace(context_providers=[config, later_provider]),
+                session=session,
+                context=context,
+                state=session.state.setdefault(config.source_id, {}),
+            )
+
+    async def test_message_labeler_allows_trailing_history_provider(self) -> None:
+        """Framework-managed history can load after message labeling and remains conservatively classified."""
+        observed_sources: list[str] = []
+
+        class Provider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__("provider")
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: SessionContext,
+                state: dict[str, Any],
+            ) -> None:
+                del agent, session, state
+                context.extend_messages(self, [Message(role="assistant", contents=["Provider context"])])
+
+        class NoopClient:
+            async def get_response(self, messages: list[Message], **kwargs: Any) -> ChatResponse:
+                del kwargs
+                assert any(message.text == "Provider context" for message in messages)
+                return ChatResponse(messages=[Message(role="assistant", contents=["done"])])
+
+        def label_message(source_id: str, _message: Message) -> ContentLabel:
+            observed_sources.append(source_id)
+            return ContentLabel()
+
+        config = SecureAgentConfig(message_labeler=label_message)
+        agent = Agent(
+            client=cast(SupportsChatGetResponse, NoopClient()),
+            context_providers=[Provider(), config],
+        )
+        session = AgentSession(session_id="message-labeler-trailing-history")
+
+        response = await agent.run("Continue", session=session)
+
+        assert response.text == "done"
+        assert observed_sources == ["provider"]
+        assert config.label_tracker.get_context_label(session).integrity == IntegrityLabel.TRUSTED
+
+    async def test_message_labeler_requires_content_label_result(self) -> None:
+        """Invalid classifier results fail before the model or tools can run."""
+
+        def invalid_labeler(_source_id: str, _message: Message) -> Any:
+            return {"integrity": "trusted"}
+
+        config = SecureAgentConfig(
+            message_labeler=cast(Callable[[str, Message], ContentLabel], invalid_labeler),
+        )
+        provider = SimpleNamespace(source_id="provider")
+        session = AgentSession(session_id="invalid-message-label")
+        context = SessionContext(session_id=session.session_id, input_messages=[])
+        context.extend_messages(provider, [Message(role="assistant", contents=["Provider context"])])
+
+        with pytest.raises(TypeError, match="message_labeler must return ContentLabel"):
+            await config.before_run(
+                agent=SimpleNamespace(context_providers=[provider, config]),
+                session=session,
+                context=context,
+                state=session.state.setdefault(config.source_id, {}),
+            )
 
     async def test_failed_history_load_keeps_conservative_reconstruction_for_retry(self) -> None:
         """A partial first-run label cannot suppress history reconstruction after load failure."""

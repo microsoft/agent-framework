@@ -233,13 +233,55 @@ When declared, `source_integrity` establishes the local integrity fallback. Embe
   arguments still add confidentiality restrictions. Caller-only unbound controls are reconstructed conservatively.
 - Stored `HistoryProvider` messages are folded into the label each time they are loaded. Unstamped assistant/tool
   content is reconstructed as **UNTRUSTED + PRIVATE**. Explicit replay labels are restriction-only: they can make
-  content less trusted or more confidential, but cannot promote replayed content to trusted.
+  content less trusted or more confidential, but cannot promote replayed content to trusted. An application-provided
+  `SecureAgentConfig.message_labeler` is a separate, authoritative classification boundary.
 - Policy enforcement uses the context label for validation
 
 ### History and Context Provider Trust Boundary
 
 `HistoryProvider` and `ContextProvider` implementations are trusted application
-plugins. FIDES cannot infer provenance from arbitrary provider behavior.
+plugins. FIDES cannot infer provenance from arbitrary provider behavior, but the
+application can classify provider messages centrally:
+
+```python
+def classify_provider_message(source_id: str, message: Message) -> ContentLabel:
+    if source_id == "internal_memory":
+        return ContentLabel(
+            integrity=IntegrityLabel.TRUSTED,
+            confidentiality=ConfidentialityLabel.PRIVATE,
+        )
+    return ContentLabel(
+        integrity=IntegrityLabel.UNTRUSTED,
+        confidentiality=ConfidentialityLabel.PUBLIC,
+    )
+
+
+security = SecureAgentConfig(message_labeler=classify_provider_message)
+agent = Agent(
+    client=client,
+    context_providers=[
+        internal_memory,
+        external_search,
+        security,
+    ],
+)
+```
+
+`message_labeler` receives the authoritative `source_id` from the
+`SessionContext.context_messages` bucket and the framework-owned message copy.
+Its returned `ContentLabel` is the complete application-owned classification
+for that exact message, including permission to mark data trusted. The
+synchronous callback result replaces any embedded message label for the current
+run. It must return `ContentLabel`; invalid results and callback failures stop
+the run.
+
+Place `SecureAgentConfig` after every non-history provider whose messages it
+should classify. Agent Framework may append its default history provider after
+the supplied providers; that history remains conservatively reconstructed. To
+classify an explicit history provider, register it before `SecureAgentConfig`.
+The callback does not classify caller input messages and does not authenticate
+approval controls, hidden references, or other control-plane structures. Those
+checks remain independent.
 
 - Unstamped history is classified conservatively every time FIDES loads it.
 - Rewriting, deduplicating, compacting, merging, or externally truncating a
@@ -248,28 +290,20 @@ plugins. FIDES cannot infer provenance from arbitrary provider behavior.
 - Do not combine session-managed history with caller-supplied full-transcript
   replay unless the history provider explicitly preserves FIDES provenance.
 - Messages from non-history context providers are not automatically folded into
-  the FIDES context label. A provider that injects retrieved or remembered
-  external data must label or hide it before it reaches the model.
+  the FIDES context label unless `message_labeler` classifies them.
+- History loaded only inside per-service-call persistence remains conservatively
+  reconstructed. Providers that need authoritative labels in that advanced
+  lifecycle must stamp or classify the data at their own boundary.
 
 This fail-closed behavior can block protected tools after an unsupported
 provider transformation. That is preferable to inferring trust from message
 shape or role.
 
-For simple providers, wrap loaded messages and stamp an application-owned,
-restriction-only `security_label`. See
-[`provider_labeling_example.py`](provider_labeling_example.py). Providers that
-use extra lifecycle hooks, service-side continuation, cross-session merges, or
-custom transcript rewriting should implement labeling inside the provider
-itself rather than relying on the sample wrappers.
-
-When several simple `ContextProvider` instances add messages during
-`before_run`, a final provider can inspect and label the combined message set.
 See
-[`provider_message_labeling_example.py`](provider_message_labeling_example.py).
-Place the message producers first, the labeler next, and `SecureAgentConfig`
-last. This pattern deliberately consumes and re-groups the prior context
-messages, so do not use it around persistent history providers or providers
-whose later lifecycle depends on their original message bucket.
+[`provider_message_labeling_example.py`](provider_message_labeling_example.py)
+for source-aware centralized classification. Providers that use extra lifecycle
+hooks, service-side continuation, cross-session merges, or custom transcript
+rewriting should classify data inside their own implementation.
 
 **Automatic Hiding:**
 - UNTRUSTED results/items are automatically hidden in variable store
@@ -685,6 +719,7 @@ agent = Agent(
 - `auto_hide_untrusted` → Automatically hide UNTRUSTED content in variable store
 - `allow_untrusted_tools` → Set of tools that can run in untrusted context
 - `block_on_violation` → Block tool calls that violate security policies
+- `message_labeler` → Authoritatively classify messages added by earlier context providers
 - `quarantine_chat_client` → Provide a separate chat client for real LLM calls in `quarantined_llm`. Without this, `quarantined_llm` returns placeholder responses.
 
 **SecureAgentConfig Methods:**
@@ -1323,6 +1358,8 @@ config = SecureAgentConfig(
     enable_policy_enforcement: bool = True,   # Toggle policy middleware
     quarantine_chat_client: SupportsChatGetResponse | None = None,
     source_id: str | None = None,
+    *,
+    message_labeler: Callable[[str, Message], ContentLabel] | None = None,
 )
 
 # Methods
