@@ -356,6 +356,24 @@ def _openai_value(content: Content, key: str, *legacy_keys: str, default: Any = 
     return default
 
 
+_REMOVED_RESPONSES_HOST_SETTINGS = {
+    "options": "Use the supported first-class host parameters instead of ResponsesServerOptions.",
+    "default_fetch_history_count": "Use max_history_items on a host-managed Responses agent.",
+    "default_model": "Configure inference defaults on the agent or client.",
+    "create_span_hook": "Use Agent Framework observability instead.",
+    "additional_server_version": "Custom server version stamping is not supported.",
+    "steerable_conversations": "Conversation steering is not supported.",
+    "resilient_background": "Use enable_background_recovery on a Responses host.",
+}
+
+
+def _reject_removed_host_settings(settings: Mapping[str, Any]) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Reject SDK settings that the first-class Responses host parameters replace, before any side effects."""
+    for name, message in _REMOVED_RESPONSES_HOST_SETTINGS.items():
+        if name in settings:
+            raise TypeError(f"{name} is no longer a supported host setting. {message}")
+
+
 def _reject_busy_conversation(session: AgentSession) -> None:  # pyright: ignore[reportUnusedFunction]
     if session.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) is not None:
         raise _PublicResponseFailure(

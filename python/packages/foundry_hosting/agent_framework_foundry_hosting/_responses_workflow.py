@@ -53,6 +53,7 @@ from ._responses_shared import (
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _normalize_allowed_oauth_consent_origins,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
+    _reject_removed_host_settings,  # pyright: ignore[reportPrivateUsage]
     _request_without_reserved_metadata,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
 )
@@ -374,6 +375,7 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
                 agent-only setting is supplied.
             ValueError: If a supported setting has an invalid value.
         """
+        _reject_removed_host_settings(kwargs)
         forbidden = {
             "agent",
             "agent_session_store_provider",
