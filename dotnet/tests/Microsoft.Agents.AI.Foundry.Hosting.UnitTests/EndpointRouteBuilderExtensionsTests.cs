@@ -180,8 +180,6 @@ public class EndpointRouteBuilderExtensionsTests
         {
             Content = new StringContent(CreateRequestJson(stream), Encoding.UTF8, "application/json"),
         };
-        // Separate storage partitions keep concurrent test hosts from deleting each other's temporary response files.
-        request.Headers.Add("x-agent-user-id", Guid.NewGuid().ToString("N"));
         using var response = await client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
         return (response.StatusCode, response.Content.Headers.ContentType?.MediaType, body);
