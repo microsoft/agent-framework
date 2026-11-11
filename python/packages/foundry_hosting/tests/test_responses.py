@@ -87,7 +87,7 @@ from openai.types.responses.response_usage import ResponseUsage as OpenAIRespons
 from pydantic import TypeAdapter
 
 from agent_framework_foundry_hosting import ResponsesHostServer, ResponsesRequest
-from agent_framework_foundry_hosting._approvals import SessionApprovalState
+from agent_framework_foundry_hosting._approvals import SessionApprovalState, _InvalidApproval
 from agent_framework_foundry_hosting._responses_shared import (
     _INCOMPLETE_REASON_KEY,  # pyright: ignore[reportPrivateUsage]
     _LATEST_CHECKPOINT_ID_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -8850,6 +8850,31 @@ class TestFunctionApprovalRoundTrip:
         assert response.headers["x-platform-error-source"] == ("platform" if platform_error else "upstream")
         assert _SESSION_STORAGE_ERROR_DETAIL not in response.text
         assert _SESSION_STORAGE_ERROR_DETAIL not in str(response.headers)
+        assert agent.run.call_count == 1
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_session_lookup_approval_error_is_a_backend_failure(self, stream: bool, tmp_path: Path) -> None:
+        approval = _make_function_approval_request_content()
+        agent = _make_agent(response=AgentResponse(messages=[Message(role="assistant", contents=[approval])]))
+        store = SqliteSessionStore(tmp_path / "approvals.sqlite")
+        server = _make_server(agent, session_store=store)
+        first = await _post(server)
+        previous_id = first.json()["id"]
+        approval_id = next(item["id"] for item in first.json()["output"] if item["type"] == "mcp_approval_request")
+
+        with patch.object(store, "get", new=AsyncMock(side_effect=_InvalidApproval(_SESSION_STORAGE_ERROR_DETAIL))):
+            response = await _post_json(
+                server,
+                {
+                    "input": [{"type": "mcp_approval_response", "approval_request_id": approval_id, "approve": True}],
+                    "previous_response_id": previous_id,
+                    "stream": stream,
+                },
+            )
+
+        assert response.status_code == 500
+        assert response.headers["x-platform-error-source"] == "upstream"
+        assert _SESSION_STORAGE_ERROR_DETAIL not in response.text
         assert agent.run.call_count == 1
 
     @pytest.mark.parametrize("fail_alias", [False, True])

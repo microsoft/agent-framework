@@ -54,6 +54,7 @@ from agent_framework_foundry_hosting import (
     ResponsesWorkflowHostServer,
     WorkflowTurn,
 )
+from agent_framework_foundry_hosting._approvals import _InvalidApproval
 from agent_framework_foundry_hosting._responses_workflow import _load_replies, _WorkflowRequestError
 from agent_framework_foundry_hosting._workflow_state import FoundryWorkflowBindingStore, HostedWorkflowRun
 
@@ -434,6 +435,35 @@ async def test_named_conversation_rejects_old_wire_replies_when_core_request_ids
     accepted = await _post(server, new_replies, conversation=conversation)
     assert accepted["status"] == "completed", accepted
     assert _texts(accepted) == ["new question:False", "new question:False"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_workflow_approval_lookup_error_is_a_backend_failure(stream: bool) -> None:
+    server = _server(lambda request: _build(_Approvals()), parser=_parse_text)
+    first = await _post(server, "/safe")
+    approval_id = next(item["id"] for item in first["output"] if item["type"] == "mcp_approval_request")
+    detail = "private workflow storage failure"
+
+    with (
+        patch.object(FoundryWorkflowBindingStore, "get_response", new=AsyncMock(side_effect=_InvalidApproval(detail))),
+        patch.object(server._resolver, "resolve", wraps=server._resolver.resolve) as resolver,  # pyright: ignore[reportPrivateUsage]
+    ):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+            response = await client.post(
+                "/responses",
+                headers={"x-agent-user-id": "user", "x-agent-foundry-call-id": "call"},
+                json={
+                    "input": [{"type": "mcp_approval_response", "approval_request_id": approval_id, "approve": True}],
+                    "agent_session_id": "sandbox",
+                    "previous_response_id": first["id"],
+                    "stream": stream,
+                },
+            )
+
+    assert response.status_code == 500
+    assert response.headers["x-platform-error-source"] == "upstream"
+    assert detail not in response.text
+    resolver.assert_not_called()
 
 
 @pytest.mark.parametrize("stream", [False, True])

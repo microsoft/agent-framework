@@ -43,11 +43,14 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from ._approvals import _InvalidApproval  # pyright: ignore[reportPrivateUsage]
 from ._scope import FoundryRequestScope
 from ._workflow_state import FoundryWorkflowBindingStore
 
 logger = logging.getLogger(__name__)
+
+
+class _InvalidApprovalInput(ValueError):
+    """A caller's approval controls cannot resume the current pending batch."""
 
 
 _Preflight = Callable[[CreateResponse, ResponseContext, FoundryAgentRequestContext], Awaitable[None]]
@@ -141,7 +144,7 @@ def bind_approval_preflight(host: ResponsesAgentServerHost, *, prefix: str, pref
             token = set_request_context(platform_context)
             try:
                 await preflight(parsed, context, platform_context)
-            except _InvalidApproval as exc:
+            except _InvalidApprovalInput as exc:
                 return error_response(exc, headers, request_id=request_id)
             except Exception as exc:
                 logger.error("Responses approval preflight failed (%s).", type(exc).__name__)
@@ -172,7 +175,7 @@ def approval_controls(items: list[Mapping[str, Any]]) -> list[str]:
             continue
         wire_id, decision = item.get("approval_request_id"), item.get("approve")
         if not isinstance(wire_id, str) or not wire_id or type(decision) is not bool:
-            raise _InvalidApproval("An approval reply requires its exact ID and a boolean decision.")
+            raise _InvalidApprovalInput("An approval reply requires its exact ID and a boolean decision.")
         ids.append(wire_id)
     return ids
 
@@ -195,7 +198,7 @@ async def preflight_workflow_approvals(
     previous = previous if isinstance(previous, str) and previous else None
     if previous is None and context.conversation_id is None:
         if ids:
-            raise _InvalidApproval("The approval has no pending workflow checkpoint.")
+            raise _InvalidApprovalInput("The approval has no pending workflow checkpoint.")
         return
     scope = FoundryRequestScope.from_context(host.config, platform_context, local_session_id=context.response_id)
     storage = FoundryWorkflowBindingStore(scope)
@@ -221,7 +224,7 @@ async def preflight_workflow_approvals(
         or head.binding != record.binding
     ):
         if ids:
-            raise _InvalidApproval("The approval is unavailable in the current workflow checkpoint.")
+            raise _InvalidApprovalInput("The approval is unavailable in the current workflow checkpoint.")
         return
     aliases = record.approvals or {}
     output = record.snapshot.get("output")
@@ -237,25 +240,25 @@ async def preflight_workflow_approvals(
             approval_ids.add(wire_id)
     if not approval_ids:
         if ids:
-            raise _InvalidApproval("The workflow has no pending MCP approval batch.")
+            raise _InvalidApprovalInput("The workflow has no pending MCP approval batch.")
         return
     if request.get("store") is False:
-        raise _InvalidApproval("Approval continuation requires store=true.")
+        raise _InvalidApprovalInput("Approval continuation requires store=true.")
     if has_unresolved_input(request, items):
-        raise _InvalidApproval("Pending workflow approvals cannot include unresolved input references.")
+        raise _InvalidApprovalInput("Pending workflow approvals cannot include unresolved input references.")
     controls: list[str] = []
     for item in items:
         item_type = item.get("type")
         if item_type == "mcp_approval_response":
             wire_id = item.get("approval_request_id")
             if wire_id not in approval_ids:
-                raise _InvalidApproval("An approval reply must match this exact pending checkpoint.")
+                raise _InvalidApprovalInput("An approval reply must match this exact pending checkpoint.")
         elif item_type in ("function_call_output", "computer_call_output"):
             wire_id = item.get("call_id")
             if not isinstance(wire_id, str) or wire_id not in aliases or wire_id in approval_ids:
-                raise _InvalidApproval("A reply must match this exact pending checkpoint.")
+                raise _InvalidApprovalInput("A reply must match this exact pending checkpoint.")
         else:
-            raise _InvalidApproval("Pending workflow approvals cannot be mixed with new input.")
+            raise _InvalidApprovalInput("Pending workflow approvals cannot be mixed with new input.")
         controls.append(cast(str, wire_id))
     if len(controls) != len(set(controls)) or set(controls) != set(aliases):
-        raise _InvalidApproval("Answer exactly the complete pending workflow request batch.")
+        raise _InvalidApprovalInput("Answer exactly the complete pending workflow request batch.")
