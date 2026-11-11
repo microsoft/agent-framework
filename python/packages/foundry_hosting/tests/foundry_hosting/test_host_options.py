@@ -23,7 +23,7 @@ from agent_framework_foundry_hosting._shared import (
     _NativeAgentOptions,
     build_response_server_options,
     prepare_response_options,
-    reject_removed_host_settings,
+    response_run_options,
     validate_agent_background_options,
     validate_request_options,
 )
@@ -58,8 +58,6 @@ def test_history_default_is_omitted_instead_of_forced_unlimited(monkeypatch: pyt
         ({"shutdown_grace_period_seconds": 0}, ValueError),
         ({"enable_background_recovery": 1}, TypeError),
         ({"enable_background_recovery": True}, ValueError),
-        ({"history_source": "inference_service", "max_history_items": 2}, ValueError),
-        ({"history_source": "agent_managed", "max_history_items": 2}, ValueError),
         ({"background_source": "inference_service"}, ValueError),
         ({"history_source": "wrong"}, ValueError),
         ({"background_source": "wrong"}, ValueError),
@@ -81,34 +79,16 @@ def test_recovery_and_workflow_history_eligibility() -> None:
         enable_background_recovery=True,
     ).resilient_background
     assert build_response_server_options(is_workflow=True, enable_background_recovery=True).resilient_background
-    with pytest.raises(ValueError, match="regular agents"):
-        build_response_server_options(is_workflow=True, max_history_items=2)
+    with pytest.warns(UserWarning, match="max_history_items is ignored"):
+        workflow_options = build_response_server_options(is_workflow=True, max_history_items=2)
+    assert workflow_options.default_fetch_history_count == ResponsesServerOptions().default_fetch_history_count
+    with pytest.warns(UserWarning, match="max_history_items is ignored"):
+        agent_managed_options = build_response_server_options(
+            is_workflow=False, history_source="agent_managed", max_history_items=2
+        )
+    assert agent_managed_options.default_fetch_history_count == ResponsesServerOptions().default_fetch_history_count
     with pytest.raises(ValueError, match="regular agent"):
         build_response_server_options(is_workflow=True, background_source="inference_service")
-
-
-@pytest.mark.parametrize(
-    "name",
-    [
-        "options",
-        "default_fetch_history_count",
-        "default_model",
-        "create_span_hook",
-        "additional_server_version",
-        "steerable_conversations",
-        "resilient_background",
-    ],
-)
-def test_removed_host_settings_fail_even_when_none(name: str) -> None:
-    settings: dict[str, Any] = {name: None}
-    with pytest.raises(TypeError, match=name):
-        reject_removed_host_settings({name: None})
-    with (
-        patch("agent_framework_foundry_hosting._invocations_shared.InvocationAgentServerHost.__init__") as sdk,
-        pytest.raises(TypeError, match=name),
-    ):
-        InvocationsHostServer(Agent(client=OptionsClient()), **settings)
-    sdk.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -195,6 +175,20 @@ async def test_invocations_hook_before_factory_preserves_developer_model(stream:
     assert callbacks.client.calls[0]["model"] == "developer"
     assert callbacks.client.calls[0]["temperature"] == 0.8
     assert callbacks.defaults == {"model": "developer", "temperature": 0.4}
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_invocations_options_are_opt_in(stream: bool) -> None:
+    callbacks = OptionCallbacks(defaults={"model": "developer", "temperature": 0.4})
+    host = InvocationsHostServer(callbacks.factory)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=host), base_url="http://test") as client:
+        response = await client.post(
+            "/invocations?agent_session_id=options",
+            json={"message": "hi", "stream": stream, "options": {"model": "caller", "temperature": 0.8}},
+        )
+    assert response.status_code == 200
+    assert callbacks.client.calls[0]["model"] == "developer"
+    assert callbacks.client.calls[0]["temperature"] == 0.4
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -300,3 +294,26 @@ async def test_response_hook_returns_independent_nested_options() -> None:
     assert request.options["metadata"] is not source["metadata"]
     with pytest.raises(TypeError, match="mapping"):
         await prepare_response_options(request, lambda request, options: cast(Any, {1: "not-string"}))
+
+
+async def test_response_options_are_opt_in_and_hook_can_select_known_fields() -> None:
+    caller_options = response_run_options(
+        cast(Any, {"extra_body": {"messages": "not-a-generation-option", "temperature": 0.8}})
+    )
+    request = ResponsesRequest(
+        cast(Any, {}),
+        MagicMock(),
+        FoundryRequestScope("session", None, None, False),
+        caller_options,
+    )
+    await prepare_response_options(request, None)
+    assert dict(request.options) == {}
+
+    selected_request = ResponsesRequest(
+        cast(Any, {}),
+        MagicMock(),
+        FoundryRequestScope("session", None, None, False),
+        caller_options,
+    )
+    await prepare_response_options(selected_request, lambda _request, options: {"temperature": options["temperature"]})
+    assert dict(selected_request.options) == {"temperature": 0.8}

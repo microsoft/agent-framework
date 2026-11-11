@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import inspect
+import warnings
 import weakref
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
@@ -46,23 +47,6 @@ from typing_extensions import TypeVar
 from ._scope import FoundryRequestScope
 
 UnsupportedOptions: TypeAlias = Literal["ignore", "warn", "error"]
-
-
-def reject_removed_host_settings(settings: Mapping[str, Any]) -> None:
-    """Reject removed SDK settings before constructing a host or allocating resources."""
-    replacements = {
-        "options": "Use the supported first-class host parameters instead of ResponsesServerOptions.",
-        "default_fetch_history_count": "Use max_history_items on a host-managed Responses agent.",
-        "default_model": "Configure inference defaults on the agent or client.",
-        "create_span_hook": "Use Agent Framework observability instead.",
-        "additional_server_version": "Custom server version stamping is not supported.",
-        "steerable_conversations": "Conversation steering is not supported.",
-        "resilient_background": "Use enable_background_recovery on a Responses host.",
-        "legacy_wire_format": "Invocations always use JSON responses and framed SSE events.",
-    }
-    for name, message in replacements.items():
-        if name in settings:
-            raise TypeError(f"{name} is no longer a supported host setting. {message}")
 
 
 def validate_sse_keep_alive_interval(value: int | None) -> None:
@@ -118,8 +102,13 @@ def build_response_server_options(
         if max_history_items <= 0:
             raise ValueError("max_history_items must be positive when supplied.")
         if is_workflow or history_source != "host_managed":
-            raise ValueError("max_history_items applies only to regular agents with history_source='host_managed'.")
-        kwargs["default_fetch_history_count"] = max_history_items
+            warnings.warn(
+                "max_history_items is ignored unless used with a regular agent and history_source='host_managed'.",
+                UserWarning,
+                stacklevel=2,
+            )
+        else:
+            kwargs["default_fetch_history_count"] = max_history_items
     return ResponsesServerOptions(
         sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
         shutdown_grace_period_seconds=shutdown_grace_period_seconds,
@@ -258,9 +247,7 @@ def response_run_options(request: CreateResponse) -> dict[str, Any]:
                 raise TypeError("extra_body must be a mapping of model options.")
             if "extra_body" in value:
                 raise ValueError("Nested extra_body is not supported; flatten provider options instead.")
-            if reserved := (_HOST_CONTROLLED_FIELDS | _RUN_CONTROLLED_FIELDS).intersection(
-                cast(Mapping[str, Any], value)
-            ):
+            if reserved := _HOST_CONTROLLED_FIELDS.intersection(cast(Mapping[str, Any], value)):
                 raise ValueError(f"extra_body cannot set host-controlled fields: {', '.join(sorted(reserved))}.")
             nested_extra.update(cast(Mapping[str, Any], value))
         elif name in _HOST_CONTROLLED_FIELDS:
@@ -333,13 +320,13 @@ OptionsHook: TypeAlias = Callable[
 
 
 async def prepare_response_options(request: ResponsesRequest, hook: OptionsHook | None) -> None:
-    """Apply a sync/async hook after factory resolution, without changing agent defaults.
+    """Apply a sync/async option selection hook without changing agent defaults.
 
-    Return replacement per-run options for both streaming and non-streaming requests.
-    Removing a caller ``model`` leaves the developer's agent/client default intact.
-    The host validates protected fields after this hook and before dispatch.
+    Caller options are omitted when no hook is configured. The host validates the
+    hook's replacement mapping before dispatch.
     """
     if hook is None:
+        request.set_options({})
         return
     result = hook(request, deepcopy(dict(request.options)))
     if inspect.isawaitable(result):

@@ -150,7 +150,6 @@ def test_agent_hosts_reject_ambiguous_factories_before_sdk_construction(protocol
         ("Invocations", "agent_session_store_provider"),
         ("Invocations", "prepare_options"),
         ("Invocations", "unsupported_options"),
-        ("Invocations", "legacy_wire_format"),
     ],
 )
 def test_workflow_hosts_reject_agent_settings_before_sdk_construction(protocol: str, setting: str) -> None:
@@ -183,28 +182,6 @@ def test_legacy_responses_request_name_is_not_exported() -> None:
     assert "HostedResponseRequest" not in dir(hosting)
     with pytest.raises(AttributeError, match="HostedResponseRequest"):
         hosting.__getattr__("HostedResponseRequest")
-
-
-@pytest.mark.parametrize(
-    ("name", "legacy"),
-    [
-        ("InvocationsHostServer", "parse_request"),
-        ("InvocationsWorkflowHostServer", "parse_request"),
-    ],
-)
-def test_legacy_parser_names_are_not_silently_forwarded_to_sdk(name: str, legacy: str) -> None:
-    host = getattr(hosting, name)
-    source = "workflow" if "Workflow" in name else "agent"
-    values = {source: lambda _: None, "parse_input": lambda _: None, legacy: lambda _: None}
-    base = (
-        "azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost"
-        if name.startswith("Responses")
-        else "azure.ai.agentserver.invocations.InvocationAgentServerHost"
-    )
-    with patch(f"{base}.__init__", return_value=None) as initialize:
-        with pytest.raises(TypeError, match=f"{legacy} was renamed to parse_input"):
-            host(**values)
-        initialize.assert_not_called()
 
 
 def test_responses_workflow_host_rejects_removed_options() -> None:
