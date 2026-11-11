@@ -188,7 +188,6 @@ def test_legacy_responses_request_name_is_not_exported() -> None:
 @pytest.mark.parametrize(
     ("name", "legacy"),
     [
-        ("ResponsesWorkflowHostServer", "parse_response"),
         ("InvocationsHostServer", "parse_request"),
         ("InvocationsWorkflowHostServer", "parse_request"),
     ],

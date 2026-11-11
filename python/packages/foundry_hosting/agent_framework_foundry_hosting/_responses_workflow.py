@@ -375,8 +375,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
             ValueError: If a supported setting has an invalid value.
         """
         reject_removed_host_settings(kwargs)
-        if "parse_response" in kwargs:
-            raise TypeError("parse_response was renamed to parse_input.")
         forbidden = {
             "agent",
             "agent_session_store_provider",
