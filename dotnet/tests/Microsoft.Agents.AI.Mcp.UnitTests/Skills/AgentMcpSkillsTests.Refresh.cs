@@ -286,7 +286,7 @@ public sealed partial class AgentMcpSkillsTests
         Assert.Equal(1, lists);
         Assert.Equal(3, gets);
         Assert.Equal(getUris[shorterFirst ? 0 : 1], getUris[2]);
-        int expiredIndex = refreshed[0] is AgentMcpSkill skill && skill.Uri == getUris[2] ? 0 : 1;
+        int expiredIndex = refreshed[0] is AgentMcpSkill skill && skill.Uri.OriginalString == getUris[2] ? 0 : 1;
         Assert.NotSame(refreshed[expiredIndex], next[expiredIndex]);
         Assert.Same(refreshed[1 - expiredIndex], next[1 - expiredIndex]);
     }
@@ -352,22 +352,25 @@ public sealed partial class AgentMcpSkillsTests
     public async Task GetSkillsAsync_VerificationFailure_RefreshesManifestOnNextRequestAsync()
     {
         // Arrange
+        const string RootUri = "skill://FIRST/%73cope/unit-converter/";
+        const string InstructionsUri = RootUri + "SKILL.md";
         const string UpdatedContent = SkillContent + "\nUpdated.";
         int gets = 0;
         int reads = 0;
         await using var server = CreateServer(
-            (_, _) => ValueTask.FromResult<JsonNode?>(TtlListResult(60000, Entry())),
+            (_, _) => ValueTask.FromResult<JsonNode?>(TtlListResult(60000, Entry(RootUri))),
             (uri, _) =>
             {
+                Assert.Equal(InstructionsUri, uri);
                 reads++;
                 return ValueTask.FromResult(Text(uri, UpdatedContent));
             },
             (request, _) =>
             {
-                Assert.Equal(SkillUri, request.Params!["uri"]!.GetValue<string>());
+                Assert.Equal(InstructionsUri, request.Params!["uri"]!.GetValue<string>());
                 Assert.NotNull(request.Params["_meta"]);
                 gets++;
-                return ValueTask.FromResult<JsonNode?>(GetSkillResult(Entry(content: UpdatedContent)));
+                return ValueTask.FromResult<JsonNode?>(GetSkillResult(Entry(RootUri, UpdatedContent)));
             });
         await using var client = await server.CreateClientAsync();
         using var source = new AgentMcpSkillsSource(client);
@@ -382,6 +385,7 @@ public sealed partial class AgentMcpSkillsTests
 
         // Assert
         Assert.NotSame(original, replacement);
+        Assert.Equal(InstructionsUri, Assert.IsType<AgentMcpSkill>(replacement).Uri.OriginalString);
         Assert.Equal(1, gets);
         Assert.Equal(1, reads);
         Assert.Equal(UpdatedContent, await replacement.GetContentAsync());
@@ -866,7 +870,7 @@ public sealed partial class AgentMcpSkillsTests
         });
         using var source = new AgentMcpSkillsSource(client.Object, loggerFactory: null,
             // The limit covers the listed sizes: SKILL.md, the checklist (10 bytes), and the icon (4 bytes).
-            options: new AgentMcpSkillsSourceOptions { ListedResourceMaxSizeBytes = Encoding.UTF8.GetByteCount(SkillContent) + 14 },
+            options: new AgentMcpSkillsSourceOptions { MaxResourceSizeBytes = Encoding.UTF8.GetByteCount(SkillContent) + 14 },
             timeProvider: clock);
         IList<AgentSkill> original = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
         if (cached)

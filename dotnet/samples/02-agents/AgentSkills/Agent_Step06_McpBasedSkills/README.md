@@ -164,6 +164,6 @@ text or decoding blobs for integrity verification.
 A read that would exceed either limit fails.
 
 Configure the resource count and combined size limits with `AgentMcpSkillsSourceOptions.ResourceMaxCount`
-and `ListedResourceMaxSizeBytes` passed to `UseMcpSkills`; both limits must be positive.
+and `MaxResourceSizeBytes` passed to `UseMcpSkills`; both limits must be positive.
 
 These checks do not limit incoming messages before the supplied client receives and parses them.

@@ -82,16 +82,16 @@ internal sealed partial class McpSkillsCatalog
         this._client = Throw.IfNull(client);
         this._logger = logger ?? NullLogger.Instance;
         this._maxResourceCount = options?.ResourceMaxCount ?? AgentMcpSkill.DefaultMaxResourceCount;
-        this._maxResourceSizeBytes = options?.ListedResourceMaxSizeBytes ?? AgentMcpSkill.DefaultMaxResourceSizeBytes;
-        this._maxPageCount = options?.ListedMaxPageCount ?? DefaultMaxPageCount;
-        this._maxSkillCount = options?.ListedMaxSkillCount ?? DefaultMaxSkillCount;
+        this._maxResourceSizeBytes = options?.MaxResourceSizeBytes ?? AgentMcpSkill.DefaultMaxResourceSizeBytes;
+        this._maxPageCount = options?.MaxPageCount ?? DefaultMaxPageCount;
+        this._maxSkillCount = options?.MaxSkillCount ?? DefaultMaxSkillCount;
         this._timeProvider = timeProvider ?? TimeProvider.System;
         this._ttlResolver = options?.TtlResolver;
         this._hasIsolationKey = hasIsolationKey;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceCount, nameof(options.ResourceMaxCount));
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.ListedResourceMaxSizeBytes));
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.ListedMaxPageCount));
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.ListedMaxSkillCount));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxResourceSizeBytes, nameof(options.MaxResourceSizeBytes));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxPageCount, nameof(options.MaxPageCount));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(this._maxSkillCount, nameof(options.MaxSkillCount));
         this._catalogCache = new(this._timeProvider, StringComparer.Ordinal);
     }
 
@@ -205,7 +205,7 @@ internal sealed partial class McpSkillsCatalog
     /// <summary>
     /// Fetches updated details for one skill and creates a replacement object, or returns null if the skill no longer exists.
     /// </summary>
-    private async Task<AgentMcpSkill?> FetchSkillAsync(string skillUri, CancellationToken cancellationToken)
+    private async Task<AgentMcpSkill?> FetchSkillAsync(Uri skillUri, CancellationToken cancellationToken)
     {
         JsonRpcResponse response;
         try
@@ -213,7 +213,7 @@ internal sealed partial class McpSkillsCatalog
             response = await this._client.SendRequestAsync(new JsonRpcRequest
             {
                 Method = "skills/get",
-                Params = new JsonObject { ["uri"] = skillUri },
+                Params = new JsonObject { ["uri"] = skillUri.OriginalString },
             }, cancellationToken).ConfigureAwait(false);
         }
         catch (McpProtocolException ex) when (ex.ErrorCode == McpErrorCode.InvalidParams || ex.ErrorCode == McpErrorCode.ResourceNotFound)
@@ -233,9 +233,9 @@ internal sealed partial class McpSkillsCatalog
             throw new InvalidOperationException($"A skills/get result must have resultType '{CompleteResultType}'. Received resultType '{result.ResultType}'.");
         }
 
-        if (!string.Equals(result.Skill.Uri, skillUri, StringComparison.Ordinal))
+        if (!string.Equals(result.Skill.Uri, skillUri.OriginalString, StringComparison.Ordinal))
         {
-            throw new InvalidOperationException($"The skills/get result must describe the requested skill '{skillUri}'.");
+            throw new InvalidOperationException($"The skills/get result must describe the requested skill '{skillUri.OriginalString}'.");
         }
 
         result.CacheScope = ValidateAndNormalizeCacheScope(result.CacheScope, this._hasIsolationKey, this._logger, "skills/get");
@@ -258,7 +258,7 @@ internal sealed partial class McpSkillsCatalog
             this.ValidateResourceManifest(entry.Uri, manifest.Entries);
         }
 
-        return new AgentMcpSkill(frontmatter, entry.Frontmatter.OriginalJson, entry.Uri, entry.Resources, this._client, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver, this._hasIsolationKey, maxResourceCount: this._maxResourceCount);
+        return new AgentMcpSkill(frontmatter, entry.Frontmatter.OriginalJson, new Uri(entry.Uri, UriKind.Absolute), entry.Resources, this._client, this._logger, this._maxResourceSizeBytes, this._timeProvider, metadataLifetime, this._ttlResolver, this._hasIsolationKey, maxResourceCount: this._maxResourceCount);
     }
 
     /// <summary>

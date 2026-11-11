@@ -75,6 +75,79 @@ public sealed partial class AgentMcpSkillsTests
     }
 
     [Theory]
+    [InlineData("skill://FIRST/%73cope/unit-converter/SKILL.md", true)]
+    [InlineData("skill://first/%73cope/unit-converter/SKILL.md", true)]
+    [InlineData("skill://first/scope/unit-converter/SKILL.md", false)]
+    public async Task GetSkillsAsync_FilterDecorator_FiltersBySkillUriAsync(string includedUri, bool matches)
+    {
+        // Arrange
+        List<string> reads = [];
+        await using var server = CreateServer(
+            (_, _) => ValueTask.FromResult<JsonNode?>(ListResult(
+                Entry("skill://FIRST/%73cope/unit-converter/"),
+                Entry("skill://first/%73cope/unit-converter/"))),
+            (uri, _) =>
+            {
+                reads.Add(uri);
+                return ValueTask.FromResult(Text(uri, SkillContent));
+            });
+        await using var client = await server.CreateClientAsync();
+        using var source = new FilteringAgentSkillsSource(
+            new AgentMcpSkillsSource(client),
+            (skill, _) => skill is AgentMcpSkill mcpSkill &&
+                mcpSkill.Uri.Host == "first" && mcpSkill.Uri.OriginalString == includedUri);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        if (matches)
+        {
+            var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(skills));
+            Assert.Equal(includedUri, skill.Uri.OriginalString);
+            Assert.Equal("skill", skill.Uri.Scheme);
+            Assert.Equal("first", skill.Uri.Host);
+        }
+        else
+        {
+            Assert.Empty(skills);
+        }
+
+        Assert.Empty(reads);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ResourceReads_PreserveOriginalUriAsync()
+    {
+        // Arrange
+        const string RootUri = "skill://FIRST/%73cope/unit-converter/";
+        const string InstructionsUri = RootUri + "SKILL.md";
+        const string ResourceUri = RootUri + "references/checklist.md";
+        List<string> reads = [];
+        await using var server = CreateServer(
+            (_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry(RootUri))),
+            (uri, _) =>
+            {
+                reads.Add(uri);
+                return ValueTask.FromResult(Text(uri, uri == InstructionsUri ? SkillContent : "Checklist."));
+            });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())));
+
+        // Act
+        string content = await skill.GetContentAsync();
+        var resource = await skill.GetResourceAsync("references/checklist.md");
+
+        // Assert
+        Assert.Equal(InstructionsUri, skill.Uri.OriginalString);
+        Assert.Equal(SkillContent, content);
+        Assert.NotNull(resource);
+        Assert.Equal("Checklist.", await resource.ReadAsync());
+        Assert.Equal([InstructionsUri, ResourceUri], reads);
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("opaque cursor:+/=\u00e9")]
     public async Task GetSkillsAsync_PaginatedList_FollowsOpaqueCursorsAndEmptyPagesAsync(string firstCursor)
@@ -152,7 +225,7 @@ public sealed partial class AgentMcpSkillsTests
             return ValueTask.FromResult<JsonNode?>(result);
         });
         await using var client = await server.CreateClientAsync();
-        using var source = new AgentMcpSkillsSource(client, new() { ListedMaxPageCount = limit });
+        using var source = new AgentMcpSkillsSource(client, new() { MaxPageCount = limit });
 
         // Act & Assert
         if (exceedsLimit)
@@ -309,7 +382,7 @@ public sealed partial class AgentMcpSkillsTests
             return ValueTask.FromResult<JsonNode?>(result);
         });
         await using var client = await server.CreateClientAsync();
-        using var source = new AgentMcpSkillsSource(client, new() { ListedMaxSkillCount = limit });
+        using var source = new AgentMcpSkillsSource(client, new() { MaxSkillCount = limit });
 
         // Act & Assert
         if (exceedsLimit)
@@ -363,7 +436,7 @@ public sealed partial class AgentMcpSkillsTests
         var client = CreateSkillsClient();
         client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = ListResult(Entry(), new JsonObject()) });
-        using var source = new AgentMcpSkillsSource(client.Object, options: new() { ListedMaxSkillCount = 1 });
+        using var source = new AgentMcpSkillsSource(client.Object, options: new() { MaxSkillCount = 1 });
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
@@ -446,10 +519,10 @@ public sealed partial class AgentMcpSkillsTests
     }
 
     [Theory]
-    [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxPageCount), 0)]
-    [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxPageCount), -1)]
-    [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxSkillCount), 0)]
-    [InlineData(nameof(AgentMcpSkillsSourceOptions.ListedMaxSkillCount), -1)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.MaxPageCount), 0)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.MaxPageCount), -1)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.MaxSkillCount), 0)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.MaxSkillCount), -1)]
     [InlineData(nameof(AgentMcpSkillsSourceOptions.ResourceMaxCount), 0)]
     [InlineData(nameof(AgentMcpSkillsSourceOptions.ResourceMaxCount), -1)]
     public void Constructor_InvalidDiscoveryLimit_Throws(string option, int limit)
@@ -458,8 +531,8 @@ public sealed partial class AgentMcpSkillsTests
         var client = CreateSkillsClient();
         var options = new AgentMcpSkillsSourceOptions
         {
-            ListedMaxPageCount = option == nameof(AgentMcpSkillsSourceOptions.ListedMaxPageCount) ? limit : null,
-            ListedMaxSkillCount = option == nameof(AgentMcpSkillsSourceOptions.ListedMaxSkillCount) ? limit : null,
+            MaxPageCount = option == nameof(AgentMcpSkillsSourceOptions.MaxPageCount) ? limit : null,
+            MaxSkillCount = option == nameof(AgentMcpSkillsSourceOptions.MaxSkillCount) ? limit : null,
             ResourceMaxCount = option == nameof(AgentMcpSkillsSourceOptions.ResourceMaxCount) ? limit : null,
         };
 
@@ -721,7 +794,7 @@ public sealed partial class AgentMcpSkillsTests
         await using var client = await server.CreateClientAsync();
         client.ServerCapabilities.Extensions = null;
         using var source = new AgentMcpSkillsSource(client, smallResourceLimit
-            ? new() { ListedResourceMaxSizeBytes = 1 }
+            ? new() { MaxResourceSizeBytes = 1 }
             : null);
 
         // Act
@@ -1017,7 +1090,7 @@ public sealed partial class AgentMcpSkillsTests
         entry["resources"]![1]!["size"] = limit - (limit / 2) - 4 + excessBytes;
         await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)));
         await using var client = await server.CreateClientAsync();
-        using var source = new AgentMcpSkillsSource(client, new() { ListedResourceMaxSizeBytes = configuredLimit });
+        using var source = new AgentMcpSkillsSource(client, new() { MaxResourceSizeBytes = configuredLimit });
 
         // Act & Assert
         if (excessBytes == 0)
@@ -1042,7 +1115,7 @@ public sealed partial class AgentMcpSkillsTests
         await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())),
             (uri, _) => ValueTask.FromResult(Text(uri, new string('x', (int)limit + 1))));
         await using var client = await server.CreateClientAsync();
-        using var source = new AgentMcpSkillsSource(client, new() { ListedResourceMaxSizeBytes = limit });
+        using var source = new AgentMcpSkillsSource(client, new() { MaxResourceSizeBytes = limit });
         var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
 
         // Act
@@ -1072,7 +1145,7 @@ public sealed partial class AgentMcpSkillsTests
         await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)),
             (uri, _) => ValueTask.FromResult(Text(uri, content)));
         await using var client = await server.CreateClientAsync();
-        using var source = new AgentMcpSkillsSource(client, new() { ListedResourceMaxSizeBytes = 2_097_152 });
+        using var source = new AgentMcpSkillsSource(client, new() { MaxResourceSizeBytes = 2_097_152 });
         var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
 
         // Act
@@ -1093,14 +1166,14 @@ public sealed partial class AgentMcpSkillsTests
         var client = CreateSkillsClient();
         var options = new AgentMcpSkillsSourceOptions
         {
-            ListedResourceMaxSizeBytes = limit,
+            MaxResourceSizeBytes = limit,
         };
 
         // Act
         var exception = Assert.Throws<ArgumentOutOfRangeException>(() => new AgentMcpSkillsSource(client.Object, options));
 
         // Assert
-        Assert.Equal(nameof(options.ListedResourceMaxSizeBytes), exception.ParamName);
+        Assert.Equal(nameof(options.MaxResourceSizeBytes), exception.ParamName);
     }
 
     [Fact]

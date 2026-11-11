@@ -49,10 +49,10 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// A refresh creates a new skill object with the server's updated resource information.
 /// Existing skill objects continue checking reads against the resource information they were created with.
-/// The catalog uses <see cref="MetadataLifetime"/> to refresh skill metadata independently of resource content.
+/// The catalog refreshes skill metadata independently of resource content.
 /// </para>
 /// </remarks>
-internal sealed partial class AgentMcpSkill : AgentSkill
+public sealed partial class AgentMcpSkill : AgentSkill
 {
     internal const long DefaultMaxResourceSizeBytes = 16 * 1024 * 1024;
 
@@ -88,12 +88,19 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// <param name="hasIsolationKey">Whether the skill belongs to a cache partition key.</param>
     /// <param name="maxResourceCount">The maximum number of cached resources, including <c>SKILL.md</c>.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxResourceSizeBytes"/> or <paramref name="maxResourceCount"/> is not positive.</exception>
-    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, JsonElement frontmatterJson, string uri, McpSkillResources resources, McpClient client, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null, bool hasIsolationKey = false, int maxResourceCount = DefaultMaxResourceCount)
+    /// <exception cref="ArgumentException"><paramref name="uri"/> is not absolute.</exception>
+    internal AgentMcpSkill(AgentSkillFrontmatter frontmatter, JsonElement frontmatterJson, Uri uri, McpSkillResources resources, McpClient client, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null, bool hasIsolationKey = false, int maxResourceCount = DefaultMaxResourceCount)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
-        this.Uri = Throw.IfNullOrWhitespace(uri);
+        ArgumentNullException.ThrowIfNull(uri);
+        if (!uri.IsAbsoluteUri)
+        {
+            throw new ArgumentException("The URI must be absolute.", nameof(uri));
+        }
+
+        this.Uri = uri;
         this.MetadataLifetime = metadataLifetime ?? McpCacheLifetime.Infinite;
-        this._skillRootUri = this.Uri[..^"SKILL.md".Length];
+        this._skillRootUri = this.Uri.OriginalString[..^"SKILL.md".Length];
         this._resources = Throw.IfNull(resources);
         this._client = Throw.IfNull(client);
         this._hasIsolationKey = hasIsolationKey;
@@ -118,7 +125,10 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     /// <summary>
     /// Gets the resource URI of the skill's <c>SKILL.md</c> file.
     /// </summary>
-    internal string Uri { get; }
+    /// <remarks>
+    /// Use <see cref="Uri.OriginalString"/> to obtain the exact URI provided by the MCP server.
+    /// </remarks>
+    public Uri Uri { get; }
 
     /// <summary>
     /// Gets the skill lifetime.
@@ -147,14 +157,14 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         McpSkillResourceEntry? skillMdResource = null;
         if (this._resources is McpSkillManifestResources manifest)
         {
-            skillMdResource = manifest.FindEntry(this.Uri) ?? throw new InvalidOperationException($"The resource list must include the skill's SKILL.md resource '{this.Uri}'.");
+            skillMdResource = manifest.FindEntry(this.Uri.OriginalString) ?? throw new InvalidOperationException($"The resource list must include the skill's SKILL.md resource '{this.Uri.OriginalString}'.");
         }
 
-        ResourceContents content = await this.GetResourceContentAsync(this.Uri, skillMdResource, cancellationToken).ConfigureAwait(false);
+        ResourceContents content = await this.GetResourceContentAsync(this.Uri.OriginalString, skillMdResource, cancellationToken).ConfigureAwait(false);
 
         if (content is not TextResourceContents textContent)
         {
-            throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this.Uri}'.");
+            throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this.Uri.OriginalString}'.");
         }
 
         return textContent.Text;
@@ -258,7 +268,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
 
             // The resource may have changed; request a new manifest without changing this skill's held manifest.
             this._needsRefresh = true;
-            LogResourceIntegrityMismatch(this._logger, uri, this.Uri, mismatch);
+            LogResourceIntegrityMismatch(this._logger, uri, this.Uri.OriginalString, mismatch);
             cancellationToken.ThrowIfCancellationRequested();
 
             if (cached is null)
@@ -309,7 +319,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         // SKILL.md contains the skill's instructions and must be returned as text.
         if (this.IsInstructionsResource(uri) && content is not TextResourceContents)
         {
-            throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this.Uri}'.");
+            throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this.Uri.OriginalString}'.");
         }
 
         if (content is TextResourceContents text)
@@ -374,7 +384,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
     {
         if (content is not TextResourceContents textContent)
         {
-            throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this.Uri}'.");
+            throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this.Uri.OriginalString}'.");
         }
 
         JsonElement frontmatter;
@@ -385,18 +395,18 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         }
         catch (InvalidOperationException exception)
         {
-            LogInvalidFrontmatter(this._logger, this.Uri, exception);
-            throw new InvalidOperationException($"SKILL.md resource '{this.Uri}' contains invalid frontmatter.", exception);
+            LogInvalidFrontmatter(this._logger, this.Uri.OriginalString, exception);
+            throw new InvalidOperationException($"SKILL.md resource '{this.Uri.OriginalString}' contains invalid frontmatter.", exception);
         }
 
         if (this._frontmatterJson.ValueKind != JsonValueKind.Object)
         {
-            throw new InvalidOperationException($"Skill '{this.Uri}' has no advertised frontmatter JSON snapshot.");
+            throw new InvalidOperationException($"Skill '{this.Uri.OriginalString}' has no advertised frontmatter JSON snapshot.");
         }
 
         if (!JsonElementComparer.DeepEquals(this._frontmatterJson, frontmatter, out string? mismatch))
         {
-            throw new InvalidOperationException($"SKILL.md resource '{this.Uri}' has frontmatter that differs from the advertised metadata at JSON pointer '{mismatch}'.");
+            throw new InvalidOperationException($"SKILL.md resource '{this.Uri.OriginalString}' has frontmatter that differs from the advertised metadata at JSON pointer '{mismatch}'.");
         }
     }
 
@@ -535,7 +545,7 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         // Bound decoding work while still checking that the final pass has stabilized.
         for (int depth = 0; depth <= MaxResourceNameDecodingDepth; depth++)
         {
-            string decoded = System.Uri.UnescapeDataString(value).Replace('\\', '/');
+            string decoded = Uri.UnescapeDataString(value).Replace('\\', '/');
 
             // The stable form exposes traversal and control characters hidden by nested encoding.
             if (decoded == value)
