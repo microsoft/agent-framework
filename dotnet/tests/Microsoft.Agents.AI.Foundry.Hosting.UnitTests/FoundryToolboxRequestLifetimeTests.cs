@@ -265,6 +265,10 @@ public sealed class FoundryToolboxRequestLifetimeTests
         var firstOutput = Assert.IsType<ResponseCompletedEvent>(first[^1]).Response.Output;
         var approval = Assert.Single(firstOutput.OfType<OutputItemMcpApprovalRequest>());
         var firstSessions = server.IssuedSessionIds.ToArray();
+        Assert.NotEmpty(firstSessions);
+        Assert.All(firstSessions, sessionId => Assert.Contains(sessionId, server.EndedSessionIds));
+        Assert.Empty(server.RequestsFor("tools/call"));
+
         var decision = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "mcp_approval_response", approval_request_id = approval.Id, approve = approved },
@@ -277,10 +281,7 @@ public sealed class FoundryToolboxRequestLifetimeTests
             history: [.. firstOutput],
             input: decision);
 
-        // Assert: nothing ran before the decision, the first response's sessions ended with it, and the decision
-        // reached the model as the proposed call's result.
-        Assert.NotEmpty(firstSessions);
-        Assert.All(firstSessions, sessionId => Assert.Contains(sessionId, server.EndedSessionIds));
+        // Assert: the decision reached the model as the proposed call's result.
         Assert.IsType<ResponseCompletedEvent>(second[^1]);
         Assert.Equal(2, modelCalls);
         var result = Assert.Single(
