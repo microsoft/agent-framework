@@ -313,7 +313,7 @@ def _host(
                 for value in (Ticket, TicketModel, TicketState, TicketReview, TicketDecision)
             ]
         ),
-        configure_observability=None,
+        agent_server_kwargs={"configure_observability": None},
     )
 
 
@@ -439,14 +439,14 @@ class TestNativeWorkflowConfiguration:
             return WorkflowBuilder(name="tickets", start_executor=_TicketExecutor([])).build()
 
         invalid_agent: Any = object()
-        with pytest.raises(TypeError, match="InvocationsWorkflowHostServer"):
-            InvocationsHostServer(agent=invalid_agent, workflow=create)
+        with pytest.raises(TypeError, match="workflow"):
+            cast(Any, InvocationsHostServer)(agent=invalid_agent, workflow=create)
         with pytest.raises(TypeError, match="parse_input"):
             cast(Any, InvocationsWorkflowHostServer)(workflow=create)
 
     def test_workflow_rejects_agent_legacy_wire_format(self) -> None:
         with pytest.raises(TypeError, match="legacy_wire_format"):
-            InvocationsWorkflowHostServer(
+            cast(Any, InvocationsWorkflowHostServer)(
                 workflow=lambda _: WorkflowBuilder(name="tickets", start_executor=_TicketExecutor([])).build(),
                 parse_input=_parse_ticket,
                 legacy_wire_format=True,
@@ -1273,11 +1273,11 @@ class TestNativeWorkflowStreamingLifecycle:
         byte_limit = 4096 if limit_kind == "events" else 128
         with (
             patch(
-                "agent_framework_foundry_hosting._invocations_shared._MAX_WORKFLOW_SNAPSHOT_EVENTS",
+                "agent_framework_foundry_hosting._invocations_workflow._MAX_WORKFLOW_SNAPSHOT_EVENTS",
                 event_limit,
             ),
             patch(
-                "agent_framework_foundry_hosting._invocations_shared._MAX_WORKFLOW_SNAPSHOT_BYTES",
+                "agent_framework_foundry_hosting._invocations_workflow._MAX_WORKFLOW_SNAPSHOT_BYTES",
                 byte_limit,
             ),
         ):

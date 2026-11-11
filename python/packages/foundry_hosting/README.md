@@ -6,6 +6,8 @@ Implementation is grouped by protocol: `_responses_agent.py` and `_responses_wor
 and `_responses_shared.py` contains their wire and streaming helpers. Invocations uses the same `_invocations_agent.py`,
 `_invocations_workflow.py`, and `_invocations_shared.py` layout. Cross-protocol request contracts, option validation,
 and agent/workflow factories live in `_shared.py`. Applications use the public package imports below.
+Both Invocations hosts inherit directly from the SDK host; shared functions handle identity, wire conversion,
+and streaming cleanup without a combined agent/workflow host.
 
 ## Choose the host
 
@@ -49,10 +51,72 @@ returning a new wrapper around shared executors does not isolate execution state
 
 Workflow hosts expose checkpoint storage, not agent-session storage or agent history/background
 policies. Responses workflows retain `prepare_options`; Invocations workflows use the parser's
-explicit workflow kwargs instead. Existing SDK options and agent approval-store APIs are unchanged.
+explicit workflow kwargs instead. Agent approval-store APIs are unchanged.
 Agent hosts reject `WorkflowAgent`, whether supplied directly or returned by a factory.
 `checkpoint_store_provider` is available only on workflow hosts.
 No stored state is converted between native workflow and agent execution models.
+
+## Explicit host configuration
+
+Responses hosts construct the upstream
+[`ResponsesServerOptions`](https://pypi.org/project/azure-ai-agentserver-responses/) internally.
+Use first-class host parameters rather than importing an SDK options bag:
+
+| Parameter | Available on | Meaning and SDK consumer |
+| --- | --- | --- |
+| `log_level=None` | All four hosts | A literal `"DEBUG"`, `"INFO"`, `"WARNING"`, `"ERROR"`, or `"CRITICAL"`, forwarded unchanged to the AgentServer SDK constructor. `None` preserves the SDK default. |
+| `max_history_items: int \| None = None` | Responses agent host, with `history_source="host_managed"` | A positive cap on prior outer history items, passed to the SDK history loader as `default_fetch_history_count`. `None` supplies no override and inherits the installed supported SDK's default. |
+| `sse_keep_alive_interval_seconds: int \| None = None` | All four hosts with framed SSE | A positive streaming heartbeat interval in seconds. Responses forwards it to SDK streaming routes; Invocations sets the host's SDK heartbeat configuration. `None` inherits a positive `SSE_KEEPALIVE_INTERVAL`, otherwise heartbeats are disabled. |
+| `shutdown_grace_period_seconds: int = 10` | Both Responses hosts | A positive shutdown wait in seconds. The SDK also uses it when DELETE waits for response persistence. It is not a request or inference timeout. |
+| `resilient_background: bool = False` | Both Responses hosts | Uses the SDK's recovery setting without renaming it. It permits eligible recovery, not background execution or exactly-once side effects. |
+
+`max_history_items=None` does **not** promise unlimited history or map to SDK `-1`.
+Supported SDK versions can have different defaults. Explicit caps count prior history items, not tokens,
+turns, retention, or workflow checkpoints. Other agent history modes and workflow hosts do not accept a cap.
+
+Explicit heartbeat intervals must be positive: zero, negative values, and booleans are invalid, not
+force-disable switches or requests to inherit the environment. The SDK still parses its environment
+configuration during construction; a malformed `SSE_KEEPALIVE_INTERVAL` can fail even with an explicit interval.
+The agent-only `legacy_wire_format=True` disables heartbeats and cannot be combined with an explicit interval.
+
+For regular-agent recovery, select both `history_source="inference_service"` and
+`background_source="inference_service"`. Native workflows recover from their own checkpoints.
+The SDK recovery setting itself is provider-independent; the inference-service requirement is a limitation
+of the regular-agent adapter, which currently resumes only saved provider continuations.
+Follow the SDK's task-subsystem and persistent-store requirements. Neither outer workflow background execution nor
+recovery permission enables provider background on constituent agents.
+
+Host `default_model`, `create_span_hook`, `additional_server_version`, and `steerable_conversations`
+are not first-class parameters. Framework-generated SDK options leave model defaults, span callbacks, and
+custom version stamping unset, and keep steering disabled. Framework observability is unchanged.
+Configure inference defaults on the agent or client. The former SDK `default_model` could fill the outer
+request model and thereby override inference; it did not select a hosted agent. Removing that host fallback
+does not change caller-supplied request models, option-hook timing, option precedence, or routing.
+
+### SDK constructor arguments
+
+All four hosts accept `agent_server_kwargs: Mapping[str, Any] | None = None`.
+This caller-owned mapping is expanded only into the corresponding AgentServer SDK constructor.
+Hosting does not inspect, validate, filter, or mutate its contents. Python and the SDK report invalid
+arguments, including collisions with arguments the framework already supplies; there is no custom merge policy.
+An SDK argument reaching this boundary does not mean every adapter path supports its behavior.
+
+Move SDK-specific top-level arguments into this mapping. For an application-owned `agent` and `asyncapi_spec`:
+
+```python
+from agent_framework_foundry_hosting import InvocationsHostServer
+
+# Before: InvocationsHostServer(agent=agent, asyncapi_spec_json=asyncapi_spec)
+server = InvocationsHostServer(
+    agent=agent,
+    agent_server_kwargs={"asyncapi_spec_json": asyncapi_spec},
+)
+```
+
+The constructors no longer accept arbitrary `**kwargs`. Removed top-level names, including `options=`
+and old parser/storage aliases, raise Python `TypeError` before construction, even when their value is `None`.
+Use the first-class parameters above for framework-supported configuration. Runtime model options,
+`client_kwargs`, and `function_invocation_kwargs` keep their existing meanings and validation.
 
 ## Toolbox tool approvals
 
@@ -200,8 +264,9 @@ history or decode pending replies. `agent=workflow.as_agent()` is no longer supp
 Wrapper context providers, history, event projection, and request-info translation are
 not silently unwrapped. See [Migrate `WorkflowAgent` hosting](#migrate-workflowagent-hosting).
 
-With `resilient_background=True`, the application must also enable the
-AgentServer resilient task subsystem. Host-owned checkpoint/output pairs
+With `resilient_background=True`, native workflows recover through the
+AgentServer resilient task subsystem; SDK-specific task initialization and persistence requirements still apply.
+Host-owned checkpoint/output pairs
 recover emitted output and usage without selecting newer unpaired workflow
 state. This is not an exactly-once guarantee for external tools: make
 side-effecting operations idempotent. Legacy unscoped workflow state is not
@@ -291,7 +356,7 @@ Outer background work always uses the caller-visible `response.id` for polling; 
 background automatically. `background_source="host_managed"` (default) uses only the outer background worker.
 `background_source="inference_service"` is a separate opt-in for `history_source="inference_service"` with a storing
 Responses client. Its private continuation token is saved under the outer ID and never returned to the caller.
-Use `ResponsesServerOptions(resilient_background=True)` to permit recovery from a **saved** token; a crash before
+Use `resilient_background=True` to permit recovery from a **saved** token; a crash before
 the token is saved cannot safely restart the inner job. Completed polling output, including local function calls,
 results, and usage, is saved together with the next token in the private response-ID snapshot before emission.
 Outer output checkpoints record which saved batches have been emitted, so recovery restores their usage and
@@ -304,13 +369,14 @@ another background response and saves its next token. A crash after a local tool
 next token is saved can still repeat the tool on recovery; use idempotent tools or avoid provider background
 for side-effecting local tools. This mechanism does not provide exactly-once tool execution.
 Provider background and steering cannot be combined.
-Regular agent runs without this opt-in are not crash-replayable. **Steering is temporarily unavailable:**
-`steerable_conversations=True` fails during host construction, before enabling the process-wide TaskManager.
+Regular agent runs without this opt-in are not crash-replayable. **Steering is unavailable:**
+`steerable_conversations` and the upstream `options` bag are not host parameters; framework-generated SDK
+options keep steering disabled.
 The current AgentServer SDK retains unbounded futures for rejected turns when its steering queue fills. Do not
-use a queue-length precheck: another worker can append before it. The guard can be removed only after
-[Azure/azure-sdk-for-python#49233](https://github.com/Azure/azure-sdk-for-python/pull/49233) ships in an
-official `azure-ai-agentserver-core` wheel, the minimum dependency and `uv.lock` are updated, and a
-concurrent queue-overflow regression proves rejected turns leave no pending futures. No future SDK
+use a queue-length precheck: another worker can append before it. Future steering support requires an
+official `azure-ai-agentserver-core` wheel containing
+[Azure/azure-sdk-for-python#49233](https://github.com/Azure/azure-sdk-for-python/pull/49233), updated minimum
+dependencies and `uv.lock`, and a concurrent queue-overflow regression proving rejected turns leave no pending futures. No future SDK
 version is assumed. Non-steerable agent background polling is unchanged.
 
 Native CreateResponse generation fields become MAF runtime options (notably `max_output_tokens` -> `max_tokens` and

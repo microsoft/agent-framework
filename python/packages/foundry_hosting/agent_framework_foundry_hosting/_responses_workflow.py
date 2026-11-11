@@ -14,7 +14,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import date, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from agent_framework import (
     AgentResponse,
@@ -32,7 +32,7 @@ from agent_framework import (
 from agent_framework._telemetry import mark_feature_used
 from anyio import CancelScope
 from azure.ai.agentserver.core import get_request_context
-from azure.ai.agentserver.responses import ResponseContext, ResponseProviderProtocol, ResponsesServerOptions
+from azure.ai.agentserver.responses import ResponseContext, ResponseProviderProtocol
 from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
@@ -54,7 +54,6 @@ from ._responses_shared import (
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _request_without_reserved_metadata,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
-    _validate_response_server_options,  # pyright: ignore[reportPrivateUsage]
 )
 from ._scope import FoundryRequestScope
 from ._shared import (
@@ -63,6 +62,7 @@ from ._shared import (
     WorkflowResolver,
     WorkflowSource,
     WorkflowTurn,
+    _build_response_server_options,  # pyright: ignore[reportPrivateUsage]
     prepare_response_options,
     prepare_workflow_kwargs,
     response_run_options,
@@ -337,12 +337,15 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
         *,
         parse_input: Callable[[ResponsesRequest], WorkflowTurn[Any] | Awaitable[WorkflowTurn[Any]]],
         prefix: str = "",
-        options: ResponsesServerOptions | None = None,
         response_store: ResponseProviderProtocol | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         prepare_options: OptionsHook | None = None,
         allowed_oauth_consent_origins: Sequence[str] | None = None,
-        **kwargs: Any,
+        sse_keep_alive_interval_seconds: int | None = None,
+        shutdown_grace_period_seconds: int = 10,
+        resilient_background: bool = False,
+        log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None = None,
+        agent_server_kwargs: Mapping[str, Any] | None = None,
     ) -> None:
         """Create a native workflow host with explicit parsing and checkpoint ownership.
 
@@ -356,8 +359,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
             parse_input: Sync or async parser of this turn's `ResponsesRequest`. Return a typed
                 `WorkflowTurn(input=...)` or a complete batch of validated pending `responses`.
             prefix: URL prefix for Responses routes.
-            options: AgentServer options, including outer background recovery. Steering remains disabled.
-                Outer background execution does not enable provider background on workflow agents.
             response_store: Backend for caller-facing Responses persistence, not the wire-level `store` flag.
             checkpoint_store_provider: Scoped checkpoint storage. Defaults to `CheckpointStoreProvider`.
                 Native workflow history and pending replies are checkpoint-owned, not agent-session-owned.
@@ -366,47 +367,52 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
                 This does not enable inner provider background or service-owned history.
             allowed_oauth_consent_origins: Optional exact HTTPS origins for consent links. Omission retains
                 safe-HTTPS validation; an empty sequence rejects all origins.
-            **kwargs: Additional AgentServer host settings forwarded to the SDK.
+            sse_keep_alive_interval_seconds: Positive streaming heartbeat interval in seconds.
+                `None` inherits a positive `SSE_KEEPALIVE_INTERVAL`, otherwise heartbeats are disabled.
+                Zero and negative explicit values are invalid. This is not a request or inference timeout.
+            shutdown_grace_period_seconds: Positive shutdown wait in seconds, defaulting to 10.
+                The SDK also uses it when DELETE waits for response persistence. Not a request timeout.
+            resilient_background: Permit checkpoint-backed outer workflow recovery, defaulting to
+                `False`. This does not enable inner provider background or guarantee exactly-once effects.
+                Framework-generated SDK options keep steering disabled.
+            log_level: Logging level forwarded unchanged to AgentServer. `None` preserves the SDK default.
+            agent_server_kwargs: Caller-owned settings expanded into the AgentServer SDK constructor.
+                Hosting does not validate their contents or mutate the mapping. SDK errors propagate.
 
         Raises:
             TypeError: If the workflow is not a request-aware factory, the parser is not callable, or an
                 agent-only setting is supplied.
-            RuntimeError: If steering is requested while unavailable.
+            ValueError: If a supported host setting has an invalid value.
         """
-        if "parse_response" in kwargs:
-            raise TypeError("parse_response was renamed to parse_input.")
-        forbidden = {
-            "agent",
-            "agent_session_store_provider",
-            "function_approval_store_provider",
-            "history_source",
-            "background_source",
-            "unsupported_options",
-            "store",
-        }.intersection(kwargs)
-        if forbidden:
-            raise TypeError(f"Unsupported native workflow host settings: {', '.join(sorted(forbidden))}.")
         validate_workflow_source(workflow)
         if not callable(parse_input):
             raise TypeError("parse_input must be a callable.")
         if prepare_options is not None and not callable(prepare_options):
             raise TypeError("prepare_options must be a callable.")
-        _validate_response_server_options(options)
         allowed_origins = _normalize_allowed_oauth_consent_origins(allowed_oauth_consent_origins)
-        super().__init__(prefix=prefix, options=options, store=response_store, **kwargs)
+        options = _build_response_server_options(
+            sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
+            shutdown_grace_period_seconds=shutdown_grace_period_seconds,
+            resilient_background=resilient_background,
+        )
+        super().__init__(
+            prefix=prefix,
+            options=options,
+            store=response_store,
+            log_level=log_level,
+            **({} if agent_server_kwargs is None else agent_server_kwargs),
+        )
         self._resolver = WorkflowResolver(workflow)
         self._parse_input = parse_input
         self._checkpoint_store_provider = (
             CheckpointStoreProvider() if checkpoint_store_provider is None else checkpoint_store_provider
         )
         self._prepare_options = prepare_options
-        self._resilient_background = bool(options and options.resilient_background)
+        self._resilient_background = resilient_background
         self._allowed_origins = allowed_origins
         self._bind_streaming_route(
             prefix=prefix,
-            keep_alive=bool(
-                (options and options.sse_keep_alive_interval_seconds) or self.config.sse_keepalive_interval
-            ),
+            keep_alive=(sse_keep_alive_interval_seconds or self.config.sse_keepalive_interval) > 0,
         )
         self.response_handler(self._handle_response)
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
