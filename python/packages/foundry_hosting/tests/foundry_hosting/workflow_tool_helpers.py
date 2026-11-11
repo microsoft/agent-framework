@@ -58,7 +58,11 @@ def mutable_function_tool(kind: str) -> FunctionTool:
         return CustomFunctionTool(name="custom", func=shared_function.func)
     if kind == "parser":
         return FunctionTool(name="parser", func=shared_function.func, result_parser=MutableToolOwner().count)
-    return FunctionTool(name="limited", func=shared_function.func, **{kind: 1})
+    if kind == "max_invocations":
+        return FunctionTool(name="limited", func=shared_function.func, max_invocations=1)
+    if kind == "max_invocation_exceptions":
+        return FunctionTool(name="limited", func=shared_function.func, max_invocation_exceptions=1)
+    raise ValueError(f"Unknown mutable tool kind: {kind}")
 
 
 def workflow_with_tools(tools: list[Any], *, client: BaseChatClient | None = None) -> Workflow:
