@@ -301,9 +301,10 @@ shape or role.
 
 See
 [`provider_message_labeling_example.py`](provider_message_labeling_example.py)
-for source-aware centralized classification. Providers that use extra lifecycle
-hooks, service-side continuation, cross-session merges, or custom transcript
-rewriting should classify data inside their own implementation.
+for one classifier applied to existing history, memory, and context providers.
+Providers that use extra lifecycle hooks, service-side continuation,
+cross-session merges, or custom transcript rewriting should classify data
+inside their own implementation.
 
 **Automatic Hiding:**
 - UNTRUSTED results/items are automatically hidden in variable store

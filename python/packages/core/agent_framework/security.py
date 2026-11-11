@@ -4327,10 +4327,11 @@ class SecureAgentConfig(ContextProvider):
                 Defaults to "secure_agent".
 
         Keyword Args:
-            message_labeler: Optional application-owned classifier for messages added by earlier context providers.
-                The synchronous callback receives the provider's ``source_id`` and the framework-owned message copy,
-                and must return the authoritative ``ContentLabel`` for that message. When configured, this
-                ``SecureAgentConfig`` must follow every non-history context provider whose messages it classifies.
+            message_labeler: Optional application-owned classifier for messages added by context providers.
+                The synchronous callback receives the authoritative ``source_id`` from the
+                ``SessionContext.context_messages`` bucket and the message in that bucket. It must return the
+                authoritative ``ContentLabel`` for that exact message. FIDES caches the result for the run without
+                mutating or stamping the message. Provider order does not affect classification.
             max_pending_approvals: Maximum pending policy approvals retained per session.
             pending_approval_ttl: Maximum age of an unconsumed approval. ``None`` disables expiry.
         """

@@ -13,7 +13,7 @@ security model, middleware behavior, and API reference.
 | `repo_confidentiality_example.py` | Data exfiltration prevention | Confidentiality labels, Foundry-backed repository access, `max_allowed_confidentiality`, and approval before leaking private data |
 | `user_identity_security_example.py` | Principal-bound identity data | Canonical tenant/user principals, identity-scoped sources and destinations, and allowed versus blocked flows |
 | `github_mcp_example.py` | Remote MCP URL with local FIDES enforcement | `SecureMCPToolProxy(url=...)`, direct GitHub MCP access, tool auto-labeling, and post-tool-call policy enforcement |
-| `provider_message_labeling_example.py` | Central context labeling | `SecureAgentConfig.message_labeler` authoritatively classifies messages added by context providers |
+| `provider_message_labeling_example.py` | Central provider-message labeling | `SecureAgentConfig.message_labeler` classifies messages from existing history, memory, and context providers |
 
 ## Prerequisites
 
@@ -133,10 +133,16 @@ What to look for:
 
 ### `provider_message_labeling_example.py`
 
-This sample uses two ordinary context providers and configures
-`SecureAgentConfig.message_labeler` to classify every message they add. The
-callback receives the provider's authoritative `source_id` and returns the
-complete application-owned `ContentLabel`.
+This sample configures one `SecureAgentConfig.message_labeler` for three existing
+framework providers:
+
+- `InMemoryHistoryProvider`
+- `FileMemoryProvider`
+- `TodoProvider`
+
+The callback receives each provider's authoritative `source_id`. It applies
+conservative labels to persisted history and memory, and a trusted public label
+to the framework-owned todo message.
 
 Run it with:
 
@@ -146,11 +152,10 @@ uv run samples/02-agents/security/provider_message_labeling_example.py
 
 What to look for:
 
+- The sample defines no custom provider class
 - Provider order does not affect classification
-- Public external context becomes **UNTRUSTED + PUBLIC**
-- Private external context becomes **UNTRUSTED + PRIVATE**
+- The callback prints classifications for history, memory, and todo messages
 - FIDES does not mutate or stamp provider messages
-- Providers with additional lifecycle behavior should classify data internally
 
 ## Where to find the details
 

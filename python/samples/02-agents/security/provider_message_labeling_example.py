@@ -1,10 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Classify messages added by application-owned context providers.
+"""Classify messages from existing history, memory, and context providers.
+
+This sample combines:
+
+1. ``InMemoryHistoryProvider`` for conversation history.
+2. ``FileMemoryProvider`` for persistent user memory.
+3. ``TodoProvider`` as another message-producing context provider.
 
 ``SecureAgentConfig.message_labeler`` receives each provider's authoritative
-``source_id`` and message. The application returns the complete label that
-FIDES should use for that message.
+``source_id`` and returns the complete label that FIDES should use for that
+provider message.
 
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT - Microsoft Foundry project endpoint.
@@ -15,66 +21,39 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any
 
-from agent_framework import Agent, AgentSession, ContextProvider, Message, SessionContext
-from agent_framework.foundry import FoundryChatClient
+from agent_framework import (
+    Agent,
+    FileMemoryProvider,
+    InMemoryAgentFileStore,
+    InMemoryHistoryProvider,
+    Message,
+    TodoProvider,
+)
+from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
 from agent_framework.security import ConfidentialityLabel, ContentLabel, IntegrityLabel, SecureAgentConfig
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
 
+HISTORY_SOURCE_ID = "conversation_history"
+MEMORY_SOURCE_ID = "user_memory"
+TODO_SOURCE_ID = "planning"
 
-class PublicSearchContext(ContextProvider):
-    """Add public but externally controlled search context."""
-
-    def __init__(self) -> None:
-        super().__init__("public_search")
-
-    async def before_run(
-        self,
-        *,
-        agent: Any,
-        session: AgentSession,
-        context: SessionContext,
-        state: dict[str, Any],
-    ) -> None:
-        del agent, session, state
-        context.extend_messages(
-            self,
-            [Message(role="assistant", contents=["Public search result: Contoso announced a new product."])],
-        )
+PROVIDER_LABELS = {
+    HISTORY_SOURCE_ID: ContentLabel(IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PRIVATE),
+    MEMORY_SOURCE_ID: ContentLabel(IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PRIVATE),
+    TODO_SOURCE_ID: ContentLabel(IntegrityLabel.TRUSTED, ConfidentialityLabel.PUBLIC),
+}
 
 
-class PrivateCaseContext(ContextProvider):
-    """Add private case data from an external support system."""
-
-    def __init__(self) -> None:
-        super().__init__("private_case")
-
-    async def before_run(
-        self,
-        *,
-        agent: Any,
-        session: AgentSession,
-        context: SessionContext,
-        state: dict[str, Any],
-    ) -> None:
-        del agent, session, state
-        context.extend_messages(
-            self,
-            [Message(role="assistant", contents=["Private case note: customer account 123 needs investigation."])],
-        )
-
-
-def classify_provider_message(source_id: str, _: Message) -> ContentLabel:
-    """Choose the authoritative label from host-owned provider policy."""
-    confidentiality = ConfidentialityLabel.PRIVATE if source_id == "private_case" else ConfidentialityLabel.PUBLIC
-    return ContentLabel(
-        integrity=IntegrityLabel.UNTRUSTED,
-        confidentiality=confidentiality,
-    )
+def classify_provider_message(source_id: str, message: Message) -> ContentLabel:
+    """Return the application-owned label for one provider message."""
+    label = PROVIDER_LABELS[source_id]
+    preview = message.text.replace("\n", " ")[:60]
+    print(f"Labeling {source_id!r} as {label.integrity.value}/{label.confidentiality.value}: {preview!r}")
+    return label
 
 
 async def main() -> None:
@@ -84,17 +63,48 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    async with Agent(
+    # 1. Create existing framework providers. No sample-specific provider class is needed.
+    history = InMemoryHistoryProvider(source_id=HISTORY_SOURCE_ID)
+    memory = FileMemoryProvider(
+        InMemoryAgentFileStore(),
+        source_id=MEMORY_SOURCE_ID,
+        scope="sample-user",
+    )
+    planning = TodoProvider(source_id=TODO_SOURCE_ID)
+
+    # 2. Configure FIDES before the providers to show that provider order does not control classification.
+    security = SecureAgentConfig(
+        message_labeler=classify_provider_message,
+        allow_untrusted_tools={"file_memory_read", "file_memory_write"},
+    )
+
+    async with Agent[FoundryChatOptions](
         client=client,
-        instructions="Summarize the available context without revealing private details.",
-        context_providers=[
-            SecureAgentConfig(message_labeler=classify_provider_message),
-            PublicSearchContext(),
-            PrivateCaseContext(),
-        ],
+        instructions="Use the available history, memory, and planning context to answer the user.",
+        context_providers=[security, history, memory, planning],
+        default_options={"store": False},
     ) as agent:
-        response = await agent.run("What context is available?", session=AgentSession())
-        print(response.text)
+        session = agent.create_session(session_id="provider-labeling-sample")
+
+        # 3. Seed existing history through the provider's public persistence API.
+        await history.save_messages(
+            session.session_id,
+            [Message(role="assistant", contents=["Earlier note: the user prefers concise travel recommendations."])],
+            state=session.state.setdefault(history.source_id, {}),
+        )
+
+        # 4. Ask the agent to create a file memory. Its index becomes provider context on the next turn.
+        await agent.run(
+            "Use file_memory_write to remember that I prefer window seats. Do not modify the todo list.",
+            session=session,
+        )
+
+        # 5. On this turn the labeler sees history, the file-memory index, and the current todo-list message.
+        response = await agent.run(
+            "What do you remember about how I like travel recommendations?",
+            session=session,
+        )
+        print(f"\nAgent: {response.text}")
 
 
 if __name__ == "__main__":
@@ -102,7 +112,11 @@ if __name__ == "__main__":
 
 
 """
-Sample output:
-The public context mentions a Contoso product announcement. Private case
-details are available but should not be disclosed.
+Sample output (abridged; exact text varies by model):
+
+Labeling 'conversation_history' as untrusted/private: 'Earlier note: the user prefers concise travel recommendations.'
+Labeling 'planning' as trusted/public: '### Current todo list...'
+Labeling 'user_memory' as untrusted/private: 'The following is your memory index...'
+
+Agent: You prefer concise travel recommendations and window seats.
 """
