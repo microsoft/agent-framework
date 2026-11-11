@@ -33,7 +33,7 @@ and checkpoint storage introduced for Foundry state stores (PR #7649).
 - Pair each persisted workflow response snapshot with the exact workflow checkpoint it represents.
 - Opt-in and off by default; non-resilient hosts pay nothing.
 - Prefer workflows: they already checkpoint between supersteps.
-- Keep a lean API on `FoundryResponsesOptions`, forwarded to `ResponsesServerOptions`.
+- Keep a lean API on `FoundryResponsesServerOptions`, forwarded to `ResponsesServerOptions`.
 - Persist agent sessions through the Foundry state store (or its local fallback), not a second disk layout.
 
 ## Decision Outcome
@@ -42,7 +42,7 @@ Chosen option: **turn resilience on through the existing handler and registratio
 
 ### Public surface
 
-`FoundryResponsesOptions.ResilientBackground` and `FoundryResponsesOptions.SteerableConversations`
+`FoundryResponsesServerOptions.ResilientBackground` and `FoundryResponsesServerOptions.SteerableConversations`
 are forwarded to `ResponsesServerOptions` so the AgentServer SDK enables recovery and steering.
 This forwarding must happen in the callback passed directly to `AddResponsesServer`. The SDK makes
 two process-level choices during that registration call: whether local SSE replay uses durable
@@ -147,7 +147,7 @@ paired recovery boundary. The superseded response still reaches a terminal `comp
 |---|---|---|
 | Resilient task, SSE events, `ResponseObject` snapshots, `_last_checkpoint_id` | AgentServer | Re-invoke the handler and identify the workflow checkpoint represented by each response snapshot |
 | Serialized `AgentSession` | Foundry Hosting | Restore agent-owned state and the workflow checkpoint reference |
-| Workflow execution checkpoints | Workflow runtime through `FoundryJsonCheckpointStore` | Restore executors, queued messages, pending requests, and workflow state |
+| Workflow execution checkpoints | Workflow runtime through Foundry state-store-backed checkpoint storage | Restore executors, queued messages, pending requests, and workflow state |
 
 The handler calls `ResponseEventStream.Checkpoint()` only after a workflow superstep supplies a new
 checkpoint ID and the matching `AgentSession` save succeeds. `PersistedResponse.Output.Count` is not
@@ -156,10 +156,9 @@ workflow storage.
 
 ### Relationship to durable storage (PR #7649)
 
-Sessions and workflow checkpoints already go through `FoundryAgentSessionStore` /
-`FoundryJsonCheckpointStore`. AgentServer separately owns resilient task records, response snapshots,
-and SSE event replay. Resilience does not invent another store; it coordinates handler re-entry with
-the existing session and workflow stores.
+Sessions and workflow checkpoints already go through Foundry state-store-backed storage. AgentServer
+separately owns resilient task records, response snapshots, and SSE event replay. Resilience does not
+invent another store; it coordinates handler re-entry with the existing session and workflow stores.
 
 ## Consequences
 
@@ -186,6 +185,5 @@ the existing session and workflow stores.
   termination through `Environment.Exit`, recovery in a different process incarnation, transient
   `404`/`424` polling responses during replacement, and long-running steering on the same
   conversation.
-- The checkpoint-index optimistic-concurrency retry count is configurable through
-  `FoundryJsonCheckpointStore`, with a default of eight attempts.
+- The internal checkpoint-index optimistic-concurrency retry count defaults to eight attempts.
 - Package floor: Azure.AI.AgentServer Core beta.28, Invocations beta.6, Responses beta.8.

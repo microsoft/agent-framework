@@ -73,11 +73,10 @@ if (!string.IsNullOrEmpty(port))
     builder.WebHost.UseUrls($"http://+:{port}");
 }
 
-builder.AddFoundryResponses(agent, configure: options =>
+builder.AddFoundryResponses(agent, options: new FoundryResponsesServerOptions
 {
-    options.ResilientBackground =
-        scenario is "resilient-workflow" or "steerable-long-running";
-    options.SteerableConversations = scenario == "steerable-long-running";
+    ResilientBackground = scenario is "resilient-workflow" or "steerable-long-running",
+    SteerableConversations = scenario == "steerable-long-running",
 });
 
 // Scenarios that consume a project toolbox set IT_TOOLBOX_NAME through their fixture.
@@ -85,7 +84,7 @@ builder.AddFoundryResponses(agent, configure: options =>
 var toolboxName = Environment.GetEnvironmentVariable("IT_TOOLBOX_NAME");
 if (!string.IsNullOrEmpty(toolboxName))
 {
-    builder.Services.AddFoundryToolboxes(credential, toolboxName);
+    builder.Services.AddFoundryToolboxService(credential, toolboxName);
 }
 
 var app = builder.Build();
@@ -155,7 +154,7 @@ static AIAgent CreateMcpToolboxAgent(AIProjectClient client, string deployment) 
         description: "MCP toolbox test agent (placeholder).");
 
 // toolbox-oauth-consent scenario: a plain agent whose tools come from a pre-registered Foundry
-// toolbox (wired via AddFoundryToolboxes from IT_TOOLBOX_NAME). The toolbox's tool source requires
+// toolbox (wired via AddFoundryToolboxService from IT_TOOLBOX_NAME). The toolbox's tool source requires
 // per-user OAuth consent, so the first request that needs the tool surfaces an oauth_consent_request
 // instead of running the tool.
 static AIAgent CreateToolboxOAuthConsentAgent(AIProjectClient client, string deployment) =>
@@ -285,7 +284,7 @@ static Func<string, CancellationToken, Task<IEnumerable<TextSearchProvider.TextS
     };
 // user-identity scenario: returns USER-ID:<platform-user-key> without calling a model so the
 // assertion works even when the subscription has no OpenAI chat deployment. The hosting layer
-// writes HostedSessionContext from x-agent-user-id before RunCoreAsync.
+// associates x-agent-user-id with the AgentSession before RunCoreAsync.
 static AIAgent CreateUserIdentityAgent(AIProjectClient _, string __) =>
     new UserIdentityEchoAgent();
 
@@ -313,10 +312,10 @@ static AIAgent CreateSessionFilesAgent(AIProjectClient client, string deployment
             AIFunctionFactory.Create(ReadFile)
         ]);
 
-// Memory scenario. The agent uses FoundryMemoryProvider scoped per user via the
-// HostedSessionContext that the hosting layer applies from the platform isolation headers.
-// In production the platform sets the headers; here we rely on the default
-// PlatformHostedSessionIsolationKeyProvider that AgentFrameworkResponseHandler resolves.
+// Memory scenario. The agent uses FoundryMemoryProvider scoped by the trusted user id that the
+// hosting layer associates with the AgentSession from the platform isolation headers.
+// In production the platform sets the headers; the hosting layer resolves the same platform context
+// in this integration container.
 static async Task<AIAgent> CreateMemoryAgentAsync(AIProjectClient client, string deployment)
 {
     var embedding = Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-ada-002";
@@ -325,7 +324,7 @@ static async Task<AIAgent> CreateMemoryAgentAsync(AIProjectClient client, string
     var memoryProvider = new FoundryMemoryProvider(
         client,
         memoryStoreName,
-        stateInitializer: HostedFoundryMemoryProviderScopes.PerUser());
+        stateInitializer: CreatePerUserMemoryState);
 
     await memoryProvider.EnsureMemoryStoreCreatedAsync(deployment, embedding, "Memory store for hosted-memory IT scenario.").ConfigureAwait(false);
 
@@ -339,6 +338,17 @@ static async Task<AIAgent> CreateMemoryAgentAsync(AIProjectClient client, string
         },
         AIContextProviders = [memoryProvider]
     });
+}
+
+static FoundryMemoryProvider.State CreatePerUserMemoryState(AgentSession? session)
+{
+    string userId =
+        session?.GetFoundryHostedUserId()
+        ?? throw new InvalidOperationException(
+            "Foundry hosted user identity is required to scope memories.");
+
+    return new FoundryMemoryProvider.State(
+        new FoundryMemoryProviderScope(userId));
 }
 
 // Agent skills scenario. Uses AgentSkillsProvider with two bundled Contoso Outdoors skills

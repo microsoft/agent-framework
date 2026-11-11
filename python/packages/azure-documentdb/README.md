@@ -33,7 +33,13 @@ file, then process environment. Connection strings are held in Agent Framework
 Connector-created clients enforce TLS, disable retryable writes, and set an
 application name. They are closed by `aclose()` or an async context manager.
 An injected PyMongo `AsyncMongoClient`, `AsyncDatabase`, or `AsyncCollection`
-remains caller-owned and bypasses settings loading.
+remains caller-owned and takes precedence over connection strings, client
+options, and selected `.env` files. An account-level injected client resolves a
+missing `database_name` from `AZURE_DOCUMENTDB_DATABASE_NAME`. For a collection
+created from an injected client or database, `AZURE_DOCUMENTDB_COLLECTION_NAME`
+is used only when neither `collection_name` nor the model definition supplies a
+name. Connection settings and selected `.env` files are never read for these
+injected-object paths.
 
 The identity running `ensure_collection_exists()` needs permission to create
 collections and indexes. Each filtered data field must declare

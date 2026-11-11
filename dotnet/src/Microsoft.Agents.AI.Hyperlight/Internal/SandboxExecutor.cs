@@ -51,6 +51,7 @@ internal sealed class SandboxExecutor : IDisposable
             this.ModulePath = options.ModulePath;
             this.HeapSize = options.HeapSize;
             this.StackSize = options.StackSize;
+            this.ExecutionTimeout = options.ExecutionTimeout;
             this.HostInputDirectory = options.HostInputDirectory;
             this.IncludeDetailedErrors = options.IncludeDetailedErrors;
             this.ToolRegistryVersion = toolRegistryVersion;
@@ -80,6 +81,8 @@ internal sealed class SandboxExecutor : IDisposable
         public string? HeapSize { get; }
 
         public string? StackSize { get; }
+
+        public TimeSpan ExecutionTimeout { get; }
 
         public string? HostInputDirectory { get; }
 
@@ -224,14 +227,23 @@ internal sealed class SandboxExecutor : IDisposable
         await this._executionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            this.EnsureInitialized(snapshot);
-
-            if (this._warmSnapshot is not null)
+            using var timeLimit = new CancellationTokenSource(snapshot.ExecutionTimeout);
+            using var executionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeLimit.Token);
+            try
             {
-                this._sandbox!.Restore(this._warmSnapshot);
-            }
+                this.EnsureInitialized(snapshot, executionCancellation.Token);
 
-            return BuildResult(this._sandbox!.Run(code));
+                if (this._warmSnapshot is not null)
+                {
+                    this._sandbox!.Restore(this._warmSnapshot);
+                }
+
+                return BuildResult(this._sandbox!.Run(code, executionCancellation.Token));
+            }
+            catch (OperationCanceledException) when (timeLimit.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                return BuildErrorResult("Code execution exceeded its time limit.");
+            }
         }
 #pragma warning disable CA1031 // Return ordinary lifecycle failures as policy-controlled execution errors.
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -255,7 +267,7 @@ internal sealed class SandboxExecutor : IDisposable
         }
     }
 
-    private void EnsureInitialized(RunSnapshot snapshot)
+    private void EnsureInitialized(RunSnapshot snapshot, CancellationToken cancellationToken)
     {
         if (this._sandbox is not null && string.Equals(this._lastConfigFingerprint, snapshot.ConfigFingerprint, StringComparison.Ordinal))
         {
@@ -265,7 +277,7 @@ internal sealed class SandboxExecutor : IDisposable
         // Configuration changed (or first run) — dispose the previous sandbox
         // so the new one picks up the current capabilities and runtime options.
         this.ClearSandboxState();
-        this.BuildAndWarmUp(snapshot);
+        this.BuildAndWarmUp(snapshot, cancellationToken);
     }
 
     private void ClearSandboxState()
@@ -285,7 +297,7 @@ internal sealed class SandboxExecutor : IDisposable
         }
     }
 
-    private void BuildAndWarmUp(RunSnapshot snapshot)
+    private void BuildAndWarmUp(RunSnapshot snapshot, CancellationToken cancellationToken)
     {
         var builder = new SandboxBuilder()
             .WithBackend(snapshot.Backend);
@@ -336,7 +348,7 @@ internal sealed class SandboxExecutor : IDisposable
         // Backend-specific no-op used to trigger lazy guest runtime initialization
         // before the warm snapshot is captured. Matches the values used by the
         // upstream HyperlightSandbox.Extensions.AI CodeExecutionTool reference.
-        _ = sandbox.Run(snapshot.Backend == SandboxBackend.JavaScript ? "void 0;" : "None");
+        _ = sandbox.Run(snapshot.Backend == SandboxBackend.JavaScript ? "void 0;" : "None", cancellationToken);
         this._warmSnapshot = sandbox.Snapshot();
         this._lastConfigFingerprint = snapshot.ConfigFingerprint;
     }

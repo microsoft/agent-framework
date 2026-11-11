@@ -117,6 +117,35 @@ In this hosted sample's directory, copy `.env.example` to `.env`, configure the 
 scope, and run `dotnet run`. Send integer text such as `"10"` to the Responses endpoint. Closing the
 HTTP stream of an accepted background response does not cancel its server-side execution.
 
+## Deploy from source
+
+The sample links `IdempotentServiceClient.cs` from the shared contributor project. Materialize that
+linked file into an isolated source folder before running `azd ai agent init`:
+
+```powershell
+$work = Join-Path $env:TEMP 'hosted-workflow-resilient-long-running-work'
+$source = Join-Path $work 'source'
+
+New-Item -ItemType Directory -Path $work -Force | Out-Null
+dotnet msbuild HostedWorkflowResilientLongRunning.csproj -target:PrepareSourceDeployment `
+    "-property:SourceDeploymentDirectory=$source"
+
+Set-Location $work
+azd ai agent init -m (Join-Path $source 'azure.yaml') `
+    -p '<existing-Foundry-project-ARM-resource-id>'
+```
+
+Contributors validating local framework changes must add the local package feed to the scaffolded
+folder before deployment:
+
+```powershell
+& '<repo>\dotnet\samples\04-hosting\FoundryHostedAgents\scripts\Add-LocalFrameworkFeed.ps1' `
+    -Path (Join-Path $work 'hosted-workflow-resilient-long-running')
+```
+
+Set `IDEMPOTENT_SERVICE_ENDPOINT` to an HTTPS endpoint reachable from the Foundry hosted agent and
+set a unique `IDEMPOTENT_OPERATION_SCOPE`, then run `azd deploy`.
+
 ## Automated coverage
 
 `ResilientTwoLifetimeIntegrationTests.StoppedHost_RecoversWorkflowWithCompleteOrderedOutputAsync`
