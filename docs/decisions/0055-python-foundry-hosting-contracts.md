@@ -117,22 +117,25 @@ including acceptance of `None`, without changing the wire flag or downstream sto
 Treat outer background execution, inner inference-service background execution, and recovery permission
 as separate controls. Use `background_source="host_managed"` by default. Retain `"inference_service"`
 for supported regular agents with inference-service history and outer-background passthrough.
-Reject hidden provider background under an outer foreground request.
+Validate hosting-visible agent and factory defaults against the selected background mode.
 
 Outer workflow background must not enable background on constituent agents. Native inner provider
 background is unsupported. Do not introduce a per-agent workflow-host background switch.
 Recovery permission neither selects an execution mode nor guarantees exactly-once external side effects.
 
-Allow top-level `background` values of `False` or `None`, and reject nested `extra_body.background` in
-every mode. Validate caller options, hook results, and developer defaults before execution. Also check the
-effective options and client kwargs from ordinary agent middleware and client-level chat middleware before
-the provider call. For a native `RawAgent`, install the check after existing client middleware on the fresh
-client that the host owns. Make native `WorkflowTurn` reject client-level and run-level middleware. Report
-middleware violations as execution failures, not as client input errors.
+For regular Responses and Invocations agents, allow an application options hook to select `background`;
+the application owns that choice. Ordinary Responses agent runs preserve hook-selected values. When the host
+explicitly selects provider background, retain `background=True` for submission and polling even if the hook
+returns `False`. Hook-selected background alone does not enable host-managed polling or recovery. Invocations
+does not inject an outer background value.
 
-Do not claim universal interception and do not change Core for this check. Core can append chat middleware
-from context providers after the guard, so applications must not enable provider background there. Clients
-that internally force provider background are unsupported.
+Do not inject background-specific enforcement middleware or add a Core interception hook. Application agent/chat
+middleware owns its changes to background options. Keep validation of caller envelope fields, hook results
+other than the agent hook's background choice, and developer defaults before execution. Reject nested caller
+`extra_body.background` before the Responses hook. Native workflow option hooks cannot select inner provider
+background; make native `WorkflowTurn` reject client-level and run-level middleware. The existing native agent
+options middleware still validates transport controls, storage, and unfinished provider responses to preserve
+checkpoint ownership; it is not the removed background-specific guard.
 
 ### Supported host settings
 

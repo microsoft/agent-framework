@@ -120,6 +120,7 @@ from .foundry_hosting.responses_host_helpers import (
     BackgroundAgentMiddleware,
     BackgroundChatMiddleware,
     BackgroundPollingClient,
+    FailingAgentMiddleware,
     GatedAgentStream,
     GatedRequestRead,
     GatedSessionLoadStore,
@@ -1969,16 +1970,10 @@ class TestResponsesHostServerInit:
 
     @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize("kind", ["agent", "chat"])
-    @pytest.mark.parametrize("nested", [False, True])
-    @pytest.mark.parametrize("in_kwargs", [False, True])
-    async def test_middleware_cannot_enable_provider_background_on_foreground(
-        self, stream: bool, kind: str, nested: bool, in_kwargs: bool
-    ) -> None:
+    async def test_application_middleware_background_is_not_intercepted(self, stream: bool, kind: str) -> None:
         client = StatefulConsentClient(["tool"])
         middleware = (
-            BackgroundAgentMiddleware(nested=nested, in_kwargs=in_kwargs)
-            if kind == "agent"
-            else BackgroundChatMiddleware(nested=nested, in_kwargs=in_kwargs)
+            BackgroundAgentMiddleware(nested=False) if kind == "agent" else BackgroundChatMiddleware(nested=False)
         )
         agent = Agent(client=client, middleware=[middleware])
         server = _make_server(agent, history_source="inference_service")
@@ -1987,69 +1982,48 @@ class TestResponsesHostServerInit:
 
         assert response.status_code == 200
         if stream:
-            assert "response.failed" in _sse_event_types(_parse_sse_events(response.text))
+            assert "response.completed" in _sse_event_types(_parse_sse_events(response.text))
         else:
-            assert response.json()["status"] == "failed"
-        assert client.calls == []
+            assert response.json()["status"] == "completed"
+        assert client.calls
+        assert client.options[0]["background"] is True
+        assert agent.middleware == [middleware]
 
-    @pytest.mark.parametrize("kind", ["agent", "chat"])
-    @pytest.mark.parametrize("nested", [False, True])
-    @pytest.mark.parametrize("in_kwargs", [False, True])
-    async def test_middleware_cannot_disable_selected_provider_background(
-        self, kind: str, nested: bool, in_kwargs: bool
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("background_source", ["host_managed", "inference_service"])
+    @pytest.mark.parametrize("hook_background", [None, False, True])
+    async def test_hook_background_is_forwarded_on_ordinary_runs(
+        self, stream: bool, background_source: str, hook_background: bool | None
     ) -> None:
         client = StatefulConsentClient(["tool"])
-        middleware = (
-            BackgroundAgentMiddleware(nested=nested, value=False, in_kwargs=in_kwargs)
-            if kind == "agent"
-            else BackgroundChatMiddleware(nested=nested, value=False, in_kwargs=in_kwargs)
-        )
-        agent = Agent(client=client, middleware=[middleware])
         server = _make_server(
-            agent,
-            session_store=SessionStore(),
+            Agent(client=client),
             history_source="inference_service",
-            background_source="inference_service",
+            background_source=background_source,
+            prepare_options=(
+                (lambda _request, _options: {"background": hook_background}) if hook_background is not None else None
+            ),
         )
-        request = CreateResponse(input="hello", store=True, background=True)
-        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
-        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
-            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
 
-        assert any(isinstance(event, Mapping) and event.get("type") == "response.failed" for event in events)
-        assert client.calls == []
+        response = await _post(server, stream=stream)
 
-    @pytest.mark.parametrize("kind", ["agent", "chat"])
-    @pytest.mark.parametrize("in_kwargs", [False, True])
-    async def test_middleware_cannot_disable_provider_background_on_poll(self, kind: str, in_kwargs: bool) -> None:
-        client = BackgroundPollingClient()
-        middleware = (
-            BackgroundAgentMiddleware(nested=False, value=False, in_kwargs=in_kwargs, on_poll=True)
-            if kind == "agent"
-            else BackgroundChatMiddleware(nested=False, value=False, in_kwargs=in_kwargs, on_poll=True)
-        )
-        agent = Agent(client=client, middleware=[middleware])
-        server = _make_server(
-            agent,
-            session_store=SessionStore(),
-            history_source="inference_service",
-            background_source="inference_service",
-        )
-        request = CreateResponse(input="hello", store=True, background=True)
-        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
-        with (
-            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
-        ):
-            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
-
-        assert any(isinstance(event, Mapping) and event.get("type") == "response.failed" for event in events)
+        assert response.status_code == 200
+        if stream:
+            assert "response.completed" in _sse_event_types(_parse_sse_events(response.text))
+        else:
+            assert response.json()["status"] == "completed"
         assert len(client.calls) == 1
-        assert client.calls[0]["background"] is True
-        assert agent.middleware == [middleware]
-        assert not client.chat_middleware
+        if hook_background is not None:
+            assert client.options[0]["background"] is hook_background
+        elif background_source == "inference_service":
+            assert client.options[0]["background"] is False
+        else:
+            assert "background" not in client.options[0]
 
-    async def test_provider_background_guard_allows_submit_and_poll_without_mutating_agent(self) -> None:
+    @pytest.mark.parametrize("conflicting_hook", [False, True])
+    async def test_host_selected_provider_background_retains_submit_and_poll_precedence(
+        self, conflicting_hook: bool
+    ) -> None:
         client = BackgroundPollingClient()
         agent = Agent(client=client)
         server = _make_server(
@@ -2057,6 +2031,7 @@ class TestResponsesHostServerInit:
             session_store=SessionStore(),
             history_source="inference_service",
             background_source="inference_service",
+            prepare_options=(lambda _request, _options: {"background": False}) if conflicting_hook else None,
         )
         request = CreateResponse(input="hello", store=True, background=True)
         context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
@@ -2072,25 +2047,25 @@ class TestResponsesHostServerInit:
         assert not agent.middleware
         assert not client.chat_middleware
 
-    @pytest.mark.parametrize("provider_background", [False, True])
-    async def test_raw_agent_client_chat_middleware_cannot_override_background(self, provider_background: bool) -> None:
+    async def test_raw_agent_client_chat_middleware_background_is_not_intercepted(self) -> None:
         client = StatefulConsentClient(["tool"])
-        middleware = BackgroundChatMiddleware(nested=False, value=not provider_background)
+        middleware = BackgroundChatMiddleware(nested=False)
         client.chat_middleware.append(middleware)
         agent = RawAgent(client=client)
         server = _make_server(
             agent,
             session_store=SessionStore(),
             history_source="inference_service",
-            background_source="inference_service" if provider_background else "host_managed",
+            background_source="inference_service",
         )
-        request = CreateResponse(input="hello", store=True, background=provider_background)
+        request = CreateResponse(input="hello", store=True, background=False)
         context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
         with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
             events = [event async for event in server._handle_response(request, context, asyncio.Event())]
 
-        assert any(isinstance(event, Mapping) and event.get("type") == "response.failed" for event in events)
-        assert client.calls == []
+        assert any(isinstance(event, Mapping) and event.get("type") == "response.completed" for event in events)
+        assert len(client.calls) == 1
+        assert client.options[0]["background"] is True
         assert client.chat_middleware == [middleware]
 
     @pytest.mark.parametrize("stream", [False, True])
@@ -2102,7 +2077,7 @@ class TestResponsesHostServerInit:
         server = _make_server(agent, session_store=SqliteSessionStore(tmp_path / "middleware-approval.sqlite"))
         first = await _post(server)
         approval_id = next(item["id"] for item in first.json()["output"] if item["type"] == "mcp_approval_request")
-        agent.middleware = [BackgroundAgentMiddleware(nested=False)]
+        agent.middleware = [FailingAgentMiddleware()]
         payload = {
             "input": [{"type": "mcp_approval_response", "approval_request_id": approval_id, "approve": True}],
             "previous_response_id": first.json()["id"],

@@ -372,9 +372,9 @@ next token is saved can still repeat the tool on recovery; use idempotent tools 
 for side-effecting local tools. This mechanism does not provide exactly-once tool execution.
 Regular agent runs without this opt-in are not crash-replayable.
 
-The supported regular-agent combinations are:
+The supported regular-agent combinations for host-selected provider background are:
 
-| `history_source` | `background_source` | Provider background | `enable_background_recovery=True` |
+| `history_source` | `background_source` | Host-selected provider background | `enable_background_recovery=True` |
 | --- | --- | --- | --- |
 | `"host_managed"` | `"host_managed"` | No; outer background only | Rejected |
 | `"agent_managed"` | `"host_managed"` | No; outer background only | Rejected |
@@ -386,20 +386,24 @@ require outer `store=true`. For checkpoint-backed native Responses workflow reco
 `enable_background_recovery=True` and enable the AgentServer resilient task subsystem; agent history/background
 source settings do not apply. This does not enable provider background on workflow agents.
 
-Provider background is selected only by the host. A provider call may use `background=True` only for an outer
-background request with both `history_source="inference_service"` and `background_source="inference_service"`.
-A top-level `background` of `False` or `None` is allowed in every mode. A nested `extra_body["background"]` is
-always rejected, even when it is `False`. The host checks these values in caller options, the `prepare_options`
-result, and developer defaults before execution. It also checks the effective options and client kwargs that
-ordinary agent middleware and client-level chat middleware produce, before the provider call. Invocations hosts
-and native workflow constituent agents never use provider background, and an outer workflow `background=True` does
-not enable it for those agents. A native `WorkflowTurn` rejects client-level and run-level `middleware`.
+The host sets provider `background=True` only for an outer background request with both
+`history_source="inference_service"` and `background_source="inference_service"`. In that selected mode,
+submission and polling retain `background=True`, even if `prepare_options` returns `background=False`.
+On ordinary agent runs, a hook-returned `background` value passes through unchanged. Without a hook-selected
+value, inference-service background mode passes `False` for an outer foreground request; other modes omit it.
+Invocations agents have no outer background mode and do not add a background option.
 
-This guard does not intercept every path. Agent Framework Core can append chat middleware that a context provider
-contributes **after** the guard; that middleware must not enable provider background. Clients that internally
-force provider background are unsupported. Invalid defaults and request options fail before execution. A
-middleware violation is an application failure during execution: a non-streaming request returns HTTP 500, and a
-stream ends with a terminal error event.
+An application that selects background in a Responses or Invocations agent hook owns that choice; it does not
+enable host-managed provider polling or recovery. Hosting does not inject middleware to inspect or override
+background values set by application agent/chat middleware, and adds no Core interception hook.
+Factory and developer defaults still undergo background validation before execution. A nested
+`extra_body["background"]` in caller options is rejected before the Responses hook, even when it is `False`.
+
+Native workflows keep a separate checkpoint contract: inner provider background is unsupported, and their
+option hook cannot select it. Outer workflow `background=True` does not enable it for constituent agents.
+A native `WorkflowTurn` rejects client-level and run-level `middleware`.
+Its existing native agent options middleware validates transport controls, storage, and unfinished provider
+responses to preserve checkpoint ownership; that multipurpose policy remains in place.
 
 **Steering is unavailable.** `steerable_conversations` and the other removed `ResponsesServerOptions` settings are
 not host parameters; passing them raises `TypeError` during host construction. The AgentServer SDK can retain

@@ -85,7 +85,6 @@ from ._shared import (
     OptionsHook,
     ResponsesRequest,
     UnsupportedOptions,
-    background_agent_run_kwargs,
     build_response_server_options,
     is_agent,
     prepare_response_options,
@@ -312,6 +311,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 Defaults to `False`; it does not enable background execution or guarantee exactly-once effects.
             prepare_options: Developer hook selecting caller model options after factory resolution.
                 Only its returned, validated mapping is forwarded. Without a hook, caller options are omitted.
+                A returned `background` value is application-owned on ordinary runs. Host-selected provider
+                background submission and polling retain `background=True`.
             unsupported_options: `"warn"` (default), `"error"`, or `"ignore"` when a custom agent
                 cannot accept runtime model options.
             **kwargs: Additional keyword arguments.
@@ -495,7 +496,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 _initialize_agent_history(agent, configuration)
             await prepare_response_options(hosted_request, self._prepare_options)
             try:
-                validate_request_options(hosted_request.options)
+                validate_request_options(hosted_request.options, allow_background=True)
                 _validate_agent_defaults(
                     agent,
                     provider_background=provider_background,
@@ -1010,7 +1011,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             chat_options = dict(hosted_request.options)
             are_options_set = bool(chat_options)
             if self._background_source == "inference_service":
-                chat_options["background"] = provider_background
+                chat_options.setdefault("background", provider_background)
             if configuration.agent_server_history:
                 if configuration.client_stores_by_default:
                     # The response provider already owns the transcript used for this run. Keep a
@@ -1040,9 +1041,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     raise _PublicResponseFailure(TypeError("The hosted agent does not accept caller runtime options."))
                 if self._unsupported_options == "warn":
                     logger.warning("Agent doesn't support runtime options. They will be ignored.")
-
-            if not provider_background:
-                run_kwargs.update(background_agent_run_kwargs(cast(SupportsAgentRun, agent), provider_background=False))
 
             if previous_response_id is not None and context.conversation_id is None and not context.is_recovery:
                 if (
@@ -1311,7 +1309,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     input_messages,
                     session=session,
                     options=options,
-                    **background_agent_run_kwargs(agent, provider_background=True),
                 )
             except Exception as exc:
                 logger.warning("Inner provider background %s failed (%s).", phase, type(exc).__name__)

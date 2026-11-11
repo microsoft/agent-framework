@@ -62,6 +62,11 @@ class BackgroundChatMiddleware(ChatMiddleware):
         await call_next()
 
 
+class FailingAgentMiddleware(AgentMiddleware):
+    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        raise RuntimeError("Application middleware failed.")
+
+
 class BackgroundPollingClient(ChatMiddlewareLayer[Any], BaseChatClient[Any]):
     STORES_BY_DEFAULT = True
 
