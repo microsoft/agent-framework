@@ -58,6 +58,7 @@ from ._shared import (
     WorkflowResolver,
     WorkflowSource,
     WorkflowTurn,
+    foreground_agent_run_kwargs,
     is_agent,
     reject_removed_host_settings,
     resolve_agent,
@@ -649,7 +650,7 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
                 try:
                     lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
                     async with lock, self._request_agent(request) as agent:
-                        run_kwargs = self._agent_kwargs(agent, options)
+                        run_kwargs = {**self._agent_kwargs(agent, options), **foreground_agent_run_kwargs(agent)}
                         async with self._request_session(partition_key, context, hosted_scope=hosted_scope) as session:
                             stream = agent.run(parsed.messages, session=session, stream=True, **run_kwargs)
                             completed = False
@@ -708,7 +709,7 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
         try:
             lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
             async with lock, self._request_agent(request) as agent:
-                run_kwargs = self._agent_kwargs(agent, options)
+                run_kwargs = {**self._agent_kwargs(agent, options), **foreground_agent_run_kwargs(agent)}
                 async with self._request_session(partition_key, context, hosted_scope=hosted_scope) as session:
                     response = await agent.run(parsed.messages, session=session, **run_kwargs)
             if self._legacy_wire_format:
