@@ -2649,6 +2649,138 @@ class TestAsAgent:
 
 
 class TestConcurrencyGuard:
+    @pytest.mark.parametrize("as_agent", [False, True])
+    @pytest.mark.parametrize("cancel", [False, True])
+    async def test_close_racing_active_pull_preserves_guard(self, as_agent: bool, cancel: bool):
+        started = asyncio.Event()
+        release = asyncio.Event()
+        stopped = asyncio.Event()
+        calls: list[int] = []
+
+        @built_workflow
+        async def wf(value: int) -> str:
+            calls.append(value)
+            if value == 1:
+                try:
+                    started.set()
+                    await release.wait()
+                finally:
+                    stopped.set()
+            return f"result: {value}"
+
+        runner = wf.as_agent() if as_agent else wf
+        stream = runner.run(1, stream=True)
+
+        async def pull_output() -> None:
+            async for event in stream:
+                if isinstance(event, AgentResponseUpdate) or event.type == "output":
+                    return
+
+        pull = asyncio.create_task(pull_output())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            with pytest.raises(RuntimeError, match="already running"):
+                await stream.close()
+            assert not stopped.is_set()
+            with pytest.raises(RuntimeError, match="Workflow is already running"):
+                await runner.run(2)
+            assert calls == [1]
+
+            if cancel:
+                pull.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await pull
+            else:
+                release.set()
+                await asyncio.wait_for(pull, timeout=5)
+            assert stopped.is_set()
+
+            # Retry close after the pending pull settles, without draining the stream.
+            await stream.close()
+            await runner.run(2)
+            assert calls == [1, 2]
+
+            newer_stream = runner.run(3, stream=True)
+            try:
+                await stream.close()
+                with pytest.raises(RuntimeError, match="Workflow is already running"):
+                    await runner.run(4)
+            finally:
+                await newer_stream.close()
+        finally:
+            release.set()
+            if not pull.done():
+                pull.cancel()
+            await asyncio.gather(pull, return_exceptions=True)
+            await stream.close()
+
+    @pytest.mark.parametrize("as_agent", [False, True])
+    async def test_closed_unstarted_stream_cannot_execute_or_release_new_run(self, as_agent: bool):
+        calls: list[int] = []
+
+        @built_workflow
+        async def wf(value: int) -> str:
+            calls.append(value)
+            return f"result: {value}"
+
+        runner = wf.as_agent() if as_agent else wf
+        old_stream = runner.run(1, stream=True)
+        await old_stream.close()
+        newer_stream = runner.run(2, stream=True)
+        try:
+            assert [event async for event in old_stream] == []
+            assert calls == []
+            await old_stream.close()
+            with pytest.raises(RuntimeError, match="Workflow is already running"):
+                await runner.run(3)
+            await newer_stream.get_final_response()
+            assert calls == [2]
+        finally:
+            await old_stream.close()
+            await newer_stream.close()
+
+    @pytest.mark.parametrize("as_agent", [False, True])
+    @pytest.mark.parametrize("cancel", [False, True])
+    async def test_close_racing_checkpoint_load_releases_guard_after_failure(self, as_agent: bool, cancel: bool):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        class WaitingStorage(InMemoryCheckpointStorage):
+            async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
+                started.set()
+                await release.wait()
+                raise ValueError("checkpoint load failed")
+
+        @built_workflow
+        async def wf(value: int) -> str:
+            return f"result: {value}"
+
+        runner = wf.as_agent() if as_agent else wf
+        stream = runner.run(checkpoint_id="missing", checkpoint_storage=WaitingStorage(), stream=True)
+        pull = asyncio.create_task(anext(stream))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            with pytest.raises(RuntimeError, match="already running"):
+                await stream.close()
+            with pytest.raises(RuntimeError, match="Workflow is already running"):
+                await runner.run(2)
+            if cancel:
+                pull.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await pull
+            else:
+                release.set()
+                with pytest.raises(ValueError, match="checkpoint load failed"):
+                    await asyncio.wait_for(pull, timeout=5)
+            await stream.close()
+            await runner.run(2)
+        finally:
+            release.set()
+            if not pull.done():
+                pull.cancel()
+            await asyncio.gather(pull, return_exceptions=True)
+            await stream.close()
+
     async def test_concurrent_run_raises(self):
         @built_workflow
         async def slow_wf(x: int) -> int:

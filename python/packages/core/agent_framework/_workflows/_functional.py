@@ -48,7 +48,8 @@ import json
 import logging
 import math
 import typing
-from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
+from contextlib import aclosing
 from contextvars import Context, ContextVar
 from copy import deepcopy
 from types import CodeType
@@ -2061,17 +2062,44 @@ class FunctionalWorkflow:
                 )
         self._ensure_not_running()
 
+        released = False
+
+        def release_run_guard() -> None:
+            nonlocal released
+            if not released:
+                released = True
+                self._is_running = False
+
+        async def run_guarded() -> AsyncGenerator[WorkflowEvent[Any], None]:
+            try:
+                async with aclosing(
+                    self._run_core(
+                        message=message,
+                        responses=responses,
+                        checkpoint_id=checkpoint_id,
+                        checkpoint_storage=checkpoint_storage,
+                        streaming=stream,
+                        **kwargs,
+                    )
+                ) as events:
+                    async for event in events:
+                        yield event
+            finally:
+                # Cover initialization failures and abandoned generators as well.
+                release_run_guard()
+
+        guarded_stream = run_guarded()
+
+        async def cleanup() -> None:
+            # An active pull rejects aclose(); retain its guard until it settles.
+            await guarded_stream.aclose()
+            # Closing a never-started generator does not execute its finally block.
+            release_run_guard()
+
         response_stream: ResponseStream[WorkflowEvent[Any], WorkflowRunResult] = ResponseStream(
-            self._run_core(
-                message=message,
-                responses=responses,
-                checkpoint_id=checkpoint_id,
-                checkpoint_storage=checkpoint_storage,
-                streaming=stream,
-                **kwargs,
-            ),
+            guarded_stream,
             finalizer=functools.partial(self._finalize_events, include_status_events=include_status_events),
-            cleanup_hooks=[self._run_cleanup],
+            cleanup_hooks=[cleanup],
         )
 
         if stream:
@@ -2133,7 +2161,7 @@ class FunctionalWorkflow:
         checkpoint_storage: CheckpointStorage | None = None,
         streaming: bool = False,
         **kwargs: Any,
-    ) -> AsyncIterable[WorkflowEvent[Any]]:
+    ) -> AsyncGenerator[WorkflowEvent[Any], None]:
         storage = checkpoint_storage or self._checkpoint_storage
         dependencies = self._discover_workflow_dependencies(self._func)
         step_wrappers, _ = dependencies
@@ -2330,10 +2358,6 @@ class FunctionalWorkflow:
             capture_exception(span, exception=exc)
             raise
         finally:
-            # ResponseStream cleanup_hooks do not run when the generator is
-            # closed by GC. Release the run lock here so a follow-up run
-            # after an abandoned stream is not rejected as concurrent.
-            self._release_run_guard()
             span.end()
 
     async def _execute(self, ctx: RunContext, message: Any) -> Any:
@@ -2664,12 +2688,6 @@ class FunctionalWorkflow:
             raise RuntimeError("Workflow is already running. Concurrent executions are not allowed.")
         self._is_running = True
 
-    def _release_run_guard(self) -> None:
-        self._is_running = False
-
-    async def _run_cleanup(self) -> None:
-        self._release_run_guard()
-
 
 # ---------------------------------------------------------------------------
 # @workflow decorator
@@ -2917,29 +2935,30 @@ class FunctionalWorkflowAgent(BaseAgent):
         )
 
         async def _generate_updates() -> AsyncIterable[AgentResponseUpdate]:
-            async for event in workflow_stream:
-                if event.type == "output":
-                    data = event.data
-                    if isinstance(data, str):
-                        contents: list[Content] = [Content.from_text(text=data)]
-                    elif isinstance(data, Content):
-                        contents = [data]
-                    else:
-                        contents = [Content.from_text(text=str(data))]
-                    yield AgentResponseUpdate(
-                        contents=contents,
-                        role="assistant",
-                        author_name=agent_name,
-                    )
-                elif event.type == "request_info":
-                    approval = self._request_info_to_approval_request(event)
-                    if approval is None:
-                        continue
-                    yield AgentResponseUpdate(
-                        contents=[approval],
-                        role="assistant",
-                        author_name=agent_name,
-                    )
+            async with workflow_stream:
+                async for event in workflow_stream:
+                    if event.type == "output":
+                        data = event.data
+                        if isinstance(data, str):
+                            contents: list[Content] = [Content.from_text(text=data)]
+                        elif isinstance(data, Content):
+                            contents = [data]
+                        else:
+                            contents = [Content.from_text(text=str(data))]
+                        yield AgentResponseUpdate(
+                            contents=contents,
+                            role="assistant",
+                            author_name=agent_name,
+                        )
+                    elif event.type == "request_info":
+                        approval = self._request_info_to_approval_request(event)
+                        if approval is None:
+                            continue
+                        yield AgentResponseUpdate(
+                            contents=[approval],
+                            role="assistant",
+                            author_name=agent_name,
+                        )
 
         return ResponseStream(
             _generate_updates(),
