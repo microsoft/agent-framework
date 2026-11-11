@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import uuid
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
@@ -668,7 +667,7 @@ class TestInit:
             ("parse_input", 42, "parse_input must be a callable"),
             ("prepare_options", 42, "prepare_options must be a callable"),
             ("unsupported_options", "discard", "unsupported_options"),
-            ("legacy_wire_format", "false", "legacy_wire_format must be a boolean"),
+            ("legacy_wire_format", True, "legacy_wire_format is no longer a supported host setting"),
         ],
     )
     def test_rejects_invalid_configuration(self, parameter: str, value: Any, error: str) -> None:
@@ -887,10 +886,9 @@ class TestParsedRequests:
         assert provider.contexts == []
 
     @pytest.mark.parametrize("stream", [False, True])
-    @pytest.mark.parametrize("legacy_wire_format", [False, True])
     @pytest.mark.parametrize("policy", ["ignore", "warn", "error"])
-    async def test_http_route_rejects_tool_context_options_under_every_wire_and_options_policy(
-        self, stream: bool, legacy_wire_format: bool, policy: Literal["ignore", "warn", "error"]
+    async def test_http_route_rejects_tool_context_options_under_every_options_policy(
+        self, stream: bool, policy: Literal["ignore", "warn", "error"]
     ) -> None:
         agent = _make_agent(response_text="ok", stream_texts=["ok"])
         provider = _SessionStoreProvider(_mock_session_store())
@@ -901,14 +899,9 @@ class TestParsedRequests:
                 agent,
                 agent_session_store_provider=provider,
                 unsupported_options=policy,
-                legacy_wire_format=legacy_wire_format,
             )
 
-        if legacy_wire_format:
-            with pytest.warns(DeprecationWarning, match="legacy_wire_format"):
-                server = create_host()
-        else:
-            server = create_host()
+        server = create_host()
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
             response = await client.post(
                 "/invocations",
@@ -1366,54 +1359,6 @@ class TestStreamingFailuresAndCompatibility:
         assert response.headers["content-type"] == "application/json"
         assert "error" in response.json()
         assert agent.calls == []
-
-    async def test_legacy_wire_format_is_explicit_once_warned_and_unchanged(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        with pytest.warns(DeprecationWarning, match="legacy_wire_format"):
-            server = InvocationsHostServer(
-                _make_agent(response_text="Hello!", stream_texts=["Hel", "lo", "!"]), legacy_wire_format=True
-            )
-        with _request_context(session_id="legacy"):
-            for _ in range(2):
-                plain = await server._handle_invoke(_make_request({"message": "hi"}))  # pyright: ignore[reportPrivateUsage]
-                assert bytes(plain.body).decode() == "Hello!"
-            streamed = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
-                _make_request({"message": "hi", "stream": True})
-            )
-            assert isinstance(streamed, StreamingResponse)
-            assert await _collect_stream(streamed) == "Hello!"
-
-        deprecations = [
-            record
-            for record in caplog.records
-            if record.levelno == logging.WARNING and "DEPRECATION:" in record.message
-        ]
-        assert len(deprecations) == 1
-
-    async def test_legacy_stream_failure_terminates_instead_of_sending_new_frame(self) -> None:
-        class FailingAgent(_FakeAgent):
-            def run(
-                self, messages: Any = None, *, stream: bool = False, session: AgentSession | None = None, **kwargs: Any
-            ) -> Any:
-                async def updates() -> AsyncIterator[AgentResponseUpdate]:
-                    yield AgentResponseUpdate(contents=[Content.from_text("first")])
-                    raise RuntimeError("provider failed")
-
-                return updates()
-
-        with pytest.warns(DeprecationWarning):
-            server = InvocationsHostServer(FailingAgent(), legacy_wire_format=True)
-        with _request_context(session_id="legacy-failure"):
-            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
-                _make_request({"message": "hi", "stream": True})
-            )
-            assert isinstance(response, StreamingResponse)
-            iterator = cast(Any, response.body_iterator)
-            assert await anext(iterator) == "first"
-            with pytest.raises(RuntimeError, match="provider failed"):
-                await anext(iterator)
-
 
 # endregion
 

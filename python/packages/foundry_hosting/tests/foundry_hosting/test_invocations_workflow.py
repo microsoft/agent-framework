@@ -444,8 +444,8 @@ class TestNativeWorkflowConfiguration:
         with pytest.raises(TypeError, match="parse_input"):
             cast(Any, InvocationsWorkflowHostServer)(workflow=create)
 
-    def test_workflow_rejects_agent_legacy_wire_format(self) -> None:
-        with pytest.raises(TypeError, match="legacy_wire_format"):
+    def test_workflow_rejects_removed_legacy_wire_format_setting(self) -> None:
+        with pytest.raises(TypeError, match="legacy_wire_format is no longer a supported host setting"):
             InvocationsWorkflowHostServer(
                 workflow=lambda _: WorkflowBuilder(name="tickets", start_executor=_TicketExecutor([])).build(),
                 parse_input=_parse_ticket,

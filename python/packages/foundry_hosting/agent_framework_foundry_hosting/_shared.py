@@ -58,6 +58,7 @@ def reject_removed_host_settings(settings: Mapping[str, Any]) -> None:
         "additional_server_version": "Custom server version stamping is not supported.",
         "steerable_conversations": "Conversation steering is not supported.",
         "resilient_background": "Use enable_background_recovery on a Responses host.",
+        "legacy_wire_format": "Invocations always use JSON responses and framed SSE events.",
     }
     for name, message in replacements.items():
         if name in settings:
