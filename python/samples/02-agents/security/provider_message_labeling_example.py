@@ -88,9 +88,9 @@ async def main() -> None:
         client=client,
         instructions="Summarize the available context without revealing private details.",
         context_providers=[
+            SecureAgentConfig(message_labeler=classify_provider_message),
             PublicSearchContext(),
             PrivateCaseContext(),
-            SecureAgentConfig(message_labeler=classify_provider_message),
         ],
     ) as agent:
         response = await agent.run("What context is available?", session=AgentSession())

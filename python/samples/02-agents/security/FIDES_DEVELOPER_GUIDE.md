@@ -260,25 +260,23 @@ security = SecureAgentConfig(message_labeler=classify_provider_message)
 agent = Agent(
     client=client,
     context_providers=[
+        security,
         internal_memory,
         external_search,
-        security,
     ],
 )
 ```
 
 `message_labeler` receives the authoritative `source_id` from the
-`SessionContext.context_messages` bucket and the framework-owned message copy.
+`SessionContext.context_messages` bucket and the message in that bucket.
 Its returned `ContentLabel` is the complete application-owned classification
 for that exact message, including permission to mark data trusted. The
-synchronous callback result replaces any embedded message label for the current
-run. It must return `ContentLabel`; invalid results and callback failures stop
-the run.
+synchronous callback result replaces any embedded message label when FIDES
+folds that message into the current run. FIDES caches the result for the exact
+message object and does not mutate or stamp the message. Provider order does
+not affect classification. It must return `ContentLabel`; invalid results and
+callback failures stop the run.
 
-Place `SecureAgentConfig` after every non-history provider whose messages it
-should classify. Agent Framework may append its default history provider after
-the supplied providers; that history remains conservatively reconstructed. To
-classify an explicit history provider, register it before `SecureAgentConfig`.
 The callback does not classify caller input messages and does not authenticate
 approval controls, hidden references, or other control-plane structures. Those
 checks remain independent.
@@ -721,7 +719,7 @@ agent = Agent(
 - `auto_hide_untrusted` → Automatically hide UNTRUSTED content in variable store
 - `allow_untrusted_tools` → Set of tools that can run in untrusted context
 - `block_on_violation` → Block tool calls that violate security policies
-- `message_labeler` → Authoritatively classify messages added by earlier context providers
+- `message_labeler` → Authoritatively classify messages added by context providers
 - `quarantine_chat_client` → Provide a separate chat client for real LLM calls in `quarantined_llm`. Without this, `quarantined_llm` returns placeholder responses.
 
 **SecureAgentConfig Methods:**

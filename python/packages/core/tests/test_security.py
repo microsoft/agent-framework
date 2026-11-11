@@ -23,7 +23,6 @@ from agent_framework import (
     AgentSession,
     ChatResponse,
     ChatResponseUpdate,
-    ContextProvider,
     ExperimentalFeature,
     FileSessionStore,
     FunctionInvocationContext,
@@ -37,11 +36,13 @@ from agent_framework import (
 )
 from agent_framework._middleware import (
     ChatContext,
-    ChatMiddleware,
+    ChatMiddlewareCallable,
     ChatMiddlewareLayer,
     FunctionMiddlewarePipeline,
+    FunctionMiddlewareTypes,
     MiddlewareFailure,
     MiddlewareTermination,
+    categorize_middleware,
 )
 from agent_framework._tools import (
     _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -3278,17 +3279,15 @@ class TestSecureAgentSessionIsolation:
             state=session.state.setdefault(config.source_id, {}),
         )
 
-        scoped_policy, scoped_tracker, replay_middleware = context.get_middleware()
+        scoped_policy, scoped_tracker = context.get_middleware()
         assert isinstance(scoped_tracker, LabelTrackingFunctionMiddleware)
         assert scoped_tracker is not configured_tracker
         assert scoped_tracker.auto_hide_untrusted is False
         assert isinstance(scoped_policy, PolicyEnforcementFunctionMiddleware)
         assert scoped_policy is not config.policy_enforcer
         assert "post_init_tool" in scoped_policy.allow_untrusted_tools
-        assert isinstance(replay_middleware, ChatMiddleware)
 
-    @pytest.mark.parametrize("stream", [False, True])
-    async def test_replayed_assistant_message_taints_fresh_session_conservatively(self, stream: bool) -> None:
+    async def test_replayed_assistant_message_taints_fresh_session_conservatively(self) -> None:
         """Caller-replayed assistant content cannot restart FIDES as trusted/public."""
         config = SecureAgentConfig()
         session = AgentSession(session_id="replayed-history")
@@ -3310,24 +3309,7 @@ class TestSecureAgentSessionIsolation:
             state=session.state.setdefault(config.source_id, {}),
         )
         tracker = provider_context.get_middleware()[0]
-        replay_middleware = cast(ChatMiddleware, provider_context.get_middleware()[2])
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
-        initial_label = tracker.get_context_label()
-        assert initial_label.integrity == IntegrityLabel.UNTRUSTED
-        assert initial_label.confidentiality == ConfidentialityLabel.PRIVATE
-        chat_context = ChatContext(
-            client=cast(Any, SimpleNamespace()),
-            messages=[replayed],
-            options={},
-            stream=stream,
-            session=session,
-        )
-
-        async def call_next() -> None:
-            return None
-
-        await replay_middleware.process(chat_context, call_next)
-
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
@@ -3413,7 +3395,7 @@ class TestSecureAgentSessionIsolation:
             state=session.state.setdefault(config.source_id, {}),
         )
 
-        tracker, policy, _ = provider_context.get_middleware()
+        tracker, policy = provider_context.get_middleware()
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         assert isinstance(policy, PolicyEnforcementFunctionMiddleware)
         label = tracker.get_context_label()
@@ -3562,7 +3544,7 @@ class TestSecureAgentSessionIsolation:
             state=session.state.setdefault(config.source_id, {}),
         )
 
-        tracker, policy, _ = provider_context.get_middleware()
+        tracker, policy = provider_context.get_middleware()
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         assert isinstance(policy, PolicyEnforcementFunctionMiddleware)
         label = tracker.get_context_label()
@@ -3677,7 +3659,7 @@ class TestSecureAgentSessionIsolation:
             state=session.state.setdefault(config.source_id, {}),
         )
 
-        scoped_tracker, scoped_policy, _ = provider_context.get_middleware()
+        scoped_tracker, scoped_policy = provider_context.get_middleware()
         assert isinstance(scoped_tracker, LabelTrackingFunctionMiddleware)
         assert isinstance(scoped_policy, PolicyEnforcementFunctionMiddleware)
         label = scoped_tracker.get_context_label()
@@ -3862,8 +3844,8 @@ class TestSecureAgentSessionIsolation:
             [Message(role="assistant", contents=["Unstamped history loaded after SecureAgentConfig"])],
         )
 
-        preflight, tracker, policy, _ = context.get_middleware()
-        assert isinstance(preflight, FunctionMiddleware)
+        preflight, tracker, policy = categorize_middleware(context.get_middleware())["function"]
+        assert callable(preflight)
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         assert isinstance(policy, PolicyEnforcementFunctionMiddleware)
         protected_tool = FunctionTool(
@@ -3892,6 +3874,10 @@ class TestSecureAgentSessionIsolation:
         config = SecureAgentConfig()
         session = AgentSession(session_id="provider-message")
         provider_context = SessionContext(session_id=session.session_id, input_messages=[])
+        provider_context.extend_messages(
+            "memory",
+            [Message(role="assistant", contents=["Trusted plugin context"])],
+        )
         await config.before_run(
             agent=SimpleNamespace(context_providers=[SimpleNamespace(source_id="memory"), config]),
             session=session,
@@ -3899,32 +3885,14 @@ class TestSecureAgentSessionIsolation:
             state=session.state.setdefault(config.source_id, {}),
         )
         tracker = provider_context.get_middleware()[0]
-        replay_middleware = cast(ChatMiddleware, provider_context.get_middleware()[2])
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
-
-        provider_message = Message(
-            role="assistant",
-            contents=["Trusted plugin context"],
-            additional_properties={"_attribution": {"source_id": "memory", "source_type": "MemoryProvider"}},
-        )
-        chat_context = ChatContext(
-            client=cast(Any, SimpleNamespace()),
-            messages=[provider_message],
-            options={},
-            session=session,
-        )
-
-        async def call_next() -> None:
-            return None
-
-        await replay_middleware.process(chat_context, call_next)
 
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.TRUSTED
         assert label.confidentiality == ConfidentialityLabel.PUBLIC
 
-    async def test_message_labeler_uses_authoritative_source_and_label(self) -> None:
-        """Application labeling uses the provider bucket and can replace a restrictive embedded label."""
+    async def test_message_labeler_uses_authoritative_source_and_reuses_label_for_replay(self) -> None:
+        """Application labels use the provider bucket without mutating or repeatedly classifying the message."""
         observed_sources: list[str] = []
 
         def label_message(source_id: str, message: Message) -> ContentLabel:
@@ -3933,15 +3901,14 @@ class TestSecureAgentSessionIsolation:
             return ContentLabel(
                 integrity=IntegrityLabel.TRUSTED,
                 confidentiality=ConfidentialityLabel.PUBLIC,
-                metadata={"classified_source": source_id},
             )
 
+        history = InMemoryHistoryProvider(source_id="trusted-memory")
         config = SecureAgentConfig(message_labeler=label_message)
-        provider = SimpleNamespace(source_id="trusted-memory")
         session = AgentSession(session_id="authoritative-provider-label")
         context = SessionContext(session_id=session.session_id, input_messages=[])
         context.extend_messages(
-            provider,
+            history,
             [
                 Message(
                     role="assistant",
@@ -3958,7 +3925,7 @@ class TestSecureAgentSessionIsolation:
         )
 
         await config.before_run(
-            agent=SimpleNamespace(context_providers=[provider, config]),
+            agent=SimpleNamespace(context_providers=[history, config]),
             session=session,
             context=context,
             state=session.state.setdefault(config.source_id, {}),
@@ -3968,47 +3935,12 @@ class TestSecureAgentSessionIsolation:
         labeled_message = context.context_messages["trusted-memory"][0]
         assert labeled_message.additional_properties["_attribution"]["source_id"] == "forged-source"
         assert labeled_message.additional_properties["security_label"] == {
-            "integrity": "trusted",
-            "confidentiality": "public",
-            "metadata": {"classified_source": "trusted-memory"},
+            "integrity": "untrusted",
+            "confidentiality": "private",
         }
-        tracker = context.get_middleware()[0]
-        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
-        assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
-        assert tracker.get_context_label().confidentiality == ConfidentialityLabel.PUBLIC
-
-    async def test_message_labeler_authority_survives_history_replay_middleware(self) -> None:
-        """An exact application-labeled history message is not reconstructed conservatively later in the run."""
-        label_calls = 0
-
-        def label_message(source_id: str, message: Message) -> ContentLabel:
-            nonlocal label_calls
-            label_calls += 1
-            assert source_id == "application-history"
-            assert message.text == "Application-owned history"
-            return ContentLabel(
-                integrity=IntegrityLabel.TRUSTED,
-                confidentiality=ConfidentialityLabel.PUBLIC,
-            )
-
-        history = InMemoryHistoryProvider(source_id="application-history")
-        config = SecureAgentConfig(message_labeler=label_message)
-        session = AgentSession(session_id="authoritative-history-label")
-        context = SessionContext(session_id=session.session_id, input_messages=[])
-        context.extend_messages(
-            history,
-            [Message(role="assistant", contents=["Application-owned history"])],
-        )
-        agent = SimpleNamespace(context_providers=[history, config])
-
-        await config.before_run(
-            agent=agent,
-            session=session,
-            context=context,
-            state=session.state.setdefault(config.source_id, {}),
-        )
-
-        _, tracker, _, replay_middleware = context.get_middleware()
+        categorized = categorize_middleware(context.get_middleware())
+        _, tracker, _ = categorized["function"]
+        replay_middleware = cast(ChatMiddlewareCallable, categorized["chat"][0])
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
         chat_context = ChatContext(
@@ -4021,68 +3953,50 @@ class TestSecureAgentSessionIsolation:
         async def call_next() -> None:
             return None
 
-        await cast(ChatMiddleware, replay_middleware).process(chat_context, call_next)
+        assert callable(replay_middleware)
+        await replay_middleware(chat_context, call_next)
 
-        assert label_calls == 1
+        assert observed_sources == ["trusted-memory"]
         assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
         assert tracker.get_context_label().confidentiality == ConfidentialityLabel.PUBLIC
 
-    async def test_message_labeler_requires_secure_config_after_non_history_providers(self) -> None:
-        """Provider messages cannot be labeled before later message producers have run."""
-        config = SecureAgentConfig(message_labeler=lambda _source_id, _message: ContentLabel())
-        later_provider = SimpleNamespace(source_id="later-provider")
-        session = AgentSession(session_id="invalid-message-labeler-order")
-        context = SessionContext(session_id=session.session_id, input_messages=[])
-
-        with pytest.raises(ValueError, match="must follow every non-history context provider"):
-            await config.before_run(
-                agent=SimpleNamespace(context_providers=[config, later_provider]),
-                session=session,
-                context=context,
-                state=session.state.setdefault(config.source_id, {}),
-            )
-
-    async def test_message_labeler_allows_trailing_history_provider(self) -> None:
-        """Framework-managed history can load after message labeling and remains conservatively classified."""
+    async def test_message_labeler_classifies_later_provider(self) -> None:
+        """The run-local classifier sees messages added after SecureAgentConfig.before_run."""
         observed_sources: list[str] = []
-
-        class Provider(ContextProvider):
-            def __init__(self) -> None:
-                super().__init__("provider")
-
-            async def before_run(
-                self,
-                *,
-                agent: Any,
-                session: AgentSession,
-                context: SessionContext,
-                state: dict[str, Any],
-            ) -> None:
-                del agent, session, state
-                context.extend_messages(self, [Message(role="assistant", contents=["Provider context"])])
-
-        class NoopClient:
-            async def get_response(self, messages: list[Message], **kwargs: Any) -> ChatResponse:
-                del kwargs
-                assert any(message.text == "Provider context" for message in messages)
-                return ChatResponse(messages=[Message(role="assistant", contents=["done"])])
 
         def label_message(source_id: str, _message: Message) -> ContentLabel:
             observed_sources.append(source_id)
-            return ContentLabel()
+            return ContentLabel(IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PRIVATE)
 
         config = SecureAgentConfig(message_labeler=label_message)
-        agent = Agent(
-            client=cast(SupportsChatGetResponse, NoopClient()),
-            context_providers=[Provider(), config],
+        provider = SimpleNamespace(source_id="provider")
+        session = AgentSession(session_id="message-labeler-later-provider")
+        context = SessionContext(session_id=session.session_id, input_messages=[])
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config, provider]),
+            session=session,
+            context=context,
+            state=session.state.setdefault(config.source_id, {}),
         )
-        session = AgentSession(session_id="message-labeler-trailing-history")
+        context.extend_messages(provider, [Message(role="assistant", contents=["Provider context"])])
+        categorized = categorize_middleware(context.get_middleware())
+        _, tracker, _ = categorized["function"]
+        replay_middleware = cast(ChatMiddlewareCallable, categorized["chat"][0])
+        chat_context = ChatContext(
+            client=cast(Any, SimpleNamespace()),
+            messages=context.context_messages[provider.source_id],
+            options={},
+            session=session,
+        )
 
-        response = await agent.run("Continue", session=session)
+        async def call_next() -> None:
+            return None
 
-        assert response.text == "done"
+        await replay_middleware(chat_context, call_next)
         assert observed_sources == ["provider"]
-        assert config.label_tracker.get_context_label(session).integrity == IntegrityLabel.TRUSTED
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        assert tracker.get_context_label().integrity == IntegrityLabel.UNTRUSTED
+        assert tracker.get_context_label().confidentiality == ConfidentialityLabel.PRIVATE
 
     async def test_message_labeler_requires_content_label_result(self) -> None:
         """Invalid classifier results fail before the model or tools can run."""
@@ -4651,7 +4565,9 @@ class TestSecureAgentSessionIsolation:
             state=session.state.setdefault(config.source_id, {}),
         )
 
-        _, tracker, _, replay_middleware = context.get_middleware()
+        categorized = categorize_middleware(context.get_middleware())
+        _, tracker, _ = categorized["function"]
+        replay_middleware = cast(ChatMiddlewareCallable, categorized["chat"][0])
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.TRUSTED
@@ -4675,7 +4591,8 @@ class TestSecureAgentSessionIsolation:
         async def call_next() -> None:
             return None
 
-        await cast(ChatMiddleware, replay_middleware).process(chat_context, call_next)
+        assert callable(replay_middleware)
+        await replay_middleware(chat_context, call_next)
 
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.TRUSTED
@@ -4710,7 +4627,9 @@ class TestSecureAgentSessionIsolation:
             state=session.state.setdefault(config.source_id, {}),
         )
 
-        _, tracker, _, replay_middleware = context.get_middleware()
+        categorized = categorize_middleware(context.get_middleware())
+        _, tracker, _ = categorized["function"]
+        replay_middleware = cast(ChatMiddlewareCallable, categorized["chat"][0])
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
 
@@ -4728,7 +4647,8 @@ class TestSecureAgentSessionIsolation:
         async def call_next() -> None:
             return None
 
-        await cast(ChatMiddleware, replay_middleware).process(chat_context, call_next)
+        assert callable(replay_middleware)
+        await replay_middleware(chat_context, call_next)
 
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.UNTRUSTED
@@ -4766,7 +4686,9 @@ class TestSecureAgentSessionIsolation:
             state=session.state.setdefault(config.source_id, {}),
         )
 
-        _, tracker, policy, replay_middleware = context.get_middleware()
+        categorized = categorize_middleware(context.get_middleware())
+        _, tracker, policy = categorized["function"]
+        replay_middleware = cast(ChatMiddlewareCallable, categorized["chat"][0])
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         assert isinstance(policy, PolicyEnforcementFunctionMiddleware)
         label = tracker.get_context_label()
@@ -4804,7 +4726,8 @@ class TestSecureAgentSessionIsolation:
         async def call_next() -> None:
             return None
 
-        await cast(ChatMiddleware, replay_middleware).process(chat_context, call_next)
+        assert callable(replay_middleware)
+        await replay_middleware(chat_context, call_next)
 
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.UNTRUSTED
@@ -4856,7 +4779,9 @@ class TestSecureAgentSessionIsolation:
             state=session.state.setdefault(config.source_id, {}),
         )
 
-        _, tracker, _, replay_middleware = context.get_middleware()
+        categorized = categorize_middleware(context.get_middleware())
+        _, tracker, _ = categorized["function"]
+        replay_middleware = cast(ChatMiddlewareCallable, categorized["chat"][0])
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         cyclic_request = Content.from_function_approval_request(
             id="cyclic-approval-occurrence",
@@ -4879,7 +4804,8 @@ class TestSecureAgentSessionIsolation:
         async def call_next() -> None:
             return None
 
-        await cast(ChatMiddleware, replay_middleware).process(chat_context, call_next)
+        assert callable(replay_middleware)
+        await replay_middleware(chat_context, call_next)
 
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.UNTRUSTED
@@ -5014,7 +4940,7 @@ class TestSecureAgentSessionIsolation:
             state=session.state.setdefault(config.source_id, {}),
         )
 
-        tracker, policy, _ = provider_context.get_middleware()
+        tracker, policy = provider_context.get_middleware()
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         assert isinstance(policy, PolicyEnforcementFunctionMiddleware)
         label = tracker.get_context_label()
@@ -11606,6 +11532,7 @@ async def test_quarantine_client_uses_its_own_security_config() -> None:
     async def execute(cfg: SecureAgentConfig, marker: str, *, direct: bool = False) -> None:
         session = AgentSession(session_id="synthetic-" + marker)
         ctx = SessionContext(session_id=session.session_id, input_messages=[])
+        middleware: Sequence[FunctionMiddlewareTypes]
         if direct:
             middleware = cfg.get_middleware()
         else:
@@ -11615,7 +11542,7 @@ async def test_quarantine_client_uses_its_own_security_config() -> None:
                 context=ctx,
                 state=session.state.setdefault(cfg.source_id, {}),
             )
-            middleware = cast(list[FunctionMiddleware], ctx.middleware[cfg.source_id])
+            middleware = categorize_middleware(ctx.middleware[cfg.source_id])["function"]
         tool = next(t for t in cfg.get_tools() if t.name == "quarantined_llm")
         args = {
             "prompt": "Summarize",

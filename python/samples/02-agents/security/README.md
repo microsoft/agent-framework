@@ -13,7 +13,7 @@ security model, middleware behavior, and API reference.
 | `repo_confidentiality_example.py` | Data exfiltration prevention | Confidentiality labels, Foundry-backed repository access, `max_allowed_confidentiality`, and approval before leaking private data |
 | `user_identity_security_example.py` | Principal-bound identity data | Canonical tenant/user principals, identity-scoped sources and destinations, and allowed versus blocked flows |
 | `github_mcp_example.py` | Remote MCP URL with local FIDES enforcement | `SecureMCPToolProxy(url=...)`, direct GitHub MCP access, tool auto-labeling, and post-tool-call policy enforcement |
-| `provider_message_labeling_example.py` | Central context labeling | `SecureAgentConfig.message_labeler` authoritatively classifies messages added by earlier context providers |
+| `provider_message_labeling_example.py` | Central context labeling | `SecureAgentConfig.message_labeler` authoritatively classifies messages added by context providers |
 
 ## Prerequisites
 
@@ -146,10 +146,10 @@ uv run samples/02-agents/security/provider_message_labeling_example.py
 
 What to look for:
 
-- Provider order is part of the contract: message producers, then FIDES
+- Provider order does not affect classification
 - Public external context becomes **UNTRUSTED + PUBLIC**
 - Private external context becomes **UNTRUSTED + PRIVATE**
-- Provider message buckets and attribution remain unchanged
+- FIDES does not mutate or stamp provider messages
 - Providers with additional lifecycle behavior should classify data internally
 
 ## Where to find the details
