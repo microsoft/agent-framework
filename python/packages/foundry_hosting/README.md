@@ -2,10 +2,7 @@
 
 This package provides the integration of Agent Framework agents and workflows with the Foundry Agent Server, which can be hosted on Foundry infrastructure.
 
-Implementation is grouped by protocol: `_responses_agent.py` and `_responses_workflow.py` define the Responses hosts,
-and `_responses_shared.py` contains their wire and streaming helpers. Invocations uses the same `_invocations_agent.py`,
-`_invocations_workflow.py`, and `_invocations_shared.py` layout. Cross-protocol request contracts, option validation,
-and agent/workflow factories live in `_shared.py`. Applications use the public package imports below.
+See [ADR 0055](../../../docs/decisions/0055-python-foundry-hosting-contracts.md) for the design rationale.
 
 ## Choose the host
 
@@ -107,27 +104,9 @@ surfaces described above.
 ## Responses route prefix
 
 `ResponsesHostServer` and `ResponsesWorkflowHostServer` pass `prefix` to the
-[AgentServer Responses host](https://learn.microsoft.com/python/api/azure-ai-agentserver-responses/azure.ai.agentserver.responses.responsesagentserverhost?view=azure-python).
-The native workflow host binds its create route at the same prefix. For example, with the
-[request-aware factory below](#agent-instances-and-factories):
-
-```python
-server = ResponsesHostServer(agent=create_agent, prefix="api/v1")
-```
-
-AgentServer applies the prefix to its Responses routes:
-
-| Operation | Default prefix (`""`) | `prefix="api/v1"` |
-| --- | --- | --- |
-| Create a response | `POST /responses` | `POST /api/v1/responses` |
-| Retrieve a response | `GET /responses/{response_id}` | `GET /api/v1/responses/{response_id}` |
-| Cancel a background response | `POST /responses/{response_id}/cancel` | `POST /api/v1/responses/{response_id}/cancel` |
-| Delete a stored response | `DELETE /responses/{response_id}` | `DELETE /api/v1/responses/{response_id}` |
-| List input items | `GET /responses/{response_id}/input_items` | `GET /api/v1/responses/{response_id}/input_items` |
-
-Use the same path prefix in clients and any reverse proxy. See the
-[AgentServer protocol endpoints](https://learn.microsoft.com/python/api/overview/azure/ai-agentserver-responses-readme?view=azure-python#protocol-endpoints)
-for the endpoint behavior and requirements.
+[AgentServer Responses host](https://learn.microsoft.com/python/api/azure-ai-agentserver-responses/azure.ai.agentserver.responses.responsesagentserverhost?view=azure-python),
+so clients and reverse proxies must use the same path prefix for its
+[protocol endpoints](https://learn.microsoft.com/python/api/overview/azure/ai-agentserver-responses-readme?view=azure-python#protocol-endpoints).
 
 ## Toolbox tool approvals
 
@@ -348,12 +327,7 @@ add a transient in-memory provider to support function-call loops, but **never e
 The host owns the provided agent instance and any providers it adds; do not reuse it with another host. A factory
 creates an independent agent for each request.
 
-The existing `history_source="agent_managed"` still preserves the agent's own provider **or** service storage defaults
-on stored requests, including `default_options={"store": True}`. Custom `SupportsAgentRun`
-implementations can continue using that mode for stored requests; it is not a forced-provider mode.
-The outer storage-backend constructor argument is `response_store=`. The old `store=` backend
-argument is rejected, including `None` and calls that also supply `response_store=`.
-The backend selector does not set the caller's per-request `store` flag.
+Custom `SupportsAgentRun` implementations can use `history_source="agent_managed"` for stored requests.
 
 `store=False` returns a one-shot response without **writing** host-managed session, conversation, or approval state;
 it also disables downstream service storage regardless of the developer's defaults. Unsafe custom agents, external
@@ -845,8 +819,6 @@ If a connection drops after commit, retrying the same trusted user/sandbox/call 
 replays that response's complete stored snapshot without executing the workflow or
 replacing its head. A different call ID starts normal turn validation and cannot
 retrieve that snapshot.
-All native Invocations requests, including local one-shot runs, require a
-request-aware workflow factory that returns a fresh graph for each request.
 After a newer Invocations head is durably committed, the host reclaims completed
 ancestor response records and checkpoints oldest-first, retaining only current,
 pending, active or blocked authority. Cleanup failures are logged and retried by

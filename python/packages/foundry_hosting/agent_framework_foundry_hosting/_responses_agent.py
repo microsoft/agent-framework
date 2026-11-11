@@ -303,10 +303,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                   the host-persisted MAF `AgentSession`. With `default_options={"store": True}`,
                   the downstream service retains history instead.
 
-                For example, after a stored response to "My name is Ada", a stored follow-up
-                "What is my name?" sends both turns to the model with `"host_managed"`, but
-                sends only the follow-up with `"inference_service"` (plus a private service continuation).
-                With `"agent_managed"`, the developer chooses either of those agent-owned history sources.
             background_source: `"host_managed"` (default) runs background work in the Responses host
                 without invoking provider-native background APIs; `"inference_service"` opts a storing, resumable
                 client into provider background polling and requires `history_source="inference_service"`.
@@ -333,22 +329,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             The former constructor `store=` alias is rejected. Outer `response.id` is the polling/continuation handle;
             any inner `service_session_id` is private and never replaces it.
 
-            1. With `history_source="host_managed"`,
-               the agent must not have a load-enabled history provider: the host supplies the transcript.
-            2. Context providers must not keep required state only on their Python instances,
+            1. Context providers must not keep required state only on their Python instances,
                because the hosting environment may get deactivated between requests. Provider
                state carried by `AgentSession`, including `InMemoryHistoryProvider` messages in
                `history_source="agent_managed"` mode, is persisted by the configured session store.
-            3. The server owns the supplied agent instance and may add hosting-specific providers.
+            2. The server owns the supplied agent instance and may add hosting-specific providers.
                Do not reuse the same agent with another host or invoke it directly after construction.
                An agent returned by a callable belongs to that request.
-            4. `enable_background_recovery=True` supports regular agents configured with
+            3. `enable_background_recovery=True` supports regular agents configured with
                `history_source="inference_service", background_source="inference_service"`.
                For provider background, only a saved private continuation token can be polled after a crash;
                a crash before the token is saved cannot be replayed safely.
                Other regular-agent runs are not crash-recoverable.
-            5. Steering is unavailable. The upstream `options` bag and steering settings are not host parameters.
-            6. A stored, named `"inference_service"` or `"agent_managed"` conversation is claimed in the scoped
+            4. Steering is unavailable. The upstream `options` bag and steering settings are not host parameters.
+            5. A stored, named `"inference_service"` or `"agent_managed"` conversation is claimed in the scoped
                session store before the agent runs. Conditional writes prevent a concurrent turn from mutating the same
                provider thread. If the turn fails or is cancelled, start a new conversation instead of
                reusing a potentially changed downstream thread.

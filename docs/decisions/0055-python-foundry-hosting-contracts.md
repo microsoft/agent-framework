@@ -37,6 +37,7 @@ Choose separate agent and native workflow hosts. Share protocol internals, but k
 configuration, and state ownership specific to each execution model.
 
 The decisions below define the intended hosting contracts, not the implementation status of each feature.
+See the [Foundry Hosting README](../../python/packages/foundry_hosting/README.md) for the current usage contract.
 
 ### Host boundaries
 
