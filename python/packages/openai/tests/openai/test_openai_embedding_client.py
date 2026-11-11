@@ -229,8 +229,6 @@ async def test_subclass_extra_request_options_are_forwarded(openai_unit_test_env
     assert call_kwargs["dimensions"] == 8
 
 
-@pytest.mark.flaky
-@pytest.mark.integration
 async def test_serialize_with_timeout(openai_unit_test_env: dict[str, str]) -> None:
     settings = {
         "model": openai_unit_test_env["OPENAI_EMBEDDING_MODEL"],
