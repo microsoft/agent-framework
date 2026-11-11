@@ -17,14 +17,15 @@ import stat
 import subprocess
 import sys
 import types
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
-from agent_framework import Content, FunctionTool, Message, tool
+from agent_framework import Content, FunctionInvocationContext, FunctionTool, Message, tool
 from agent_framework._sessions import SessionContext
 from agent_framework.exceptions import ToolException
 
@@ -730,6 +731,8 @@ def test_instruction_builders_describe_write_caps_and_visible_tools(tmp_path: Pa
 
     assert "write cap 128 bytes" in description
     assert "Files written to `/work` are returned" in description
+    assert "Capture file-count and byte limits apply across all mounts per execution" in description
+    assert "Capture file-count and byte limits apply across all mounts per execution" in instructions
     assert "Some tools may also appear directly" in instructions
 
 
@@ -861,6 +864,31 @@ async def test_run_code_direct_typed_call_invokes_registered_tool() -> None:
     assert final_resume[1] == {"return_value": 5}
 
 
+async def test_run_code_direct_typed_call_with_positional_arguments_is_rejected_without_invoking_host() -> None:
+    calls: list[str | None] = []
+
+    @tool
+    def record(label: str | None = None) -> str:
+        """Record the label received by the host."""
+        calls.append(label)
+        return "recorded"
+
+    func_snapshot = _FakeFunctionSnapshot(function_name="record", call_id=5, args=("positional",))
+    script = _set_script(func_snapshot, _FakeMontyComplete(output=None))
+
+    monty_tool = MontyExecuteCodeTool(tools=[record])
+    await monty_tool._run_code(code='await record("positional")')
+
+    payloads = [payload for _, _, payload in script.resume_log]
+    assert payloads == [
+        {
+            "exc_type": "TypeError",
+            "message": "record accepts keyword arguments only. Use keyword arguments for parameters.",
+        }
+    ]
+    assert calls == []
+
+
 async def test_run_code_call_tool_fallback_invokes_registered_tool() -> None:
     func_snapshot = _FakeFunctionSnapshot(
         function_name="call_tool",
@@ -943,7 +971,10 @@ async def test_run_code_call_tool_with_unregistered_name_returns_error() -> None
     )
 
 
-async def test_run_code_returns_error_content_on_runtime_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_run_code_returns_error_content_on_runtime_failure(
+    monkeypatch: pytest.MonkeyPatch, include_detailed_errors: bool
+) -> None:
     class _BoomBridge:
         def __init__(self, tool_map: Any, **_: Any) -> None:
             pass
@@ -953,11 +984,32 @@ async def test_run_code_returns_error_content_on_runtime_failure(monkeypatch: py
 
     monkeypatch.setattr(execute_code_module, "InlineCodeBridge", _BoomBridge)
 
-    monty_tool = MontyExecuteCodeTool()
+    monty_tool = MontyExecuteCodeTool(include_detailed_errors=include_detailed_errors)
     result = await monty_tool._run_code(code="x = 1")
     assert len(result) == 1
     assert result[0].type == "error"
-    assert "boom" in (result[0].error_details or "")
+    assert ("boom" in (result[0].error_details or "")) is include_detailed_errors
+    assert ("boom" in json.dumps([item.to_dict() for item in result])) is include_detailed_errors
+
+
+@pytest.mark.parametrize("constructor", [MontyExecuteCodeTool, MontyCodeActProvider])
+@pytest.mark.parametrize("value", ["false", 1, None])
+def test_detailed_error_option_rejects_non_boolean_values(constructor: Any, value: Any) -> None:
+    with pytest.raises(TypeError, match="include_detailed_errors must be a bool"):
+        constructor(include_detailed_errors=value)
+
+
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+def test_detailed_error_policy_is_snapshotted_and_not_a_code_parameter(include_detailed_errors: bool) -> None:
+    codeact = MontyExecuteCodeTool(include_detailed_errors=include_detailed_errors)
+    provider = MontyCodeActProvider(include_detailed_errors=include_detailed_errors)
+
+    assert codeact.create_run_tool().build_serializable_state()["include_detailed_errors"] is include_detailed_errors
+    assert (
+        provider._execute_code_tool.create_run_tool().build_serializable_state()["include_detailed_errors"]
+        is include_detailed_errors
+    )
+    assert set(codeact.parameters()["properties"]) == {"code"}
 
 
 def test_build_execution_contents_handles_truncation_and_non_json_output() -> None:
@@ -1017,7 +1069,8 @@ def test_capture_written_files_returns_new_files_and_omits_large_ones(
         "/work/existing.txt",
         "/work/nested/report.txt",
     }
-    assert any("large.txt" in (item.text or "") and "omitted" in (item.text or "") for item in text_items)
+    assert len(text_items) == 1
+    assert "omitted" in (text_items[0].text or "")
     assert any(
         _decode_content_bytes(item) == b"after"
         for item in data_items
@@ -1025,6 +1078,178 @@ def test_capture_written_files_returns_new_files_and_omits_large_ones(
     )
     assert all(not item.additional_properties["path"].startswith("/readonly/") for item in data_items)
     assert all(item.additional_properties["path"] != "/work/unchanged.txt" for item in data_items)
+
+
+def test_capture_written_files_default_limits() -> None:
+    assert execute_code_module.MAX_CAPTURED_FILES == 20
+    assert execute_code_module.MAX_CAPTURED_FILE_BYTES == 5 * 1024 * 1024
+    assert execute_code_module.MAX_CAPTURED_TOTAL_BYTES == 20 * 1024 * 1024
+
+
+@pytest.mark.parametrize("file_count", [0, 19, 20, 21])
+@pytest.mark.parametrize("mount_count", [1, 2])
+def test_capture_written_files_bounds_empty_attachment_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    file_count: int,
+    mount_count: int,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    mounts = []
+    for index in range(mount_count):
+        root = tmp_path / str(index)
+        root.mkdir()
+        mounts.append(FileMount(host_path=root, mount_path=f"/work{index}", mode="read-write"))
+    for index in range(file_count):
+        (Path(mounts[index % mount_count].host_path) / f"{index:02}.bin").write_bytes(b"")
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILE_BYTES", 8)
+    read_file = MagicMock(wraps=execute_code_module._read_validated_file)
+    encode = MagicMock(wraps=Content.from_data)
+    monkeypatch.setattr(execute_code_module, "_read_validated_file", read_file)
+    monkeypatch.setattr(Content, "from_data", encode)
+
+    captured = execute_code_module._capture_written_files(mounts, {})
+    data_items = [item for item in captured if item.type == "data"]
+    text_items = [item for item in captured if item.type == "text"]
+
+    expected_count = min(file_count, 20)
+    assert len(data_items) == expected_count
+    assert all(_decode_content_bytes(item) == b"" for item in data_items)
+    assert len(text_items) == int(file_count > 20)
+    assert read_file.call_count == expected_count
+    assert encode.call_count == expected_count
+
+
+@pytest.mark.parametrize(
+    ("sizes", "expected_sizes", "omitted"),
+    [
+        ([4, 3], [4, 3], False),
+        ([4, 4], [4, 4], False),
+        ([4, 5, 4], [4, 4], True),
+        ([8, 1, 0], [8, 0], True),
+        ([3, 0, 6, 5], [3, 0, 5], True),
+    ],
+)
+def test_capture_written_files_bounds_total_bytes_across_mounts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sizes: list[int],
+    expected_sizes: list[int],
+    omitted: bool,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    roots = [tmp_path / "first", tmp_path / "second"]
+    for root in roots:
+        root.mkdir()
+    mounts = [
+        FileMount(host_path=root, mount_path=f"/work{index}", mode="read-write") for index, root in enumerate(roots)
+    ]
+    for index, size in enumerate(sizes):
+        (roots[min(index, 1)] / f"{index:02}.bin").write_bytes(b"x" * size)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILE_BYTES", 8)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_TOTAL_BYTES", 8)
+    read_file = MagicMock(wraps=execute_code_module._read_validated_file)
+    encode = MagicMock(wraps=Content.from_data)
+    monkeypatch.setattr(execute_code_module, "_read_validated_file", read_file)
+    monkeypatch.setattr(Content, "from_data", encode)
+
+    captured = execute_code_module._capture_written_files(mounts, {})
+    data_items = [item for item in captured if item.type == "data"]
+    text_items = [item for item in captured if item.type == "text"]
+
+    assert [len(_decode_content_bytes(item)) for item in data_items] == expected_sizes
+    assert len(text_items) == int(omitted)
+    assert read_file.call_count == len(expected_sizes)
+    assert encode.call_count == len(expected_sizes)
+    remaining = 8
+    for call, size in zip(read_file.call_args_list, expected_sizes, strict=True):
+        assert call.kwargs["max_bytes"] == min(8, remaining)
+        remaining -= size
+
+
+@pytest.mark.parametrize("skipped_kind", ["unchanged", "unsafe", "unreadable"])
+def test_capture_written_files_does_not_charge_skipped_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    skipped_kind: str,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    ignored = tmp_path / "a-ignored.bin"
+    ignored.write_bytes(b"xx")
+    mount = FileMount(host_path=tmp_path, mount_path="/work", mode="read-write")
+    before = execute_code_module._snapshot_writable_mounts([mount]) if skipped_kind == "unchanged" else {}
+    (tmp_path / "z-safe.bin").write_bytes(b"ok")
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILES", 1)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_TOTAL_BYTES", 2)
+
+    if skipped_kind == "unsafe":
+        original_stat = execute_code_module._safe_capture_file_stat
+
+        def safe_stat(*, root: Path, entry: Path) -> os.stat_result | None:
+            return None if entry == ignored else original_stat(root=root, entry=entry)
+
+        monkeypatch.setattr(execute_code_module, "_safe_capture_file_stat", safe_stat)
+    elif skipped_kind == "unreadable":
+        original_read = execute_code_module._read_validated_file
+
+        def read_file(*, root: Path, entry: Path, expected: os.stat_result, max_bytes: int) -> bytes | None:
+            if entry == ignored:
+                return None
+            return original_read(root=root, entry=entry, expected=expected, max_bytes=max_bytes)
+
+        monkeypatch.setattr(execute_code_module, "_read_validated_file", read_file)
+
+    captured = execute_code_module._capture_written_files([mount], before)
+
+    assert len(captured) == 1
+    assert _decode_content_bytes(captured[0]) == b"ok"
+
+
+def test_capture_written_files_bounds_omission_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    for index in range(32):
+        (tmp_path / f"{index:02}-{'x' * 100}.bin").write_bytes(b"xxx")
+    mount = FileMount(host_path=tmp_path, mount_path="/work", mode="read-write")
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILE_BYTES", 2)
+    read_file = MagicMock(wraps=execute_code_module._read_validated_file)
+    encode = MagicMock(wraps=Content.from_data)
+    monkeypatch.setattr(execute_code_module, "_read_validated_file", read_file)
+    monkeypatch.setattr(Content, "from_data", encode)
+
+    captured = execute_code_module._capture_written_files([mount], {})
+
+    assert len(captured) == 1
+    assert captured[0].type == "text"
+    assert "omitted" in (captured[0].text or "")
+    assert len(captured[0].text or "") < 200
+    read_file.assert_not_called()
+    encode.assert_not_called()
+
+
+def test_capture_written_files_resets_budgets_between_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    (tmp_path / "first.bin").write_bytes(b"ok")
+    (tmp_path / "second.bin").write_bytes(b"no")
+    mount = FileMount(host_path=tmp_path, mount_path="/work", mode="read-write")
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILES", 1)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_TOTAL_BYTES", 2)
+
+    for _ in range(2):
+        captured = execute_code_module._capture_written_files([mount], {})
+        assert len(captured) == 2
+        assert _decode_content_bytes(captured[0]) == b"ok"
+        assert captured[1].type == "text"
 
 
 def _create_junction_or_skip(*, link: Path, target: Path) -> None:
@@ -1325,6 +1550,101 @@ def test_capture_written_files_does_not_follow_parent_link_swapped_in_after_vali
     assert not any(item.type == "data" for item in captured)
 
 
+@pytest.mark.parametrize("limit_kind", ["per-file", "total"])
+def test_capture_written_files_rejects_growth_before_opening(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    limit_kind: str,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    artifact = tmp_path / "a-growing.bin"
+    artifact.write_bytes(b"xxxx")
+    (tmp_path / "z-safe.bin").write_bytes(b"ok")
+    mount = FileMount(host_path=tmp_path, mount_path="/work", mode="read-write")
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILES", 1)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILE_BYTES", 5 if limit_kind == "per-file" else 8)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_TOTAL_BYTES", 5 if limit_kind == "total" else 8)
+
+    def grow() -> None:
+        artifact.write_bytes(b"x" * 6)
+
+    _swap_after_first_validation(monkeypatch, grow)
+    open_reader = MagicMock(wraps=os.fdopen)
+    close = MagicMock(wraps=os.close)
+    encode = MagicMock(wraps=Content.from_data)
+    monkeypatch.setattr(os, "fdopen", open_reader)
+    monkeypatch.setattr(os, "close", close)
+    monkeypatch.setattr(Content, "from_data", encode)
+
+    captured = execute_code_module._capture_written_files([mount], {})
+
+    assert len(captured) == 2
+    assert _decode_content_bytes(captured[0]) == b"ok"
+    assert captured[1].type == "text"
+    assert open_reader.call_count == 1
+    assert close.call_count == 2
+    assert encode.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("initial_size", "grown_size", "safe_size", "total_limit", "expected_sizes", "omitted"),
+    [
+        (4, 0, 8, 8, [0, 8], False),
+        (4, 5, 4, 8, [5], True),
+        (4, 8, 1, 8, [8], True),
+        (4, 9, 4, 8, [4], True),
+        (0, 1, 0, 0, [0], True),
+    ],
+)
+def test_capture_written_files_bounds_reads_and_charges_actual_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    initial_size: int,
+    grown_size: int,
+    safe_size: int,
+    total_limit: int,
+    expected_sizes: list[int],
+    omitted: bool,
+) -> None:
+    from agent_framework_monty import FileMount
+
+    artifact = tmp_path / "a-growing.bin"
+    artifact.write_bytes(b"x" * initial_size)
+    (tmp_path / "z-safe.bin").write_bytes(b"s" * safe_size)
+    mount = FileMount(host_path=tmp_path, mount_path="/work", mode="read-write")
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_FILE_BYTES", 8)
+    monkeypatch.setattr(execute_code_module, "MAX_CAPTURED_TOTAL_BYTES", total_limit)
+    original_fdopen = os.fdopen
+    readers: list[MagicMock] = []
+
+    @contextmanager
+    def growing_reader(fd: int, mode: str, *, closefd: bool) -> Generator[MagicMock]:
+        if not readers:
+            artifact.write_bytes(b"g" * grown_size)
+        with original_fdopen(fd, mode, closefd=closefd) as handle:
+            reader = MagicMock(wraps=handle)
+            readers.append(reader)
+            yield reader
+
+    read_file = MagicMock(wraps=execute_code_module._read_validated_file)
+    encode = MagicMock(wraps=Content.from_data)
+    monkeypatch.setattr(os, "fdopen", growing_reader)
+    monkeypatch.setattr(execute_code_module, "_read_validated_file", read_file)
+    monkeypatch.setattr(Content, "from_data", encode)
+
+    captured = execute_code_module._capture_written_files([mount], {})
+    data_items = [item for item in captured if item.type == "data"]
+    text_items = [item for item in captured if item.type == "text"]
+
+    assert [len(_decode_content_bytes(item)) for item in data_items] == expected_sizes
+    assert len(text_items) == int(omitted)
+    assert encode.call_count == len(expected_sizes)
+    assert len(readers) == read_file.call_count
+    for reader, call in zip(readers, read_file.call_args_list, strict=True):
+        reader.read.assert_called_once_with(call.kwargs["max_bytes"] + 1)
+
+
 # ---------------------------------------------------------------------------
 # MontyCodeActProvider tests
 # ---------------------------------------------------------------------------
@@ -1426,8 +1746,48 @@ def test_generate_type_stubs_emits_dsl_and_tool_signatures() -> None:
     stubs = bridge_module.generate_type_stubs({"custom": custom})
 
     assert "async def call_tool(name: str, **kwargs: Any) -> Any:" in stubs
-    assert "async def custom(x: int, y: str = ...) -> bool:" in stubs
+    assert "async def custom(*, x: int, y: str = ...) -> bool:" in stubs
     assert "when_any" not in stubs
+
+
+def test_generate_type_stubs_declares_every_parameter_keyword_only() -> None:
+    def positional_or_keyword(tenant_id: str | None = None, limit: int = 1000) -> int:
+        return limit
+
+    def keyword_only(*, tenant_id: str | None = None) -> int:
+        return 0
+
+    def no_parameters() -> int:
+        return 0
+
+    stubs = bridge_module.generate_type_stubs({
+        "positional_or_keyword": positional_or_keyword,
+        "keyword_only": keyword_only,
+        "no_parameters": no_parameters,
+    })
+
+    assert "async def positional_or_keyword(*, tenant_id: str | None = ..., limit: int = ...) -> int:" in stubs
+    assert "async def keyword_only(*, tenant_id: str | None = ...) -> int:" in stubs
+    # A tool without parameters keeps an empty parameter list.
+    assert "async def no_parameters() -> int:" in stubs
+
+
+def test_generate_type_stubs_omits_parameters_guest_code_cannot_supply() -> None:
+    def wrapper(query: str, *args: int, **kwargs: Any) -> str:
+        return query
+
+    def with_context(query: str, ctx: FunctionInvocationContext) -> str:
+        return query
+
+    stubs = bridge_module.generate_type_stubs(
+        {"wrapper": wrapper, "with_context": with_context},
+        accepted_parameters={"with_context": ["query"]},
+    )
+
+    # ``*args`` and ``**kwargs`` are never declared, with or without an accepted-parameter list.
+    assert "async def wrapper(*, query: str) -> str:" in stubs
+    # Parameters outside the accepted list, such as an injected context, are left out.
+    assert "async def with_context(*, query: str) -> str:" in stubs
 
 
 def test_generate_type_stubs_preserves_none_and_optional() -> None:
@@ -1451,11 +1811,11 @@ def test_generate_type_stubs_preserves_none_and_optional() -> None:
     })
 
     # ``None`` return must round-trip as None, not Any.
-    assert "async def nullable_return(x: int) -> None:" in stubs
+    assert "async def nullable_return(*, x: int) -> None:" in stubs
     # ``Optional[X]`` is ``Union[X, None]`` at runtime; preserve None.
-    assert "async def optional_param(x: int | None = ...) -> bool:" in stubs
+    assert "async def optional_param(*, x: int | None = ...) -> bool:" in stubs
     # Multi-arm union with None.
-    assert "async def union_param(x: int | str | None) -> str:" in stubs
+    assert "async def union_param(*, x: int | str | None) -> str:" in stubs
 
 
 def test_generate_type_stubs_skips_non_identifier_tool_names() -> None:
@@ -1483,7 +1843,7 @@ def test_generate_type_stubs_skips_non_identifier_tool_names() -> None:
         "normal": normal,
     })
 
-    assert "async def normal(x: int) -> int:" in stubs
+    assert "async def normal(*, x: int) -> int:" in stubs
     assert "weird-name" not in stubs
     assert "injected" not in stubs
     assert "async def async(" not in stubs
@@ -1565,7 +1925,10 @@ async def test_concurrent_tool_callbacks_share_registered_invocation_limit() -> 
     results = await asyncio.gather(*(bridge._invoke_tool(index, "limited", {}) for index, bridge in enumerate(bridges)))
 
     assert sum(payload == {"return_value": 42} for _, payload in results) == 1
-    assert sum(payload.get("exc_type") == "ToolException" for _, payload in results) == 7
+    assert (
+        sum(payload == {"exc_type": "RuntimeError", "message": "Host tool execution failed."} for _, payload in results)
+        == 7
+    )
     assert limited.invocation_count == 1
 
 
@@ -1622,6 +1985,126 @@ async def test_provider_runs_share_registered_tool_invocation_limit() -> None:
         if run_index == 0:
             assert payload == {"return_value": 42}
         else:
-            assert payload["exc_type"] == "ToolException"
-            assert "maximum invocation limit" in payload["message"]
+            assert payload == {"exc_type": "RuntimeError", "message": "Host tool execution failed."}
         assert limited.invocation_count == 1
+
+
+def test_run_snapshot_does_not_repeat_unchanged_fides_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=annotated_tool)
+
+    caplog.clear()
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+        codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." not in caplog.text
+
+
+def test_run_snapshot_warns_when_fides_metadata_keys_change(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=annotated_tool)
+    assert annotated_tool.additional_properties is not None
+    annotated_tool.additional_properties["confidentiality"] = "private"
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert codeact.get_tools()[0] is annotated_tool
+
+
+def test_run_snapshot_warns_when_fides_metadata_value_changes(caplog: pytest.LogCaptureFixture) -> None:
+    @tool(additional_properties={"source_integrity": "trusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=annotated_tool)
+    assert annotated_tool.additional_properties is not None
+
+    caplog.clear()
+    annotated_tool.additional_properties["source_integrity"] = "untrusted"
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        run_tool = codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert run_tool.get_tools()[0] is annotated_tool
+
+
+def test_fides_warning_cache_pruned_on_tool_removal() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=first)
+    assert any(obj is first for obj, _ in codeact._fides_warned_metadata)
+
+    codeact.remove_tool(first.name)
+
+    assert not any(obj is first for obj, _ in codeact._fides_warned_metadata)
+
+
+def test_fides_warning_cache_pruned_on_clear() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=first)
+    codeact.clear_tools()
+
+    assert codeact._fides_warned_metadata == []
+
+
+def test_fides_warning_cache_pruned_on_replacement() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=first)
+
+    @tool(
+        name=first.name,
+        additional_properties={"source_integrity": "trusted"},
+    )
+    def replacement(value: int) -> int:
+        return value
+
+    codeact.add_tools(replacement)
+
+    assert not any(obj is first for obj, _ in codeact._fides_warned_metadata)
+    assert any(obj is replacement for obj, _ in codeact._fides_warned_metadata)
+
+
+def test_fides_metadata_change_warns_once_across_run_snapshots(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "trusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=annotated_tool)
+    assert annotated_tool.additional_properties is not None
+
+    annotated_tool.additional_properties["source_integrity"] = "untrusted"
+    caplog.clear()
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+        codeact.create_run_tool()
+
+    warnings = [
+        record for record in caplog.records if "FIDES is not supported with CodeAct providers." in record.getMessage()
+    ]
+    assert len(warnings) == 1

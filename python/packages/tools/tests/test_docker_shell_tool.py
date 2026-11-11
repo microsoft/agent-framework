@@ -14,12 +14,13 @@ import asyncio
 import json
 import subprocess
 import sys
-from collections.abc import Sequence
-from typing import TypeAlias
+from collections.abc import Callable, Iterable, Sequence
+from typing import TypeAlias, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import agent_framework_tools.shell._docker as docker_module
 from agent_framework_tools._feature_usage import FeatureIndex
 from agent_framework_tools.shell import (
     DockerNotAvailableError,
@@ -30,9 +31,27 @@ from agent_framework_tools.shell import (
     is_docker_available,
 )
 from agent_framework_tools.shell._docker import build_exec_argv, build_run_argv
+from agent_framework_tools.shell._resolve import resolve_executable
 
 _CommunicateOutcome: TypeAlias = tuple[bytes, bytes] | BaseException
 _WaitOutcome: TypeAlias = int | None | BaseException
+_FakeWindowsHost: TypeAlias = Callable[[str, Iterable[str]], None]
+
+_RUNTIME_DIR = r"C:\Runtimes"
+_DOCKER_EXE = rf"{_RUNTIME_DIR}\docker.exe"
+_CREATE_PROCESS = "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec"
+
+
+@pytest.fixture(autouse=True)
+def _pin_runtime_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the launch tests independent of the container runtimes installed on the host."""
+    monkeypatch.setattr(docker_module, "resolve_executable", lambda name: name)
+
+
+@pytest.fixture
+def real_runtime_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use the real executable lookup for tests that check how the runtime is resolved."""
+    monkeypatch.setattr(docker_module, "resolve_executable", resolve_executable)
 
 
 class _FakeProcess:
@@ -46,11 +65,23 @@ class _FakeProcess:
     ) -> None:
         self.pid = pid
         self.returncode = returncode
-        self.stdout = object()
-        self.stderr = object()
+        self._transport = MagicMock(spec=asyncio.SubprocessTransport)
+        self.stdout_transport = MagicMock(spec=asyncio.ReadTransport)
+        self.stderr_transport = MagicMock(spec=asyncio.ReadTransport)
+        self._transport.get_pipe_transport.side_effect = {1: self.stdout_transport, 2: self.stderr_transport}.get
+        self.stdout = asyncio.StreamReader()
+        self.stderr = asyncio.StreamReader()
         self.killed = False
         self._communicate_results = list(communicate_results or [(b"", b"")])
-        self._wait_results = list(wait_results or [returncode])
+        first = self._communicate_results[0]
+        self._wait_results = list(
+            wait_results or ([first, returncode] if isinstance(first, BaseException) else [returncode])
+        )
+        output = next((item for item in self._communicate_results if isinstance(item, tuple)), (b"", b""))
+        self.stdout.feed_data(output[0])
+        self.stderr.feed_data(output[1])
+        self.stdout.feed_eof()
+        self.stderr.feed_eof()
 
     async def communicate(self) -> tuple[bytes, bytes]:
         result = self._communicate_results.pop(0)
@@ -60,7 +91,7 @@ class _FakeProcess:
         return stdout, stderr
 
     async def wait(self) -> int | None:
-        result = self._wait_results.pop(0)
+        result = self._wait_results.pop(0) if self._wait_results else self.returncode
         if isinstance(result, BaseException):
             raise result
         self.returncode = result
@@ -309,7 +340,7 @@ async def test_start_and_close_are_noops_in_stateless_mode() -> None:
 
 
 async def test_start_creates_and_reuses_persistent_session() -> None:
-    tool = DockerShellTool(docker_binary="podman", shell="sh")
+    tool = DockerShellTool(docker_binary="podman", shell="sh", max_stdout_bytes=1024, max_stderr_bytes=2048)
     session = AsyncMock()
 
     with (
@@ -324,7 +355,8 @@ async def test_start_creates_and_reuses_persistent_session() -> None:
         ["podman", "exec", "-i", tool._container_name, "sh"],
         workdir=None,
         env=None,
-        max_output_bytes=tool._max_output_bytes,
+        max_stdout_bytes=1024,
+        max_stderr_bytes=2048,
     )
     assert session.start.await_count == 2
 
@@ -436,6 +468,125 @@ async def test_run_stateless_builds_expected_argv() -> None:
     assert result.stderr == "warning\n"
     assert result.exit_code == 3
     assert result.timed_out is False
+
+
+@pytest.mark.parametrize(("max_stdout_bytes", "max_stderr_bytes"), [(17, 33), (33, 17)])
+async def test_docker_stateless_bounds_both_host_output_buffers(
+    max_stdout_bytes: int, max_stderr_bytes: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_framework_tools.shell._truncate import _OutputBuffer, truncate_head_tail
+
+    append = _OutputBuffer.append
+    observed: list[int] = []
+
+    def checked_append(self: _OutputBuffer, data: bytes) -> None:
+        append(self, data)
+        retained = len(self._head) + len(self._tail)
+        assert self._cap in (max_stdout_bytes, max_stderr_bytes)
+        assert retained <= self._cap
+        observed.append(retained)
+
+    monkeypatch.setattr(_OutputBuffer, "append", checked_append)
+    tool = DockerShellTool(mode="stateless", max_stdout_bytes=max_stdout_bytes, max_stderr_bytes=max_stderr_bytes)
+    proc = _FakeProcess(communicate_results=[(b"a" * 65536, b"b" * 65536)])
+    with patch("agent_framework_tools.shell._docker.asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        result = await tool.run("unused")
+    assert result.truncated and result.exit_code == 0
+    assert result.stdout == truncate_head_tail(b"a" * 65536, max_stdout_bytes)[0]
+    assert result.stderr == truncate_head_tail(b"b" * 65536, max_stderr_bytes)[0]
+    assert observed
+
+
+@pytest.mark.parametrize("failure", ["cancel", "reader"])
+async def test_docker_stateless_failure_stops_container_and_local_client(failure: str) -> None:
+    tool = DockerShellTool(mode="stateless")
+    proc = _FakeProcess(returncode=None)
+    killer = _FakeProcess()
+    waiting = asyncio.Event()
+
+    async def wait() -> int:
+        waiting.set()
+        await asyncio.Event().wait()
+        return 0
+
+    if failure == "reader":
+        proc.stderr.set_exception(OSError("pipe failed"))
+    with (
+        patch.object(proc, "wait", wait),
+        patch(
+            "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec",
+            AsyncMock(side_effect=[proc, killer]),
+        ) as create_process,
+    ):
+        task = asyncio.create_task(tool.run("unused", timeout=5))
+        await waiting.wait()
+        if failure == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(OSError, match="pipe failed"):
+                await task
+    assert proc.killed
+    proc.stdout_transport.close.assert_called()
+    proc.stderr_transport.close.assert_called()
+    assert create_process.await_count == 2
+    assert create_process.await_args_list[1].args[1:4] == ("kill", "--signal", "KILL")
+
+
+@pytest.mark.parametrize("cap", [0, -1])
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_docker_rejects_invalid_output_limit_before_execution(cap: int, stream: str) -> None:
+    with pytest.raises(ValueError, match=f"max_{stream}_bytes must be positive"):
+        DockerShellTool(
+            max_stdout_bytes=cap if stream == "stdout" else 1024,
+            max_stderr_bytes=cap if stream == "stderr" else 1024,
+        )
+
+
+async def test_docker_cleanup_reader_failure_stops_cleanup_process() -> None:
+    tool = DockerShellTool(mode="stateless")
+    proc = _FakeProcess(returncode=None, wait_results=[asyncio.TimeoutError()])
+    killer = _FakeProcess(returncode=1)
+    reaper = _FakeProcess(returncode=None)
+    reaper.stderr.set_exception(OSError("cleanup pipe failed"))
+    with (
+        patch(
+            "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec",
+            AsyncMock(side_effect=[proc, killer, reaper]),
+        ),
+        pytest.raises(OSError, match="cleanup pipe failed"),
+    ):
+        await tool.run("unused", timeout=5)
+    assert reaper.killed and proc.killed
+
+
+@pytest.mark.parametrize("cleanup_command", ["kill", "rm"])
+async def test_docker_cancellation_stops_cleanup_process(cleanup_command: str) -> None:
+    tool = DockerShellTool(mode="stateless")
+    proc = _FakeProcess(returncode=None, wait_results=[asyncio.TimeoutError()])
+    cleanup = _FakeProcess(returncode=None)
+    waiting = asyncio.Event()
+
+    async def wait() -> int:
+        waiting.set()
+        await asyncio.Event().wait()
+        return 0
+
+    processes = [proc, cleanup] if cleanup_command == "kill" else [proc, _FakeProcess(returncode=1), cleanup]
+    with (
+        patch.object(cleanup, "wait", wait),
+        patch(
+            "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec",
+            AsyncMock(side_effect=processes),
+        ),
+    ):
+        task = asyncio.create_task(tool.run("unused", timeout=5))
+        await waiting.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert cleanup.killed and proc.killed
 
 
 async def test_run_stateless_places_unsafe_extra_args_after_isolation_defaults() -> None:
@@ -584,6 +735,145 @@ async def test_as_function_surfaces_command_errors() -> None:
 
     assert result == "blocked"
     assert "persistent session" in function.description
+
+
+# --------------------------------------------------------------------- executable lookup
+
+
+async def test_persistent_lifecycle_launches_only_the_qualified_runtime_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(f".;{_RUNTIME_DIR}", {_DOCKER_EXE, r".\docker.exe", "docker.exe"})
+    tool = DockerShellTool()
+    started = _FakeProcess(returncode=0, communicate_results=[(b"abcdef123456\n", b"")])
+    stopped = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+
+    with (
+        patch(_CREATE_PROCESS, AsyncMock(side_effect=[started, stopped])) as create_proc,
+        patch("agent_framework_tools.shell._docker.ShellSession", return_value=AsyncMock()) as shell_session,
+    ):
+        await tool.start()
+        await tool.close()
+
+    assert [call.args[:2] for call in create_proc.await_args_list] == [(_DOCKER_EXE, "run"), (_DOCKER_EXE, "rm")]
+    assert shell_session.call_args.args[0][:2] == [_DOCKER_EXE, "exec"]
+
+
+async def test_stateless_run_launches_the_qualified_runtime_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(f".;{_RUNTIME_DIR}", {_DOCKER_EXE, r".\docker.exe", "docker.exe"})
+    tool = DockerShellTool(mode="stateless")
+    proc = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+
+    with patch(_CREATE_PROCESS, AsyncMock(return_value=proc)) as create_proc:
+        await tool._run_stateless("echo hi", timeout=5.0)
+
+    assert create_proc.await_args is not None
+    assert create_proc.await_args.args[:2] == (_DOCKER_EXE, "run")
+
+
+async def test_stateless_cleanup_launches_the_qualified_runtime_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(f".;{_RUNTIME_DIR}", {_DOCKER_EXE, r".\docker.exe", "docker.exe"})
+    tool = DockerShellTool(mode="stateless")
+    victim = _FakeProcess(returncode=None)
+    killer = _FakeProcess(returncode=1)
+    reaper = _FakeProcess(returncode=0)
+
+    with patch(_CREATE_PROCESS, AsyncMock(side_effect=[killer, reaper])) as create_proc:
+        await tool._terminate_stateless(cast(asyncio.subprocess.Process, victim), "af-shell-test")
+
+    assert [call.args[:2] for call in create_proc.await_args_list] == [(_DOCKER_EXE, "kill"), (_DOCKER_EXE, "rm")]
+    assert victim.killed
+
+
+async def test_launch_is_refused_when_the_runtime_exists_only_in_the_current_directory_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(f".;{_RUNTIME_DIR}", {r".\docker.exe", "docker.exe"})
+    persistent = DockerShellTool()
+    stateless = DockerShellTool(mode="stateless")
+
+    with patch(_CREATE_PROCESS, AsyncMock()) as create_proc:
+        with pytest.raises(FileNotFoundError, match="'docker'"):
+            await persistent.start()
+        with pytest.raises(FileNotFoundError, match="'docker'"):
+            await stateless.run("echo hi")
+
+    create_proc.assert_not_awaited()
+
+
+async def test_container_is_stopped_with_the_runtime_that_started_it_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(_RUNTIME_DIR, {_DOCKER_EXE})
+    tool = DockerShellTool()
+    started = _FakeProcess(returncode=0, communicate_results=[(b"abcdef123456\n", b"")])
+    stopped = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+
+    with (
+        patch(_CREATE_PROCESS, AsyncMock(side_effect=[started, stopped])) as create_proc,
+        patch("agent_framework_tools.shell._docker.ShellSession", return_value=AsyncMock()),
+    ):
+        await tool.start()
+        fake_windows_host(r"C:\Other", {r"C:\Other\docker.exe"})
+        await tool.close()
+
+    assert [call.args[0] for call in create_proc.await_args_list] == [_DOCKER_EXE, _DOCKER_EXE]
+
+
+async def test_explicit_runtime_path_is_launched_unchanged_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(_RUNTIME_DIR, {_DOCKER_EXE})
+    tool = DockerShellTool(mode="stateless", docker_binary=r"C:\Custom\podman.exe")
+    proc = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+
+    with patch(_CREATE_PROCESS, AsyncMock(return_value=proc)) as create_proc:
+        await tool._run_stateless("echo hi", timeout=5.0)
+
+    assert create_proc.await_args is not None
+    assert create_proc.await_args.args[0] == r"C:\Custom\podman.exe"
+
+
+async def test_run_stateless_uses_the_configured_binary_unchanged_on_other_platforms(
+    real_runtime_lookup: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = DockerShellTool(mode="stateless", docker_binary="podman")
+    proc = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    with patch(_CREATE_PROCESS, AsyncMock(return_value=proc)) as create_proc:
+        await tool._run_stateless("echo hi", timeout=5.0)
+
+    assert create_proc.await_args is not None
+    assert create_proc.await_args.args[0] == "podman"
+
+
+def test_is_docker_available_uses_the_qualified_runtime_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_windows_host(f".;{_RUNTIME_DIR}", {_DOCKER_EXE, r".\docker.exe", "docker.exe"})
+    monkeypatch.setattr(docker_module.shutil, "which", lambda name: name)
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"27.0.1\n", stderr=b"")
+
+    with patch("agent_framework_tools.shell._docker.subprocess.run", return_value=completed) as run:
+        assert is_docker_available() is True
+
+    assert run.call_args.args[0][0] == _DOCKER_EXE
+
+
+def test_is_docker_available_is_false_when_the_runtime_exists_only_in_the_current_directory_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(f".;{_RUNTIME_DIR}", {r".\docker.exe", "docker.exe"})
+
+    with patch("agent_framework_tools.shell._docker.subprocess.run") as run:
+        assert is_docker_available() is False
+
+    run.assert_not_called()
 
 
 # --------------------------------------------------------------------- integration

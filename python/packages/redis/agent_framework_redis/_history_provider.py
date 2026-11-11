@@ -11,19 +11,105 @@ from __future__ import annotations
 import json
 import warnings
 from collections.abc import Awaitable, Sequence
+from copy import copy
 from inspect import isawaitable
 from typing import Any, ClassVar, Literal, TypeVar, cast
 
 import redis.asyncio as redis
 from agent_framework import Message
+from agent_framework._compaction import (
+    _approval_request_identity,  # pyright: ignore[reportPrivateUsage]
+    _unambiguous_approval_pairs,  # pyright: ignore[reportPrivateUsage]
+    group_messages,
+)
 from agent_framework._filesystem import _storage_key_segment  # pyright: ignore[reportPrivateUsage]
 from agent_framework._sessions import HistoryProvider, filter_new_messages
 from agent_framework._telemetry import mark_feature_used
 from redis.credentials import CredentialProvider
+from redis.exceptions import WatchError
 
 from ._feature_usage import FeatureIndex
 
 _T = TypeVar("_T")
+
+# Optimistic-concurrency retries for a single ``save_messages`` call. Each retry recomputes the
+# trim boundary against the key state after a competing writer modified it (WATCH conflict).
+_SAVE_WATCH_RETRIES = 8
+
+
+def _has_unfinished_approval(messages: Sequence[Message]) -> bool:
+    """Return whether an approval group still lacks at least one response."""
+    request_identities = {
+        identity
+        for message in messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+        if (identity := _approval_request_identity(content)) is not None
+    }
+    paired_request_count = len(_unambiguous_approval_pairs(messages))
+    return len(request_identities) > paired_request_count
+
+
+def _trim_start_index(messages: Sequence[Message], max_messages: int) -> int:
+    """Return the oldest index whose retained suffix contains only complete core groups.
+
+    The raw count boundary advances past every group that crosses it, including linked
+    non-contiguous spans. Advancing can cross another linked group, so repeat until the
+    boundary is stable. A group larger than the limit is dropped rather than split.
+    Pending approval groups are retained whole across saves until their responses arrive,
+    even when that temporarily exceeds the limit.
+    """
+    count = len(messages)
+    if count <= max_messages:
+        return 0
+
+    # group_messages assigns missing message ids to form stable group ids. Shallow
+    # copies isolate that top-level mutation without copying the message contents.
+    spans = group_messages([copy(message) for message in messages])
+    group_bounds: dict[str, list[int]] = {}
+    group_members: dict[str, list[Message]] = {}
+    for span in spans:
+        group_id = str(span["group_id"])
+        start_index = int(span["start_index"])
+        end_index = int(span["end_index"])
+        bounds = group_bounds.setdefault(group_id, [start_index, end_index])
+        bounds[0] = min(bounds[0], start_index)
+        bounds[1] = max(bounds[1], end_index)
+        group_members.setdefault(group_id, []).extend(messages[start_index : end_index + 1])
+
+    start = count - max_messages
+    pending_starts = [
+        group_bounds[group_id][0] for group_id, members in group_members.items() if _has_unfinished_approval(members)
+    ]
+    boundary_limit = count
+    if pending_starts:
+        # A pending approval may need its original declaration on a later save.
+        # Retain the whole suffix containing it, including any overlapping groups.
+        protected_start = min(pending_starts)
+        while True:
+            next_start = min(
+                (
+                    group_start
+                    for group_start, group_end in group_bounds.values()
+                    if group_start < protected_start <= group_end
+                ),
+                default=protected_start,
+            )
+            if next_start == protected_start:
+                break
+            protected_start = next_start
+        start = min(start, protected_start)
+        boundary_limit = protected_start
+
+    while start < boundary_limit:
+        next_start = start
+        for group_start, group_end in group_bounds.values():
+            if group_start < start <= group_end:
+                next_start = max(next_start, group_end + 1)
+        if next_start == start:
+            break
+        start = next_start
+    return start
 
 
 async def _redis_result(value: Awaitable[_T] | _T) -> _T:
@@ -95,16 +181,21 @@ class RedisHistoryProvider(HistoryProvider):
         Args:
             source_id: Unique identifier for this provider instance.
             redis_url: Redis connection URL (e.g., "redis://localhost:6379").
-                Mutually exclusive with credential_provider and redis_client.
+                Ignored when redis_client is supplied. Mutually exclusive with credential_provider.
             credential_provider: Redis credential provider for Azure AD authentication.
-                Requires host parameter. Mutually exclusive with redis_url and redis_client.
-            host: Redis host name. Required when using credential_provider.
-            port: Redis port number. Defaults to 6380 (Azure Redis SSL port).
-            ssl: Enable SSL/TLS connection. Defaults to True.
-            username: Redis username.
+                Requires host parameter. Ignored when redis_client is supplied.
+                Mutually exclusive with redis_url.
+            host: Redis host name. Required when credential_provider is used to build a client.
+            port: Redis port number. Defaults to 6380 (Azure Redis SSL port). Used only when
+                the provider builds a client.
+            ssl: Enable SSL/TLS connection. Defaults to True. Used only when the provider
+                builds a client.
+            username: Redis username. Used only when the provider builds a client.
             redis_client: Borrowed standalone async Redis client configured with
-                ``decode_responses=True``. The caller owns its lifetime. Mutually exclusive
-                with redis_url and credential_provider.
+                ``decode_responses=True``. The caller owns its lifetime and ``aclose`` leaves
+                it open. It takes precedence over redis_url, credential_provider and the
+                individual connection settings, which are ignored rather than treated as a
+                conflict, matching the Redis vector stores.
             key_prefix: Base prefix for Redis keys. Scoped mode appends independently encoded
                 tenant, application, agent, provider source, and session segments.
                 Defaults to 'chat_messages'.
@@ -130,7 +221,7 @@ class RedisHistoryProvider(HistoryProvider):
         Raises:
             TypeError: If redis_client is not a standalone async Redis client.
             ValueError: If no Redis connection source is provided.
-            ValueError: If more than one Redis connection source is provided.
+            ValueError: If both redis_url and credential_provider are provided.
             ValueError: If credential_provider is used without host parameter.
             ValueError: If redis_client does not use decoded string responses.
             ValueError: If max_messages is negative.
@@ -145,19 +236,26 @@ class RedisHistoryProvider(HistoryProvider):
             store_context_from=store_context_from,
         )
 
-        connection_sources = sum(source is not None for source in (redis_client, redis_url, credential_provider))
-        if connection_sources == 0:
-            raise ValueError("Either redis_client, redis_url, or credential_provider must be provided")
-        if connection_sources > 1:
-            raise ValueError("redis_client, redis_url, and credential_provider are mutually exclusive")
-        if credential_provider is not None and host is None:
-            raise ValueError("host is required when using credential_provider")
         if redis_client is not None:
+            # A caller-owned client is the connection. redis_url, credential_provider and the
+            # individual connection settings describe how to build one, so supplying them
+            # alongside it is redundant rather than conflicting, and none of them is
+            # validated. Only what the provider needs of the client itself still has to
+            # hold; its lifetime stays with the caller. This is the precedence the Redis
+            # vector stores already apply in _create_client.
             if not isinstance(redis_client, redis.Redis):
                 raise TypeError("Redis history providers require a standalone redis.asyncio.Redis client")
             connection_kwargs = cast(dict[str, Any], redis_client.connection_pool.connection_kwargs)  # pyright: ignore[reportUnknownMemberType]
             if not connection_kwargs.get("decode_responses", False):
                 raise ValueError("Redis history providers require decode_responses=True")
+        else:
+            connection_sources = sum(source is not None for source in (redis_url, credential_provider))
+            if connection_sources == 0:
+                raise ValueError("Either redis_client, redis_url, or credential_provider must be provided")
+            if connection_sources > 1:
+                raise ValueError("redis_url and credential_provider are mutually exclusive")
+            if credential_provider is not None and host is None:
+                raise ValueError("host is required when using credential_provider")
         if max_messages is not None and max_messages < 0:
             raise ValueError("max_messages must be None (unlimited) or a non-negative integer")
         if key_format not in ("scoped", "legacy"):
@@ -185,7 +283,9 @@ class RedisHistoryProvider(HistoryProvider):
         self.agent_id = agent_id
         self.key_format = key_format
         self.max_messages = max_messages
-        self.redis_url = redis_url
+        # Recorded as the source the provider actually used: a URL passed alongside an
+        # injected client is ignored, so reporting it would claim a connection never made.
+        self.redis_url = redis_url if redis_client is None else None
         self._owns_client = redis_client is None
 
         if redis_client is not None:
@@ -302,23 +402,53 @@ class RedisHistoryProvider(HistoryProvider):
             # history is what clear() is for.
             return
 
-        existing_messages = await self.get_messages(session_id, state=state, **kwargs)
-        new_messages = filter_new_messages(existing_messages, messages)
+        # Retention trims the oldest messages, and the cut must not split a tool call/result pair.
+        # Read, append, and trim are guarded by WATCH so a concurrent save to the same key cannot
+        # make this one trim from a stale absolute index and delete the whole session history: if
+        # the key changed under us, the transaction aborts and we recompute against the new state.
+        last_conflict: WatchError | None = None
+        for _ in range(_SAVE_WATCH_RETRIES):
+            async with self._redis_client.pipeline(transaction=True) as pipe:
+                await _redis_result(pipe.watch(key))
+                # Read through the pipeline's own reserved connection. `WATCH` has
+                # already pinned it, and going back out through the parent client would
+                # need a second one: a borrowed client with `max_connections=1` would
+                # then fail every non-empty save.
+                watched = cast("list[str]", await _redis_result(cast("Any", pipe).lrange(key, 0, -1)))
+                existing_messages = [Message.from_dict(self._deserialize_json(row)) for row in watched]
+                new_messages = filter_new_messages(existing_messages, messages)
+                if not new_messages:
+                    await _redis_result(pipe.unwatch())
+                    return
 
-        if not new_messages:
-            return
+                serialized_messages = [self._serialize_json(msg) for msg in new_messages]
+                # ``existing_messages`` plus ``new_messages`` is exactly the list being written
+                # (existing entries followed by the appended ones), so its indices line up with the
+                # Redis list we are about to trim.
+                full_messages: list[Message] = list(existing_messages) + list(new_messages)
+                trim_start = -1
+                if self.max_messages is not None and len(full_messages) > self.max_messages:
+                    trim_start = _trim_start_index(full_messages, self.max_messages)
 
-        serialized_messages = [self._serialize_json(msg) for msg in new_messages]
-
-        async with self._redis_client.pipeline(transaction=True) as pipe:
-            for serialized in serialized_messages:
-                await _redis_result(pipe.rpush(key, serialized))
-            await pipe.execute()
-
-        if self.max_messages is not None:
-            current_count: int = await _redis_result(self._redis_client.llen(key))
-            if current_count > self.max_messages:
-                await _redis_result(self._redis_client.ltrim(key, -self.max_messages, -1))
+                pipe.multi()
+                for serialized in serialized_messages:
+                    await _redis_result(pipe.rpush(key, serialized))
+                if trim_start >= 0:
+                    await _redis_result(pipe.ltrim(key, trim_start, -1))
+                try:
+                    await pipe.execute()
+                except WatchError as exc:
+                    # The key changed between WATCH and EXEC. Recompute against the new state.
+                    last_conflict = exc
+                    continue
+                return
+        # Every attempt aborted. Falling off the end would report success while
+        # nothing was persisted, so surface the conflict that defeated the last one.
+        raise (
+            last_conflict
+            if last_conflict is not None
+            else RuntimeError(f"Redis history save for {key!r} did not persist after {_SAVE_WATCH_RETRIES} attempts")
+        )
 
     @staticmethod
     def _serialize_json(message: Message) -> str:

@@ -42,7 +42,9 @@ builder.Services.AddSingleton<IHttpContextAccessor>(httpContextAccessor);
 var projectEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4";
-var pythonExecutable = Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON") ?? "python3";
+var pythonExecutable = Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON")
+    ?? throw new InvalidOperationException(
+        "Set LOCAL_CODEACT_PYTHON to the fully qualified path of a trusted Python interpreter.");
 var purviewClientAppId = Environment.GetEnvironmentVariable("PURVIEW_CLIENT_APP_ID");
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in
@@ -78,14 +80,11 @@ await using ClawAgentBuild build = await ClawAgentFactory.CreateAsync(new ClawAg
 });
 
 // AddFoundryResponses wires up the Responses API host for the agent and auto-applies OpenTelemetry.
-builder.Services.AddFoundryResponses(build.Agent);
+builder.AddFoundryResponses(build.Agent);
 
 var app = builder.Build();
 
 // Map the hosted-agent endpoint that live Foundry calls.
 app.MapFoundryResponses();
-
-// Contributor-only: map the per-agent OpenAI route shape for local debugging. Not used in production.
-app.MapDevTemporaryLocalAgentEndpoint();
 
 app.Run();

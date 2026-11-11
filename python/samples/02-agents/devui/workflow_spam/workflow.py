@@ -17,7 +17,7 @@ Workflow Steps:
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Never
 
 from agent_framework import (
     Case,
@@ -29,7 +29,6 @@ from agent_framework import (
     response_handler,
 )
 from pydantic import BaseModel, Field
-from typing_extensions import Never
 
 
 # Define response model with clear user guidance

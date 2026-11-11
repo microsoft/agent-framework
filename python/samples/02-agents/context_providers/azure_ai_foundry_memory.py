@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 
 from agent_framework import Agent, InMemoryHistoryProvider
-from agent_framework.foundry import FoundryChatClient, FoundryMemoryProvider
+from agent_framework.foundry import FoundryChatClient, FoundryChatOptions, FoundryMemoryProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     MemoryStoreDefaultDefinition,
@@ -87,7 +87,7 @@ async def main() -> None:
         )
 
         # Create an agent with the memory context provider
-        async with Agent(
+        async with Agent[FoundryChatOptions](
             name="MemoryAgent",
             client=client,
             instructions="""You are a helpful assistant that remembers past conversations.

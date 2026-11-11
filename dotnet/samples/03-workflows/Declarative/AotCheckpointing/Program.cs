@@ -37,7 +37,7 @@ internal sealed class Program
 
         Workflow CreateWorkflow()
         {
-            AzureAgentProvider agentProvider = new(foundryEndpoint, new AzureCliCredential());
+            FoundryAgentProvider agentProvider = new(foundryEndpoint, new AzureCliCredential());
             DeclarativeWorkflowOptions options = new(agentProvider) { Configuration = configuration };
             string workflowPath = Path.Combine(AppContext.BaseDirectory, "AotCheckpointing.yaml");
             return DeclarativeWorkflowBuilder.Build<WorkflowInput>(workflowPath, options, TransformInput);

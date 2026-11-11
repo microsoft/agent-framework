@@ -214,7 +214,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
     public async ValueTask SendMessageAsync(string sourceId, object message, string? targetId = null, CancellationToken cancellationToken = default)
     {
-        using Activity? activity = this._workflow.TelemetryContext.StartMessageSendActivity(sourceId, targetId, message);
+        using Activity? activity = this._workflow.TelemetryContext.StartMessageSendActivity(sourceId, targetId);
 
         // Create a carrier for trace context propagation
         var traceContext = activity is null ? null : new Dictionary<string, string>();
@@ -402,7 +402,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
     }
 
-    internal async Task NotifyCheckpointLoadedAsync(CancellationToken cancellationToken = default)
+    internal async Task NotifyCheckpointLoadedAsync(Checkpoint checkpoint, CancellationToken cancellationToken = default)
     {
         this.CheckEnded();
 
@@ -427,7 +427,17 @@ internal sealed class InProcessRunnerContext : IRunnerContext
             restorationTasks.Add(RestoreStateAsync(executor, callbacks));
         }
         // Shared state must finish restoring before any subclass post-load hook runs.
-        await Task.WhenAll(restorationTasks).ConfigureAwait(false);
+        try
+        {
+            await Task.WhenAll(restorationTasks).ConfigureAwait(false);
+            await this.StateManager.PublishUpdatesAsync(tracer: null).ConfigureAwait(false);
+        }
+        catch
+        {
+            // All callbacks have completed; discard failed writes before any post-load hooks run.
+            await this.StateManager.RollbackStateAsync(checkpoint).ConfigureAwait(false);
+            throw;
+        }
         await Task.WhenAll(executors.Select(InvokeCheckpointRestoredAsync)).ConfigureAwait(false);
 
         async Task RestoreStateAsync(Executor executor, List<Func<IWorkflowContext, CancellationToken, ValueTask>> callbacks)

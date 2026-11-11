@@ -14,10 +14,6 @@ cmd = "ruff check"
 help = "Run Pyright for this package."
 cmd = "pyright"
 
-[tool.poe.tasks.publish]
-help = "Publish this package with uv."
-cmd = "uv publish"
-
 [tool.poe.tasks.clean-dist]
 help = "Remove generated dist artifacts for this package."
 cmd = "rm -rf dist"

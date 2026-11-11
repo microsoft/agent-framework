@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from mcp import MCPError, types
@@ -333,7 +333,8 @@ async def test_mcp_tools_call_second_connection_loss_log_respects_sensitive_data
             MCPError(-32000, f"session terminated: {private_error_detail}"),
         ]
     )
-    tool.connect = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    tool._reconnect_without_loading = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    tool._tools_loaded = tool._prompts_loaded = True
 
     span_exporter.clear()
     with (
@@ -456,7 +457,8 @@ def test_mcp_stdio_tool_with_command_and_supplied_session_preserves_pipe_transpo
 def test_mcp_http_tool_transport_attributes():
     """MCPStreamableHTTPTool should have tcp transport and URL-based server address/port."""
     tool = MCPStreamableHTTPTool(name="test", url="https://api.example.com:8443/mcp")
-    attrs = tool._mcp_base_span_attributes()
+    with patch.dict("sys.modules", {"httpx": None}):
+        attrs = tool._mcp_base_span_attributes()
     assert attrs[OtelAttr.NETWORK_TRANSPORT] == "tcp"
     assert attrs[OtelAttr.NETWORK_PROTOCOL_NAME] == "http"
     assert attrs[OtelAttr.ADDRESS] == "api.example.com"

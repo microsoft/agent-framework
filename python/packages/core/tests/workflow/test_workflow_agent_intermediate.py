@@ -12,9 +12,9 @@ Covers:
 from __future__ import annotations
 
 import warnings
+from typing import Never
 
 import pytest
-from typing_extensions import Never
 
 from agent_framework import (
     AgentResponse,

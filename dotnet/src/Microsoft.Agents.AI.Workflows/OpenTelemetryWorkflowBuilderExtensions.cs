@@ -18,7 +18,7 @@ public static class OpenTelemetryWorkflowBuilderExtensions
     /// <param name="builder">The <see cref="WorkflowBuilder"/> to which OpenTelemetry support will be added.</param>
     /// <param name="configure">
     /// An optional callback that provides additional configuration of the <see cref="WorkflowTelemetryOptions"/> instance.
-    /// This allows for fine-tuning telemetry behavior such as enabling sensitive data collection.
+    /// This allows for fine-tuning telemetry behavior such as disabling individual activity types.
     /// </param>
     /// <param name="activitySource">
     /// An optional <see cref="ActivitySource"/> to use for telemetry. If provided, this activity source will be used
@@ -46,7 +46,7 @@ public static class OpenTelemetryWorkflowBuilderExtensions
     /// <code>
     /// var workflow = new WorkflowBuilder(startExecutor)
     ///     .AddEdge(executor1, executor2)
-    ///     .WithOpenTelemetry(cfg => cfg.EnableSensitiveData = true)
+    ///     .WithOpenTelemetry()
     ///     .Build();
     /// </code>
     /// </example>

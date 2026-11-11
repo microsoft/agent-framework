@@ -42,15 +42,20 @@ AIAgent agent = workflow.AsAIAgent(
     includeWorkflowOutputsInResponse: true);
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent, configure: options => options.ResilientBackground = true);
+// Repository builds use the unreleased direct-options API; source ZIPs target published 1.27.
+#if USE_LOCAL_AGENT_FRAMEWORK_SOURCE
+builder.AddFoundryResponses(
+    agent,
+    options: new FoundryResponsesServerOptions { ResilientBackground = true });
+#else
+builder.AddFoundryResponses(
+    agent,
+    configure: options => options.ResilientBackground = true);
+#endif
 
 var app = builder.Build();
 app.MapFoundryResponses();
 Task? requestedShutdown = null;
-if (app.Environment.IsDevelopment())
-{
-    app.MapFoundryResponses("openai/v1");
-}
 
 // This configuration is for local development demonstration purposes only.
 // When hosted in Foundry the lifetime of the agent process is managed and shutdowns are handled gracefully.

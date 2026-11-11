@@ -37,17 +37,23 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
 
     private readonly CodeExecutor _executor;
     private readonly LocalCodeActApprovalMode _approvalMode;
+    private readonly bool _includeDetailedErrors;
 
     private readonly ConcurrentDictionary<string, AIFunction> _tools = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, FileMount> _fileMounts = new(StringComparer.Ordinal);
     private volatile bool _disposed;
 
     /// <summary>Initializes a new instance of the <see cref="LocalCodeActProvider"/> class.</summary>
-    /// <param name="pythonExecutablePath">Path to the Python interpreter used for execution and validation.</param>
+    /// <param name="pythonExecutablePath">
+    /// Fully qualified path to the Python interpreter used for execution and validation.
+    /// The file must exist in a trusted location.
+    /// </param>
     /// <param name="options">Optional provider configuration.</param>
+    /// <exception cref="ArgumentException">The interpreter path is empty or is not fully qualified.</exception>
+    /// <exception cref="System.IO.FileNotFoundException">The interpreter file does not exist.</exception>
     public LocalCodeActProvider(string pythonExecutablePath, LocalCodeActProviderOptions? options = null)
     {
-        _ = Throw.IfNullOrWhitespace(pythonExecutablePath);
+        PythonExecutablePath.Validate(pythonExecutablePath);
         options ??= new LocalCodeActProviderOptions();
 
         var limits = options.ExecutionLimits ?? new ProcessExecutionLimits();
@@ -68,6 +74,7 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
         }
 
         this._approvalMode = options.ApprovalMode;
+        this._includeDetailedErrors = options.IncludeDetailedErrors;
 
         this._executor = new CodeExecutor(
             pythonExecutablePath,
@@ -190,7 +197,8 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
         this.ThrowIfDisposed();
         snapshot = new CodeExecutor.RunSnapshot(
             this._tools.Values.ToList(),
-            this._fileMounts.Values.ToList());
+            this._fileMounts.Values.ToList(),
+            this._includeDetailedErrors);
 
         FeatureUsageMarker.MarkUsed();
         var approvalRequired = ComputeApprovalRequired(this._approvalMode, snapshot.Tools);

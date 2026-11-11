@@ -313,10 +313,22 @@ async def test_client_ownership(definition):
     ):
         pass
     client.close.assert_not_awaited()
-    async with QdrantStore(async_client=client, managed_client=True) as owner:
-        pass
+    async with QdrantStore(async_client=client, url="https://ignored.example", managed_client=True) as owner:
+        assert owner.async_client is client
+        assert not owner.managed_client
     await owner.aclose()
-    client.close.assert_awaited_once()
+    async with QdrantCollection(
+        dict,
+        definition=definition,
+        collection_name="test",
+        async_client=client,
+        api_key="ignored-key",
+        managed_client=True,
+    ) as injected:
+        assert injected.async_client is client
+        assert not injected.managed_client
+    await injected.aclose()
+    client.close.assert_not_awaited()
     client.reset_mock()
     with patch("agent_framework_qdrant._vector_store.AsyncQdrantClient", return_value=client):
         async with QdrantCollection(
@@ -364,24 +376,32 @@ async def test_api_key_unwrapped_at_sdk_boundary(
 
 
 @pytest.mark.parametrize("route", ["collection", "store"])
-@pytest.mark.parametrize("api_key", [SecretString("test-api-key"), SecretString("")])
-def test_api_key_rejected_with_supplied_client(definition, route: str, api_key: SecretString):
+@pytest.mark.parametrize("api_key", [SecretString("test-api-key"), SecretString(""), "plain-key", ""])
+async def test_api_key_ignored_with_supplied_client(definition, route: str, api_key: SecretString | str):
     client = AsyncMock(spec=AsyncQdrantClient)
     with (
         patch("agent_framework_qdrant._vector_store.AsyncQdrantClient") as factory,
-        pytest.raises(ValueError, match="connection settings"),
+        patch("agent_framework_qdrant._vector_store.load_settings") as loader,
     ):
+        connector: QdrantCollection | QdrantStore
         if route == "collection":
-            QdrantCollection(
+            connector = QdrantCollection(
                 dict,
                 definition=definition,
                 collection_name="test",
                 async_client=client,
                 api_key=api_key,
+                managed_client=True,
             )
+            assert connector.definition is definition
         else:
-            QdrantStore(async_client=client, api_key=api_key)
+            connector = QdrantStore(async_client=client, api_key=api_key, managed_client=True)
+        assert connector.async_client is client
+        assert not connector.managed_client
+        await connector.aclose()
     factory.assert_not_called()
+    loader.assert_not_called()
+    client.close.assert_not_awaited()
 
 
 async def test_failed_and_partial_batches(definition, record):
@@ -402,18 +422,21 @@ async def test_failed_and_partial_batches(definition, record):
 
 
 async def test_local_filters_rejected_even_on_empty_collection(definition):
-    async with QdrantCollection(
-        dict,
-        definition=definition,
-        collection_name="test",
-        async_client=AsyncQdrantClient(":memory:"),
-        managed_client=True,
-    ) as collection:
-        await collection.ensure_collection_exists()
-        with pytest.raises(NotImplementedError, match="server"):
-            await collection.get(filter=Filter("text", "eq", "hi"))
-        with pytest.raises(NotImplementedError, match="server"):
-            await collection.search(vector=[1, 0, 0], filter=Filter("integer", "eq", 1))
+    client = AsyncQdrantClient(":memory:")
+    try:
+        async with QdrantCollection(
+            dict,
+            definition=definition,
+            collection_name="test",
+            async_client=client,
+        ) as collection:
+            await collection.ensure_collection_exists()
+            with pytest.raises(NotImplementedError, match="server"):
+                await collection.get(filter=Filter("text", "eq", "hi"))
+            with pytest.raises(NotImplementedError, match="server"):
+                await collection.search(vector=[1, 0, 0], filter=Filter("integer", "eq", 1))
+    finally:
+        await client.close()
 
 
 @pytest.mark.parametrize("init_options", [{}, {"location": ":memory:"}, {"path": "local-storage"}])
@@ -486,12 +509,23 @@ async def test_unsupported_options_and_schema(definition):
         await collection.get(order_by={"integer": True})
     with pytest.raises(ValueError, match="finite"):
         await collection.search(vector=[1, 0, 0], score_threshold=math.nan)
-    with pytest.raises(ValueError, match="connection settings"):
-        QdrantStore(async_client=client, url="http://localhost")
-    with pytest.raises(ValueError, match="connection settings"):
-        QdrantCollection(
-            dict, definition=definition, collection_name="test", async_client=client, url="http://localhost"
-        )
+    store = QdrantStore(async_client=client, url="http://localhost", managed_client=True)
+    assert store.async_client is client
+    assert not store.managed_client
+    injected = QdrantCollection(
+        dict, definition=definition, collection_name="test", async_client=client, url="http://localhost"
+    )
+    assert injected.async_client is client
+    assert injected.collection_name == "test"
+
+
+def test_invalid_collection_arguments_do_not_create_client():
+    with (
+        patch("agent_framework_qdrant._vector_store.AsyncQdrantClient") as factory,
+        pytest.raises(ValueError, match="VectorStoreCollectionDefinition"),
+    ):
+        QdrantCollection(dict, collection_name="test", url="https://qdrant.example")
+    factory.assert_not_called()
 
 
 @pytest.mark.parametrize(

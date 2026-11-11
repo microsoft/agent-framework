@@ -1,11 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Awaitable
-from typing import Any, Literal, overload
+from typing import Any, Literal, Never, overload
 
 import pytest
 from pydantic import PrivateAttr
-from typing_extensions import Never
 
 from agent_framework import (
     AgentExecutor,

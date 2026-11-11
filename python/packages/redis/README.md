@@ -18,8 +18,8 @@ records. Import them from `agent_framework.redis` or `agent_framework_redis`.
 
 ## Install
 
-Requires Python 3.10–3.14. RedisVL currently declares `Requires-Python <3.15`,
-so pip cannot install this connector on Python 3.15 yet:
+Supports Python 3.11–3.15. Python 3.15 requires RedisVL 0.31; earlier Python
+versions can use older compatible RedisVL releases:
 
 ```bash
 pip install agent-framework-redis --pre
@@ -53,6 +53,11 @@ JSON collections additionally require RedisJSON.
 Redis Search indexes require logical database 0, so vector-store URLs and clients
 must select database 0 (the default).
 
+The beta `RedisContextProvider` scope schema is not backward compatible with
+indexes created by earlier releases. Delete the old index and its context
+hashes, let the provider create a new index, and re-ingest the context data.
+Incompatible indexes fail closed; `overwrite_index=True` does not migrate them.
+
 Choose `storage_type="hash"` for non-null records with binary vector storage,
 or `"json"` for nullable fields/vectors and native JSON data. HASH rejects
 `None`, including `vector=None`; JSON preserves explicit null. Both support
@@ -67,8 +72,9 @@ with `SecretString`; use `rediss://` when your server requires TLS.
 `RedisHistoryProvider` can create its own client from a URL or credential
 provider, or borrow a standalone `redis.asyncio.Redis` client configured with
 `decode_responses=True`. A borrowed client lets the application configure
-connection policy such as bounded timeouts and health checks. It remains
-caller-owned and must not be combined with `redis_url` or `credential_provider`.
+connection policy such as bounded timeouts and health checks. It takes
+precedence over `redis_url`, `credential_provider`, and the individual
+connection settings, which are ignored, and remains caller-owned.
 Retry behavior also remains caller-controlled; transcript appends are not
 idempotent if a client replays a write after an ambiguous connection loss.
 

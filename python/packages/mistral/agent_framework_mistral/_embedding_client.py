@@ -96,7 +96,7 @@ class RawMistralEmbeddingClient(
             Can also be set via environment variable ``MISTRAL_EMBEDDING_MODEL``.
         api_key: Mistral API key. Defaults to ``MISTRAL_API_KEY`` environment variable.
         server_url: Optional server URL override. Defaults to ``MISTRAL_SERVER_URL``
-            environment variable, or the Mistral default.
+            environment variable, or the Mistral default. Ignored when a Mistral SDK ``client`` is provided.
         http_client: Optional pre-configured ``httpx.AsyncClient``. When provided, api_key is
             not required and the client is expected to carry its own auth headers and base URL.
         client: Optional pre-configured ``mistralai.client.Mistral``. Passing an HTTP client via
@@ -138,6 +138,8 @@ class RawMistralEmbeddingClient(
         if client is not None and http_client is not None:
             raise ValueError("Provide either 'client' or 'http_client', not both.")
 
+        # An injected SDK client owns its credentials and endpoint, so api_key and server_url are not required
+        # and their loaded values are ignored below.
         injected = client is not None or http_client is not None
         required_fields = ["embedding_model"] if injected else ["embedding_model", "api_key"]
         mistral_settings = load_settings(
@@ -157,8 +159,8 @@ class RawMistralEmbeddingClient(
 
         if isinstance(client, Mistral):
             self.client = client
-            if self.server_url is None:
-                self.server_url = client.sdk_configuration.get_server_details()[0]
+            # The injected SDK client sends the requests, so its endpoint wins over configured settings.
+            self.server_url = client.sdk_configuration.get_server_details()[0]
         else:
             client_kwargs: dict[str, Any] = {"timeout_ms": _DEFAULT_TIMEOUT_MS}
             if resolved_api_key := mistral_settings.get("api_key"):
@@ -293,7 +295,7 @@ class MistralEmbeddingClient(
             Can also be set via environment variable ``MISTRAL_EMBEDDING_MODEL``.
         api_key: Mistral API key. Defaults to ``MISTRAL_API_KEY`` environment variable.
         server_url: Optional server URL override. Defaults to ``MISTRAL_SERVER_URL``
-            environment variable, or the Mistral default.
+            environment variable, or the Mistral default. Ignored when a Mistral SDK ``client`` is provided.
         http_client: Optional pre-configured ``httpx.AsyncClient``.
         client: Optional pre-configured ``mistralai.client.Mistral``. Passing an HTTP client via
             this parameter remains supported but is deprecated; use ``http_client`` instead.

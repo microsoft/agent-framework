@@ -10,7 +10,7 @@ import sys
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Generic, Literal, NoReturn, cast
+from typing import Any, ClassVar, Generic, Literal, NoReturn, TypedDict, cast
 
 import httpx
 from agent_framework import (
@@ -68,10 +68,6 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # pragma: no cover
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.mistral")
 
@@ -361,7 +357,7 @@ class RawMistralChatClient(
                 Can also be set via environment variable ``MISTRAL_CHAT_MODEL``.
             api_key: Mistral API key. Defaults to ``MISTRAL_API_KEY`` environment variable.
             server_url: Optional server URL override. Defaults to ``MISTRAL_SERVER_URL``
-                environment variable, or the Mistral default.
+                environment variable, or the Mistral default. Ignored when a Mistral SDK ``client`` is provided.
             client: Optional pre-configured ``mistralai.client.Mistral``.
             http_client: Optional pre-configured ``httpx.AsyncClient``. When provided, api_key
                 is not required and the client is expected to carry its own auth headers.
@@ -387,6 +383,8 @@ class RawMistralChatClient(
         if client is not None and http_client is not None:
             raise ValueError("Provide either 'client' or 'http_client', not both.")
 
+        # An injected SDK client owns its credentials and endpoint, so api_key and server_url are not required
+        # and their loaded values are ignored below.
         mistral_settings = load_settings(
             MistralSettings,
             env_prefix="MISTRAL_",
@@ -401,11 +399,12 @@ class RawMistralChatClient(
         self.model = mistral_settings.get("chat_model")
         self.server_url = mistral_settings.get("server_url")
         self._owns_client = not isinstance(client, Mistral)
+        self._client_closed = False
 
         if isinstance(client, Mistral):
             self.client = client
-            if self.server_url is None:
-                self.server_url = client.sdk_configuration.get_server_details()[0]
+            # The injected SDK client sends the requests, so its endpoint wins over configured settings.
+            self.server_url = client.sdk_configuration.get_server_details()[0]
         else:
             client_kwargs: dict[str, Any] = {"timeout_ms": _DEFAULT_TIMEOUT_MS}
             if resolved_api_key := mistral_settings.get("api_key"):
@@ -421,11 +420,15 @@ class RawMistralChatClient(
 
         super().__init__(additional_properties=additional_properties)
 
+    @override
     async def close(self) -> None:
         """Close the internally created Mistral SDK client."""
-        if self._owns_client:
-            await self.client.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
-            self.client.__exit__(None, None, None)  # type: ignore[no-untyped-call]
+        if self._owns_client and not self._client_closed:
+            try:
+                await self.client.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
+            finally:
+                self.client.__exit__(None, None, None)  # type: ignore[no-untyped-call]
+            self._client_closed = True
 
     @override
     def service_url(self) -> str:
@@ -989,7 +992,7 @@ class MistralChatClient(
                 Can also be set via environment variable ``MISTRAL_CHAT_MODEL``.
             api_key: Mistral API key. Defaults to ``MISTRAL_API_KEY`` environment variable.
             server_url: Optional server URL override. Defaults to ``MISTRAL_SERVER_URL``
-                environment variable, or the Mistral default.
+                environment variable, or the Mistral default. Ignored when a Mistral SDK ``client`` is provided.
             client: Optional pre-configured ``mistralai.client.Mistral``.
             http_client: Optional pre-configured ``httpx.AsyncClient``. When provided, api_key
                 is not required and the client is expected to carry its own auth headers.

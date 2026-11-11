@@ -6,8 +6,8 @@ Mirrors the public API of ``HyperlightExecuteCodeTool`` for the subset that
 applies to a pure-Python interpreter (no backends to choose from). By default
 the Monty sandbox rejects OS / filesystem / network calls with
 ``PermissionError``; pass ``workspace_root`` or ``file_mounts`` to expose
-scoped host directories, and the tool will capture any files written under
-``read-write`` mounts as ``Content`` items in the response.
+scoped host directories, and the tool will capture files written under
+``read-write`` mounts as ``Content`` items within per-execution capture limits.
 """
 
 from __future__ import annotations
@@ -56,9 +56,17 @@ _FIDES_TOOL_PROPERTY_KEYS = frozenset({
 #: matching the Hyperlight default. Use ``file_mounts`` for any other path.
 WORKSPACE_MOUNT_PATH = "/input"
 
-#: Maximum bytes per captured output file. Files larger than this are skipped
-#: and a ``Content.from_text`` warning is appended in their place.
+#: Maximum bytes per captured output file. Oversized files are skipped and
+#: reported in one omission summary per execution.
 MAX_CAPTURED_FILE_BYTES = 5 * 1024 * 1024  # 5 MiB
+
+#: Maximum captured files across all read-write mounts in one execution.
+MAX_CAPTURED_FILES = 20
+
+#: Maximum raw captured bytes across all read-write mounts in one execution.
+MAX_CAPTURED_TOTAL_BYTES = 20 * 1024 * 1024  # 20 MiB
+
+_CAPTURE_OMISSION_MESSAGE = "[files omitted: capture file-count or byte limits exceeded]"
 
 EXECUTE_CODE_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -186,6 +194,40 @@ def _make_tool_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
     return partial(tool_obj.invoke, skip_parsing=True)
 
 
+def _fides_metadata_snapshot(tool_obj: FunctionTool) -> dict[str, str]:
+    """Capture FIDES metadata for compatibility-warning deduplication."""
+    properties = tool_obj.additional_properties or {}
+    return {key: repr(value) for key, value in properties.items() if key in _FIDES_TOOL_PROPERTY_KEYS}
+
+
+def _warn_unsupported_fides_tools(
+    tools: Sequence[FunctionTool],
+    warned_metadata: list[tuple[FunctionTool, dict[str, str]]],
+) -> None:
+    """Warn when newly registered or changed FIDES metadata is observed."""
+    for tool_obj in tools:
+        snapshot = _fides_metadata_snapshot(tool_obj)
+        previous = next(
+            (metadata for registered, metadata in warned_metadata if registered is tool_obj),
+            None,
+        )
+
+        if snapshot and snapshot != previous:
+            logger.warning(
+                "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
+                "through function middleware for calls made inside generated code. "
+                "Keep FIDES-dependent tools as direct agent tools.",
+                tool_obj.name,
+            )
+
+        warned_metadata[:] = [
+            (registered, metadata) for registered, metadata in warned_metadata if registered is not tool_obj
+        ]
+
+        if snapshot:
+            warned_metadata.append((tool_obj, snapshot))
+
+
 class MontyExecuteCodeTool(FunctionTool):
     """Execute Python code inside a Monty interpreter.
 
@@ -218,6 +260,11 @@ class MontyExecuteCodeTool(FunctionTool):
     All mutators (``add_tools``, ``add_file_mounts`` etc.) must be called from
     the same task/thread that owns the tool. Monty itself runs on the event
     loop, so no internal locking is needed.
+
+    Keyword Args:
+        include_detailed_errors: Include host exception types/messages and execution error details.
+            Defaults to ``False``. Enable only for a trusted channel; diagnostics can contain secrets.
+            This setting is independent of the outer client's error and sensitive-logging settings.
     """
 
     def __init__(
@@ -229,7 +276,11 @@ class MontyExecuteCodeTool(FunctionTool):
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         resource_limits: dict[str, Any] | None = None,
         tool_description_format: _ToolDescriptionFormat = "compact",
+        include_detailed_errors: bool = False,
+        _fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] | None = None,
     ) -> None:
+        if not isinstance(include_detailed_errors, bool):
+            raise TypeError("include_detailed_errors must be a bool.")
         super().__init__(
             name=EXECUTE_CODE_TOOL_NAME,
             description=EXECUTE_CODE_TOOL_DESCRIPTION,
@@ -238,10 +289,12 @@ class MontyExecuteCodeTool(FunctionTool):
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
         )
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
+        self._include_detailed_errors = include_detailed_errors
         self._tool_description_format: _NormalizedToolDescriptionFormat = _normalize_tool_description_format(
             tool_description_format
         )
         self._managed_tools: list[FunctionTool] = []
+        self._fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] = list(_fides_warned_metadata or [])
         self._workspace_root: Path | None = (
             _resolve_existing_directory(workspace_root) if workspace_root is not None else None
         )
@@ -277,16 +330,12 @@ class MontyExecuteCodeTool(FunctionTool):
         """Add Monty-side tools to this execute_code surface."""
         new_tools = _collect_tools(tools)
         self._managed_tools = _collect_tools(self._managed_tools, new_tools)
-        for tool_obj in new_tools:
-            if tool_obj.additional_properties and not _FIDES_TOOL_PROPERTY_KEYS.isdisjoint(
-                tool_obj.additional_properties
-            ):
-                logger.warning(
-                    "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
-                    "through function middleware for calls made inside generated code. "
-                    "Keep FIDES-dependent tools as direct agent tools.",
-                    tool_obj.name,
-                )
+        self._fides_warned_metadata[:] = [
+            (registered, metadata)
+            for registered, metadata in self._fides_warned_metadata
+            if any(registered is current for current in self._managed_tools)
+        ]
+        _warn_unsupported_fides_tools(new_tools, self._fides_warned_metadata)
         self._refresh_approval_mode()
 
     def get_tools(self) -> list[FunctionTool]:
@@ -299,11 +348,17 @@ class MontyExecuteCodeTool(FunctionTool):
         if len(remaining_tools) == len(self._managed_tools):
             raise KeyError(f"No managed tool named {name!r} is registered.")
         self._managed_tools = remaining_tools
+        self._fides_warned_metadata[:] = [
+            (registered, metadata)
+            for registered, metadata in self._fides_warned_metadata
+            if any(registered is current for current in remaining_tools)
+        ]
         self._refresh_approval_mode()
 
     def clear_tools(self) -> None:
         """Remove all managed Monty tools."""
         self._managed_tools = []
+        self._fides_warned_metadata.clear()
         self._refresh_approval_mode()
 
     def add_file_mounts(self, file_mounts: FileMountInput | Sequence[FileMountInput]) -> None:
@@ -357,13 +412,17 @@ class MontyExecuteCodeTool(FunctionTool):
 
     def create_run_tool(self) -> MontyExecuteCodeTool:
         """Create a run-scoped snapshot of this execute_code surface."""
+        tools = self.get_tools()
+        _warn_unsupported_fides_tools(tools, self._fides_warned_metadata)
         return MontyExecuteCodeTool(
-            tools=self.get_tools(),
+            _fides_warned_metadata=self._fides_warned_metadata,
+            tools=tools,
             approval_mode=self._default_approval_mode,
             workspace_root=self._workspace_root,
             file_mounts=list(self._file_mounts.values()) or None,
             resource_limits=self._resource_limits,
             tool_description_format=self._tool_description_format,
+            include_detailed_errors=self._include_detailed_errors,
         )
 
     def build_serializable_state(self) -> dict[str, Any]:
@@ -376,6 +435,7 @@ class MontyExecuteCodeTool(FunctionTool):
         return {
             "runtime": "monty",
             "approval_mode": approval_mode,
+            "include_detailed_errors": self._include_detailed_errors,
             "tool_names": [tool_obj.name for tool_obj in self._managed_tools],
             "tool_description_format": (
                 dict(self._tool_description_format)
@@ -440,12 +500,14 @@ class MontyExecuteCodeTool(FunctionTool):
         return mounts
 
     async def _run_code(self, *, code: str) -> list[Content]:
+        include_detailed_errors = self._include_detailed_errors
         tools = list(self._managed_tools)
         mounts = self._effective_mounts()
 
         tool_map = self._build_tool_map(tools)
         stub_map = self._build_type_stub_map(tools)
-        type_stubs = generate_type_stubs(stub_map) if stub_map else None
+        accepted_parameters = {tool_obj.name: tool_obj.parameters().get("properties", {}) for tool_obj in tools}
+        type_stubs = generate_type_stubs(stub_map, accepted_parameters=accepted_parameters) if stub_map else None
 
         # Snapshot mtimes of host files in read-write mounts so we can later
         # identify which files the sandbox actually touched.
@@ -456,6 +518,7 @@ class MontyExecuteCodeTool(FunctionTool):
             type_stubs=type_stubs,
             mounts=[_to_monty_mount(mount) for mount in mounts] or None,
             resource_limits=self._resource_limits,
+            include_detailed_errors=include_detailed_errors,
         )
 
         try:
@@ -464,7 +527,7 @@ class MontyExecuteCodeTool(FunctionTool):
             return [
                 Content.from_error(
                     message="Execution error",
-                    error_details=f"{type(exc).__name__}: {exc}",
+                    error_details=f"{type(exc).__name__}: {exc}" if include_detailed_errors else None,
                 ),
             ]
 
@@ -552,14 +615,25 @@ def _safe_capture_file_stat(*, root: Path, entry: Path) -> os.stat_result | None
     return entry_stat if stat.S_ISREG(entry_stat.st_mode) else None
 
 
-def _read_validated_file(*, root: Path, entry: Path, expected: os.stat_result) -> bytes | None:
+class _CaptureSizeLimitError(ValueError):
+    """A file exceeded its remaining capture byte allowance."""
+
+
+def _read_validated_file(
+    *,
+    root: Path,
+    entry: Path,
+    expected: os.stat_result,
+    max_bytes: int,
+) -> bytes | None:
     """Read ``entry`` through one descriptor that is checked against the validated file.
 
     ``Path.read_bytes()`` reopens the path, so a component swapped for a link or junction after
     validation would be followed. Opening first, comparing the descriptor with the validated ``lstat``
     identity, and revalidating the path afterwards rejects such a swap. Windows has no no-follow open,
     so the check is not atomic there, but an undetected swap would have to be applied, reverted, and
-    applied again around the checks. Returns ``None`` when the file changed or cannot be read safely.
+    applied again around the checks. Returns ``None`` when the file identity changed or cannot be read
+    safely. Raises ``_CaptureSizeLimitError`` if the file exceeds ``max_bytes``.
     """
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -574,8 +648,13 @@ def _read_validated_file(*, root: Path, entry: Path, expected: os.stat_result) -
         rechecked = _safe_capture_file_stat(root=root, entry=entry)
         if rechecked is None or (rechecked.st_dev, rechecked.st_ino) != identity:
             return None
+        if opened.st_size > max_bytes:
+            raise _CaptureSizeLimitError("File exceeds the capture byte limit.")
         with os.fdopen(fd, "rb", closefd=False) as handle:
-            return handle.read()
+            data = handle.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise _CaptureSizeLimitError("File grew beyond the capture byte limit.")
+        return data
     except OSError:
         return None
     finally:
@@ -614,15 +693,16 @@ def _capture_written_files(
 ) -> list[Content]:
     """Return :class:`Content` items for files the sandbox wrote during the run.
 
-    Mirrors Hyperlight's ``/output`` capture flow: any new or modified real
-    regular file under a read-write mount is read back as binary and
-    surfaced as ``Content.from_data`` with a ``path`` annotation in
-    ``additional_properties``. Links and reparse points are skipped at every
-    directory level, and each file is read through a descriptor verified
-    against the validated path, so a malicious workspace cannot trick us into
-    capturing host files outside the configured mount root.
+    New or modified real regular files under read-write mounts are surfaced as
+    ``Content.from_data`` with a ``path`` annotation in ``additional_properties``.
+    File-count and raw-byte budgets apply across all mounts, with one summary
+    for files omitted by capture limits. Links and reparse points are skipped at
+    every directory level, and bounded reads use descriptors verified against
+    the validated paths.
     """
     captured: list[Content] = []
+    total_bytes = 0
+    omitted = False
     for mount in mounts:
         if mount.mode != "read-write":
             continue
@@ -636,16 +716,19 @@ def _capture_written_files(
             current = (int(entry_stat.st_size), int(entry_stat.st_mtime_ns))
             if before.get(relative) == current:
                 continue  # Unchanged.
+            if len(captured) >= MAX_CAPTURED_FILES:
+                captured.append(Content.from_text(_CAPTURE_OMISSION_MESSAGE))
+                return captured
             sandbox_path = f"{mount.mount_path.rstrip('/')}/{relative}"
-            if entry_stat.st_size > MAX_CAPTURED_FILE_BYTES:
-                captured.append(
-                    Content.from_text(
-                        f"[file {sandbox_path} omitted: {entry_stat.st_size} bytes "
-                        f"exceeds MAX_CAPTURED_FILE_BYTES={MAX_CAPTURED_FILE_BYTES}]"
-                    )
-                )
+            max_bytes = min(MAX_CAPTURED_FILE_BYTES, MAX_CAPTURED_TOTAL_BYTES - total_bytes)
+            if entry_stat.st_size > max_bytes:
+                omitted = True
                 continue
-            data = _read_validated_file(root=host_root, entry=entry, expected=entry_stat)
+            try:
+                data = _read_validated_file(root=host_root, entry=entry, expected=entry_stat, max_bytes=max_bytes)
+            except _CaptureSizeLimitError:
+                omitted = True
+                continue
             if data is None:
                 continue
             media_type = mimetypes.guess_type(entry.name)[0] or "application/octet-stream"
@@ -656,4 +739,7 @@ def _capture_written_files(
                     additional_properties={"path": sandbox_path},
                 )
             )
+            total_bytes += len(data)
+    if omitted:
+        captured.append(Content.from_text(_CAPTURE_OMISSION_MESSAGE))
     return captured
