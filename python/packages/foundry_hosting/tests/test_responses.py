@@ -71,6 +71,8 @@ from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.models import (
     CreateResponse,
     Item,
+    ItemReferenceParam,
+    MCPApprovalResponse,
     Metadata,
     OutputItem,
     ResponseIncompleteReason,
@@ -85,10 +87,13 @@ from openai.types.responses.response_usage import ResponseUsage as OpenAIRespons
 from pydantic import TypeAdapter
 
 from agent_framework_foundry_hosting import ResponsesHostServer, ResponsesRequest
+from agent_framework_foundry_hosting._approvals import SessionApprovalState
 from agent_framework_foundry_hosting._responses_shared import (
     _INCOMPLETE_REASON_KEY,  # pyright: ignore[reportPrivateUsage]
     _LATEST_CHECKPOINT_ID_KEY,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
+    OAUTH_CONSENT_NOT_EXECUTED_RESULT,
+    OAUTH_CONSENT_REQUIRED_RESULT,
     ConsentError,
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
     _annotations_to_output_text,  # pyright: ignore[reportPrivateUsage]
@@ -109,7 +114,28 @@ from agent_framework_foundry_hosting._responses_shared import (
 from agent_framework_foundry_hosting._state_store import (
     AgentSessionStoreProvider,
     FoundryAgentSessionStore,
-    FunctionApprovalStoreProvider,
+)
+
+from .foundry_hosting.approval_helpers import SqliteSessionStore
+from .foundry_hosting.responses_host_helpers import (
+    ApprovalPublishingClient,
+    BackgroundAgentMiddleware,
+    BackgroundChatMiddleware,
+    BackgroundPollingClient,
+    GatedAgentStream,
+    GatedApprovalStore,
+    GatedClaimStore,
+    GatedRequestRead,
+    GatedSessionLoadStore,
+    StatefulConsentClient,
+    UnlayeredClient,
+    collect_host_events,
+)
+from .foundry_hosting.toolbox_consent_helpers import (
+    CONSENT_LINK,
+    BatchToolCallClient,
+    ToolboxConsentServer,
+    consent_toolbox,
 )
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
@@ -1379,6 +1405,34 @@ async def test_agent_host_prefix_preserves_response_routes(stream: bool) -> None
         assert (await client.get(f"/api/v1/responses/{response_id}")).status_code == 404
 
 
+@pytest.mark.parametrize(
+    ("prefix", "path"), [("api/v1", "/api/v1"), (" /api/v1/ ", "/api/v1"), ("//api/v1/", "//api/v1")]
+)
+async def test_prefixed_agent_background_cancel_uses_sdk_routes(prefix: str, path: str) -> None:
+    gated = GatedAgentStream()
+    agent = _make_agent()
+    agent.run = MagicMock(side_effect=lambda **kwargs: ResponseStream(gated.updates()))
+    server = _make_server(agent, prefix=prefix)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        created = await client.post(
+            f"http://test{path}/responses", json={"input": "wait", "store": True, "background": True}
+        )
+        assert created.status_code == 200, created.text
+        response_id = created.json()["id"]
+        await asyncio.wait_for(gated.started.wait(), 2)
+        cancelled = await client.post(f"http://test{path}/responses/{response_id}/cancel")
+        assert cancelled.status_code == 200, cancelled.text
+        await asyncio.wait_for(gated.stopped.wait(), 2)
+        for _ in range(150):
+            fetched = await client.get(f"http://test{path}/responses/{response_id}")
+            if fetched.status_code == 200 and fetched.json()["status"] == "cancelled":
+                break
+            await asyncio.sleep(0.01)
+        assert fetched.status_code == 200, fetched.text
+        assert fetched.json()["status"] == "cancelled"
+        assert "too late" not in fetched.text
+
+
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("metadata", [None, {}, {"foo": "bar", "view": "concise"}])
 async def test_request_metadata_is_returned_and_stored(stream: bool, metadata: dict[str, str] | None) -> None:
@@ -1628,11 +1682,12 @@ class TestResponsesHostServerInit:
     )
     def test_removed_host_setting_fails_before_sdk_or_agent_mutation(self, name: str) -> None:
         agent = _make_agent()
+        kwargs: dict[str, Any] = {name: None}
         with (
             patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize,
             pytest.raises(TypeError, match=name),
         ):
-            ResponsesHostServer(agent, **{name: None})
+            ResponsesHostServer(agent, **kwargs)
         initialize.assert_not_called()
         assert agent.context_providers == []
         assert agent.default_options == {}
@@ -1673,9 +1728,7 @@ class TestResponsesHostServerInit:
 
     @pytest.mark.parametrize("env", [None, "0", "3"])
     @pytest.mark.parametrize("explicit", [None, 5])
-    def test_heartbeat_precedence(
-        self, monkeypatch: pytest.MonkeyPatch, env: str | None, explicit: int | None
-    ) -> None:
+    def test_heartbeat_precedence(self, monkeypatch: pytest.MonkeyPatch, env: str | None, explicit: int | None) -> None:
         if env is None:
             monkeypatch.delenv("SSE_KEEPALIVE_INTERVAL", raising=False)
         else:
@@ -1739,10 +1792,7 @@ class TestResponsesHostServerInit:
             server._session_storage_provider,  # pyright: ignore[reportPrivateUsage]
             AgentSessionStoreProvider,
         )
-        assert isinstance(
-            server._function_approval_storage_provider,  # pyright: ignore[reportPrivateUsage]
-            FunctionApprovalStoreProvider,
-        )
+        assert not hasattr(server, "_function_approval_storage_provider")
 
     def test_init_rejects_history_provider_with_load_messages(self) -> None:
 
@@ -1980,6 +2030,181 @@ class TestResponsesHostServerInit:
         assert "Cannot find an existing agent session for previous_response_id=response-missing." in error["message"]
         agent.run.assert_not_called()
         agent.create_session.assert_not_called()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("kind", ["agent", "chat"])
+    @pytest.mark.parametrize("nested", [False, True])
+    @pytest.mark.parametrize("in_kwargs", [False, True])
+    async def test_middleware_cannot_enable_provider_background_on_foreground(
+        self, stream: bool, kind: str, nested: bool, in_kwargs: bool
+    ) -> None:
+        client = StatefulConsentClient(["tool"])
+        middleware = (
+            BackgroundAgentMiddleware(nested=nested, in_kwargs=in_kwargs)
+            if kind == "agent"
+            else BackgroundChatMiddleware(nested=nested, in_kwargs=in_kwargs)
+        )
+        agent = Agent(client=client, middleware=[middleware])
+        server = _make_server(agent, history_source="inference_service")
+
+        response = await _post(server, stream=stream)
+
+        assert response.status_code == 200
+        if stream:
+            assert "response.failed" in _sse_event_types(_parse_sse_events(response.text))
+        else:
+            assert response.json()["status"] == "failed"
+        assert client.calls == []
+
+    @pytest.mark.parametrize("kind", ["agent", "chat"])
+    @pytest.mark.parametrize("nested", [False, True])
+    @pytest.mark.parametrize("in_kwargs", [False, True])
+    async def test_middleware_cannot_disable_selected_provider_background(
+        self, kind: str, nested: bool, in_kwargs: bool
+    ) -> None:
+        client = StatefulConsentClient(["tool"])
+        middleware = (
+            BackgroundAgentMiddleware(nested=nested, value=False, in_kwargs=in_kwargs)
+            if kind == "agent"
+            else BackgroundChatMiddleware(nested=nested, value=False, in_kwargs=in_kwargs)
+        )
+        agent = Agent(client=client, middleware=[middleware])
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            history_source="inference_service",
+            background_source="inference_service",
+        )
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert any(isinstance(event, Mapping) and event.get("type") == "response.failed" for event in events)
+        assert client.calls == []
+
+    @pytest.mark.parametrize("kind", ["agent", "chat"])
+    @pytest.mark.parametrize("in_kwargs", [False, True])
+    async def test_middleware_cannot_disable_provider_background_on_poll(self, kind: str, in_kwargs: bool) -> None:
+        client = BackgroundPollingClient()
+        middleware = (
+            BackgroundAgentMiddleware(nested=False, value=False, in_kwargs=in_kwargs, on_poll=True)
+            if kind == "agent"
+            else BackgroundChatMiddleware(nested=False, value=False, in_kwargs=in_kwargs, on_poll=True)
+        )
+        agent = Agent(client=client, middleware=[middleware])
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            history_source="inference_service",
+            background_source="inference_service",
+        )
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
+        ):
+            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert any(isinstance(event, Mapping) and event.get("type") == "response.failed" for event in events)
+        assert len(client.calls) == 1
+        assert client.calls[0]["background"] is True
+        assert agent.middleware == [middleware]
+        assert not client.chat_middleware
+
+    async def test_provider_background_guard_allows_submit_and_poll_without_mutating_agent(self) -> None:
+        client = BackgroundPollingClient()
+        agent = Agent(client=client)
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            history_source="inference_service",
+            background_source="inference_service",
+        )
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
+        ):
+            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert any(isinstance(event, Mapping) and event.get("type") == "response.completed" for event in events)
+        assert [call["background"] for call in client.calls] == [True, True]
+        assert client.calls[1]["continuation_token"] == {"response_id": "provider-token"}
+        assert not agent.middleware
+        assert not client.chat_middleware
+
+    @pytest.mark.parametrize("provider_background", [False, True])
+    async def test_raw_agent_client_chat_middleware_cannot_override_background(self, provider_background: bool) -> None:
+        client = StatefulConsentClient(["tool"])
+        middleware = BackgroundChatMiddleware(nested=False, value=not provider_background)
+        client.chat_middleware.append(middleware)
+        agent = RawAgent(client=client)
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            history_source="inference_service",
+            background_source="inference_service" if provider_background else "host_managed",
+        )
+        request = CreateResponse(input="hello", store=True, background=provider_background)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert any(isinstance(event, Mapping) and event.get("type") == "response.failed" for event in events)
+        assert client.calls == []
+        assert client.chat_middleware == [middleware]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_middleware_failure_after_approval_claim_does_not_restore_authority(
+        self, stream: bool, tmp_path: Path
+    ) -> None:
+        client = ApprovalPublishingClient(_make_function_approval_request_content())
+        agent = Agent(client=client, middleware=[])
+        server = _make_server(agent, session_store=SqliteSessionStore(tmp_path / "middleware-approval.sqlite"))
+        first = await _post(server)
+        approval_id = next(item["id"] for item in first.json()["output"] if item["type"] == "mcp_approval_request")
+        agent.middleware = [BackgroundAgentMiddleware(nested=False)]
+        payload = {
+            "input": [{"type": "mcp_approval_response", "approval_request_id": approval_id, "approve": True}],
+            "previous_response_id": first.json()["id"],
+            "stream": stream,
+        }
+
+        rejected = await _post_json(server, payload)
+
+        assert rejected.status_code == 200
+        if stream:
+            assert "response.failed" in _sse_event_types(_parse_sse_events(rejected.text))
+        else:
+            assert rejected.json()["status"] == "failed"
+        assert client.calls == 1
+        replay = await _post_json(server, payload)
+        assert replay.status_code == 400
+        assert client.calls == 1
+
+    @pytest.mark.parametrize("provider_background", [False, True])
+    @pytest.mark.parametrize("layered_agent", [False, True])
+    async def test_unlayered_clients_receive_no_middleware_kwarg(
+        self, provider_background: bool, layered_agent: bool
+    ) -> None:
+        client = UnlayeredClient()
+        agent = Agent(client=client) if layered_agent else RawAgent(client=client)
+        server = _make_server(
+            agent,
+            history_source="inference_service",
+            background_source="inference_service" if provider_background else "host_managed",
+        )
+        request = CreateResponse(input="hello", store=True, background=provider_background)
+        context = ResponseContext(response_id="unlayered-response", mode_flags=MagicMock())
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert any(isinstance(event, Mapping) and event.get("type") == "response.completed" for event in events)
+        assert client.kwargs
+        assert all("middleware" not in kwargs for kwargs in client.kwargs)
 
 
 # endregion
@@ -2277,8 +2502,8 @@ class TestAgentSessionPersistence:
             },
         )
 
-        assert invalid.json()["status"] == "failed"
-        assert "unknown-approval" in invalid.json()["error"]["message"]
+        assert invalid.status_code == 400
+        assert "No pending approval batch" in invalid.json()["error"]["message"]
         parent = await store.get(parent_id)
         assert parent is not None and "_foundry_service_child" not in parent.state
         assert len(client.calls) == 1
@@ -2318,8 +2543,6 @@ class TestAgentSessionPersistence:
         agent = Agent(client=client, default_options=OpenAIChatOptions(store=True))
         store = SessionStore()
         server = _make_server(agent, session_store=store, history_source=mode)
-        approvals = MagicMock(spec=FunctionApprovalStoreProvider)
-        server._function_approval_storage_provider = approvals  # pyright: ignore[reportPrivateUsage]
 
         response = await _post_json(server, {"input": "one shot", "store": False, "model": "test-model"})
 
@@ -2330,7 +2553,6 @@ class TestAgentSessionPersistence:
         assert agent.default_options["store"] is True
         provider = cast(MagicMock, server._session_storage_provider)  # pyright: ignore[reportPrivateUsage]
         provider.get_store.assert_not_called()
-        approvals.get_store.assert_not_called()
 
     async def test_store_false_rejects_external_history_and_custom_agent(self) -> None:
         history = _PerServiceCallHistoryProvider()
@@ -8267,10 +8489,11 @@ class TestFunctionApprovalRoundTrip:
         `function_approval_response` content delivered to the agent.
     """
 
-    async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
+    async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self, tmp_path: Path) -> None:
         request_content = _make_function_approval_request_content()
         agent = _make_agent(response=AgentResponse(messages=[Message(role="assistant", contents=[request_content])]))
-        server = _make_server(agent)
+        store = SqliteSessionStore(tmp_path / "approvals.sqlite")
+        server = _make_server(agent, session_store=store)
 
         resp = await _post(server, stream=False)
 
@@ -8284,15 +8507,17 @@ class TestFunctionApprovalRoundTrip:
         assert approval_items[0]["server_label"] == "my_server"
 
         # Storage must contain a saved entry under the emitted request id.
-        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config, platform_context=get_request_context()
-        ).load_approval_request(approval_request_id)
+        session = await store.get(body["id"])
+        assert session is not None
+        loaded = await SessionApprovalState(session, store).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert loaded.function_call is not None
         assert loaded.function_call.name == "delete_file"
 
     @pytest.mark.parametrize("with_preamble", [False, True])
-    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self, with_preamble: bool) -> None:
+    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(
+        self, with_preamble: bool, tmp_path: Path
+    ) -> None:
         request_content = _make_function_approval_request_content(request_id="apr_streaming")
         updates: list[AgentResponseUpdate] = []
         preambles = ("Checking the refund policy.", "The refund requires approval.")
@@ -8319,7 +8544,8 @@ class TestFunctionApprovalRoundTrip:
                     )
         updates.append(AgentResponseUpdate(contents=[request_content], role="assistant"))
         agent = _make_agent(stream_updates=updates)
-        server = _make_server(agent)
+        store = SqliteSessionStore(tmp_path / "approvals.sqlite")
+        server = _make_server(agent, session_store=store)
 
         resp = await _post(server, stream=True)
 
@@ -8344,12 +8570,13 @@ class TestFunctionApprovalRoundTrip:
                 break
         assert approval_request_id is not None
 
-        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config, platform_context=get_request_context()
-        ).load_approval_request(approval_request_id)
+        response_id = next(e["data"]["response"]["id"] for e in events if e["event"] == "response.completed")
+        session = await store.get(response_id)
+        assert session is not None
+        loaded = await SessionApprovalState(session, store).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
 
-    async def test_round_trip_approval_response_reaches_agent(self) -> None:
+    async def test_round_trip_approval_response_reaches_agent(self, tmp_path: Path) -> None:
         """Two-turn: turn 1 emits an approval request; turn 2 sends an
         approval response and the agent receives a `function_approval_response`."""
         request_content = _make_function_approval_request_content()
@@ -8360,7 +8587,7 @@ class TestFunctionApprovalRoundTrip:
                 AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])]),
             ]
         )
-        server = _make_server(agent)
+        server = _make_server(agent, session_store=SqliteSessionStore(tmp_path / "approvals.sqlite"))
 
         first = await _post(server, stream=False)
         assert first.status_code == 200
@@ -8380,6 +8607,7 @@ class TestFunctionApprovalRoundTrip:
                 }
             ],
             "stream": False,
+            "previous_response_id": first_body["id"],
         }
         second = await _post_json(server, second_payload)
         assert second.status_code == 200
@@ -8395,7 +8623,7 @@ class TestFunctionApprovalRoundTrip:
         assert approval_responses[0].approved is True
         assert approval_responses[0].function_call.name == "delete_file"
 
-    async def test_round_trip_approval_response_rejected(self) -> None:
+    async def test_round_trip_approval_response_rejected(self, tmp_path: Path) -> None:
         """Same as above but the user rejects the approval; the agent must
         receive `approved=False`."""
         request_content = _make_function_approval_request_content()
@@ -8406,7 +8634,7 @@ class TestFunctionApprovalRoundTrip:
                 AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
             ]
         )
-        server = _make_server(agent)
+        server = _make_server(agent, session_store=SqliteSessionStore(tmp_path / "approvals.sqlite"))
 
         first = await _post(server, stream=False)
         approval_request_id = next(
@@ -8425,6 +8653,7 @@ class TestFunctionApprovalRoundTrip:
                     }
                 ],
                 "stream": False,
+                "previous_response_id": first.json()["id"],
             },
         )
         assert second.status_code == 200
@@ -8437,9 +8666,7 @@ class TestFunctionApprovalRoundTrip:
         assert approval_responses[0].approved is False
 
     async def test_approval_response_referencing_unknown_id_fails(self) -> None:
-        """Sending an `mcp_approval_response` for a request id that was
-        never persisted must surface as a ``response.failed`` event whose
-        ``error.message`` contains the missing approval request id."""
+        """A response without pending session authority is rejected before execution."""
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])])
         )
@@ -8459,15 +8686,411 @@ class TestFunctionApprovalRoundTrip:
                 "stream": False,
             },
         )
-        # The handler converts the underlying KeyError into a terminal
-        # ``response.failed`` event, so non-streaming callers see HTTP 200
-        # with status="failed" and a meaningful error message rather than
-        # a generic 5xx response.
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "failed"
-        error: dict[str, Any] = body.get("error") or {}
-        assert "apr_unknown" in (error.get("message") or "")
+        assert resp.status_code == 400
+        agent.run.assert_not_called()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_invalid_batches_are_rejected_before_headers_without_consuming_authority(
+        self, stream: bool, tmp_path: Path
+    ) -> None:
+        requests = [
+            _make_function_approval_request_content(request_id=f"request-{index}", call_id=f"call-{index}")
+            for index in range(2)
+        ]
+        agent = _make_multi_response_agent([
+            AgentResponse(messages=[Message(role="assistant", contents=requests)]),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])]),
+        ])
+        store = SqliteSessionStore(tmp_path / "approvals.sqlite")
+        response_store = InMemoryResponseProvider()
+        server = _make_server(agent, session_store=store, response_store=response_store)
+        first = await _post(server)
+        assert first.status_code == 200
+        previous_id = first.json()["id"]
+        approval_ids = [item["id"] for item in first.json()["output"] if item["type"] == "mcp_approval_request"]
+        assert len(approval_ids) == 2
+        decisions = [
+            MCPApprovalResponse(type="mcp_approval_response", approval_request_id=approval_id, approve=index == 0)
+            for index, approval_id in enumerate(approval_ids)
+        ]
+        assert (await response_store.get_items([approval_ids[0]]))[0] is not None
+        invalid_inputs: list[Any] = [
+            decisions[:1],
+            [decisions[0], decisions[0]],
+            [decisions[0], {**decisions[1], "approval_request_id": "foreign"}],
+            "continue",
+            [*decisions, {"type": "message", "role": "user", "content": "extra"}],
+            [*decisions, {"type": "item_reference", "id": approval_ids[0]}],
+            [*decisions, {"type": "item_reference", "id": "missing-item"}],
+            [{"type": "item_reference", "id": "missing-item"}],
+        ]
+        for invalid_input in invalid_inputs:
+            response = await _post_json(
+                server,
+                {"input": invalid_input, "previous_response_id": previous_id, "stream": stream},
+            )
+            assert response.status_code == 400, response.text
+            assert response.headers["content-type"].startswith("application/json")
+            assert response.headers["x-platform-error-source"] == "user"
+            assert "response.created" not in response.text
+            assert agent.run.call_count == 1
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+            for id_in_header in (True, False):
+                for invalid_input in (decisions[:1], [decisions[0], decisions[0]]):
+                    payload = {"input": invalid_input, "previous_response_id": previous_id, "stream": stream}
+                    headers = {"x-agent-response-id": previous_id} if id_in_header else {}
+                    if not id_in_header:
+                        payload["response_id"] = previous_id
+                    redelivery = await client.post("/responses", headers=headers, json=payload)
+                    assert redelivery.status_code == 400
+                    assert redelivery.headers["content-type"].startswith("application/json")
+                    assert "response.created" not in redelivery.text
+                    assert agent.run.call_count == 1
+
+        rejected_store = await _post_json(
+            server,
+            {"input": decisions, "previous_response_id": previous_id, "stream": stream, "store": False},
+        )
+        assert rejected_store.status_code == 400, rejected_store.text
+        assert rejected_store.headers["content-type"].startswith("application/json")
+        assert agent.run.call_count == 1
+
+        direct_request = CreateResponse(
+            input=[*decisions, ItemReferenceParam(type="item_reference", id="missing-item")],
+            previous_response_id=previous_id,
+        )
+        direct_context = ResponseContext(
+            response_id="handler-revalidation",
+            mode_flags=MagicMock(),
+            request=direct_request,
+            previous_response_id=previous_id,
+            provider=response_store,
+        )
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=decisions)):
+            direct_events = [
+                event async for event in server._handle_response(direct_request, direct_context, asyncio.Event())
+            ]
+        assert any(
+            isinstance(event, Mapping)
+            and event.get("type") == "response.failed"
+            and "Pending MCP approvals cannot be mixed" in str(event)
+            for event in direct_events
+        )
+        assert agent.run.call_count == 1
+
+        referenced_id = "resolved-decision"
+        await response_store.create_response(
+            cast(ResponseObject, {**first.json(), "id": "reference-seed", "output": []}),
+            [cast(OutputItem, {**decisions[0], "id": referenced_id})],
+            [],
+        )
+        continuation_id = IdGenerator.new_response_id(previous_id)
+        continuation = {
+            "input": [decisions[1], {"type": "item_reference", "id": referenced_id}],
+            "previous_response_id": previous_id,
+            "stream": stream,
+        }
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+            accepted = await client.post(
+                "/responses", headers={"x-agent-response-id": continuation_id}, json=continuation
+            )
+        assert accepted.status_code == 200, accepted.text
+        if stream:
+            events = _parse_sse_events(accepted.text)
+            completed = next(event["data"]["response"] for event in events if event["event"] == "response.completed")
+        else:
+            completed = accepted.json()
+        assert completed["status"] == "completed"
+        assert completed["id"] == continuation_id
+        received = [
+            content.approved
+            for message in agent.run.call_args.kwargs["messages"]
+            for content in message.contents
+            if content.type == "function_approval_response"
+        ]
+        assert received == [False, True]
+        replay = await _post_json(server, {"input": decisions, "previous_response_id": previous_id, "stream": stream})
+        assert replay.status_code == 400
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+            for id_in_header in (True, False):
+                payload = dict(continuation)
+                headers = {"x-agent-response-id": continuation_id} if id_in_header else {}
+                if not id_in_header:
+                    payload["response_id"] = continuation_id
+                redelivery = await client.post("/responses", headers=headers, json=payload)
+                assert redelivery.status_code == 400
+                assert redelivery.headers["content-type"].startswith("application/json")
+                assert "response.created" not in redelivery.text
+        assert agent.run.call_count == 2
+
+    @pytest.mark.parametrize("platform_error", [False, True])
+    async def test_backend_value_error_is_not_mapped_to_invalid_approval(
+        self, platform_error: bool, tmp_path: Path
+    ) -> None:
+        from azure.ai.agentserver.responses.hosting._validation import tag_platform_error
+
+        request = _make_function_approval_request_content()
+        agent = _make_agent(response=AgentResponse(messages=[Message(role="assistant", contents=[request])]))
+        store = SqliteSessionStore(tmp_path / "approvals.sqlite")
+        server = _make_server(agent, session_store=store)
+        first = await _post(server)
+        previous_id = first.json()["id"]
+        approval_id = next(item["id"] for item in first.json()["output"] if item["type"] == "mcp_approval_request")
+        session = await store.get(previous_id)
+        assert session is not None
+        error = ValueError(_SESSION_STORAGE_ERROR_DETAIL)
+        if platform_error:
+            tag_platform_error(error)
+        with (
+            patch.object(store, "get", new=AsyncMock(return_value=session)),
+            patch.object(store, "get_with_revision", new=AsyncMock(side_effect=error)),
+        ):
+            response = await _post_json(
+                server,
+                {
+                    "input": [{"type": "mcp_approval_response", "approval_request_id": approval_id, "approve": True}],
+                    "previous_response_id": previous_id,
+                    "stream": True,
+                },
+            )
+        assert response.status_code == 500
+        assert response.headers["x-platform-error-source"] == ("platform" if platform_error else "upstream")
+        assert _SESSION_STORAGE_ERROR_DETAIL not in response.text
+        assert _SESSION_STORAGE_ERROR_DETAIL not in str(response.headers)
+        assert agent.run.call_count == 1
+
+    @pytest.mark.parametrize("fail_alias", [False, True])
+    async def test_approval_events_wait_for_authority_and_session_snapshots(
+        self, fail_alias: bool, tmp_path: Path
+    ) -> None:
+        approval = _make_function_approval_request_content()
+        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[approval], role="assistant")])
+        store = GatedApprovalStore(tmp_path / "gated.sqlite", fail_alias=fail_alias)
+        server = _make_server(agent, session_store=store)
+        context = ResponseContext(response_id="response-gated", mode_flags=MagicMock())
+        events: list[Any] = []
+        task = asyncio.create_task(
+            collect_host_events(
+                cast(AsyncIterator[Any], server._handle_response(CreateResponse(input="go"), context, asyncio.Event())),
+                events,
+            )
+        )
+        try:
+            await asyncio.wait_for(store.started.wait(), 5)
+            assert "mcp_approval_request" not in str(events)
+            assert await store.get("response-gated") is None
+            store.release.set()
+            await asyncio.wait_for(task, 5)
+        finally:
+            store.release.set()
+            if not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
+        if fail_alias:
+            assert "mcp_approval_request" not in str(events)
+            assert any(event.get("type") == "response.failed" for event in events)
+        else:
+            assert any(
+                event.get("type") == "response.output_item.added" and event["item"]["type"] == "mcp_approval_request"
+                for event in events
+            )
+            assert await store.get("response-gated") is not None
+
+    async def test_background_approval_checkpoint_waits_for_durable_authority(self, tmp_path: Path) -> None:
+        approval = _make_function_approval_request_content()
+        agent = _make_agent()
+        agent.client.STORES_BY_DEFAULT = True
+        agent.run = AsyncMock(
+            side_effect=[
+                AgentResponse(messages=[], continuation_token=OpenAIContinuationToken(response_id="provider-token")),
+                AgentResponse(messages=[Message(role="assistant", contents=[approval])]),
+            ]
+        )
+        store = GatedApprovalStore(tmp_path / "background-approval.sqlite")
+        server = _make_server(
+            agent,
+            session_store=store,
+            history_source="inference_service",
+            background_source="inference_service",
+            enable_background_recovery=True,
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        context = ResponseContext(response_id="background-approval", mode_flags=MagicMock())
+        request = CreateResponse(input="go", store=True, background=True)
+        events: list[Any] = []
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
+        ):
+            task = asyncio.create_task(
+                collect_host_events(
+                    cast(AsyncIterator[Any], server._handle_response(request, context, asyncio.Event())),
+                    events,
+                )
+            )
+            try:
+                await asyncio.wait_for(store.started.wait(), timeout=5)
+                assert "mcp_approval_request" not in str(events)
+                assert not any(isinstance(event, ResponseCheckpointEvent) for event in events)
+                private_snapshot = await store.get("background-approval")
+                assert private_snapshot is not None
+                assert private_snapshot.state["_foundry_provider_background"]["completed"] is True
+                store.release.set()
+                await asyncio.wait_for(task, timeout=5)
+            finally:
+                store.release.set()
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+        assert any(isinstance(event, ResponseCheckpointEvent) for event in events)
+        assert any(
+            isinstance(event, Mapping)
+            and event.get("type") == "response.output_item.added"
+            and event["item"]["type"] == "mcp_approval_request"
+            for event in events
+        )
+        final_snapshot = await store.get("background-approval")
+        assert final_snapshot is not None
+        assert any("approval" in key for key in final_snapshot.state)
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_concurrent_continuations_only_dispatch_one_claim(self, stream: bool, tmp_path: Path) -> None:
+        approval = _make_function_approval_request_content()
+        agent = _make_multi_response_agent([
+            AgentResponse(messages=[Message(role="assistant", contents=[approval])]),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])]),
+        ])
+        store = GatedClaimStore(tmp_path / "race.sqlite")
+        server = _make_server(agent, session_store=store)
+        first = await _post(server)
+        approval_id = next(item["id"] for item in first.json()["output"] if item["type"] == "mcp_approval_request")
+        payload = {
+            "input": [{"type": "mcp_approval_response", "approval_request_id": approval_id, "approve": True}],
+            "previous_response_id": first.json()["id"],
+            "stream": stream,
+        }
+        tasks = [asyncio.create_task(_post_json(server, payload)) for _ in range(2)]
+        try:
+            await asyncio.wait_for(store.started.wait(), 5)
+            assert agent.run.call_count == 1
+            store.release.set()
+            responses = await asyncio.wait_for(asyncio.gather(*tasks), 5)
+        finally:
+            store.release.set()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        assert agent.run.call_count == 2
+        if stream:
+            terminals = [
+                next(
+                    event["event"]
+                    for event in _parse_sse_events(response.text)
+                    if event["event"] in {"response.completed", "response.failed"}
+                )
+                for response in responses
+            ]
+            assert sorted(terminals) == ["response.completed", "response.failed"]
+        else:
+            assert sorted(response.json()["status"] for response in responses) == ["completed", "failed"]
+
+    @pytest.mark.parametrize("cancelled", [False, True])
+    async def test_lost_claim_ack_does_not_dispatch_or_reopen_approval(self, cancelled: bool, tmp_path: Path) -> None:
+        approval = _make_function_approval_request_content()
+        agent = _make_agent(response=AgentResponse(messages=[Message(role="assistant", contents=[approval])]))
+        store = SqliteSessionStore(tmp_path / "lost-ack.sqlite")
+        server = _make_server(agent, session_store=store)
+        first = await _post(server)
+        approval_id = next(item["id"] for item in first.json()["output"] if item["type"] == "mcp_approval_request")
+        payload = {
+            "input": [{"type": "mcp_approval_response", "approval_request_id": approval_id, "approve": True}],
+            "previous_response_id": first.json()["id"],
+        }
+        store.error_after_commit = (
+            asyncio.CancelledError() if cancelled else RuntimeError("claim acknowledged unsuccessfully")
+        )
+        if cancelled:
+            with pytest.raises(asyncio.CancelledError):
+                await _post_json(server, payload)
+        else:
+            failed = await _post_json(server, payload)
+            assert failed.status_code == 200
+            assert failed.json()["status"] == "failed"
+        assert agent.run.call_count == 1
+        store.error_after_commit = None
+        replay = await _post_json(server, payload)
+        assert replay.status_code == 400
+        assert agent.run.call_count == 1
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_approval_is_isolated_by_platform_user(self, stream: bool, tmp_path: Path) -> None:
+        approval = _make_function_approval_request_content()
+        agent = _make_multi_response_agent([
+            AgentResponse(messages=[Message(role="assistant", contents=[approval])]),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])]),
+        ])
+        stores = {
+            "owner": SqliteSessionStore(tmp_path / "owner.sqlite"),
+            "other": SqliteSessionStore(tmp_path / "other.sqlite"),
+        }
+        provider = MagicMock(spec=AgentSessionStoreProvider)
+        provider.get_store.side_effect = lambda **kwargs: stores[kwargs["platform_context"].user_id]
+        server = _make_server(agent, agent_session_store_provider=provider)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+            first = await client.post("/responses", json={"input": "go"}, headers={"x-agent-user-id": "owner"})
+            assert first.status_code == 200, first.text
+            approval_id = next(item["id"] for item in first.json()["output"] if item["type"] == "mcp_approval_request")
+            payload = {
+                "input": [{"type": "mcp_approval_response", "approval_request_id": approval_id, "approve": True}],
+                "previous_response_id": first.json()["id"],
+                "stream": stream,
+            }
+            denied = await client.post("/responses", json=payload, headers={"x-agent-user-id": "other"})
+            assert denied.status_code == 400, denied.text
+            assert denied.headers["content-type"].startswith("application/json")
+            assert agent.run.call_count == 1
+            accepted = await client.post("/responses", json=payload, headers={"x-agent-user-id": "owner"})
+            assert accepted.status_code == 200, accepted.text
+            if stream:
+                assert "response.completed" in _sse_event_types(_parse_sse_events(accepted.text))
+            else:
+                assert accepted.json()["status"] == "completed"
+        assert agent.run.call_count == 2
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_conversation_and_response_aliases_share_approval_authority(
+        self, stream: bool, tmp_path: Path
+    ) -> None:
+        approval = _make_function_approval_request_content()
+        agent = _make_multi_response_agent([
+            AgentResponse(messages=[Message(role="assistant", contents=[approval])]),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])]),
+        ])
+        server = _make_server(agent, session_store=SqliteSessionStore(tmp_path / "aliases.sqlite"))
+        conversation_id = IdGenerator.new_id("conv")
+        first = await _post_json(server, {"input": "go", "conversation": conversation_id})
+        assert first.status_code == 200, first.text
+        previous_id = first.json()["id"]
+        approval_id = next(item["id"] for item in first.json()["output"] if item["type"] == "mcp_approval_request")
+        decision = [{"type": "mcp_approval_response", "approval_request_id": approval_id, "approve": True}]
+
+        invalid = await _post_json(server, {"input": "continue", "conversation": conversation_id, "stream": stream})
+        assert invalid.status_code == 400
+        accepted = await _post_json(server, {"input": decision, "conversation": conversation_id, "stream": stream})
+        assert accepted.status_code == 200, accepted.text
+        if stream:
+            assert "response.completed" in _sse_event_types(_parse_sse_events(accepted.text))
+        else:
+            assert accepted.json()["status"] == "completed"
+        replay = await _post_json(server, {"input": decision, "previous_response_id": previous_id, "stream": stream})
+        assert replay.status_code == 400
+        assert agent.run.call_count == 2
 
 
 # endregion
@@ -8476,6 +9099,178 @@ class TestFunctionApprovalRoundTrip:
 
 
 # region Agent lifecycle (lazy entry & OAuth consent surfacing)
+
+
+@pytest.mark.xdist_group("session_isolation")
+class TestToolboxConsentHost:
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_consent_preserves_function_results_and_stored_continuation(
+        self, stream: bool, tmp_path: Path
+    ) -> None:
+        gateway = ToolboxConsentServer(["before", "secure", "after"])
+        gateway.require_consent("secure")
+        async with consent_toolbox(gateway) as toolbox:
+            client = BatchToolCallClient([function.name for function in toolbox.functions])
+            client.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[index]
+            agent = Agent(client=client, tools=toolbox, default_options=ChatOptions(allow_multiple_tool_calls=True))
+            server = _make_server(agent, session_store=SqliteSessionStore(tmp_path / "consent.sqlite"))
+
+            first = await _post(server, stream=stream)
+            assert first.status_code == 200, first.text
+            if stream:
+                events = _parse_sse_events(first.text)
+                response = next(
+                    event["data"]["response"] for event in events if event["event"] == "response.incomplete"
+                )
+            else:
+                response = first.json()
+            assert response["status"] == "incomplete"
+            outputs = response["output"]
+            calls = [item for item in outputs if item["type"] == "function_call"]
+            results = [item for item in outputs if item["type"] == "function_call_output"]
+            consents = [item for item in outputs if item["type"] == "oauth_consent_request"]
+            assert len(calls) == len(results) == 3
+            assert {item["call_id"] for item in calls} == {item["call_id"] for item in results}
+            assert len({item["call_id"] for item in results}) == 3
+            by_call = {item["call_id"]: item["output"] for item in results}
+            assert "before-result" in str(by_call["call-0"])
+            assert by_call["call-1"] == OAUTH_CONSENT_REQUIRED_RESULT
+            assert by_call["call-2"] == OAUTH_CONSENT_NOT_EXECUTED_RESULT
+            assert len(consents) == 1
+            assert consents[0]["consent_link"] == CONSENT_LINK
+            assert gateway.calls == ["before", "secure"]
+
+            gateway.consent_errors.clear()
+            second = await _post_json(
+                server,
+                {"input": "Consent granted", "previous_response_id": response["id"], "stream": stream},
+            )
+            assert second.status_code == 200, second.text
+            if stream:
+                assert "response.completed" in _sse_event_types(_parse_sse_events(second.text))
+            else:
+                assert second.json()["status"] == "completed"
+            assert len(client.calls) == 2
+            history_results = [
+                content.call_id
+                for message in client.calls[1]
+                for content in message.contents
+                if content.type == "function_result"
+            ]
+            assert len(history_results) == 3
+            assert set(history_results) == {"call-0", "call-1", "call-2"}
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_service_history_fails_on_invocation_time_consent_before_publication(
+        self, stream: bool, tmp_path: Path
+    ) -> None:
+        gateway = ToolboxConsentServer(["before", "secure", "after"])
+        gateway.require_consent("secure")
+        async with consent_toolbox(gateway) as toolbox:
+            client = StatefulConsentClient([function.name for function in toolbox.functions])
+            client.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[index]
+            agent = Agent(client=client, tools=toolbox, default_options=ChatOptions(allow_multiple_tool_calls=True))
+            server = _make_server(
+                agent,
+                session_store=SqliteSessionStore(tmp_path / "service-consent.sqlite"),
+                history_source="inference_service",
+            )
+            response = await _post(server, stream=stream)
+            assert response.status_code == 200, response.text
+            assert CONSENT_LINK not in response.text
+            assert "oauth_consent_request" not in response.text
+            assert (
+                "Invocation-time OAuth consent is unsupported with history_source='inference_service'." in response.text
+            )
+            if stream:
+                events = _parse_sse_events(response.text)
+                assert "response.failed" in _sse_event_types(events)
+                assert "response.incomplete" not in _sse_event_types(events)
+            else:
+                assert response.json()["status"] == "failed"
+            assert len(client.calls) == 2
+            assert gateway.calls == ["before", "before", "secure"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("background_source", ["host_managed", "inference_service"])
+    async def test_service_history_background_fails_on_invocation_time_consent_before_publication(
+        self, stream: bool, background_source: str, tmp_path: Path
+    ) -> None:
+        gateway = ToolboxConsentServer(["before", "secure", "after"])
+        gateway.require_consent("secure")
+        async with consent_toolbox(gateway) as toolbox:
+            client = StatefulConsentClient([function.name for function in toolbox.functions])
+            client.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[index]
+            agent = Agent(client=client, tools=toolbox)
+            server = _make_server(
+                agent,
+                session_store=SqliteSessionStore(tmp_path / "background-consent.sqlite"),
+                history_source="inference_service",
+                background_source=background_source,
+            )
+            request = CreateResponse(input="go", store=True, background=True, stream=stream)
+            context = ResponseContext(response_id="background-consent", mode_flags=MagicMock())
+            with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+                events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert CONSENT_LINK not in str(events)
+        assert "oauth_consent_request" not in str(events)
+        assert "Invocation-time OAuth consent is unsupported with history_source='inference_service'." in str(events)
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert "response.failed" in types
+        assert "response.incomplete" not in types
+        assert gateway.calls == ["before", "before", "secure"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_new_store_false_consent_fails_without_exposing_continuation(
+        self, stream: bool, tmp_path: Path
+    ) -> None:
+        gateway = ToolboxConsentServer(["secure"])
+        gateway.require_consent("secure")
+        async with consent_toolbox(gateway) as toolbox:
+            client = BatchToolCallClient([function.name for function in toolbox.functions])
+            agent = Agent(client=client, tools=toolbox)
+            server = _make_server(agent, session_store=SqliteSessionStore(tmp_path / "consent.sqlite"))
+            response = await _post_json(server, {"input": "go", "store": False, "stream": stream})
+
+        assert response.status_code == 200
+        assert CONSENT_LINK not in response.text
+        assert "oauth_consent_request" not in response.text
+        assert "requires store=true" in response.text
+        if stream:
+            events = _parse_sse_events(response.text)
+            assert "response.failed" in _sse_event_types(events)
+        else:
+            assert response.json()["status"] == "failed"
+        assert gateway.calls == ["secure"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("link", [CONSENT_LINK, "http://consent.example.com/authorize?state=secret"])
+    async def test_disallowed_consent_fails_without_exposing_link(
+        self, stream: bool, link: str, tmp_path: Path
+    ) -> None:
+        gateway = ToolboxConsentServer(["secure", "after"])
+        gateway.require_consent("secure", message=f"Request failed (remote): {link}")
+        async with consent_toolbox(gateway) as toolbox:
+            client = BatchToolCallClient([function.name for function in toolbox.functions])
+            client.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[index]
+            agent = Agent(client=client, tools=toolbox)
+            server = _make_server(
+                agent,
+                session_store=SqliteSessionStore(tmp_path / "rejected-consent.sqlite"),
+                allowed_oauth_consent_origins=["https://allowed.example.com"],
+            )
+            response = await _post(server, stream=stream)
+
+        assert response.status_code == 200
+        assert link not in response.text
+        assert "oauth_consent_request" not in response.text
+        assert "OAuth consent link rejected" in response.text
+        if stream:
+            assert "response.failed" in _sse_event_types(_parse_sse_events(response.text))
+        else:
+            assert response.json()["status"] == "failed"
+        assert gateway.calls == ["secure"]
 
 
 def _make_consent_error(
@@ -8800,16 +9595,26 @@ class TestOAuthConsentSurfacing:
         oauth_items = [item for item in body["output"] if item["type"] == "oauth_consent_request"]
         assert [item["consent_link"] for item in oauth_items] == ["https://external.example/authorize"]
 
-    async def test_configured_origin_allowlist_accepts_connect_time_consent(self) -> None:
+    @pytest.mark.parametrize("history_source", ["host_managed", "inference_service"])
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_configured_origin_allowlist_accepts_connect_time_consent(
+        self, history_source: str, stream: bool
+    ) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
         agent.__aenter__.side_effect = _make_consent_error("https://auth.example.com/authorize?state=1")
-        server = _make_server(agent, allowed_oauth_consent_origins=["https://auth.example.com"])
+        agent.client.STORES_BY_DEFAULT = history_source == "inference_service"
+        server = _make_server(
+            agent, allowed_oauth_consent_origins=["https://auth.example.com"], history_source=history_source
+        )
 
-        resp = await _post(server, input_text="hello", stream=False)
+        resp = await _post(server, input_text="hello", stream=stream)
 
-        assert resp.json()["status"] == "incomplete"
+        if stream:
+            assert "response.incomplete" in _sse_event_types(_parse_sse_events(resp.text))
+        else:
+            assert resp.json()["status"] == "incomplete"
 
     async def test_configured_origin_allowlist_rejects_connect_time_consent(
         self, caplog: pytest.LogCaptureFixture
@@ -9699,6 +10504,39 @@ class TestParallelRequestReads:
         assert types[-1] == "response.failed"
         # The in-flight input read must have been cancelled by the handler's cleanup, not orphaned.
         await asyncio.wait_for(sibling_cancelled.wait(), timeout=1)
+
+    async def test_session_preparation_cancellation_drains_reads_and_propagates(self) -> None:
+        reader = GatedRequestRead()
+        store = GatedSessionLoadStore(reader.started)
+        agent = _make_agent()
+        server = _make_server(agent, session_store=store)
+        request = CreateResponse(input="hi", previous_response_id="previous", stream=True)
+        context = ResponseContext(response_id="response-cancel", mode_flags=MagicMock())
+        events: list[Any] = []
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(side_effect=reader.load)),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            task = asyncio.create_task(
+                collect_host_events(
+                    cast(AsyncIterator[Any], server._handle_response(request, context, asyncio.Event())),
+                    events,
+                )
+            )
+            try:
+                await asyncio.wait_for(store.started.wait(), timeout=2)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            finally:
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+        assert reader.stopped.is_set()
+        assert store.stopped.is_set()
+        agent.run.assert_not_called()
 
 
 # endregion
