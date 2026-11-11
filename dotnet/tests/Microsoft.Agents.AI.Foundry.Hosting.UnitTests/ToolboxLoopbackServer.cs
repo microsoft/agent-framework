@@ -68,6 +68,9 @@ internal sealed class ToolboxLoopbackServer : IAsyncDisposable
     /// </summary>
     internal Func<string, string?, JsonObject?> ToolsListErrorFor { get; set; } = static (_, _) => null;
 
+    /// <summary>Gets or sets the <c>_meta</c> object of the advertised tool, or <see langword="null"/> for none.</summary>
+    internal JsonObject? ToolMeta { get; set; }
+
     /// <summary>
     /// Gets or sets how many <c>initialize</c> requests each one waits for (bounded) before it answers.
     /// Used to observe whether a client opens toolboxes concurrently.
@@ -116,7 +119,10 @@ internal sealed class ToolboxLoopbackServer : IAsyncDisposable
 
         var request = (await JsonNode.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted))!;
         var rpcMethod = request["method"]?.GetValue<string>();
-        this._requests.Enqueue(new("POST", toolboxName, rpcMethod, callId, sessionId));
+        var arguments = string.Equals(rpcMethod, "tools/call", StringComparison.Ordinal)
+            ? request["params"]?["arguments"]?.DeepClone()
+            : null;
+        this._requests.Enqueue(new("POST", toolboxName, rpcMethod, callId, sessionId, arguments));
         if (request["id"] is not { } id)
         {
             context.Response.StatusCode = StatusCodes.Status202Accepted;
@@ -146,15 +152,18 @@ internal sealed class ToolboxLoopbackServer : IAsyncDisposable
                     return;
                 }
 
-                result = new JsonObject
+                var tool = new JsonObject
                 {
-                    ["tools"] = new JsonArray(new JsonObject
-                    {
-                        ["name"] = this.ToolNameFor(toolboxName, callId),
-                        ["description"] = "Echoes the caller identity.",
-                        ["inputSchema"] = JsonNode.Parse("""{"type":"object","properties":{"city":{"type":"string"}}}"""),
-                    }),
+                    ["name"] = this.ToolNameFor(toolboxName, callId),
+                    ["description"] = "Echoes the caller identity.",
+                    ["inputSchema"] = JsonNode.Parse("""{"type":"object","properties":{"city":{"type":"string"}}}"""),
                 };
+                if (this.ToolMeta is { } toolMeta)
+                {
+                    tool["_meta"] = toolMeta.DeepClone();
+                }
+
+                result = new JsonObject { ["tools"] = new JsonArray(tool) };
                 break;
 
             case "tools/call":
@@ -222,9 +231,11 @@ internal sealed class ToolboxLoopbackServer : IAsyncDisposable
 /// <param name="RpcMethod">The JSON-RPC method, or <see langword="null"/> for a non-POST request.</param>
 /// <param name="CallId">The <c>x-agent-foundry-call-id</c> header, or <see langword="null"/> when absent.</param>
 /// <param name="SessionId">The <c>Mcp-Session-Id</c> header, or <see langword="null"/> when absent.</param>
+/// <param name="Arguments">The arguments of a <c>tools/call</c>, or <see langword="null"/> for any other request.</param>
 internal sealed record RecordedToolboxRequest(
     string HttpMethod,
     string ToolboxName,
     string? RpcMethod,
     string? CallId,
-    string? SessionId);
+    string? SessionId,
+    JsonNode? Arguments = null);

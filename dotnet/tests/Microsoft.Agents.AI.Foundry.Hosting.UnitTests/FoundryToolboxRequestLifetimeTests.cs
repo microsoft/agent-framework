@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -223,6 +224,91 @@ public sealed class FoundryToolboxRequestLifetimeTests
         Assert.Equal("call-a", server.CallIdThatOpened(call.SessionId));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateAsync_ApprovalAnsweredInLaterResponse_RunsOnThatResponsesSessionAsync(bool approved)
+    {
+        // Arrange: every call needs approval, so the response that proposes a call ends, with its MCP sessions,
+        // before the call runs. The decision arrives in a later response with another platform call id.
+        await using var server = await ToolboxLoopbackServer.StartAsync();
+        server.ToolMeta = new JsonObject { ["tool_configuration"] = new JsonObject { ["require_approval"] = "always" } };
+        await using var service = CreateService(server, "weather");
+        await service.StartAsync(CancellationToken.None);
+        var modelCalls = 0;
+        List<ChatMessage> lastModelInput = [];
+        var chatClient = new Mock<IChatClient>();
+        chatClient
+            .Setup(c => c.GetStreamingResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns((IEnumerable<ChatMessage> messages, ChatOptions? _, CancellationToken _) =>
+            {
+                lastModelInput = [.. messages];
+                return Interlocked.Increment(ref modelCalls) == 1
+                    ? YieldAsync(new ChatResponseUpdate(
+                        ChatRole.Assistant,
+                        [new FunctionCallContent("call_weather", "get_weather", new Dictionary<string, object?> { ["city"] = "Amsterdam" })])
+                    {
+                        MessageId = "model_message_1",
+                        FinishReason = ChatFinishReason.ToolCalls,
+                    })
+                    : YieldAsync(new ChatResponseUpdate(ChatRole.Assistant, "Done.")
+                    {
+                        MessageId = "model_message_2",
+                        FinishReason = ChatFinishReason.Stop,
+                    });
+            });
+        var handler = CreateHandler(new ChatClientAgent(chatClient.Object, new ChatClientAgentOptions()), service);
+
+        // Act
+        var first = await RunAsync(handler, callId: "call-a", responseId: "resp_" + new string('5', 46), conversationId: "conv-approval");
+        var firstOutput = Assert.IsType<ResponseCompletedEvent>(first[^1]).Response.Output;
+        var approval = Assert.Single(firstOutput.OfType<OutputItemMcpApprovalRequest>());
+        var firstSessions = server.IssuedSessionIds.ToArray();
+        var decision = BinaryData.FromObjectAsJson(new[]
+        {
+            new { type = "mcp_approval_response", approval_request_id = approval.Id, approve = approved },
+        });
+        var second = await RunAsync(
+            handler,
+            callId: "call-b",
+            responseId: "resp_" + new string('6', 46),
+            conversationId: "conv-approval",
+            history: [.. firstOutput],
+            input: decision);
+
+        // Assert: nothing ran before the decision, the first response's sessions ended with it, and the decision
+        // reached the model as the proposed call's result.
+        Assert.NotEmpty(firstSessions);
+        Assert.All(firstSessions, sessionId => Assert.Contains(sessionId, server.EndedSessionIds));
+        Assert.IsType<ResponseCompletedEvent>(second[^1]);
+        Assert.Equal(2, modelCalls);
+        var result = Assert.Single(
+            lastModelInput.SelectMany(static message => message.Contents).OfType<FunctionResultContent>(),
+            static result => result.CallId == "call_weather");
+        var resultText = Convert.ToString(result.Result, CultureInfo.InvariantCulture) ?? string.Empty;
+        var calls = server.RequestsFor("tools/call");
+        if (!approved)
+        {
+            Assert.Empty(calls);
+            Assert.DoesNotContain("call-", resultText, StringComparison.Ordinal);
+            return;
+        }
+
+        // An approved call runs once, with the proposed arguments, on a session the deciding caller opened.
+        var call = Assert.Single(calls);
+        Assert.Equal("call-b", call.CallId);
+        Assert.Equal("call-b", server.CallIdThatOpened(call.SessionId));
+        Assert.DoesNotContain(call.SessionId, firstSessions);
+        Assert.Equal("Amsterdam", call.Arguments?["city"]?.GetValue<string>());
+        Assert.Contains("call-b", resultText, StringComparison.Ordinal);
+    }
+
+    private static async IAsyncEnumerable<ChatResponseUpdate> YieldAsync(ChatResponseUpdate update)
+    {
+        await Task.Yield();
+        yield return update;
+    }
+
     private static JsonObject ConsentRequiredError() => new()
     {
         ["code"] = -32006,
@@ -257,10 +343,20 @@ public sealed class FoundryToolboxRequestLifetimeTests
             service);
     }
 
-    private static async Task<List<ResponseStreamEvent>> RunAsync(AgentFrameworkResponseHandler handler, string callId)
+    private static async Task<List<ResponseStreamEvent>> RunAsync(
+        AgentFrameworkResponseHandler handler,
+        string callId,
+        string? responseId = null,
+        string? conversationId = null,
+        IReadOnlyList<OutputItem>? history = null,
+        BinaryData? input = null)
     {
-        var request = new CreateResponse { Model = "test" };
-        request.Input = BinaryData.FromObjectAsJson(new[]
+        var request = new CreateResponse
+        {
+            Model = "test",
+            Conversation = conversationId is null ? null : BinaryData.FromString($"\"{conversationId}\""),
+        };
+        request.Input = input ?? BinaryData.FromObjectAsJson(new[]
         {
             new
             {
@@ -272,9 +368,9 @@ public sealed class FoundryToolboxRequestLifetimeTests
             },
         });
 
-        var context = new Mock<ResponseContext>(s_responseId) { CallBase = true };
+        var context = new Mock<ResponseContext>(responseId ?? s_responseId) { CallBase = true };
         context.Setup(x => x.PlatformContext).Returns(new PlatformContext("user", callId));
-        context.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<OutputItem>());
+        context.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(history ?? Array.Empty<OutputItem>());
         context.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<Item>());
 
         using var timeout = new CancellationTokenSource(s_runTimeout);
