@@ -212,6 +212,7 @@ public class FoundryToolboxServiceTests
         // percent-encoded forms — must be rejected before any request URL is built, so it can never
         // carry the managed-identity token to an unintended endpoint.
         var options = new FoundryToolboxServiceOptions { EndpointOverride = TestEndpoint };
+        options.ToolboxNames.Add("valid-toolbox");
         options.ToolboxNames.Add(unsafeName);
         var openCount = 0;
         await using var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
@@ -229,6 +230,7 @@ public class FoundryToolboxServiceTests
         // Assert: startup fails before the container serves traffic, and nothing is opened.
         Assert.IsType<InvalidOperationException>(exception);
         Assert.Contains(unsafeName, exception.Message, StringComparison.Ordinal);
+        Assert.Empty(service.ToolboxNames);
         Assert.Equal(0, openCount);
     }
 
