@@ -14,6 +14,8 @@ from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFo
 
 from agent_framework_foundry_hosting import FoundryRequestScope
 
+_STORED_ETAG = object()
+
 
 def make_session(value: str) -> AgentSession:
     session = AgentSession(session_id="inner-maf-session")
@@ -33,17 +35,23 @@ class FakeContainer:
     def __init__(self) -> None:
         self.items: dict[tuple[str, str], dict[str, Any]] = {}
         self._version = 0
-        self.omit_etag = False
+        self.acknowledgement_etag: object = _STORED_ETAG
         self.create_error: int | None = None
         self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    @staticmethod
+    def _matches_if_match(condition: str, current: str) -> bool:
+        if condition.strip() == "*" or condition == current:
+            return True
+        return current in (candidate.strip() for candidate in condition.split(","))
 
     def _stamp(self, body: dict[str, Any]) -> dict[str, Any]:
         self._version += 1
         stored = {**deepcopy(body), "_etag": f'"{self._version}"'}
         self.items[body["scope_key"], body["id"]] = stored
         result = deepcopy(stored)
-        if self.omit_etag:
-            result["_etag"] = None
+        if self.acknowledgement_etag is not _STORED_ETAG:
+            result["_etag"] = self.acknowledgement_etag
         return result
 
     async def read_item(self, *, item: str, partition_key: str) -> dict[str, Any]:
@@ -68,7 +76,7 @@ class FakeContainer:
         stored = self.items.get((body["scope_key"], item))
         if stored is None:
             raise http_error(404)
-        if stored["_etag"] != etag:
+        if not self._matches_if_match(etag, stored["_etag"]):
             raise http_error(412)
         return self._stamp(body)
 
@@ -78,7 +86,7 @@ class FakeContainer:
         stored = self.items.get((partition_key, item))
         if stored is None:
             raise http_error(404)
-        if stored["_etag"] != etag:
+        if not self._matches_if_match(etag, stored["_etag"]):
             raise http_error(412)
         del self.items[partition_key, item]
 

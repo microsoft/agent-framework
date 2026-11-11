@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft. All rights reserved.
+
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
@@ -12,17 +14,15 @@
 # ]
 # ///
 
-# Copyright (c) Microsoft. All rights reserved.
-
 """Trusted user-and-sandbox session snapshots with optimistic concurrency.
 
 Hosted runs use an existing Cosmos DB container partitioned by /scope_key and
 authenticate with managed identity. Both stores also expose the structural
 ``get_with_revision``/``compare_and_set`` capability that hosted agent approvals
-require. Cosmos uses server-side create-only writes and exact ETag matches. Local
-runs use snapshots owned by one provider: their conditional writes are atomic
-only within one process and event loop, and they are not a multi-user
-authentication boundary.
+require. Cosmos uses server-side create-only writes and exact ETag matches; use
+a single-write-region account for approval authority. Local runs use snapshots
+owned by one provider: their conditional writes are atomic only within one
+process and event loop, and they are not a multi-user authentication boundary.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import uuid
 from contextlib import AsyncExitStack
 from copy import deepcopy
@@ -48,6 +49,7 @@ from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
 
 _CONFLICT = "Another request advanced this agent session; reload before writing."
+_SINGLE_ETAG = re.compile(r'"[\x21\x23-\x7e\x80-\xff]*"')
 _MAX_COSMOS_ITEM_BYTES = 2_000_000
 _SESSION_TOO_LARGE = (
     "Agent session exceeds the 2,000,000-byte Cosmos snapshot budget; reduce session state or start a new conversation."
@@ -57,6 +59,12 @@ _SESSION_TOO_LARGE = (
 def _validate_revision(expected_revision: str | None) -> None:
     if expected_revision is not None and (not isinstance(expected_revision, str) or not expected_revision):
         raise ValueError("expected_revision must be None or a non-empty string.")
+
+
+def _validate_cosmos_etag(etag: str) -> None:
+    # If-Match treats a wildcard or list as something other than one exact revision.
+    if _SINGLE_ETAG.fullmatch(etag) is None:
+        raise RuntimeError("A Cosmos revision must be a single strong ETag.")
 
 
 class CosmosSessionStore(SessionStore):
@@ -98,6 +106,7 @@ class CosmosSessionStore(SessionStore):
         etag = item.get("_etag")
         if not isinstance(etag, str) or not etag:
             raise RuntimeError("Stored Cosmos session is missing its ETag.")
+        _validate_cosmos_etag(etag)
         return AgentSession.from_dict(item["session"]), etag
 
     async def set(self, session_id: str, session: AgentSession) -> None:
@@ -113,6 +122,8 @@ class CosmosSessionStore(SessionStore):
         cancelled write may still have committed, so callers must reload before deciding.
         """
         _validate_revision(expected_revision)
+        if expected_revision is not None:
+            _validate_cosmos_etag(expected_revision)
         item: dict[str, Any] = {
             "id": self._item_id(session_id),
             "scope_key": self._scope_key,
@@ -139,6 +150,7 @@ class CosmosSessionStore(SessionStore):
         new_etag = result.get("_etag")
         if not isinstance(new_etag, str) or not new_etag:
             raise RuntimeError("Cosmos did not return an ETag after saving.")
+        _validate_cosmos_etag(new_etag)
         return new_etag
 
     async def delete(self, session_id: str) -> None:
@@ -148,6 +160,7 @@ class CosmosSessionStore(SessionStore):
             await self.get(session_id)
         etag = self._etags[session_id]
         if etag is not None:
+            _validate_cosmos_etag(etag)
             try:
                 await self._container.delete_item(
                     item=item_id,

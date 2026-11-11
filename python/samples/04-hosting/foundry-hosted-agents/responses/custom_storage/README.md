@@ -91,8 +91,11 @@ private hosting type. The sample stores follow these rules:
 - Keys are opaque strings. They can differ from `AgentSession.session_id` and
   can contain characters such as `/`. Cosmos item IDs hash the key.
 - Cosmos uses `create_item` and `replace_item` with the ETag and
-  `MatchConditions.IfNotModified`. The service enforces both conditions.
-  A write result without an ETag fails.
+  `MatchConditions.IfNotModified`. The service applies each condition in the
+  account's write region; see [Cosmos prerequisites](#cosmos-prerequisites).
+  The store accepts one quoted, strong ETag as a revision. It rejects wildcard
+  and list `If-Match` values before sending a write or delete. A missing or
+  invalid ETag in a read or write result fails.
 - A write that fails or is cancelled may still have been committed. Reload the
   state before you decide what to do next. Do not assume that the write did
   not happen.
@@ -115,6 +118,12 @@ AZURE_COSMOS_ENDPOINT=https://<account>.documents.azure.com:443/
 COSMOS_DATABASE_NAME=<database>
 COSMOS_CONTAINER_NAME=<container-with-partition-key-/scope_key>
 ```
+
+For approval state, the Cosmos account **must use one write region**.
+Multi-write-region accounts can accept conditional updates independently in
+different regions before resolving conflicts. This sample does not provide a
+single global approval claim in that configuration. See
+[Cosmos optimistic concurrency and global distribution](https://learn.microsoft.com/en-us/azure/cosmos-db/database-transactions-optimistic-concurrency#optimistic-concurrency-control-and-global-distribution).
 
 The hosted provider uses `azure.identity.aio.ManagedIdentityCredential`, with
 the platform-provided `FOUNDRY_AGENT_INSTANCE_CLIENT_ID` when present. Grant that

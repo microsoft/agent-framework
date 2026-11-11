@@ -90,7 +90,7 @@ async def test_conditional_write_contract(sample: ModuleType, kind: str) -> None
 async def test_exact_update_of_absent_key_conflicts(sample: ModuleType, kind: str) -> None:
     store = local_store(sample, {}) if kind == "local" else cosmos_store(sample, FakeContainer())
     with pytest.raises(RuntimeError):
-        await store.compare_and_set("missing", make_session("x"), expected_revision="some-revision")
+        await store.compare_and_set("missing", make_session("x"), expected_revision='"missing"')
     assert await store.get_with_revision("missing") == (None, None)
 
 
@@ -198,7 +198,7 @@ async def test_cosmos_uses_server_conditions(sample: ModuleType) -> None:
 
 async def test_cosmos_missing_ack_revision_fails(sample: ModuleType) -> None:
     container = FakeContainer()
-    container.omit_etag = True
+    container.acknowledgement_etag = None
     store = cosmos_store(sample, container)
     with pytest.raises(RuntimeError, match="ETag"):
         await store.compare_and_set(_APPROVAL_KEY, make_session("one"), expected_revision=None)
@@ -207,6 +207,109 @@ async def test_cosmos_missing_ack_revision_fails(sample: ModuleType) -> None:
     assert revision
     with pytest.raises(RuntimeError):
         await store.compare_and_set(_APPROVAL_KEY, make_session("duplicate"), expected_revision=None)
+
+
+@pytest.mark.parametrize("condition", ["*", '"stale","1"'])
+async def test_cosmos_fake_models_non_exact_if_match(sample: ModuleType, condition: str) -> None:
+    container = FakeContainer()
+    store = cosmos_store(sample, container)
+    await store.compare_and_set(_APPROVAL_KEY, make_session("one"), expected_revision=None)
+    scope_key, item_id = next(iter(container.items))
+    body = {"id": item_id, "scope_key": scope_key, "session": make_session("replaced").to_dict()}
+
+    await container.replace_item(item=item_id, body=body, etag=condition, match_condition=MatchConditions.IfNotModified)
+
+    stored, _ = await store.get_with_revision(_APPROVAL_KEY)
+    assert stored is not None and stored.state["value"] == "replaced"
+
+
+@pytest.mark.parametrize(
+    "revision",
+    ["*", " * ", '"1","2"', '"1", "2"', '"2","1"', 'W/"2"', "2", '"2"\n', '"2"\x00', '"2",*'],
+)
+async def test_cosmos_rejects_non_exact_revision_before_write(sample: ModuleType, revision: str) -> None:
+    container = FakeContainer()
+    store = cosmos_store(sample, container)
+    first = await store.compare_and_set(_APPROVAL_KEY, make_session("one"), expected_revision=None)
+    current = await store.compare_and_set(_APPROVAL_KEY, make_session("two"), expected_revision=first)
+    calls = len(container.calls)
+
+    with pytest.raises(RuntimeError, match="ETag"):
+        await store.compare_and_set(_APPROVAL_KEY, make_session("overwritten"), expected_revision=revision)
+
+    assert len(container.calls) == calls
+    stored, stored_revision = await store.get_with_revision(_APPROVAL_KEY)
+    assert stored is not None and stored.state["value"] == "two"
+    assert stored_revision == current
+
+
+@pytest.mark.parametrize("etag", ['""', '"*"', '"a,b"', '"\xe9"'])
+async def test_cosmos_accepts_one_opaque_strong_etag(sample: ModuleType, etag: str) -> None:
+    container = FakeContainer()
+    store = cosmos_store(sample, container)
+    await store.compare_and_set(_APPROVAL_KEY, make_session("one"), expected_revision=None)
+    container.items[next(iter(container.items))]["_etag"] = etag
+    assert (await store.get_with_revision(_APPROVAL_KEY))[1] == etag
+
+    new_revision = await store.compare_and_set(_APPROVAL_KEY, make_session("two"), expected_revision=etag)
+
+    assert new_revision != etag
+    stored, _ = await store.get_with_revision(_APPROVAL_KEY)
+    assert stored is not None and stored.state["value"] == "two"
+
+
+@pytest.mark.parametrize("etag", [None, "", 42, "*", "unquoted", 'W/"one"', '"one","two"', '"one"\n'])
+async def test_cosmos_rejects_invalid_read_etag(sample: ModuleType, etag: object) -> None:
+    container = FakeContainer()
+    store = cosmos_store(sample, container)
+    await store.compare_and_set(_APPROVAL_KEY, make_session("one"), expected_revision=None)
+    container.items[next(iter(container.items))]["_etag"] = etag
+
+    with pytest.raises(RuntimeError, match="ETag"):
+        await store.get_with_revision(_APPROVAL_KEY)
+    with pytest.raises(RuntimeError, match="ETag"):
+        await store.get(_APPROVAL_KEY)
+    with pytest.raises(RuntimeError, match="ETag"):
+        await store.delete(_APPROVAL_KEY)
+    assert all(call[0] != "delete" for call in container.calls)
+
+
+@pytest.mark.parametrize("etag", [None, "", 42, "*", "unquoted", 'W/"one"', '"one","two"', '"one"\n'])
+async def test_cosmos_rejects_invalid_write_acknowledgement(sample: ModuleType, etag: object) -> None:
+    container = FakeContainer()
+    container.acknowledgement_etag = etag
+    store = cosmos_store(sample, container)
+
+    with pytest.raises(RuntimeError, match="ETag"):
+        await store.compare_and_set(_APPROVAL_KEY, make_session("one"), expected_revision=None)
+
+    stored, revision = await store.get_with_revision(_APPROVAL_KEY)
+    assert stored is not None and stored.state["value"] == "one"
+    assert revision
+
+
+async def test_cosmos_rejects_invalid_cached_delete_etag(sample: ModuleType) -> None:
+    container = FakeContainer()
+    store = cosmos_store(sample, container)
+    await store.set(_APPROVAL_KEY, make_session("one"))
+    store._etags[_APPROVAL_KEY] = "*"
+
+    with pytest.raises(RuntimeError, match="ETag"):
+        await store.delete(_APPROVAL_KEY)
+
+    assert all(call[0] != "delete" for call in container.calls)
+    stored, _ = await store.get_with_revision(_APPROVAL_KEY)
+    assert stored is not None and stored.state["value"] == "one"
+
+
+async def test_local_store_keeps_opaque_revision_values(sample: ModuleType) -> None:
+    snapshots = {("scope", _APPROVAL_KEY): ("opaque-version", make_session("one").to_dict())}
+    store = local_store(sample, snapshots)
+    assert (await store.get_with_revision(_APPROVAL_KEY))[1] == "opaque-version"
+
+    revision = await store.compare_and_set(_APPROVAL_KEY, make_session("two"), expected_revision="opaque-version")
+
+    assert revision != "opaque-version"
 
 
 async def test_cosmos_other_errors_propagate(sample: ModuleType) -> None:
