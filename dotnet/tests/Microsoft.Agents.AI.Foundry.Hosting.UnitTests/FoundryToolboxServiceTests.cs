@@ -63,7 +63,7 @@ public class FoundryToolboxServiceTests
             var openCount = 0;
             await using var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
             {
-                ToolboxOpener = (_, _) =>
+                ToolboxOpener = (_, _, _) =>
                 {
                     openCount++;
                     return Task.FromResult(CreateOpenResult(new HttpClient()));
@@ -72,7 +72,7 @@ public class FoundryToolboxServiceTests
 
             // Act
             await service.StartAsync(CancellationToken.None);
-            await using var scope = service.CreateRequestScope();
+            await using var scope = service.CreateRequestScope(callId: null);
             var resolution = await scope.ResolveAsync(CancellationToken.None);
 
             // Assert
@@ -106,7 +106,7 @@ public class FoundryToolboxServiceTests
             await service.StartAsync(CancellationToken.None);
 
             // Act
-            await using var scope = service.CreateRequestScope();
+            await using var scope = service.CreateRequestScope(callId: null);
             var resolution = await scope.ResolveAsync(CancellationToken.None);
 
             // Assert
@@ -134,7 +134,7 @@ public class FoundryToolboxServiceTests
             await service.StartAsync(CancellationToken.None);
 
             // Act
-            await using var scope = service.CreateRequestScope();
+            await using var scope = service.CreateRequestScope(callId: null);
             var resolution = await scope.ResolveAsync(CancellationToken.None);
 
             // Assert
@@ -176,7 +176,7 @@ public class FoundryToolboxServiceTests
         var opened = new ConcurrentBag<string>();
         await using var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (name, _) =>
+            ToolboxOpener = (name, _, _) =>
             {
                 opened.Add(name);
                 return Task.FromResult(CreateOpenResult(new HttpClient()));
@@ -185,7 +185,7 @@ public class FoundryToolboxServiceTests
 
         // Act
         await service.StartAsync(CancellationToken.None);
-        await using var scope = service.CreateRequestScope();
+        await using var scope = service.CreateRequestScope(callId: null);
         await scope.ResolveAsync(CancellationToken.None);
 
         // Assert
@@ -218,7 +218,7 @@ public class FoundryToolboxServiceTests
         var openCount = 0;
         await using var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (_, _) =>
+            ToolboxOpener = (_, _, _) =>
             {
                 openCount++;
                 return Task.FromResult(CreateOpenResult(new HttpClient()));
@@ -255,12 +255,12 @@ public class FoundryToolboxServiceTests
         options.ToolboxNames.Add(validName);
         await using var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (_, _) => Task.FromResult(CreateOpenResult(new HttpClient(), tool)),
+            ToolboxOpener = (_, _, _) => Task.FromResult(CreateOpenResult(new HttpClient(), tool)),
         };
 
         // Act
         await service.StartAsync(CancellationToken.None);
-        await using var scope = service.CreateRequestScope();
+        await using var scope = service.CreateRequestScope(callId: null);
         var resolution = await scope.ResolveAsync(CancellationToken.None);
 
         // Assert
@@ -277,7 +277,7 @@ public class FoundryToolboxServiceTests
         var openCount = 0;
         await using var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (_, _) =>
+            ToolboxOpener = (_, _, _) =>
             {
                 openCount++;
                 return Task.FromResult(CreateOpenResult(new HttpClient()));
@@ -304,7 +304,7 @@ public class FoundryToolboxServiceTests
             CreateCredential(),
             logs.CreateLogger<FoundryToolboxService>());
         await service.StartAsync(CancellationToken.None);
-        await using var scope = service.CreateRequestScope();
+        await using var scope = service.CreateRequestScope(callId: null);
 
         // Act
         var resolution = await scope.ResolveAsync(CancellationToken.None);
@@ -327,12 +327,12 @@ public class FoundryToolboxServiceTests
         options.ToolboxNames.Add("fast");
         await using var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (name, _) => name == "slow"
+            ToolboxOpener = (name, _, _) => name == "slow"
                 ? Task.FromException<FoundryToolboxService.ToolboxOpenResult>(new TaskCanceledException("Timed out."))
                 : Task.FromResult(CreateOpenResult(new HttpClient(), tool)),
         };
         await service.StartAsync(CancellationToken.None);
-        await using var scope = service.CreateRequestScope();
+        await using var scope = service.CreateRequestScope(callId: null);
 
         // Act
         var resolution = await scope.ResolveAsync(CancellationToken.None);
@@ -352,7 +352,7 @@ public class FoundryToolboxServiceTests
         options.ToolboxNames.Add("canceled");
         await using var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (name, cancellationToken) =>
+            ToolboxOpener = (name, _, cancellationToken) =>
             {
                 if (name == "opened")
                 {
@@ -364,7 +364,7 @@ public class FoundryToolboxServiceTests
             },
         };
         await service.StartAsync(CancellationToken.None);
-        var scope = service.CreateRequestScope();
+        var scope = service.CreateRequestScope(callId: null);
 
         // Act
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
@@ -386,12 +386,12 @@ public class FoundryToolboxServiceTests
         options.ToolboxNames.Add("needs-consent");
         await using var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (name, _) => Task.FromResult(name == "ready"
+            ToolboxOpener = (name, _, _) => Task.FromResult(name == "ready"
                 ? CreateOpenResult(new HttpClient(handler), AIFunctionFactory.Create(() => "ok", name: "ready_tool"))
                 : new FoundryToolboxService.ToolboxOpenResult(Connection: null, Consents: [consent])),
         };
         await service.StartAsync(CancellationToken.None);
-        var scope = service.CreateRequestScope();
+        var scope = service.CreateRequestScope(callId: null);
 
         // Act
         var resolution = await scope.ResolveAsync(CancellationToken.None);
@@ -415,7 +415,7 @@ public class FoundryToolboxServiceTests
         var openCount = 0;
         await using var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = async (_, cancellationToken) =>
+            ToolboxOpener = async (_, _, cancellationToken) =>
             {
                 if (Interlocked.Increment(ref concurrentOpenCount) == 2)
                 {
@@ -435,7 +435,7 @@ public class FoundryToolboxServiceTests
 
         async Task<AITool> ResolveInOwnScopeAsync()
         {
-            await using var scope = service.CreateRequestScope();
+            await using var scope = service.CreateRequestScope(callId: null);
             return Assert.Single((await scope.ResolveAsync(CancellationToken.None)).Tools);
         }
 
@@ -461,10 +461,10 @@ public class FoundryToolboxServiceTests
         var client = new TrackingAsyncDisposable();
         await using var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = (_, _) => Task.FromResult(CreateOpenResult(new HttpClient(handler), client)),
+            ToolboxOpener = (_, _, _) => Task.FromResult(CreateOpenResult(new HttpClient(handler), client)),
         };
         await service.StartAsync(CancellationToken.None);
-        var scope = service.CreateRequestScope();
+        var scope = service.CreateRequestScope(callId: null);
         await scope.ResolveAsync(CancellationToken.None);
 
         // Act
@@ -492,7 +492,7 @@ public class FoundryToolboxServiceTests
             Mock.Of<TokenCredential>(),
             logs.CreateLogger<FoundryToolboxService>())
         {
-            ToolboxOpener = (name, _) =>
+            ToolboxOpener = (name, _, _) =>
             {
                 var fails = name == "throws";
                 var handler = handlers[name] = new TrackingHttpMessageHandler(
@@ -504,7 +504,7 @@ public class FoundryToolboxServiceTests
         };
         await service.StartAsync(CancellationToken.None);
         logs.Entries.Clear();
-        var scope = service.CreateRequestScope();
+        var scope = service.CreateRequestScope(callId: null);
         await scope.ResolveAsync(CancellationToken.None);
 
         // Act
@@ -552,7 +552,7 @@ public class FoundryToolboxServiceTests
         // Act
         for (var response = 0; response < 2; response++)
         {
-            await using var scope = service.CreateRequestScope();
+            await using var scope = service.CreateRequestScope(callId: null);
             Assert.Single((await scope.ResolveAsync(CancellationToken.None)).Tools);
         }
 
@@ -566,6 +566,33 @@ public class FoundryToolboxServiceTests
         Assert.True(primary.SendCount >= 4);
         Assert.False(disposedWithResponses);
         Assert.True(primary.IsDisposed);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_OpensEveryToolboxWithTheScopeCallIdAsync()
+    {
+        // Arrange
+        var options = new FoundryToolboxServiceOptions { EndpointOverride = TestEndpoint };
+        options.ToolboxNames.Add("weather");
+        options.ToolboxNames.Add("calendar");
+        var openedWith = new ConcurrentDictionary<string, string?>(StringComparer.Ordinal);
+        await using var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
+        {
+            ToolboxOpener = (name, callId, _) =>
+            {
+                openedWith[name] = callId;
+                return Task.FromResult(CreateOpenResult(new HttpClient()));
+            },
+        };
+        await service.StartAsync(CancellationToken.None);
+        await using var scope = service.CreateRequestScope(callId: "call-a");
+
+        // Act
+        await scope.ResolveAsync(CancellationToken.None);
+
+        // Assert
+        Assert.Equal("call-a", openedWith["weather"]);
+        Assert.Equal("call-a", openedWith["calendar"]);
     }
 
     [Fact]

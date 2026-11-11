@@ -161,18 +161,13 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
             session ??= await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        // Capture the platform per-request call id (x-agent-foundry-call-id, protocol 2.0.0 only).
-        // It is re-applied to the ambient HostedCallContext immediately before each outbound egress
-        // point below: AsyncLocal writes made in this streaming iterator are reverted across yield
-        // boundaries, so a single up-front assignment would be lost before the toolbox/MCP calls run.
-        var platformCallId = context.PlatformContext?.CallId;
-
         // Every toolbox connection opened for this response belongs to this scope and ends with the response,
-        // so no MCP session is shared with another response or caller.
-        var toolboxRequestScope = this._toolboxService?.CreateRequestScope()
+        // so no MCP session is shared with another response or caller. The scope binds each connection to the
+        // platform per-request call id (x-agent-foundry-call-id, protocol 2.0.0 only), which the toolbox proxy
+        // uses to resolve the caller.
+        var toolboxRequestScope = this._toolboxService?.CreateRequestScope(context.PlatformContext?.CallId)
             ?? FoundryToolboxService.ToolboxRequestScope.CreateInactive();
         await using var configuredToolboxRequestScope = toolboxRequestScope.ConfigureAwait(false);
-        HostedCallContext.CallId = platformCallId;
 
         // Stamp/validate the hosted identity only when one was resolved. Locally (non-hosted) there is
         // no user identity, so there is nothing to partition or tamper-check and the session is shared.
@@ -260,10 +255,6 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         // Open the pre-registered Foundry toolboxes for this response when the toolbox service is available.
         if (this._toolboxService is not null)
         {
-            // Re-apply the call id: the EmitCreated/EmitInProgress yields above reverted the ambient
-            // value, and the toolbox initialize and tools/list egress below must carry it.
-            HostedCallContext.CallId = platformCallId;
-
             var toolboxResolution = await toolboxRequestScope.ResolveAsync(cancellationToken).ConfigureAwait(false);
 
             // A toolbox that needs this caller's OAuth consent stops the turn instead of silently running
@@ -366,11 +357,6 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         {
             while (true)
             {
-                // Re-apply the call id before each pull from the agent stream: the per-event yields
-                // below revert the ambient AsyncLocal, but the MCP tools/call egress that happens
-                // inside MoveNextAsync must carry the platform call id on every request.
-                HostedCallContext.CallId = platformCallId;
-
                 bool shutdownDetected = false;
                 IReadOnlyList<McpConsentInfo>? pendingConsents = null;
                 ResponseStreamEvent? failedEvent = null;

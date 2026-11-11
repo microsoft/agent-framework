@@ -184,7 +184,7 @@ public class OAuthConsentPolicyHandlerTests
         => CreateStartedServiceAsync(
             allowedOrigins,
             toolboxNames: ["tb"],
-            opener: (name, _) => Task.FromResult(
+            opener: (name, _, _) => Task.FromResult(
                 new FoundryToolboxService.ToolboxOpenResult(
                     Connection: null,
                     Consents: [new McpConsentInfo(name, $"{name}.tool", consentLink)])));
@@ -192,7 +192,7 @@ public class OAuthConsentPolicyHandlerTests
     private static async Task<FoundryToolboxService> CreateStartedServiceAsync(
         ISet<Uri>? allowedOrigins,
         IList<string> toolboxNames,
-        Func<string, CancellationToken, Task<FoundryToolboxService.ToolboxOpenResult>>? opener)
+        Func<string, string?, CancellationToken, Task<FoundryToolboxService.ToolboxOpenResult>>? opener)
     {
         var options = new FoundryToolboxServiceOptions
         {

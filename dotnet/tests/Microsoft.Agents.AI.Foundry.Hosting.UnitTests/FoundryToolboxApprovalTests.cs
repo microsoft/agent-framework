@@ -55,7 +55,7 @@ public sealed class FoundryToolboxApprovalTests
         await using var toolbox = await ToolboxServer.CreateAsync("""{"tool_configuration":{"require_approval":"always"}}""");
         await using var service = toolbox.CreateService();
         await service.StartAsync(CancellationToken.None);
-        await using var scope = service.CreateRequestScope();
+        await using var scope = service.CreateRequestScope(callId: null);
         var tool = Assert.IsAssignableFrom<AIFunction>(Assert.Single((await scope.ResolveAsync(CancellationToken.None)).Tools));
         var calls = 0;
         ChatResponse NextResponse() => ++calls == 1 || calls == 3
@@ -122,7 +122,7 @@ public sealed class FoundryToolboxApprovalTests
         await using var toolbox = await ToolboxServer.CreateAsync(metadata);
         await using var service = toolbox.CreateService();
         await service.StartAsync(CancellationToken.None);
-        await using var scope = service.CreateRequestScope();
+        await using var scope = service.CreateRequestScope(callId: null);
 
         // Act
         var tool = Assert.IsAssignableFrom<AIFunction>(Assert.Single((await scope.ResolveAsync(CancellationToken.None)).Tools));
@@ -157,7 +157,7 @@ public sealed class FoundryToolboxApprovalTests
 
         await using var service = toolbox.CreateService();
         await service.StartAsync(CancellationToken.None);
-        await using (var firstScope = service.CreateRequestScope())
+        await using (var firstScope = service.CreateRequestScope(callId: null))
         {
             var first = await firstScope.ResolveAsync(CancellationToken.None);
             Assert.Empty(first.Tools);
@@ -165,7 +165,7 @@ public sealed class FoundryToolboxApprovalTests
         }
 
         toolbox.ListError = null;
-        await using var scope = service.CreateRequestScope();
+        await using var scope = service.CreateRequestScope(callId: null);
 
         // Act: the next response opens the toolbox again.
         var resolution = await scope.ResolveAsync(CancellationToken.None);
@@ -185,7 +185,7 @@ public sealed class FoundryToolboxApprovalTests
         toolbox.CallError = new JsonObject { ["code"] = -32006, ["message"] = ConsentUrl };
         await using var service = toolbox.CreateService();
         await service.StartAsync(CancellationToken.None);
-        await using var scope = service.CreateRequestScope();
+        await using var scope = service.CreateRequestScope(callId: null);
         var tool = Assert.IsType<ApprovalRequiredAIFunction>(Assert.Single((await scope.ResolveAsync(CancellationToken.None)).Tools));
         using var cancellation = new CancellationTokenSource();
         var state = new RequestConsentState { CancellationSource = cancellation };

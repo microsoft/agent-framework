@@ -17,6 +17,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <list type="bullet">
 ///   <item>Acquires a fresh Azure bearer token with the configured scope for requests to the configured toolbox origin, per <c>tools-integration-spec.md</c> §4.</item>
 ///   <item>Injects the mandatory <c>Foundry-Features: Toolboxes=V1Preview</c> header on that origin per spec §2, merging any additional flags from <c>FOUNDRY_AGENT_TOOLSET_FEATURES</c>.</item>
+///   <item>Forwards the platform call id (<c>x-agent-foundry-call-id</c>) of the response that opened the connection on that origin, so every request of the connection's MCP session carries the same caller identity.</item>
 ///   <item>Propagates W3C trace context (<c>traceparent</c>, <c>tracestate</c>, <c>baggage</c>) from <see cref="Activity.Current"/> per spec §6.3.</item>
 ///   <item>Retries on HTTP 429, 500, 502, and 503 with exponential back-off (max 3 attempts, per spec §7).</item>
 /// </list>
@@ -33,12 +34,14 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
     private readonly TokenRequestContext _tokenContext;
     private readonly string? _additionalFeaturesHeaderValue;
     private readonly Uri _pinnedEndpoint;
+    private readonly string? _callId;
 
     internal FoundryToolboxBearerTokenHandler(
         TokenCredential credential,
         string tokenScope,
         string? additionalFeaturesHeaderValue,
-        Uri pinnedEndpoint)
+        Uri pinnedEndpoint,
+        string? callId = null)
     {
         _ = Throw.IfNull(credential);
         _ = Throw.IfNullOrWhitespace(tokenScope);
@@ -52,6 +55,7 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
         this._tokenContext = new([tokenScope]);
         this._additionalFeaturesHeaderValue = additionalFeaturesHeaderValue;
         this._pinnedEndpoint = pinnedEndpoint;
+        this._callId = string.IsNullOrWhiteSpace(callId) ? null : callId;
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(
@@ -76,8 +80,9 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
 
         // Per PlatformContext, forward the platform per-request call id (x-agent-foundry-call-id,
         // container protocol 2.0.0) so the toolbox proxy can resolve the server-side caller context.
-        var callId = HostedCallContext.CallId;
-        if (!string.IsNullOrWhiteSpace(callId) && !request.Headers.Contains("x-agent-foundry-call-id"))
+        // The value is fixed when the connection is created, never read from ambient state, so the
+        // MCP session and every request on it carry the identity of the response that opened it.
+        if (this._callId is { } callId && !request.Headers.Contains("x-agent-foundry-call-id"))
         {
             request.Headers.TryAddWithoutValidation("x-agent-foundry-call-id", callId);
         }

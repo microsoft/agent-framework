@@ -31,7 +31,8 @@ public class FoundryToolboxBearerTokenHandlerTests
         Mock<TokenCredential>? credential = null,
         string? featuresHeader = null,
         string tokenScope = FoundryToolboxServiceOptions.DefaultTokenScope,
-        HttpStatusCode statusCode = HttpStatusCode.OK)
+        HttpStatusCode statusCode = HttpStatusCode.OK,
+        string? callId = null)
     {
         credential ??= CreateMockCredential();
         var inner = new CountingHandler(statusCode);
@@ -39,7 +40,8 @@ public class FoundryToolboxBearerTokenHandlerTests
             credential.Object,
             tokenScope,
             featuresHeader,
-            new Uri("https://example.com"))
+            new Uri("https://example.com"),
+            callId)
         {
             InnerHandler = inner
         };
@@ -47,36 +49,32 @@ public class FoundryToolboxBearerTokenHandlerTests
     }
 
     [Fact]
-    public async Task SendAsync_ForwardsCallIdWhenSetAsync()
+    public async Task SendAsync_ForwardsConnectionCallIdAsync()
     {
         // Arrange
-        var (handler, _) = CreateHandlerPair();
+        var (handler, _) = CreateHandlerPair(callId: "call-abc");
         using var invoker = new HttpMessageInvoker(handler);
-        HostedCallContext.CallId = "call-abc";
 
-        try
-        {
-            // Act
-            using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
-            using var response = await invoker.SendAsync(request, CancellationToken.None);
+        // Act: send twice, as an MCP session sends initialize and then tools/call.
+        using var first = new HttpRequestMessage(HttpMethod.Post, "https://example.com/api");
+        using var firstResponse = await invoker.SendAsync(first, CancellationToken.None);
+        using var second = new HttpRequestMessage(HttpMethod.Post, "https://example.com/api");
+        using var secondResponse = await invoker.SendAsync(second, CancellationToken.None);
 
-            // Assert
-            Assert.True(request.Headers.TryGetValues("x-agent-foundry-call-id", out var values));
-            Assert.Equal("call-abc", values!.Single());
-        }
-        finally
-        {
-            HostedCallContext.CallId = null;
-        }
+        // Assert: every request of the connection carries the call id it was created with.
+        Assert.Equal("call-abc", Assert.Single(first.Headers.GetValues("x-agent-foundry-call-id")));
+        Assert.Equal("call-abc", Assert.Single(second.Headers.GetValues("x-agent-foundry-call-id")));
     }
 
-    [Fact]
-    public async Task SendAsync_OmitsCallIdWhenAbsentAsync()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    public async Task SendAsync_OmitsCallIdWhenAbsentAsync(string? callId)
     {
         // Arrange
-        var (handler, _) = CreateHandlerPair();
+        var (handler, _) = CreateHandlerPair(callId: callId);
         using var invoker = new HttpMessageInvoker(handler);
-        HostedCallContext.CallId = null;
 
         // Act
         using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
@@ -110,38 +108,31 @@ public class FoundryToolboxBearerTokenHandlerTests
             credential.Object,
             FoundryToolboxServiceOptions.DefaultTokenScope,
             null,
-            new Uri("https://trusted.example.com"))
+            new Uri("https://trusted.example.com"),
+            callId: "call-abc")
         {
             InnerHandler = new CountingHandler(HttpStatusCode.OK)
         };
         using var invoker = new HttpMessageInvoker(handler);
-        HostedCallContext.CallId = "call-abc";
 
-        try
-        {
-            using var trustedRequest = new HttpRequestMessage(HttpMethod.Post, "https://trusted.example.com/mcp");
-            using var trustedResponse = await invoker.SendAsync(trustedRequest, CancellationToken.None);
-            Assert.Equal(FakeToken, trustedRequest.Headers.Authorization?.Parameter);
-            Assert.True(trustedRequest.Headers.Contains("x-agent-foundry-call-id"));
+        using var trustedRequest = new HttpRequestMessage(HttpMethod.Post, "https://trusted.example.com/mcp");
+        using var trustedResponse = await invoker.SendAsync(trustedRequest, CancellationToken.None);
+        Assert.Equal(FakeToken, trustedRequest.Headers.Authorization?.Parameter);
+        Assert.True(trustedRequest.Headers.Contains("x-agent-foundry-call-id"));
 
-            // Act: legacy MCP SSE can construct a new request from a server-advertised
-            // absolute endpoint, so model that foreign-origin request directly.
-            using var crossOriginRequest = new HttpRequestMessage(HttpMethod.Post, "https://untrusted.example/collect");
-            using var crossOriginResponse = await invoker.SendAsync(crossOriginRequest, CancellationToken.None);
+        // Act: legacy MCP SSE can construct a new request from a server-advertised
+        // absolute endpoint, so model that foreign-origin request directly.
+        using var crossOriginRequest = new HttpRequestMessage(HttpMethod.Post, "https://untrusted.example/collect");
+        using var crossOriginResponse = await invoker.SendAsync(crossOriginRequest, CancellationToken.None);
 
-            // Assert: Foundry credentials, internal feature negotiation, and platform call
-            // context must remain on the configured toolbox origin.
-            Assert.Null(crossOriginRequest.Headers.Authorization);
-            Assert.False(crossOriginRequest.Headers.Contains("Foundry-Features"));
-            Assert.False(crossOriginRequest.Headers.Contains("x-agent-foundry-call-id"));
-            credential.Verify(
-                value => value.GetTokenAsync(It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()),
-                Times.Once);
-        }
-        finally
-        {
-            HostedCallContext.CallId = null;
-        }
+        // Assert: Foundry credentials, internal feature negotiation, and platform call
+        // context must remain on the configured toolbox origin.
+        Assert.Null(crossOriginRequest.Headers.Authorization);
+        Assert.False(crossOriginRequest.Headers.Contains("Foundry-Features"));
+        Assert.False(crossOriginRequest.Headers.Contains("x-agent-foundry-call-id"));
+        credential.Verify(
+            value => value.GetTokenAsync(It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Theory]

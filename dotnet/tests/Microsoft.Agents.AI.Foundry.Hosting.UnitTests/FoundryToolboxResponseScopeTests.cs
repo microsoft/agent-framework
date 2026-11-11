@@ -22,15 +22,14 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public sealed class FoundryToolboxResponseScopeTests
 {
     private static readonly string s_sharedResponseId = "resp_" + new string('7', 46);
+    private static readonly string[] s_callIds = ["call-a", "call-b"];
+    private static readonly string[] s_toolNames = ["tool_for_call_a", "tool_for_call_b"];
 
     [Fact]
     public async Task CreateAsync_ToolboxClientsAreIsolatedAndDisposedPerResponseAsync()
     {
         // Arrange
-        HostedCallContext.CallId = null;
-
         var openCallIds = new ConcurrentBag<string>();
-        var agentCallIds = new ConcurrentBag<string>();
         var observedTools = new ConcurrentBag<AITool>();
         var handlers = new ConcurrentBag<TrackingHttpMessageHandler>();
         var bothConcurrentOpensEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -49,10 +48,10 @@ public sealed class FoundryToolboxResponseScopeTests
             options,
             Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = async (_, cancellationToken) =>
+            ToolboxOpener = async (_, requestCallId, cancellationToken) =>
             {
-                var callId = HostedCallContext.CallId
-                    ?? throw new InvalidOperationException("A toolbox must be opened for a response.");
+                var callId = requestCallId
+                    ?? throw new InvalidOperationException("A toolbox must be opened with the response's call id.");
 
                 if (Interlocked.Increment(ref concurrentOpenCount) == 2)
                 {
@@ -65,7 +64,7 @@ public sealed class FoundryToolboxResponseScopeTests
                 var openNumber = Interlocked.Increment(ref openCount);
                 var handler = new TrackingHttpMessageHandler(throwOnDispose: openNumber == 1);
                 handlers.Add(handler);
-                AITool tool = AIFunctionFactory.Create(() => callId, name: $"scoped_tool_{openNumber}");
+                AITool tool = AIFunctionFactory.Create(() => callId, name: "tool_for_" + callId.Replace('-', '_'));
                 return new FoundryToolboxService.ToolboxOpenResult(
                     new FoundryToolboxService.ToolboxConnection(
                         Client: null,
@@ -84,7 +83,6 @@ public sealed class FoundryToolboxResponseScopeTests
                 It.IsAny<CancellationToken>()))
             .Returns((IEnumerable<ChatMessage> _, ChatOptions? chatOptions, CancellationToken cancellationToken) =>
             {
-                agentCallIds.Add(HostedCallContext.CallId ?? string.Empty);
                 observedTools.Add(Assert.Single(chatOptions?.Tools ?? []));
 
                 var callNumber = Interlocked.Increment(ref chatCallCount);
@@ -114,14 +112,11 @@ public sealed class FoundryToolboxResponseScopeTests
         var second = RunAsync(handler, CreateRequest(), CreateContext(callId: "call-b"));
         await Task.WhenAll(first, second);
 
-        // Assert: both responses opened independently, carried their call id across the handler's initial
-        // lifecycle yields, and disposed their response-owned clients, even when one disposal failed.
+        // Assert: each response opened its own connection with its own call id, its agent saw only the tool
+        // opened for that call id, and every response-owned client was disposed, even when one disposal failed.
         Assert.Equal(2, openCount);
-        Assert.Equal(2, openCallIds.Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal(
-            openCallIds.OrderBy(static value => value, StringComparer.Ordinal),
-            agentCallIds.OrderBy(static value => value, StringComparer.Ordinal));
-        Assert.Equal(2, observedTools.Distinct().Count());
+        Assert.Equal(s_callIds, openCallIds.Order(StringComparer.Ordinal));
+        Assert.Equal(s_toolNames, observedTools.Select(static tool => tool.Name).Order(StringComparer.Ordinal));
         Assert.Equal(2, handlers.Count);
         Assert.All(handlers, static item => Assert.True(item.IsDisposed));
 

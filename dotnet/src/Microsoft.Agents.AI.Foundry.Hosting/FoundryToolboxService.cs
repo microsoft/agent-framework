@@ -43,6 +43,10 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// every session when the response completes. No MCP session is shared between responses.
 /// </para>
 /// <para>
+/// The call id is fixed on each connection when it is created and sent on every request of its MCP session,
+/// including tool calls made after the response's execution context is gone. It is never read from ambient state.
+/// </para>
+/// <para>
 /// Discovered tools with <c>_meta.tool_configuration.require_approval</c> set to <c>always</c>
 /// require approval for each call through <see cref="ApprovalRequiredAIFunction"/>. An explicit
 /// unsupported or malformed configuration also requires approval and is logged as a warning.
@@ -110,9 +114,10 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
     /// <summary>
     /// Test-only seam for the network-doing toolbox-open step. When set, <see cref="OpenToolboxAsync"/>
     /// delegates to this instead of connecting to the live MCP proxy, so request-scope resolution and
-    /// cleanup can be unit-tested deterministically. Never set in production.
+    /// cleanup can be unit-tested deterministically. It receives the toolbox name and the response's
+    /// platform call id. Never set in production.
     /// </summary>
-    internal Func<string, CancellationToken, Task<ToolboxOpenResult>>? ToolboxOpener { get; set; }
+    internal Func<string, string?, CancellationToken, Task<ToolboxOpenResult>>? ToolboxOpener { get; set; }
 
     /// <summary>
     /// Test-only seam that supplies the primary HTTP handler shared by every toolbox connection.
@@ -184,7 +189,11 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
     /// <summary>
     /// Creates the owner of the toolbox connections opened while handling one response.
     /// </summary>
-    internal ToolboxRequestScope CreateRequestScope() => new(this);
+    /// <param name="callId">
+    /// The response's platform call id (<c>x-agent-foundry-call-id</c>), or <see langword="null"/> when the platform
+    /// supplied none. Every connection the scope opens sends it.
+    /// </param>
+    internal ToolboxRequestScope CreateRequestScope(string? callId) => new(this, callId);
 
     /// <summary>
     /// Validates that <paramref name="toolboxName"/> resolves to a single, intact path segment in the
@@ -260,7 +269,8 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
         TokenCredential credential,
         string tokenScope,
         string? featuresHeader,
-        HttpMessageHandler? primaryHandler = null)
+        HttpMessageHandler? primaryHandler = null,
+        string? callId = null)
     {
         _ = Throw.IfNull(endpoint);
         _ = Throw.IfNull(credential);
@@ -274,7 +284,7 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
 
         // The bearer handler must run before the pinning handler so any credential it adds
         // is removed before network dispatch if a future transport creates a foreign request.
-        return new FoundryToolboxBearerTokenHandler(credential, tokenScope, featuresHeader, endpoint)
+        return new FoundryToolboxBearerTokenHandler(credential, tokenScope, featuresHeader, endpoint, callId)
         {
             InnerHandler = originPinningHandler
         };
@@ -296,6 +306,7 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
     /// </summary>
     private async Task<ToolboxOpenResult> OpenToolboxAsync(
         string toolboxName,
+        string? callId,
         CancellationToken cancellationToken)
     {
         // Defense-in-depth: names are validated at startup, and this is the single point where a
@@ -307,7 +318,7 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
         // live toolbox proxy. Never set in production.
         if (this.ToolboxOpener is { } opener)
         {
-            return await opener(toolboxName, cancellationToken).ConfigureAwait(false);
+            return await opener(toolboxName, callId, cancellationToken).ConfigureAwait(false);
         }
 
         var proxyUrl = $"{this._resolvedEndpoint!}/toolboxes/{toolboxName}/mcp?api-version={FoundryToolboxServiceOptions.ApiVersion}";
@@ -320,14 +331,16 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
             ?? throw new ObjectDisposedException(nameof(FoundryToolboxService));
 
         // The connection's own handlers wrap the shared primary handler without owning it, so disposing
-        // this connection's HttpClient leaves the pool to the service.
+        // this connection's HttpClient leaves the pool to the service. Its bearer handler carries the
+        // response's call id, binding the MCP session opened below to that caller.
         var httpClient = new HttpClient(
             CreateToolboxHttpMessageHandler(
                 endpoint,
                 this._credential,
                 this._options.TokenScope,
                 this._featuresHeader,
-                new SharedHttpMessageHandler(primaryHandler)));
+                new SharedHttpMessageHandler(primaryHandler),
+                callId));
 
         var transportOptions = CreateToolboxTransportOptions(endpoint, toolboxName);
         var transport = new HttpClientTransport(transportOptions, httpClient);
@@ -496,22 +509,24 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
     /// </summary>
     /// <remarks>
     /// A scope is created for one response and used only by it. <see cref="ResolveAsync"/> opens every configured
-    /// toolbox concurrently under the response's caller context; <see cref="DisposeAsync"/> ends every connection
-    /// the scope opened. No connection is shared with, or reused by, another response.
+    /// toolbox concurrently with the response's call id; <see cref="DisposeAsync"/> ends every connection the scope
+    /// opened. No connection is shared with, or reused by, another response.
     /// </remarks>
     internal sealed class ToolboxRequestScope : IAsyncDisposable
     {
         private readonly FoundryToolboxService? _owner;
+        private readonly string? _callId;
         private readonly List<(string ToolboxName, ToolboxConnection Connection)> _connections = [];
         private bool _disposed;
 
-        internal ToolboxRequestScope(FoundryToolboxService? owner)
+        internal ToolboxRequestScope(FoundryToolboxService? owner, string? callId)
         {
             this._owner = owner;
+            this._callId = callId;
         }
 
         /// <summary>Creates a scope with no toolboxes, for a handler that has no toolbox service.</summary>
-        internal static ToolboxRequestScope CreateInactive() => new(owner: null);
+        internal static ToolboxRequestScope CreateInactive() => new(owner: null, callId: null);
 
         /// <summary>
         /// Opens every configured toolbox for this response and returns the tools to add, or the OAuth consents
@@ -581,7 +596,7 @@ internal sealed partial class FoundryToolboxService : IHostedService, IAsyncDisp
         {
             try
             {
-                var result = await owner.OpenToolboxAsync(toolboxName, cancellationToken).ConfigureAwait(false);
+                var result = await owner.OpenToolboxAsync(toolboxName, this._callId, cancellationToken).ConfigureAwait(false);
                 if (result.Connection is not { } connection)
                 {
                     return new ToolboxOpenOutcome(Tools: [], Consents: result.Consents ?? []);
