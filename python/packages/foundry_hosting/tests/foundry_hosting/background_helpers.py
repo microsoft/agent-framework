@@ -66,15 +66,3 @@ class BackgroundCallbacks:
 
     def workflow(self, request: Request) -> Workflow:
         return WorkflowBuilder(start_executor=self.agent).build()
-
-
-class AgentChatCallbacks(BackgroundCallbacks):
-    def __init__(self) -> None:
-        super().__init__(source="none", location="options", injected={"background": True})
-        self.agent = Agent(client=self.client, middleware=[self.inject_chat])
-
-
-class ReplacedMiddlewareCallbacks(BackgroundCallbacks):
-    async def inject_agent(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-        context.client_kwargs["middleware"] = (self.inject_chat,)
-        await call_next()

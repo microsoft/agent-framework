@@ -54,6 +54,8 @@ class InvocationsHostServer(_InvocationsHostServer):
                 options. Return the replacement mapping.
                 Hosting validates protected fields after the hook and before resolving the factory,
                 unlike Responses factories which run before the hook. Defaults are not mutated.
+                Invocations has no outer background mode, so hosting never sets `background`;
+                a `background` value returned by the hook is passed through as the application's choice.
             unsupported_options: Policy for agents without runtime options: `"warn"`, `"ignore"`, or `"error"`.
             sse_keep_alive_interval_seconds: Positive streaming heartbeat interval. If omitted, use a positive
                 `SSE_KEEPALIVE_INTERVAL`, otherwise disable heartbeats. Not a request/model timeout.
