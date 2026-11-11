@@ -544,7 +544,11 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     private static string ResolvePath(string workingFolder, string fileName)
     {
         // Validate and normalize the file name (rejects rooted, traversal, empty, etc.).
-        // Only fileName needs validation — workingFolder is developer-provided and trusted.
+        // workingFolder is not validated here. It comes from FileMemoryState, which is set by
+        // the state initializer only for a new session; on a restored session it is read back
+        // from the session's StateBag and the initializer does not run. Containment of the
+        // combined path is delegated to the AgentFileStore implementation (the built-in stores
+        // re-normalize every path they receive).
         string normalizedFileName = StorePaths.NormalizeRelativePath(fileName);
 
         string normalizedWorkingFolder = workingFolder.Replace('\\', '/');
