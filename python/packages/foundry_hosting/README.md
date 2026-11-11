@@ -686,8 +686,8 @@ validates the entire reply batch against its exact pending checkpoint.
 
 A sync/async `build_workflow(request)` factory returns a **built**, fresh `Workflow`,
 with stable name, executor IDs and graph identity. Build fresh executors, agents,
-clients, providers and tools for each request; allocation must not execute tools or
-workflow side effects. Both hosted and local workflows require a factory; built instances
+clients, providers and mutable tools for each request. Allocation must not execute
+tools or workflow side effects. Both hosted and local workflows require a factory; built instances
 are rejected at construction. Factory-owned agents are entered and
 closed per turn; applications must explicitly own external credentials/providers
 through their resource-managing agent subclasses. Do not configure another
