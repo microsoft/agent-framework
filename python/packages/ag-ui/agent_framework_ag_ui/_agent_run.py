@@ -162,6 +162,7 @@ logger = logging.getLogger(__name__)
 AG_UI_INTERNAL_METADATA_KEYS = {"ag_ui_thread_id", "ag_ui_run_id", "current_state", "forwarded_props"}
 _COLLECTED_APPROVAL_RESPONSES_KEY = "collected_approval_responses"
 _PROVIDER_SERVICE_SESSION_ID_STATE_KEY = "__ag_ui_provider_service_session_id"
+_BACKGROUND_TOOL_RECOVERY_STATE_KEY = "_background_tool_recovery"
 
 # Provider-owned session-state keys reserved unconditionally, independent of what the agent declares through
 # ``service_session_state_keys``. Agents are expected to declare their own keys, but that resolves through the
@@ -2653,6 +2654,7 @@ def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
         _TOOL_APPROVAL_STATE_KEY,
         InMemoryHistoryProvider.DEFAULT_SOURCE_ID,
         MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
+        _BACKGROUND_TOOL_RECOVERY_STATE_KEY,
         *(provider.source_id for provider in context_providers),
         *_provider_service_session_state_keys(agent),
         *_fides_session_state_keys(agent),
@@ -2725,6 +2727,8 @@ def _provider_service_session_state_keys(agent: SupportsAgentRun) -> set[str]:
     declared = getattr(agent, "service_session_state_keys", ())
     if isinstance(declared, (list, tuple, set, frozenset)):
         keys.update(key for key in cast(Collection[Any], declared) if isinstance(key, str))
+    # Recovery evidence stays private and durable even when model history is client-managed.
+    keys.discard(_BACKGROUND_TOOL_RECOVERY_STATE_KEY)
     return keys
 
 

@@ -65,6 +65,9 @@ Create an `AgentSession` through the agent and pass the same session to each run
 - Treat persisted session state as sensitive data.
 - Read [session documentation](https://learn.microsoft.com/agent-framework/concepts/agents/conversations/session) for
   serialization and provider-specific continuation behavior.
+- For background Responses calls that execute local tools, retain the same session and continuation token across polls
+  and supported result-delivery retries. Calls without a reusable session remain supported but have no cross-poll
+  recovery or replay protection. Re-supply dynamically added tools on retry; missing or changed definitions are rejected.
 
 ## History
 

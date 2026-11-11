@@ -18,12 +18,14 @@ It covers:
 - approved, rejected, mixed, and replayed approval rounds;
 - reasoning content and opaque reasoning signatures bound to function calls;
 - history persistence and service-side continuation;
+- session-backed recovery of local tool results during Responses background operations;
 - error, user-input, middleware-termination, middleware-failure, and loop-limit paths;
 - provider and transport serialization of function calls and results.
 
 The primary implementation is in `python/packages/core/agent_framework/_tools.py`. History replay behavior in
 `python/packages/core/agent_framework/_sessions.py`, provider serializers, hosting packages, and UI transports are
-part of the same contract when they carry function-call loop content.
+part of the same contract when they carry function-call loop content. Background execution and result-delivery
+evidence is managed by `python/packages/core/agent_framework/_tool_recovery.py`.
 
 ## Maintenance policy
 
@@ -601,6 +603,63 @@ that manually replay messages own the equivalent rule: do not resend an approval
   final response transcript, each positioned before the group it replaces, so history loaded with `skip_excluded`
   keeps the summarized content; summaries of caller-owned input messages stay out of the returned transcript.
 
+### Background tool-result recovery
+
+Recovery retries result delivery, not completed tool execution. It applies to automatic local tools in OpenAI
+Responses background operations and continuation-token polls, including Azure OpenAI and Foundry adapters, not ordinary
+foreground calls or other protocols. The caller must retain the authoritative `AgentSession` after failures.
+Sessionless and ephemeral-session calls remain supported without cross-poll recovery or replay protection.
+
+- Claim each occurrence by stable `Content.id` in `executing` before middleware or tool invocation, then save results
+  independently as calls complete. Missing response identities or missing/repeated occurrence identities fail before invocation.
+  A failed or cancelled sibling must not erase completed results.
+- A ready checkpoint requires results for every claimed occurrence. Session serialization must preserve the prepared
+  messages, caller-visible transcript, original input, identities, reasoning, usage, error count, consumed budgets,
+  tool choice, continuation mode, and effective tool registry independently of successful-run history.
+- Retry requires the original polling token and unchanged caller input. Use checkpointed messages, not regenerated
+  provider context, and submit results without retrieving the completed response or rerunning middleware/tools.
+  Preserve conversation-object versus response-ID continuation without conflicting aliases, and do not reset consumed
+  limits or elapsed time. Retrieval failure before any execution claim does not make tool execution indeterminate.
+- Evidence is scoped to provider, endpoint, model, organization, and project; Foundry also includes effective agent
+  identity (name/version or an applicable `agent_reference` override). Pending or handled evidence cannot cross scopes;
+  empty state may. Matching token-only polls retain the originating model when no override is supplied.
+- Restore the checkpointed tool registry in order, including additions/removals, using matching trusted implementations
+  supplied on retry. Do not reconstruct executable tools from stored data. Missing or changed definitions reject
+  delivery but leave the ready checkpoint available for a corrected retry.
+- Checkpoint completed nonterminal streaming batches before yielding tool results, so closing before dispatch leaves
+  delivery ready. Both modes preserve the same ordered reasoning/call/result transcript and cumulative usage;
+  successful recovery persists one pair per occurrence. Streaming may repeat previously exposed updates.
+- Invalid, unsupported-version, incomplete, or indeterminate evidence fails before replay; uncertain execution or
+  provider acceptance requires reconciliation. Ordinary tool-error results keep their existing contract.
+- After pending delivery clears, retain consumed polling/response identities and reject stale tokens. A full
+  handled-response ledger refuses further execution rather than evicting replay protection.
+- `_background_tool_recovery` is provider-owned: preserve inherited ownership declarations and exclude it from delegated
+  `Agent.as_tool(propagate_session=True)` state in both directions while propagating application state. AG-UI retains
+  it privately in both history modes and rejects request Shared State replacement, including through opaque wrappers.
+
+Completing a tool does not prove provider acceptance. Delivery follows these rules:
+
+| State | Event | Required outcome |
+|---|---|---|
+| `executing` | All claimed results and delivery context are checkpointed | Enter `ready`. |
+| `ready` | Retry restoration, local preparation failure, or stream close before dispatch | Stay `ready`; retained results remain reusable. |
+| `ready` | Prepared result request is dispatched | Enter `submitting` immediately before the provider call, after local validation/preparation. |
+| `submitting` | Successful provider response | Clear pending delivery; retain consumed identities. |
+| `submitting` | HTTP 429/503 before any submission-stream update | Return to `ready`. |
+| `submitting` | Other failure/cancellation, or failure after any submission-stream update | Enter `indeterminate`; do not retry automatically. |
+| `executing` | Exception/cancellation escapes before a complete checkpoint | Enter `indeterminate`; retain completed siblings. |
+| Any pending state | Normal completion, including an early terminal return | Clear pending state and retain consumed identities; this alone does not prove provider acceptance. |
+
+Concurrent polls against one live session must be rejected, with ownership released on return, error, cancellation,
+or stream close. Hosts must authorize and tenant-scope storage, protect retained results, persist session mutations
+after failures, and serialize ownership across restored workers. This is not a distributed lock or transaction:
+crashes between side effects and durable storage still require tool idempotency or reconciliation. Recovery promises
+neither exactly-once provider processing nor exactly-once external side effects across crashes or lost/shared state.
+
+Existing approval, Host-pause, fatal-middleware, and provider-invalidation rules still apply. Execution during initial
+approval/Host resolution, before a new provider response, is outside this delivery-recovery contract (#8574).
+Recovery must not manufacture approval authority.
+
 ## Scenario-to-test matrix
 
 ### Normal function invocation
@@ -777,13 +836,45 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | AG-UI malformed `confirm_changes` metadata | Non-list tool-call metadata and malformed argument JSON are ignored without guessing a target call. | `test_confirm_changes_target_ignores_non_list_tool_calls`, `test_confirm_changes_target_rejects_malformed_arguments_json` |
 | Compaction pair integrity | Adjacent and non-adjacent pairs, including assistant-embedded results and completed reused-id occurrences, remain atomic without pairing ambiguous or out-of-order ids. | `packages/core/tests/core/test_compaction.py::test_group_annotations_keep_tool_call_and_tool_result_atomic`, `test_group_annotations_include_reasoning_in_tool_call_group`, `test_group_annotations_pair_nonadjacent_function_result_by_call_id`, `test_group_annotations_pair_multiple_nonadjacent_results_with_declaration`, `test_group_annotations_pair_completed_reused_call_id_occurrences`, `test_group_annotations_close_assistant_embedded_result_before_reused_call_id`, `test_sliding_window_does_not_retain_orphan_result_after_assistant_embedded_result`, `test_sliding_window_keeps_reused_call_id_occurrences_atomic`, `test_group_annotations_do_not_pair_ambiguous_duplicate_call_ids` |
 
+### Background tool-result recovery
+
+The following references are relative to `python/`. "All consumption modes" means non-streaming, explicit streaming
+iteration, and streaming `get_final_response()`-only consumption. Other rows state their response-mode coverage;
+a non-streaming test is not evidence for the corresponding streaming path.
+
+| Scenario | Required invariant | Primary regression test |
+|---|---|---|
+| Retrieval failure before local execution | With `failure_stage="retrieve"`, HTTP 429/503 executes no tool; a later successful poll may retrieve and execute once. Covered in both response modes, with live and JSON-restored sessions. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_poll_retry_does_not_repeat_completed_tools` |
+| Rejected result submission and repeated delivery failure | With `failure_stage="submit"`, HTTP 429/503 before submission output permits retry of identical saved results without tool re-execution, including persistent failure. Successful recovery preserves usage, occurrence pairing, history, and stale-token rejection. Covered in both modes, with live and JSON-restored sessions. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_poll_retry_does_not_repeat_completed_tools` |
+| Pending input, scope, or checkpoint mismatch | New input, changed model/endpoint, unsupported state version, malformed budget, missing result evidence, changed tool schema, or busy state fails before another provider request or tool execution. All consumption modes. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_recovery_rejects_unsafe_retries` |
+| Ambiguous or cancelled submission | The `ambiguous-delivery` and `cancelled-submission` cases leave evidence non-retryable after JSON session restoration; completed tools do not run again. All consumption modes. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_recovery_rejects_unsafe_retries` |
+| Stateless compatibility | Direct-client and ephemeral-agent background calls still execute normally in both modes; this does not establish cross-poll recovery guarantees. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_tools_without_a_reusable_session_remain_supported` |
+| Partial batch and concurrent ownership | A concurrent poll is rejected; cancellation retains completed siblings and leaves the incomplete batch indeterminate after restoration. All consumption modes. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_partial_batch_and_concurrent_poll_fail_closed` |
+| Reused call IDs, reasoning, middleware, and consumed limits | Distinct occurrences with the same provider `call_id` retain distinct results and reasoning; recovery does not repeat middleware or reset function-call/iteration limits. Final responses and persisted history retain both results and cumulative usage is preserved. All consumption modes. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_recovery_preserves_reused_call_ids_reasoning_and_limits` |
+| Malformed execution identity | Missing response/occurrence identity rejects middleware and tool execution; a repeated occurrence cannot execute again or erase its recorded result. Incomplete evidence remains non-retryable after JSON restoration. Covered at the shared execution boundary with concurrent and sequential invocation configured. | `packages/core/tests/core/test_tools.py::test_background_recovery_rejects_malformed_execution_identity` |
+| Interrupted submission stream | Once a submission update is exposed, a later HTTP 429 is indeterminate rather than retryable, including after restoration. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_recovery_rejects_retry_after_partial_submission_stream` |
+| Refreshed provider context | A completed TodoProvider mutation may change regenerated context, but retry accepts unchanged caller input and submits the identical checkpointed messages without duplicating the mutation. Both recovery modes. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_recovery_accepts_refreshed_todo_context` |
+| Conversation continuation aliases | `conversation_id`, native `conversation` strings, and conversation objects retain the original conversation without conflicting `previous_response_id`. Both recovery modes after JSON restoration. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_recovery_preserves_conversation_mode` |
+| Token-only model retention | An omitted model on polling/recovery retains the initial per-run override rather than reverting to the client default. Both recovery modes after JSON restoration. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_token_only_poll_retains_model_override` |
+| Empty-state scope change | A background request that produced no execution or handled-response evidence does not prevent a later model/endpoint change. Non-streaming coverage. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_without_execution_evidence_can_change_scope` |
+| Local preparation failure before dispatch | Invalid request options do not poison a ready checkpoint; a corrected retry delivers without repeating retrieval or execution. Both recovery modes. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_recovery_survives_local_request_validation_failure` |
+| Close immediately after a streamed tool result | The completed batch is already checkpointed; close before dispatch followed by JSON restoration permits non-streaming delivery without re-execution. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_stream_close_after_tool_result_keeps_delivery_ready` |
+| Dynamic tool registry | Recovery restores additions/removals in effective order. Missing added implementations reject delivery without losing the ready checkpoint; supplying them permits retry. Both recovery modes after JSON restoration. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_recovery_restores_dynamic_tool_registry` |
+| Stream-close ownership cleanup | Closing a retrieval stream before local execution releases live-session ownership so another poll can retrieve normally. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_stream_close_releases_poll_ownership` |
+| Explicit approval boundary | A background-polled approval-required tool waits for an explicit bound approval and executes once on resume in both modes; this is not coverage of delivery failure after approval execution. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_recovery_preserves_explicit_approval_resume` |
+| Handled-response capacity | Stale tokens remain rejected; a full ledger refuses a new tool batch instead of evicting consumed-token evidence. Non-streaming coverage. | `packages/openai/tests/openai/test_openai_chat_client.py::test_background_recovery_capacity_does_not_evict_consumed_tokens` |
+| Foundry agent scope | Changed name/version or an effective non-preview agent-reference override cannot reuse another agent's execution evidence. A preview-only ignored override does not change scope. Non-streaming coverage. | `packages/foundry/tests/foundry/test_foundry_agent.py::test_foundry_background_recovery_rejects_another_agent` |
+| Foundry delegated recovery-state ownership | Raw, fully layered, and generic-agent/client entry points isolate parent/child recovery state while preserving application state on success and failure. | `packages/foundry/tests/foundry/test_foundry_agent.py::test_foundry_agent_tools_isolate_service_state_between_children` |
+| AG-UI private recovery state | Both history modes retain trusted evidence in private Session Continuation State and reject request-state replacement, with or without discoverable ownership declarations. | `packages/ag-ui/tests/ag_ui/test_run.py::test_background_recovery_state_is_private_and_cannot_be_overwritten` |
+
 ## Required coverage gaps
 
-These scenarios are required but are not fully covered by merged tests on `main`:
+These scenarios are required but are not fully covered by the regressions named above:
 
 | Gap | Tracking |
 |---|---|
 | Service-owned `previous_response_id` continuation cannot execute a terminal approval again on a later turn. | #6851 |
+| Result-delivery failure after local execution during initial approval/Host resume needs its own recovery contract and dedicated regressions; successful approval resume does not cover it. | #8574 |
 
 Do not mark these rows covered by nearby tests; each needs a dedicated regression at the owning layer.
 
@@ -827,6 +918,9 @@ Before accepting an update, reviewers must confirm:
 - caller messages and previous responses remain immutable;
 - streaming updates and final response agree with non-streaming output;
 - history replay does not reintroduce approval authority;
+- background recovery retries delivery without repeating completed tools or middleware, and ambiguous outcomes fail
+  closed without discarding evidence;
+- recovery state remains private, scoped to its owning session/provider, and isolated from delegated agents;
 - full package, syntax, source typing, and test typing checks were run.
 
 ## Related issues
@@ -846,3 +940,5 @@ Before accepting an update, reviewers must confirm:
 - #6074 / #7233 — reasoning-paired tool-call replay
 - #6450 / #6794 — provider message and tool-result serialization
 - #8099 — in-run compaction summaries in the returned transcript
+- #9031 — repeated local side effects after background result-submission failure
+- #8574 — result-delivery recovery for approval/Host resume
