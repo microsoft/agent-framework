@@ -50,10 +50,12 @@ from ._middleware import (
 )
 from ._serialization import SerializationMixin
 from ._sessions import (
+    _SERVICE_HISTORY_VERIFIED_SOURCES_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentSession,
     ContextProvider,
     HistoryProvider,
     SessionContext,
+    _get_service_continuation,  # pyright: ignore[reportPrivateUsage]
 )
 from ._tools import (
     _APPROVAL_REQUEST_ID_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -1526,7 +1528,10 @@ _STATE_VARIABLES = "variables"
 _STATE_VARIABLE_METADATA = "variable_metadata"
 _STATE_AUDIT_LOG = "audit_log"
 _STATE_PENDING_APPROVALS = "pending_policy_approvals"
+_STATE_HISTORY_RECONSTRUCTION_COVERAGE = "history_reconstruction_coverage"
+_STATE_SERVICE_CONTINUATION_IDENTITY = "service_continuation_identity"
 _STANDALONE_SESSION_STATE_KEY = "__agent_framework_fides_security__"
+_RESTORED_CONTEXT_LABEL_METADATA_KEY = "_agent_framework_fides_restored_context_label"
 
 
 def _strict_json_value(
@@ -4283,6 +4288,8 @@ class SecureAgentConfig(ContextProvider):
             )
     """
 
+    requires_loaded_context_before_invocation = True
+
     DEFAULT_SOURCE_ID = "secure_agent"
 
     def __init__(
@@ -4465,6 +4472,53 @@ class SecureAgentConfig(ContextProvider):
         }
 
     @staticmethod
+    def _history_providers(agent: Any) -> list[HistoryProvider]:
+        """Return loadable history providers visible on an agent."""
+        return [
+            provider
+            for provider in getattr(agent, "context_providers", ())
+            if isinstance(provider, HistoryProvider) and provider.load_messages
+        ]
+
+    @staticmethod
+    def _service_continuation_identity(state: Mapping[str, Any]) -> str | None:
+        """Return the continuation identity bound to restored FIDES state."""
+        raw_identity = state.get(_STATE_SERVICE_CONTINUATION_IDENTITY)
+        if raw_identity is None:
+            return None
+        try:
+            identity = _decode_durable_state(raw_identity, path="service continuation identity")
+        except ValueError:
+            return None
+        return identity if isinstance(identity, str) else None
+
+    @staticmethod
+    def _store_service_continuation_identity(state: dict[str, Any], identity: str) -> None:
+        """Bind authoritative FIDES state to one normalized continuation identity."""
+        state[_STATE_SERVICE_CONTINUATION_IDENTITY] = _encode_durable_state(
+            identity,
+            path="service continuation identity",
+        )
+
+    @staticmethod
+    def _verified_service_history_sources(
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        continuation_identity: str,
+    ) -> set[str]:
+        """Return providers whose loaded snapshot exactly covers the continuation."""
+        return {
+            provider.source_id
+            for provider in SecureAgentConfig._history_providers(agent)
+            if provider._covers_service_continuation(  # pyright: ignore[reportPrivateUsage]
+                context=context,
+                state=session.state.get(provider.source_id, {}),
+                continuation_identity=continuation_identity,
+            )
+        }
+
+    @staticmethod
     def _fold_provider_message_map(
         scope: _SecurityScope,
         provider_messages: Mapping[str, Sequence[Message]],
@@ -4506,6 +4560,73 @@ class SecureAgentConfig(ContextProvider):
         if provider_labels:
             scope.context_label = combine_labels(scope.context_label, *provider_labels)
 
+    async def after_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Bind completed FIDES state to the continuation used by the run."""
+        del agent, session
+        continuation_present, continuation_identity = _get_service_continuation(context)
+        if continuation_present and continuation_identity is not None and _STATE_CONTEXT_LABEL in state:
+            self._store_service_continuation_identity(state, continuation_identity)
+        elif not continuation_present:
+            state.pop(_STATE_SERVICE_CONTINUATION_IDENTITY, None)
+
+    async def after_context_loaded(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Fold loaded history before approval replay and validate service continuation authority."""
+        restored_context_label = context.metadata.get(_RESTORED_CONTEXT_LABEL_METADATA_KEY) is True
+        continuation_present, continuation_identity = _get_service_continuation(context)
+        bound_identity = self._service_continuation_identity(state)
+        state_is_authoritative = (
+            continuation_present
+            and continuation_identity is not None
+            and restored_context_label
+            and bound_identity == continuation_identity
+        )
+        verified_sources = (
+            self._verified_service_history_sources(agent, session, context, continuation_identity)
+            if continuation_identity is not None
+            else set[str]()
+        )
+        context.metadata[_SERVICE_HISTORY_VERIFIED_SOURCES_CONTEXT_KEY] = verified_sources
+        if continuation_present and (
+            continuation_identity is None
+            or (restored_context_label and not state_is_authoritative)
+            or (not restored_context_label and not verified_sources)
+        ):
+            state.pop(_STATE_SERVICE_CONTINUATION_IDENTITY, None)
+            state.pop(_STATE_HISTORY_RECONSTRUCTION_COVERAGE, None)
+            raise RuntimeError(
+                "Cannot reconstruct service-managed history without an authoritative FIDES context label."
+            )
+
+        history_source_ids = self._history_source_ids(agent)
+        if history_source_ids:
+            approval_proofs = self._capture_core_approval_replay_proofs(
+                session,
+                context.input_messages,
+            )
+            self._fold_provider_message_map(
+                _SecurityScope(state, scope_id=session.session_id),
+                context.context_messages,
+                session=session,
+                source_ids=history_source_ids,
+                approval_proofs=approval_proofs,
+            )
+        if continuation_present and continuation_identity is not None:
+            self._store_service_continuation_identity(state, continuation_identity)
+
     async def before_run(
         self,
         *,
@@ -4526,6 +4647,7 @@ class SecureAgentConfig(ContextProvider):
             context: The invocation context - tools, instructions, and middleware are added here.
             state: The provider-scoped mutable state dict.
         """
+        context.metadata[_RESTORED_CONTEXT_LABEL_METADATA_KEY] = _STATE_CONTEXT_LABEL in state
         scope = _SecurityScope(state, scope_id=session.session_id)
         history_source_ids = self._history_source_ids(agent)
         configured_labeler = self._message_labeler
