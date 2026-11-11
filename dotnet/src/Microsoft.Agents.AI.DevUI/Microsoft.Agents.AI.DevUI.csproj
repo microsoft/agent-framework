@@ -13,7 +13,7 @@
   </PropertyGroup>
 
   <!-- Work around https://github.com/dotnet/sdk/issues/56656 until the SDK fixes referenced Web SDK libraries. -->
-  <PropertyGroup Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(NETCoreSdkVersion)', '^11\.0\.100-rc\.'))">
+  <PropertyGroup Condition="'$(NETCoreSdkVersion)' == '11.0.100'">
     <EnableHotReloadInRuntimeConfigDevFile>false</EnableHotReloadInRuntimeConfigDevFile>
   </PropertyGroup>
 
