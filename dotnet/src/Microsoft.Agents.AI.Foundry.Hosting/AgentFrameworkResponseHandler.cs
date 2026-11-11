@@ -252,10 +252,42 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
             this._options);
         chatOptions.Instructions = request.Instructions;
 
+        // A resilient turn defers to recovery when the host shuts down; any other turn ends incomplete.
+        bool isResilientTurn = this.ShouldPersistForResilience(request) || context.IsRecovery;
+
         // Open the pre-registered Foundry toolboxes for this response when the toolbox service is available.
         if (this._toolboxService is not null)
         {
-            var toolboxResolution = await toolboxRequestScope.ResolveAsync(cancellationToken).ConfigureAwait(false);
+            // Opening toolboxes waits on the network before the agent runs, so it observes shutdown itself rather
+            // than holding the response through the transport timeouts. A shutdown here ends the turn the same way
+            // as one during the agent run below, before the agent or its session has advanced, so nothing is saved.
+            ToolboxRequestResolution toolboxResolution = ToolboxRequestResolution.Empty;
+            bool shutdownDuringToolboxOpen = false;
+            using (var toolboxOpenCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, context.Shutdown))
+            {
+                try
+                {
+                    toolboxResolution = await toolboxRequestScope.ResolveAsync(toolboxOpenCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (context.IsShutdownRequested)
+                {
+                    shutdownDuringToolboxOpen = true;
+                }
+            }
+
+            if (shutdownDuringToolboxOpen)
+            {
+                if (isResilientTurn)
+                {
+                    LogShutdownDeferredForRecovery(this._logger);
+                    await context.ExitForRecoveryAsync(cancellationToken).ConfigureAwait(false);
+                    yield break;
+                }
+
+                LogShutdownEmittingIncomplete(this._logger);
+                yield return stream.EmitIncomplete();
+                yield break;
+            }
 
             // A toolbox that needs this caller's OAuth consent stops the turn instead of silently running
             // without its tools: the user completes consent out of band, then re-sends the request.
@@ -332,8 +364,6 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         // process crash can reload a recent session snapshot. Workflow supersteps use a stronger
         // boundary below: save the session, record its workflow checkpoint id in internal response
         // metadata, then ask AgentServer to persist the matching ResponseObject snapshot.
-        bool isResilientTurn = this.ShouldPersistForResilience(request) || context.IsRecovery;
-
         bool emittedTerminal = false;
         bool notAllowedStoreUsageDetected = false;
 

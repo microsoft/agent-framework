@@ -37,6 +37,7 @@ public sealed class FoundryToolboxRequestLifetimeTests
     private const string ConsentLink = "https://auth.example.com/authorize";
     private static readonly string s_responseId = "resp_" + new string('4', 46);
     private static readonly TimeSpan s_runTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan s_shutdownTimeout = TimeSpan.FromSeconds(10);
     private static readonly string[] s_callIdsInOrder = ["call-a", "call-b"];
     private static readonly string[] s_callerToolNames = ["tool_for_call_a"];
     private static readonly string[] s_toolNamesInToolboxOrder = ["weather_tool", "calendar_tool"];
@@ -303,6 +304,69 @@ public sealed class FoundryToolboxRequestLifetimeTests
         Assert.Contains("call-b", resultText, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CreateAsync_ShutdownWhileOpeningToolboxes_StopsBeforeTheAgentRunsAsync(bool resilient)
+    {
+        // Arrange: a toolbox handshake hangs, and the host begins a graceful shutdown while it is in flight. The
+        // response's own cancellation token stays live.
+        var opening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var options = new FoundryToolboxServiceOptions { EndpointOverride = "https://proj.example/api/projects/proj" };
+        options.ToolboxNames.Add("weather");
+        await using var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>())
+        {
+            ToolboxOpener = async (_, _, cancellationToken) =>
+            {
+                opening.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                throw new InvalidOperationException("The toolbox handshake never completes.");
+            },
+        };
+        await service.StartAsync(CancellationToken.None);
+        var agent = new ToolCallingAgent();
+        var sessionStore = new TestAgentSessionStore();
+        var handler = CreateHandler(
+            agent,
+            service,
+            new FoundryResponsesServerOptions { ResilientBackground = resilient },
+            sessionStore);
+        using var shutdown = new CancellationTokenSource();
+        var recoveryExits = 0;
+
+        // Act
+        var run = Task.Run(() => RunAsync(
+            handler,
+            callId: "call-a",
+            background: true,
+            configureContext: context =>
+            {
+                context.Setup(x => x.Shutdown).Returns(shutdown.Token);
+                context.Setup(x => x.IsShutdownRequested).Returns(() => shutdown.IsCancellationRequested);
+                context.Setup(x => x.ExitForRecoveryAsync(It.IsAny<CancellationToken>()))
+                    .Callback(() => Interlocked.Increment(ref recoveryExits))
+                    .Returns(Task.CompletedTask);
+            }));
+        await opening.Task.WaitAsync(s_runTimeout);
+        shutdown.Cancel();
+        var events = await run.WaitAsync(s_shutdownTimeout);
+
+        // Assert: discovery stops at shutdown, the agent never runs, and no session state is saved.
+        Assert.Empty(agent.ObservedToolNames);
+        Assert.Equal(0, sessionStore.SaveCount);
+        if (resilient)
+        {
+            // The response stays in progress for a later process to recover.
+            Assert.Equal(1, recoveryExits);
+            Assert.DoesNotContain(events, static e => e is ResponseCompletedEvent or ResponseIncompleteEvent or ResponseFailedEvent);
+        }
+        else
+        {
+            Assert.Equal(0, recoveryExits);
+            Assert.IsType<ResponseIncompleteEvent>(events[^1]);
+        }
+    }
+
     private static async IAsyncEnumerable<ChatResponseUpdate> YieldAsync(ChatResponseUpdate update)
     {
         await Task.Yield();
@@ -331,15 +395,19 @@ public sealed class FoundryToolboxRequestLifetimeTests
         return new FoundryToolboxService(options, credential.Object);
     }
 
-    private static AgentFrameworkResponseHandler CreateHandler(AIAgent agent, FoundryToolboxService service)
+    private static AgentFrameworkResponseHandler CreateHandler(
+        AIAgent agent,
+        FoundryToolboxService service,
+        FoundryResponsesServerOptions? options = null,
+        AgentSessionStore? sessionStore = null)
     {
         var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
+        services.AddSingleton(sessionStore ?? new TestAgentSessionStore());
         services.AddSingleton(agent);
         return new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
-            new FoundryResponsesServerOptions(),
+            options ?? new FoundryResponsesServerOptions(),
             service);
     }
 
@@ -349,11 +417,14 @@ public sealed class FoundryToolboxRequestLifetimeTests
         string? responseId = null,
         string? conversationId = null,
         IReadOnlyList<OutputItem>? history = null,
-        BinaryData? input = null)
+        BinaryData? input = null,
+        bool background = false,
+        Action<Mock<ResponseContext>>? configureContext = null)
     {
         var request = new CreateResponse
         {
             Model = "test",
+            Background = background ? true : null,
             Conversation = conversationId is null ? null : BinaryData.FromString($"\"{conversationId}\""),
         };
         request.Input = input ?? BinaryData.FromObjectAsJson(new[]
@@ -372,6 +443,7 @@ public sealed class FoundryToolboxRequestLifetimeTests
         context.Setup(x => x.PlatformContext).Returns(new PlatformContext("user", callId));
         context.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(history ?? Array.Empty<OutputItem>());
         context.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<Item>());
+        configureContext?.Invoke(context);
 
         using var timeout = new CancellationTokenSource(s_runTimeout);
         var events = new List<ResponseStreamEvent>();
