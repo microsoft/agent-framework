@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import sys
@@ -309,6 +310,35 @@ FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "end_turn": "stop",
     "refusal": "content_filter",
 }
+
+
+def _forbid_additional_properties(node: Any) -> None:
+    """Set ``additionalProperties: false`` on every object schema in ``node``, in place.
+
+    Anthropic structured outputs reject any object schema without it, including nested
+    models in ``$defs``. Maps of names to schemas (``properties``, ``$defs``) are walked
+    as maps, so a field named ``properties`` or ``type`` is not mistaken for a schema.
+    """
+    if isinstance(node, list):
+        for item in cast(list[Any], node):
+            _forbid_additional_properties(item)
+        return
+    if not isinstance(node, dict):
+        return
+    schema = cast(dict[str, Any], node)
+    schema_type = schema.get("type")
+    is_object = schema_type == "object" or (isinstance(schema_type, list) and "object" in schema_type)
+    if is_object or "properties" in schema:
+        additional = schema.get("additionalProperties")
+        if additional is None or additional is True:
+            schema["additionalProperties"] = False
+    for key, value in schema.items():
+        if key in ("properties", "$defs", "definitions", "patternProperties"):
+            if isinstance(value, dict):
+                for sub_schema in cast(dict[str, Any], value).values():
+                    _forbid_additional_properties(sub_schema)
+        elif key not in ("default", "examples", "const", "enum"):
+            _forbid_additional_properties(value)
 
 
 def _map_finish_reason(stop_reason: str | None) -> FinishReason | None:
@@ -1041,7 +1071,9 @@ class RawAnthropicClient(
 
             if isinstance(schema, dict):
                 # Copy, so the caller's response_format is not changed for later requests.
-                schema = {**schema, "additionalProperties": False}
+                schema = copy.deepcopy(cast(dict[str, Any], schema))
+                schema["additionalProperties"] = False
+                _forbid_additional_properties(schema)
 
             return {
                 "type": "json_schema",
@@ -1050,6 +1082,7 @@ class RawAnthropicClient(
 
         schema = response_format.model_json_schema()
         schema["additionalProperties"] = False
+        _forbid_additional_properties(schema)
 
         return {
             "type": "json_schema",
