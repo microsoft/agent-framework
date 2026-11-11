@@ -1360,6 +1360,7 @@ class TestStreamingFailuresAndCompatibility:
         assert "error" in response.json()
         assert agent.calls == []
 
+
 # endregion
 
 
