@@ -92,19 +92,9 @@ from azure.ai.agentserver.responses.streaming._builders import (
 )
 from mcp import MCPError
 
+from ._approvals import SessionApprovalState
+
 logger = logging.getLogger(__name__)
-
-
-class _ApprovalLookup(Protocol):
-    """Read-only approval-request lookup used when converting stored history back to messages.
-
-    Implementations must not consume, claim, or otherwise change approval authority; the host validates and claims
-    approval batches separately before protected execution.
-    """
-
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        """Return the original ``function_approval_request`` content for a public approval request ID."""
-        ...
 
 
 class _ApprovalRecorder(Protocol):
@@ -1690,14 +1680,14 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
 
 
 async def _items_to_messages(  # pyright: ignore[reportUnusedFunction]
-    input_items: Sequence[Item], *, approval_storage: _ApprovalLookup | None = None
+    input_items: Sequence[Item], *, approval_storage: SessionApprovalState | None = None
 ) -> list[Message]:
     """Converts a sequence of input items to a list of Messages, one per item.
 
     Args:
         input_items: The input items to convert.
-        approval_storage: An optional read-only approval lookup used to look up
-            approval requests when converting MCP approval response items.
+        approval_storage: Optional session-backed approval state used to read
+            approval requests without consuming their authority.
 
     Returns:
         A list of Messages, one per supported input item.
@@ -1799,15 +1789,15 @@ def _shell_command_output_to_content(output: Mapping[str, Any]) -> Content:
 async def _item_to_message(
     item: Item,
     *,
-    approval_storage: _ApprovalLookup | None = None,
+    approval_storage: SessionApprovalState | None = None,
     _item_type_name: Literal["Item", "OutputItem"] = "Item",
 ) -> Message:
     """Converts an Item to a Message.
 
     Args:
         item: The Item to convert.
-        approval_storage: An optional read-only approval lookup used to look up
-            approval requests when converting MCP approval response items.
+        approval_storage: Optional session-backed approval state used to read
+            approval requests without consuming their authority.
         _item_type_name: The item type name to include in unsupported-type errors.
 
     Returns:
@@ -2103,14 +2093,14 @@ async def _item_to_message(
 async def _output_items_to_messages(  # pyright: ignore[reportUnusedFunction]
     history: Sequence[OutputItem],
     *,
-    approval_storage: _ApprovalLookup | None = None,
+    approval_storage: SessionApprovalState | None = None,
 ) -> list[Message]:
     """Converts a sequence of OutputItem objects to a list of Message objects.
 
     Args:
         history (Sequence[OutputItem]): The sequence of OutputItem objects to convert.
-        approval_storage (_ApprovalLookup | None, optional): The approval storage to use for
-            resolving MCP approval requests. Defaults to None.
+        approval_storage: Optional session-backed approval state used to read
+            approval requests without consuming their authority.
 
     Returns:
         list[Message]: The list of Message objects.
@@ -2121,13 +2111,13 @@ async def _output_items_to_messages(  # pyright: ignore[reportUnusedFunction]
     return messages
 
 
-async def _output_item_to_message(item: OutputItem, *, approval_storage: _ApprovalLookup | None = None) -> Message:
+async def _output_item_to_message(item: OutputItem, *, approval_storage: SessionApprovalState | None = None) -> Message:
     """Converts an OutputItem to a Message.
 
     Args:
         item (OutputItem): The OutputItem to convert.
-        approval_storage (_ApprovalLookup | None, optional): The approval storage to use for
-            resolving MCP approval requests. Defaults to None.
+        approval_storage: Optional session-backed approval state used to read
+            approval requests without consuming their authority.
 
     Returns:
         Message: The converted Message.
