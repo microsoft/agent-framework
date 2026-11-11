@@ -94,30 +94,37 @@ class _FakeConnectionRegistry:
 class _FakeAsyncClient:
     def __init__(self, registry: _FakeConnectionRegistry, **kwargs: object) -> None:
         # Explicit alias wins; otherwise fall back to pymilvus's uri-derived shared alias.
-        self._using = str(kwargs.get("alias") or f"async-{kwargs.get('uri')}")
+        self.alias = str(kwargs.get("alias") or f"async-{kwargs.get('uri')}")
         self._registry = registry
-        self._registry.connect(self._using)
+        self._registry.connect(self.alias)
 
     async def close(self) -> None:
-        self._registry.disconnect(self._using)
-
-    @property
-    def connected(self) -> bool:
-        return self._registry.is_live(self._using)
+        self._registry.disconnect(self.alias)
 
 
 async def test_closing_one_store_leaves_independent_store_usable():
     # Regression: before unique aliases, two stores at the same uri shared one connection, so
     # closing the first tore down the connection the second still relied on.
     registry = _FakeConnectionRegistry()
-    with patch(_CLIENT_PATH, side_effect=lambda **kwargs: _FakeAsyncClient(registry, **kwargs)):
+    created: list[_FakeAsyncClient] = []
+
+    def _factory(**kwargs: object) -> _FakeAsyncClient:
+        client = _FakeAsyncClient(registry, **kwargs)
+        created.append(client)
+        return client
+
+    # Assert against the registry and the typed fake clients (not the AsyncMilvusClient-typed
+    # store.client handle) so every type checker stays happy without attribute-access ignores.
+    with patch(_CLIENT_PATH, side_effect=_factory):
         store_a = MilvusStore(uri="http://localhost:19530")
-        store_b = MilvusStore(uri="http://localhost:19530")
+        MilvusStore(uri="http://localhost:19530")
 
-        assert store_a.client._using != store_b.client._using  # type: ignore[attr-defined]
-        assert store_a.client.connected and store_b.client.connected  # type: ignore[attr-defined]
+        alias_a, alias_b = created[0].alias, created[1].alias
+        assert alias_a != alias_b
+        assert registry.is_live(alias_a) and registry.is_live(alias_b)
 
+        # Closing one store must only tear down its own connection.
         await store_a.aclose()
 
-        assert store_a.client.connected is False  # type: ignore[attr-defined]
-        assert store_b.client.connected is True  # type: ignore[attr-defined]
+        assert registry.is_live(alias_a) is False
+        assert registry.is_live(alias_b) is True
