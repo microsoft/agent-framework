@@ -413,7 +413,10 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
 
     def _bind_streaming_route(self, *, prefix: str, keep_alive: bool) -> None:
         """Adapt only the native POST route's public StreamingResponse cleanup lifetime."""
-        path = f"/{prefix.strip('/')}/responses" if prefix.strip("/") else "/responses"
+        normalized_prefix = prefix.strip()
+        if normalized_prefix and not normalized_prefix.startswith("/"):
+            normalized_prefix = f"/{normalized_prefix}"
+        path = f"{normalized_prefix.rstrip('/')}/responses"
         for index, route in enumerate(self.router.routes):
             if not isinstance(route, Route) or route.path != path or "POST" not in (route.methods or ()):
                 continue

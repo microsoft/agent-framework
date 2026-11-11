@@ -1346,6 +1346,40 @@ def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
 
 
 @pytest.mark.parametrize("stream", [False, True])
+async def test_agent_host_prefix_preserves_response_routes(stream: bool) -> None:
+    agent = _make_agent(
+        response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Prefixed")])])
+    )
+    server = _make_server(agent, prefix="api/v1")
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        created = await client.post("/api/v1/responses", json={"input": "hello", "stream": stream, "store": True})
+        assert created.status_code == 200, created.text
+        if stream:
+            result = next(
+                event["data"]["response"]
+                for event in _parse_sse_events(created.text)
+                if event["event"] == "response.completed"
+            )
+        else:
+            result = created.json()
+        assert result["status"] == "completed"
+        response_id = result["id"]
+
+        stored = await client.get(f"/api/v1/responses/{response_id}")
+        assert stored.status_code == 200, stored.text
+        assert stored.json()["output"] == result["output"]
+
+        inputs = await client.get(f"/api/v1/responses/{response_id}/input_items")
+        assert inputs.status_code == 200, inputs.text
+        assert inputs.json()["data"]
+
+        deleted = await client.delete(f"/api/v1/responses/{response_id}")
+        assert deleted.status_code == 200, deleted.text
+        assert (await client.get(f"/api/v1/responses/{response_id}")).status_code == 404
+
+
+@pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("metadata", [None, {}, {"foo": "bar", "view": "concise"}])
 async def test_request_metadata_is_returned_and_stored(stream: bool, metadata: dict[str, str] | None) -> None:
     agent = _make_agent(

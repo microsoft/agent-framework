@@ -510,10 +510,23 @@ async def test_new_workflow_wrapper_does_not_hide_shared_builder_executors() -> 
 
 
 @pytest.mark.parametrize("stream", [False, True])
-async def test_workflow_host_prefix_preserves_create_and_retrieval_routes(stream: bool) -> None:
-    server = _server(prefix="api/v1")
+@pytest.mark.parametrize(
+    ("prefix", "path"),
+    [
+        ("api/v1", "/api/v1"),
+        (" /api/v1/ ", "/api/v1"),
+        ("//api/v1/", "//api/v1"),
+        (" / ", ""),
+    ],
+)
+async def test_workflow_host_prefix_preserves_create_and_retrieval_routes(
+    stream: bool, prefix: str, path: str
+) -> None:
+    server = _server(prefix=prefix)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
-        created = await client.post("/api/v1/responses", json={"input": '{"text":"prefixed"}', "stream": stream})
+        created = await client.post(
+            f"http://test{path}/responses", json={"input": '{"text":"prefixed"}', "stream": stream}
+        )
         assert created.status_code == 200
         if stream:
             events = [json.loads(line[6:]) for line in created.text.splitlines() if line.startswith("data: {")]
@@ -522,7 +535,7 @@ async def test_workflow_host_prefix_preserves_create_and_retrieval_routes(stream
             result = created.json()
         assert result["status"] == "completed", result
         assert result["output"][0]["output"] == {"text": "prefixed", "count": 1}
-        stored = await client.get(f"/api/v1/responses/{result['id']}")
+        stored = await client.get(f"http://test{path}/responses/{result['id']}")
         assert stored.status_code == 200
         assert stored.json()["output"] == result["output"]
 
