@@ -1641,7 +1641,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session=active_session,
             input_messages=input_messages,
             options=opts,
-            service_stores_history=bool(service_stores_history),
         )
         default_additional_args = chat_options.pop("additional_function_arguments", None)
         if isinstance(default_additional_args, Mapping):
@@ -1757,19 +1756,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 agent=self,
                 session=active_session,
                 providers=per_service_call_history_providers,
-                context_providers=self.context_providers,
-                run_context=session_context,
                 service_stores_history=service_stores_history,
             )
-        if per_service_call_history_middleware is not None:
-            existing_middleware = cast(
-                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
-            )
-            effective_client_kwargs["middleware"] = [
-                *_as_middleware_list(existing_middleware),
-                per_service_call_history_middleware,
-            ]
-
         provider_middleware = session_context.get_middleware()
         if provider_middleware:
             # Providers may only contribute chat/function middleware (enforced by
@@ -1788,6 +1776,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                     *_as_middleware_list(existing_middleware),
                     *provider_function_chat_middleware,
                 ]
+
+        if per_service_call_history_middleware is not None:
+            existing_middleware = cast(
+                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
+            )
+            effective_client_kwargs["middleware"] = [
+                *_as_middleware_list(existing_middleware),
+                per_service_call_history_middleware,
+            ]
 
         evaluation_tools: dict[str, dict[str, Any]] = {}
         if isinstance(self.client, BaseChatClient):
@@ -1816,7 +1813,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         session: AgentSession | None,
         input_messages: list[Message] | None = None,
         options: dict[str, Any] | None = None,
-        service_stores_history: bool = False,
     ) -> tuple[SessionContext, dict[str, Any]]:
         """Prepare the session context and messages for agent execution.
 
@@ -1827,7 +1823,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session: The conversation session (None for stateless invocation).
             input_messages: Messages to process.
             options: Runtime options dict (already copied, safe to mutate).
-            service_stores_history: Whether the service owns history for this run.
 
         Returns:
             A tuple containing:
@@ -1878,40 +1873,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 context=session_context,
                 state=provider_session.state.setdefault(provider.source_id, {}),
             )
-
-        loaded_context = session_context
-        requires_loaded_context = any(
-            provider.requires_loaded_context_before_invocation for provider in self.context_providers
-        )
-        if per_service_call_history_required and not service_stores_history and requires_loaded_context:
-            if provider_session is None:
-                raise RuntimeError("Provider session must be available when per-service history is classified.")
-            loaded_context = SessionContext(
-                session_id=provider_session.session_id,
-                service_session_id=provider_session.service_session_id,
-                input_messages=list(session_context.input_messages),
-                options=dict(session_context.options),
-                metadata=session_context.metadata,
-            )
-            for provider in self.context_providers:
-                if isinstance(provider, HistoryProvider) and provider.load_messages:
-                    await provider.before_run(
-                        agent=self,
-                        session=provider_session,
-                        context=loaded_context,
-                        state=provider_session.state.setdefault(provider.source_id, {}),
-                    )
-
-        if self.context_providers:
-            if provider_session is None:
-                raise RuntimeError("Provider session must be available when loaded context is finalized.")
-            for provider in self.context_providers:
-                await provider.after_context_loaded(
-                    agent=self,
-                    session=provider_session,
-                    context=loaded_context,
-                    state=provider_session.state.setdefault(provider.source_id, {}),
-                )
 
         # Merge provider-contributed tools into chat_options
         if session_context.tools:

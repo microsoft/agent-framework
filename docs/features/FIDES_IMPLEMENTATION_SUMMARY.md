@@ -372,3 +372,4 @@ cumulative security state before execution. Newly supplied assistant/tool messag
 when state was restored. Stored provider history is reconstructed conservatively whenever it is loaded; FIDES does not
 infer trust through transcript persistence, deduplication, compaction, or merging. Applications may instead configure
 `SecureAgentConfig.message_labeler` to authoritatively classify messages already added by their context providers.
+Per-service-call history that is unavailable at run setup is treated as **UNTRUSTED + PRIVATE**.

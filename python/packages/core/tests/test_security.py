@@ -66,7 +66,6 @@ from agent_framework.security import (
     PolicyEnforcementFunctionMiddleware,
     SecureAgentConfig,
     VariableReferenceContent,
-    _replayed_message_label,
     combine_labels,
     get_current_middleware,
     rewritten_arguments,
@@ -3843,64 +3842,50 @@ class TestSecureAgentSessionIsolation:
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.USER_IDENTITY
 
-    @pytest.mark.parametrize("provider_order", ["history-first", "security-first"])
-    async def test_history_is_folded_once_regardless_of_provider_order(
-        self,
-        provider_order: str,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """The post-provider finalizer does not fold history already handled by SecureAgentConfig."""
-
-        class StaticHistoryProvider(HistoryProvider):
-            async def get_messages(
-                self,
-                session_id: str | None,
-                *,
-                state: dict[str, Any] | None = None,
-                **kwargs: Any,
-            ) -> list[Message]:
-                del session_id, state, kwargs
-                return [Message(role="assistant", contents=["One unstamped history item"])]
-
-            async def save_messages(
-                self,
-                session_id: str | None,
-                messages: Any,
-                *,
-                state: dict[str, Any] | None = None,
-                **kwargs: Any,
-            ) -> None:
-                del session_id, messages, state, kwargs
-
-        class NoopClient:
-            async def get_response(self, *args: Any, **kwargs: Any) -> ChatResponse:
-                del args, kwargs
-                return ChatResponse(messages=[Message(role="assistant", contents=["done"])])
-
-        history = StaticHistoryProvider("ordered-history")
+    async def test_history_loaded_after_security_is_folded_before_tool_execution(self) -> None:
+        """A private FIDES preflight classifies history loaded by a later provider."""
         config = SecureAgentConfig()
-        providers = [history, config] if provider_order == "history-first" else [config, history]
-        agent = Agent(
-            client=cast(SupportsChatGetResponse, NoopClient()),
-            context_providers=providers,
-        )
-        session = AgentSession(session_id=f"history-order-{provider_order}")
-        replay_calls = 0
-
-        def count_replayed_message(*args: Any, **kwargs: Any) -> ContentLabel:
-            nonlocal replay_calls
-            replay_calls += 1
-            return _replayed_message_label(*args, **kwargs)
-
-        monkeypatch.setattr("agent_framework.security._replayed_message_label", count_replayed_message)
-
-        await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        history = InMemoryHistoryProvider(source_id="later-history")
+        session = AgentSession(session_id="later-loaded-history")
+        context = SessionContext(session_id=session.session_id, input_messages=[])
+        await config.before_run(
+            agent=SimpleNamespace(
+                context_providers=[config, history],
+                require_per_service_call_history_persistence=False,
+            ),
             session=session,
-            input_messages=[],
-            options={},
+            context=context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+        context.extend_messages(
+            history,
+            [Message(role="assistant", contents=["Unstamped history loaded after SecureAgentConfig"])],
         )
 
-        assert replay_calls == 1
+        preflight, tracker, policy, _ = context.get_middleware()
+        assert isinstance(preflight, FunctionMiddleware)
+        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+        assert isinstance(policy, PolicyEnforcementFunctionMiddleware)
+        protected_tool = FunctionTool(
+            func=lambda: "must not run",
+            name="protected_action",
+            additional_properties={"source_integrity": "trusted"},
+        )
+        invocation = FunctionInvocationContext(
+            function=protected_tool,
+            arguments={},
+            session=session,
+        )
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(preflight, tracker, policy).execute(
+                invocation,
+                lambda _context: pytest.fail("Later-loaded history must taint before protected execution"),
+            )
+
+        label = tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
 
     async def test_non_history_context_provider_messages_remain_deferred(self) -> None:
         """SecureAgentConfig does not silently impose policy on trusted context-provider plugins."""
@@ -4022,14 +4007,8 @@ class TestSecureAgentSessionIsolation:
             context=context,
             state=session.state.setdefault(config.source_id, {}),
         )
-        await config.after_context_loaded(
-            agent=agent,
-            session=session,
-            context=context,
-            state=session.state[config.source_id],
-        )
 
-        tracker, _, replay_middleware = context.get_middleware()
+        _, tracker, _, replay_middleware = context.get_middleware()
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
         chat_context = ChatContext(
@@ -4167,35 +4146,27 @@ class TestSecureAgentSessionIsolation:
 
         config = SecureAgentConfig()
         history = FailOnceHistoryProvider()
+        client_type = type("HistoryRetryClient", (FunctionInvocationLayer, ChatMiddlewareLayer, NoopClient), {})
         agent = Agent(
-            client=cast(SupportsChatGetResponse, NoopClient()),
+            client=cast(SupportsChatGetResponse, client_type()),
             context_providers=[config, history],
         )
         session = AgentSession(session_id="failed-history-retry")
         input_messages = [Message(role="user", contents=["Continue"])]
 
         with pytest.raises(RuntimeError, match="history load failed"):
-            await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
-                session=session,
-                input_messages=input_messages,
-                options={},
-            )
+            await agent.run(input_messages, session=session)
 
         restored = AgentSession.from_dict(session.to_dict())
-        session_context, _ = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
-            session=restored,
-            input_messages=input_messages,
-            options={},
-        )
+        response = await agent.run(input_messages, session=restored)
 
-        tracker = session_context.get_middleware()[0]
-        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
-        label = tracker.get_context_label()
+        assert response.text == "done"
+        label = ContentLabel.from_dict(json.loads(restored.state[config.source_id]["context_label"]))
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
 
-    async def test_per_service_loaded_history_is_enforced_before_tool_execution(self) -> None:
-        """Per-service loaded history taints FIDES before a model-selected protected tool can run."""
+    async def test_per_service_history_fails_closed_in_replay_layer(self) -> None:
+        """This layer blocks protected tools until the service-history layer classifies per-call history."""
         executed: list[str] = []
         messages_received: list[list[Message]] = []
 
@@ -4288,8 +4259,8 @@ class TestSecureAgentSessionIsolation:
         assert context_label["integrity"] == "untrusted"
         assert context_label["confidentiality"] == "private"
 
-    async def test_per_service_history_is_restored_before_approved_tool_execution(self) -> None:
-        """A restored approval cannot execute before per-service history taints FIDES."""
+    async def test_per_service_approval_fails_closed_in_replay_layer(self) -> None:
+        """An approved tool cannot bypass unavailable per-service history classification."""
         executed: list[str] = []
         responses = [
             ChatResponse(
@@ -4679,14 +4650,8 @@ class TestSecureAgentSessionIsolation:
             context=context,
             state=session.state.setdefault(config.source_id, {}),
         )
-        await config.after_context_loaded(
-            agent=SimpleNamespace(context_providers=[config, history]),
-            session=session,
-            context=context,
-            state=session.state[config.source_id],
-        )
 
-        tracker, _, replay_middleware = context.get_middleware()
+        _, tracker, _, replay_middleware = context.get_middleware()
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.TRUSTED
@@ -4744,14 +4709,8 @@ class TestSecureAgentSessionIsolation:
             context=context,
             state=session.state.setdefault(config.source_id, {}),
         )
-        await config.after_context_loaded(
-            agent=SimpleNamespace(context_providers=[config, history]),
-            session=session,
-            context=context,
-            state=session.state[config.source_id],
-        )
 
-        tracker, _, replay_middleware = context.get_middleware()
+        _, tracker, _, replay_middleware = context.get_middleware()
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
 
@@ -4806,14 +4765,8 @@ class TestSecureAgentSessionIsolation:
             context=context,
             state=session.state.setdefault(config.source_id, {}),
         )
-        await config.after_context_loaded(
-            agent=SimpleNamespace(context_providers=[config, history]),
-            session=session,
-            context=context,
-            state=session.state[config.source_id],
-        )
 
-        tracker, policy, replay_middleware = context.get_middleware()
+        _, tracker, policy, replay_middleware = context.get_middleware()
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         assert isinstance(policy, PolicyEnforcementFunctionMiddleware)
         label = tracker.get_context_label()
@@ -4903,7 +4856,7 @@ class TestSecureAgentSessionIsolation:
             state=session.state.setdefault(config.source_id, {}),
         )
 
-        tracker, _, replay_middleware = context.get_middleware()
+        _, tracker, _, replay_middleware = context.get_middleware()
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         cyclic_request = Content.from_function_approval_request(
             id="cyclic-approval-occurrence",
@@ -5015,7 +4968,11 @@ class TestSecureAgentSessionIsolation:
             state=session.state.setdefault(config.source_id, {}),
         )
 
-        tracker = provider_context.get_middleware()[0]
+        tracker = next(
+            middleware
+            for middleware in provider_context.get_middleware()
+            if isinstance(middleware, LabelTrackingFunctionMiddleware)
+        )
         assert isinstance(tracker, LabelTrackingFunctionMiddleware)
         label = tracker.get_context_label()
         assert label.integrity == IntegrityLabel.UNTRUSTED

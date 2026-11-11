@@ -291,9 +291,11 @@ checks remain independent.
   replay unless the history provider explicitly preserves FIDES provenance.
 - Messages from non-history context providers are not automatically folded into
   the FIDES context label unless `message_labeler` classifies them.
-- History loaded only inside per-service-call persistence remains conservatively
-  reconstructed. Providers that need authoritative labels in that advanced
-  lifecycle must stamp or classify the data at their own boundary.
+- When `require_per_service_call_history_persistence=True`, run-level FIDES
+  cannot inspect the history owned by the per-call persistence path before an
+  approval can execute. It therefore marks the context **UNTRUSTED + PRIVATE**
+  and fails closed. Integrations that need more precise behavior must establish
+  history authority inside that persistence boundary.
 
 This fail-closed behavior can block protected tools after an unsupported
 provider transformation. That is preferable to inferring trust from message

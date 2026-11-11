@@ -1583,6 +1583,42 @@ class _ReplaySecurityChatMiddleware(ChatMiddleware):
         await call_next()
 
 
+class _LoadedHistorySecurityFunctionMiddleware(FunctionMiddleware):
+    """Fold history that finished loading after SecureAgentConfig.before_run."""
+
+    def __init__(
+        self,
+        scope: _SecurityScope,
+        session: AgentSession,
+        run_context: SessionContext,
+        history_source_ids: set[str],
+        *,
+        approval_authority: _ApprovalReplayAuthority,
+        message_label_authority: _MessageLabelAuthority | None,
+    ) -> None:
+        self._scope = scope
+        self._session = session
+        self._run_context = run_context
+        self._history_source_ids = history_source_ids
+        self._approval_authority = approval_authority
+        self._message_label_authority = message_label_authority
+
+    async def process(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
+        SecureAgentConfig._fold_history_labels(  # pyright: ignore[reportPrivateUsage]
+            self._scope,
+            self._run_context,
+            session=self._session,
+            history_source_ids=self._history_source_ids,
+            approval_authority=self._approval_authority,
+            message_label_authority=self._message_label_authority,
+        )
+        await call_next()
+
+
 # =============================================================================
 # Security Middleware
 # =============================================================================
@@ -4350,8 +4386,6 @@ class SecureAgentConfig(ContextProvider):
             )
     """
 
-    requires_loaded_context_before_invocation = True
-
     DEFAULT_SOURCE_ID = "secure_agent"
 
     def __init__(
@@ -4515,6 +4549,10 @@ class SecureAgentConfig(ContextProvider):
                             == _function_call_replay_key(rebound.function_call)
                         )
                     ):
+                        request_id = rebound.additional_properties.get(_APPROVAL_REQUEST_ID_KEY)
+                        stored = pending.get(request_id) if isinstance(request_id, str) else None
+                        if stored is not None and stored.function_call is not None:
+                            authority.remember(stored, stored.function_call)
                         authority.remember(content, rebound.function_call)
         return authority
 
@@ -4580,6 +4618,10 @@ class SecureAgentConfig(ContextProvider):
         message_label_authority: _MessageLabelAuthority | None,
     ) -> None:
         """Fold loaded history-provider messages into one FIDES scope."""
+        loaded_history = [
+            message for source_id in history_source_ids for message in context.context_messages.get(source_id, ())
+        ]
+        approval_authority.reauthenticate(loaded_history)
         SecureAgentConfig._fold_provider_message_map(
             scope,
             context.context_messages,
@@ -4625,36 +4667,6 @@ class SecureAgentConfig(ContextProvider):
                 authority.remember(message, authoritative_label)
         return source_ids, authority
 
-    async def after_context_loaded(
-        self,
-        *,
-        agent: Any,
-        session: AgentSession,
-        context: SessionContext,
-        state: dict[str, Any],
-    ) -> None:
-        """Fold complete loaded history before function approval replay can execute."""
-        history_source_ids = self._history_source_ids(agent)
-        raw_approval_authority = context.metadata.get(_APPROVAL_REPLAY_AUTHORITY_KEY)
-        approval_authority = (
-            raw_approval_authority
-            if isinstance(raw_approval_authority, _ApprovalReplayAuthority)
-            else _ApprovalReplayAuthority()
-        )
-        context.metadata[_APPROVAL_REPLAY_AUTHORITY_KEY] = approval_authority
-        raw_message_label_authority = context.metadata.get(_MESSAGE_LABEL_AUTHORITY_KEY)
-        message_label_authority = (
-            raw_message_label_authority if isinstance(raw_message_label_authority, _MessageLabelAuthority) else None
-        )
-        self._fold_history_labels(
-            _SecurityScope(state, scope_id=session.session_id),
-            context,
-            session=session,
-            history_source_ids=history_source_ids,
-            approval_authority=approval_authority,
-            message_label_authority=message_label_authority,
-        )
-
     async def before_run(
         self,
         *,
@@ -4676,7 +4688,6 @@ class SecureAgentConfig(ContextProvider):
             state: The provider-scoped mutable state dict.
         """
         scope = _SecurityScope(state, scope_id=session.session_id)
-        middleware: list[FunctionMiddleware | ChatMiddleware] = [*self._middleware_for_scope(scope)]
         history_source_ids = self._history_source_ids(agent)
         provider_source_ids: set[str] = set()
         message_label_authority: _MessageLabelAuthority | None = None
@@ -4695,6 +4706,25 @@ class SecureAgentConfig(ContextProvider):
                 source_ids=provider_source_ids,
                 approval_authority=approval_authority,
                 message_label_authority=message_label_authority,
+            )
+        self._fold_history_labels(
+            scope,
+            context,
+            session=session,
+            history_source_ids=history_source_ids,
+            approval_authority=approval_authority,
+            message_label_authority=message_label_authority,
+        )
+        # Per-service persistence loads history inside chat middleware, after inbound
+        # approvals may already execute. Without authority at this boundary, fail closed.
+        if bool(getattr(agent, "require_per_service_call_history_persistence", False)) and history_source_ids:
+            scope.context_label = combine_labels(
+                scope.context_label,
+                ContentLabel(
+                    integrity=IntegrityLabel.UNTRUSTED,
+                    confidentiality=ConfidentialityLabel.PRIVATE,
+                    metadata={"source": "unclassified_per_service_history"},
+                ),
             )
         input_bound_call_keys = _bound_approval_call_keys(
             context.input_messages,
@@ -4715,6 +4745,19 @@ class SecureAgentConfig(ContextProvider):
             scope.context_label = combine_labels(
                 scope.context_label,
                 *input_labels,
+            )
+        middleware: list[FunctionMiddleware | ChatMiddleware] = [*self._middleware_for_scope(scope)]
+        if history_source_ids:
+            middleware.insert(
+                0,
+                _LoadedHistorySecurityFunctionMiddleware(
+                    scope,
+                    session,
+                    context,
+                    history_source_ids,
+                    approval_authority=approval_authority,
+                    message_label_authority=message_label_authority,
+                ),
             )
         middleware.append(
             _ReplaySecurityChatMiddleware(
