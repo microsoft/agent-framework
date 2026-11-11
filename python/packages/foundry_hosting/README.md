@@ -533,7 +533,8 @@ writes for concurrent turns, including the pre-dispatch claim. Local callers can
 first loading a session.
 
 See the [custom storage provider sample](../../samples/04-hosting/foundry-hosted-agents/responses/custom_storage/)
-for an example that uses an in-memory session store locally and Azure Cosmos DB when hosted.
+for an example that uses an in-memory session store locally and a user-managed Azure Cosmos DB account when hosted.
+Its Cosmos prerequisites apply to that custom provider, not to the default Foundry-managed store.
 
 Native Responses refusal parts are stored as text carrying
 `additional_properties["model_output_kind"] == "refusal"` and emitted as

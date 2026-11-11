@@ -119,11 +119,14 @@ COSMOS_DATABASE_NAME=<database>
 COSMOS_CONTAINER_NAME=<container-with-partition-key-/scope_key>
 ```
 
-For approval state, the Cosmos account **must use one write region**.
+For approval state, the user-managed Cosmos account configured for this sample
+**must use one write region**.
 Multi-write-region accounts can accept conditional updates independently in
 different regions before resolving conflicts. This sample does not provide a
 single global approval claim in that configuration. See
 [Cosmos optimistic concurrency and global distribution](https://learn.microsoft.com/en-us/azure/cosmos-db/database-transactions-optimistic-concurrency#optimistic-concurrency-control-and-global-distribution).
+This prerequisite applies to the sample's custom provider, not to the
+Foundry-managed state store.
 
 The hosted provider uses `azure.identity.aio.ManagedIdentityCredential`, with
 the platform-provided `FOUNDRY_AGENT_INSTANCE_CLIENT_ID` when present. Grant that
