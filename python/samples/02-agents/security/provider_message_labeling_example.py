@@ -42,9 +42,9 @@ MEMORY_SOURCE_ID = "user_memory"
 TODO_SOURCE_ID = "planning"
 
 PROVIDER_LABELS = {
-    HISTORY_SOURCE_ID: ContentLabel(IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PRIVATE),
+    HISTORY_SOURCE_ID: ContentLabel(IntegrityLabel.TRUSTED, ConfidentialityLabel.PRIVATE),
     MEMORY_SOURCE_ID: ContentLabel(IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PRIVATE),
-    TODO_SOURCE_ID: ContentLabel(IntegrityLabel.TRUSTED, ConfidentialityLabel.PUBLIC),
+    TODO_SOURCE_ID: ContentLabel(IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC),
 }
 
 
@@ -72,7 +72,7 @@ async def main() -> None:
     )
     planning = TodoProvider(source_id=TODO_SOURCE_ID)
 
-    # 2. Configure FIDES before the providers to show that provider order does not control classification.
+    # 2. Configure FIDES after the providers so their messages exist when the callback runs.
     security = SecureAgentConfig(
         message_labeler=classify_provider_message,
         allow_untrusted_tools={"file_memory_read", "file_memory_write"},
@@ -81,7 +81,7 @@ async def main() -> None:
     async with Agent[FoundryChatOptions](
         client=client,
         instructions="Use the available history, memory, and planning context to answer the user.",
-        context_providers=[security, history, memory, planning],
+        context_providers=[history, memory, planning, security],
         default_options={"store": False},
     ) as agent:
         session = agent.create_session(session_id="provider-labeling-sample")
@@ -114,8 +114,8 @@ if __name__ == "__main__":
 """
 Sample output (abridged; exact text varies by model):
 
-Labeling 'conversation_history' as untrusted/private: 'Earlier note: the user prefers concise travel recommendations.'
-Labeling 'planning' as trusted/public: '### Current todo list...'
+Labeling 'conversation_history' as trusted/private: 'Earlier note: the user prefers concise travel recommendations.'
+Labeling 'planning' as untrusted/public: '### Current todo list...'
 Labeling 'user_memory' as untrusted/private: 'The following is your memory index...'
 
 Agent: You prefer concise travel recommendations and window seats.

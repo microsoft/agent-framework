@@ -4331,7 +4331,8 @@ class SecureAgentConfig(ContextProvider):
                 The synchronous callback receives the authoritative ``source_id`` from the
                 ``SessionContext.context_messages`` bucket and the message in that bucket. It must return the
                 authoritative ``ContentLabel`` for that exact message. FIDES caches the result for the run without
-                mutating or stamping the message. Provider order does not affect classification.
+                mutating or stamping the message. Register ``SecureAgentConfig`` after every non-history provider
+                whose messages it should classify.
             max_pending_approvals: Maximum pending policy approvals retained per session.
             pending_approval_ttl: Maximum age of an unconsumed approval. ``None`` disables expiry.
         """
@@ -4528,6 +4529,21 @@ class SecureAgentConfig(ContextProvider):
         scope = _SecurityScope(state, scope_id=session.session_id)
         history_source_ids = self._history_source_ids(agent)
         configured_labeler = self._message_labeler
+        provider_source_ids: set[str] = set()
+        if configured_labeler is not None:
+            raw_providers = getattr(agent, "context_providers", None)
+            if not isinstance(raw_providers, Sequence):
+                raise ValueError("SecureAgentConfig with message_labeler requires an ordered context provider sequence.")
+            providers = cast(Sequence[Any], raw_providers)
+            try:
+                config_index = next(index for index, provider in enumerate(providers) if provider is self)
+            except StopIteration as exc:
+                raise ValueError(
+                    "SecureAgentConfig with message_labeler must be registered as a context provider."
+                ) from exc
+            if any(not isinstance(provider, HistoryProvider) for provider in providers[config_index + 1 :]):
+                raise ValueError("SecureAgentConfig with message_labeler must follow every non-history context provider.")
+            provider_source_ids = set(context.context_messages)
         message_labels: dict[int, tuple[Message, ContentLabel]] = {}
 
         def cached_provider_label(_: str, message: Message) -> ContentLabel | None:
@@ -4536,7 +4552,7 @@ class SecureAgentConfig(ContextProvider):
 
         def classify_provider_message(source_id: str, message: Message) -> ContentLabel | None:
             cached = cached_provider_label(source_id, message)
-            if cached is not None or configured_labeler is None:
+            if cached is not None or configured_labeler is None or source_id not in provider_source_ids:
                 return cached
             label = configured_labeler(source_id, message)
             if not isinstance(label, ContentLabel):
@@ -4553,7 +4569,7 @@ class SecureAgentConfig(ContextProvider):
         )
 
         def fold_run_context() -> None:
-            source_ids = set(context.context_messages) if configured_labeler is not None else history_source_ids
+            source_ids = provider_source_ids | history_source_ids
             if not source_ids:
                 return
             self._fold_provider_message_map(
@@ -4631,7 +4647,7 @@ class SecureAgentConfig(ContextProvider):
             )
             await call_next()
 
-        if history_source_ids or configured_labeler is not None:
+        if history_source_ids:
             middleware.insert(0, fold_loaded_provider_context)
             middleware.append(fold_replayed_history)
         self._provider_state_used = True

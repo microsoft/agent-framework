@@ -141,8 +141,8 @@ framework providers:
 - `TodoProvider`
 
 The callback receives each provider's authoritative `source_id`. It applies
-conservative labels to persisted history and memory, and a trusted public label
-to the framework-owned todo message.
+a trusted private label to application-owned history, an untrusted private
+label to file memory, and an untrusted public label to todo content.
 
 Run it with:
 
@@ -153,7 +153,7 @@ uv run samples/02-agents/security/provider_message_labeling_example.py
 What to look for:
 
 - The sample defines no custom provider class
-- Provider order does not affect classification
+- `SecureAgentConfig` is registered after the providers whose messages it classifies
 - The callback prints classifications for history, memory, and todo messages
 - FIDES does not mutate or stamp provider messages
 

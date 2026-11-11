@@ -3826,7 +3826,13 @@ class TestSecureAgentSessionIsolation:
 
     async def test_history_loaded_after_security_is_folded_before_tool_execution(self) -> None:
         """A private FIDES preflight classifies history loaded by a later provider."""
-        config = SecureAgentConfig()
+        labeled_sources: list[str] = []
+
+        def label_message(source_id: str, _message: Message) -> ContentLabel:
+            labeled_sources.append(source_id)
+            return ContentLabel(IntegrityLabel.TRUSTED)
+
+        config = SecureAgentConfig(message_labeler=label_message)
         history = InMemoryHistoryProvider(source_id="later-history")
         session = AgentSession(session_id="later-loaded-history")
         context = SessionContext(session_id=session.session_id, input_messages=[])
@@ -3866,6 +3872,7 @@ class TestSecureAgentSessionIsolation:
             )
 
         label = tracker.get_context_label()
+        assert labeled_sources == []
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
 
@@ -3960,43 +3967,20 @@ class TestSecureAgentSessionIsolation:
         assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
         assert tracker.get_context_label().confidentiality == ConfidentialityLabel.PUBLIC
 
-    async def test_message_labeler_classifies_later_provider(self) -> None:
-        """The run-local classifier sees messages added after SecureAgentConfig.before_run."""
-        observed_sources: list[str] = []
-
-        def label_message(source_id: str, _message: Message) -> ContentLabel:
-            observed_sources.append(source_id)
-            return ContentLabel(IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PRIVATE)
-
-        config = SecureAgentConfig(message_labeler=label_message)
-        provider = SimpleNamespace(source_id="provider")
-        session = AgentSession(session_id="message-labeler-later-provider")
+    async def test_message_labeler_requires_config_after_non_history_providers(self) -> None:
+        """Provider messages must exist before SecureAgentConfig classifies them."""
+        config = SecureAgentConfig(message_labeler=lambda _source_id, _message: ContentLabel())
+        later_provider = SimpleNamespace(source_id="later-provider")
+        session = AgentSession(session_id="invalid-message-labeler-order")
         context = SessionContext(session_id=session.session_id, input_messages=[])
-        await config.before_run(
-            agent=SimpleNamespace(context_providers=[config, provider]),
-            session=session,
-            context=context,
-            state=session.state.setdefault(config.source_id, {}),
-        )
-        context.extend_messages(provider, [Message(role="assistant", contents=["Provider context"])])
-        categorized = categorize_middleware(context.get_middleware())
-        _, tracker, _ = categorized["function"]
-        replay_middleware = cast(ChatMiddlewareCallable, categorized["chat"][0])
-        chat_context = ChatContext(
-            client=cast(Any, SimpleNamespace()),
-            messages=context.context_messages[provider.source_id],
-            options={},
-            session=session,
-        )
 
-        async def call_next() -> None:
-            return None
-
-        await replay_middleware(chat_context, call_next)
-        assert observed_sources == ["provider"]
-        assert isinstance(tracker, LabelTrackingFunctionMiddleware)
-        assert tracker.get_context_label().integrity == IntegrityLabel.UNTRUSTED
-        assert tracker.get_context_label().confidentiality == ConfidentialityLabel.PRIVATE
+        with pytest.raises(ValueError, match="must follow every non-history context provider"):
+            await config.before_run(
+                agent=SimpleNamespace(context_providers=[config, later_provider]),
+                session=session,
+                context=context,
+                state=session.state.setdefault(config.source_id, {}),
+            )
 
     async def test_message_labeler_requires_content_label_result(self) -> None:
         """Invalid classifier results fail before the model or tools can run."""
