@@ -45,10 +45,9 @@ from azure.ai.agentserver.core.storage import (
     FoundryStoragePreconditionError,
 )
 
-from ._request import WorkflowTurn
 from ._scope import FoundryRequestScope
+from ._shared import WorkflowTurn, prepare_workflow_kwargs, validate_workflow_provider_state
 from ._state_store import CheckpointStoreProvider, ContextScopedStoreProvider
-from ._workflow_source import prepare_workflow_kwargs, validate_workflow_provider_state
 
 _CONFLICT = "Another request advanced this workflow. Reload its current response or start a fresh lineage."
 _BLOCKED = "This workflow turn was interrupted or failed; start a fresh workflow lineage to avoid replaying effects."

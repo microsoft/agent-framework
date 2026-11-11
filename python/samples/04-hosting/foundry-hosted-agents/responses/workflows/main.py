@@ -21,8 +21,8 @@ from agent_framework import (
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import (
     CheckpointStoreProvider,
-    HostedResponseRequest,
-    ResponsesHostServer,
+    ResponsesRequest,
+    ResponsesWorkflowHostServer,
     WorkflowTurn,
 )
 from azure.identity import DefaultAzureCredential
@@ -74,7 +74,7 @@ class StartExecutor(Executor):
         )
 
 
-def build_workflow(request: HostedResponseRequest) -> Workflow:
+def build_workflow(request: ResponsesRequest) -> Workflow:
     """Build fresh graphs, executors, agents, clients, and credentials with stable graph IDs."""
     start = StartExecutor()
     writer = AgentExecutor(
@@ -99,16 +99,16 @@ def build_workflow(request: HostedResponseRequest) -> Workflow:
     )
 
 
-async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[SloganRequest]:
+async def parse_input(request: ResponsesRequest) -> WorkflowTurn[SloganRequest]:
     """Parse only this turn's Responses text; history and checkpoint selection belong to the host."""
     return WorkflowTurn(input=SloganRequest.model_validate_json(await request.get_input_text() or ""))
 
 
 def main() -> None:
     load_dotenv()
-    ResponsesHostServer(
+    ResponsesWorkflowHostServer(
         workflow=build_workflow,
-        parse_response=parse_response,
+        parse_input=parse_input,
         checkpoint_store_provider=CheckpointStoreProvider(
             allowed_checkpoint_types=[f"{SloganRequest.__module__}:{SloganRequest.__qualname__}"],
         ),

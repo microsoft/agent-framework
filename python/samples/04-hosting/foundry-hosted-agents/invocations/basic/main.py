@@ -18,7 +18,7 @@ load_dotenv()
 
 
 # 1. Map the application's JSON payload to typed MAF inputs.
-async def parse_request(request: Request) -> InvocationRun:
+async def parse_input(request: Request) -> InvocationRun:
     """Map application-specific JSON to a validated agent turn."""
     payload: Any = await request.json()
     if not isinstance(payload, dict) or not isinstance(payload.get("prompt"), str):
@@ -55,7 +55,7 @@ def main() -> None:
 
     server = InvocationsHostServer(
         agent,
-        parse_request=parse_request,
+        parse_input=parse_input,
         prepare_options=prepare_options,
         unsupported_options="error",
     )
