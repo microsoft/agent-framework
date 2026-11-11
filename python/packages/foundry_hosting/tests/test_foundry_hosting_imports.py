@@ -180,33 +180,14 @@ def test_legacy_responses_request_name_is_not_exported() -> None:
         hosting.__getattr__("HostedResponseRequest")
 
 
-@pytest.mark.parametrize(
-    ("name", "legacy"),
-    [
-        ("ResponsesWorkflowHostServer", "parse_response"),
-    ],
-)
-def test_legacy_parser_name_is_not_silently_forwarded_to_sdk(name: str, legacy: str) -> None:
-    host = getattr(hosting, name)
-    source = "workflow" if "Workflow" in name else "agent"
-    values = {source: lambda _: None, "parse_input": lambda _: None, legacy: lambda _: None}
-    base = (
-        "azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost"
-        if name.startswith("Responses")
-        else "azure.ai.agentserver.invocations.InvocationAgentServerHost"
-    )
-    with patch(f"{base}.__init__", return_value=None) as initialize:
-        with pytest.raises(TypeError, match=f"{legacy} was renamed to parse_input"):
-            host(**values)
-        initialize.assert_not_called()
-
-
-def test_responses_workflow_host_preserves_steering_guard() -> None:
-    from azure.ai.agentserver.responses import ResponsesServerOptions
-
-    with pytest.raises(RuntimeError, match="steerable_conversations=True is temporarily unavailable"):
+def test_responses_workflow_host_rejects_agent_history_limit_even_when_none() -> None:
+    with (
+        patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize,
+        pytest.raises(TypeError, match="max_history_items"),
+    ):
         cast(Any, hosting.ResponsesWorkflowHostServer)(
             workflow=lambda _: None,
             parse_input=lambda _: None,
-            options=ResponsesServerOptions(steerable_conversations=True),
+            max_history_items=None,
         )
+    initialize.assert_not_called()

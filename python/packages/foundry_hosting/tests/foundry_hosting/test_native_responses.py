@@ -7,7 +7,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -35,8 +35,15 @@ from agent_framework import (
 )
 from agent_framework._workflows._agent_utils import prepare_executor_run_kwargs
 from agent_framework._workflows._const import RESOLVED_WORKFLOW_RUN_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
-from azure.ai.agentserver.responses import FileResponseStore, InMemoryResponseProvider, ResponsesServerOptions
+from azure.ai.agentserver.responses import FileResponseStore, InMemoryResponseProvider
 from azure.ai.agentserver.responses._id_generator import IdGenerator
+from azure.ai.agentserver.responses.models import (
+    CreateResponse,
+    ItemReferenceParam,
+    MCPApprovalResponse,
+    OutputItem,
+    ResponseObject,
+)
 from pydantic import BaseModel
 
 from agent_framework_foundry_hosting import (
@@ -47,6 +54,7 @@ from agent_framework_foundry_hosting import (
     ResponsesWorkflowHostServer,
     WorkflowTurn,
 )
+from agent_framework_foundry_hosting._responses_workflow import _load_replies, _WorkflowRequestError
 from agent_framework_foundry_hosting._workflow_state import FoundryWorkflowBindingStore, HostedWorkflowRun
 
 
@@ -380,7 +388,7 @@ async def test_graph_change_cannot_choose_a_new_unrelated_checkpoint() -> None:
     assert "graph" in second["error"]["message"]
 
 
-async def test_generic_pending_replies_are_complete_and_consumed_once() -> None:
+async def test_generic_partial_replies_reproject_unanswered_requests_under_new_ids() -> None:
     server = _server(lambda request: _build(_Review()), parser=_parse_text)
     first = await _post(server, "review")
     assert first["status"] == "completed", first
@@ -391,19 +399,27 @@ async def test_generic_pending_replies_are_complete_and_consumed_once() -> None:
         [{"type": "function_call_output", "call_id": call_ids[0], "output": "true"}],
         previous_response_id=first["id"],
     )
-    assert partial["status"] == "failed"
-    assert not partial["output"]
-    full = [
-        {"type": "function_call_output", "call_id": call_ids[0], "output": "true"},
-        {"type": "function_call_output", "call_id": call_ids[1], "output": "false"},
-    ]
-    duplicate = await _post(server, [full[0], dict(full[0]), full[1]], previous_response_id=first["id"])
+    assert partial["status"] == "completed", partial
+    assert _texts(partial) == ["review:True"]
+    new_ids = [item["call_id"] for item in partial["output"] if item["type"] == "function_call"]
+    assert len(new_ids) == 1 and new_ids[0] not in call_ids
+    reply = {"type": "function_call_output", "call_id": new_ids[0], "output": "false"}
+
+    duplicate = await _post(server, [reply, dict(reply)], previous_response_id=partial["id"])
     assert duplicate["status"] == "failed"
     assert not duplicate["output"]
-    completed = await _post(server, full, previous_response_id=first["id"])
+    stale = await _post(
+        server,
+        [{"type": "function_call_output", "call_id": call_ids[1], "output": "false"}],
+        previous_response_id=partial["id"],
+    )
+    assert stale["status"] == "failed"
+    assert not stale["output"]
+
+    completed = await _post(server, [reply], previous_response_id=partial["id"])
     assert completed["status"] == "completed", completed
-    assert _texts(completed) == ["review:True", "review:False"]
-    replay = await _post(server, full, previous_response_id=first["id"])
+    assert _texts(completed) == ["review:False"]
+    replay = await _post(server, [reply], previous_response_id=partial["id"])
     assert replay["status"] == "failed"
     assert not replay["output"]
 
@@ -428,31 +444,257 @@ async def test_named_conversation_rejects_old_wire_replies_when_core_request_ids
     assert _texts(accepted) == ["new question:False", "new question:False"]
 
 
-async def test_approval_wire_ids_bind_only_to_exact_pending_checkpoint() -> None:
+@pytest.mark.parametrize("stream", [False, True])
+async def test_workflow_binding_lookup_error_fails_without_leaking_detail(stream: bool) -> None:
     server = _server(lambda request: _build(_Approvals()), parser=_parse_text)
+    first = await _post(server, "/safe")
+    approval_id = next(item["id"] for item in first["output"] if item["type"] == "mcp_approval_request")
+    detail = "private workflow storage failure"
+
+    with patch.object(FoundryWorkflowBindingStore, "get_response", new=AsyncMock(side_effect=RuntimeError(detail))):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+            response = await client.post(
+                "/responses",
+                headers={"x-agent-user-id": "user", "x-agent-foundry-call-id": "call"},
+                json={
+                    "input": [{"type": "mcp_approval_response", "approval_request_id": approval_id, "approve": True}],
+                    "agent_session_id": "sandbox",
+                    "previous_response_id": first["id"],
+                    "stream": stream,
+                },
+            )
+
+    assert response.status_code == 200
+    assert detail not in response.text
+    if stream:
+        assert "response.failed" in response.text
+    else:
+        assert response.json()["status"] == "failed"
+
+
+def _terminal(response: httpx.Response, stream: bool) -> dict[str, Any]:
+    assert response.status_code == 200, response.text
+    if not stream:
+        return response.json()
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: {")]
+    return next(
+        event["response"]
+        for event in events
+        if event["type"] in ("response.completed", "response.failed", "response.incomplete")
+    )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_invalid_approval_replies_fail_in_stream_and_leave_the_pause_usable(stream: bool) -> None:
+    provider = InMemoryResponseProvider()
+    server = _server(lambda request: _build(_Approvals()), parser=_parse_text, response_store=provider)
     first = await _post(server, "/safe")
     assert first["status"] == "completed", first
     wire_ids = [item["id"] for item in first["output"] if item["type"] == "mcp_approval_request"]
     assert len(wire_ids) == 2
     full = [
-        {"type": "mcp_approval_response", "approval_request_id": wire_ids[0], "approve": True},
-        {"type": "mcp_approval_response", "approval_request_id": wire_ids[1], "approve": False},
+        MCPApprovalResponse(type="mcp_approval_response", approval_request_id=wire_ids[0], approve=True),
+        MCPApprovalResponse(type="mcp_approval_response", approval_request_id=wire_ids[1], approve=False),
     ]
-    for replies in (
-        full[:1],
-        [full[0], dict(full[0]), full[1]],
-        [{**full[0], "approval_request_id": "forged"}, full[1]],
-    ):
-        rejected = await _post(server, replies, previous_response_id=first["id"])
-        assert rejected["status"] == "failed"
-        assert not rejected["output"]
-    wrong_scope = await _post(server, full, sandbox="other", previous_response_id=first["id"])
-    assert wrong_scope["status"] == "failed"
-    completed = await _post(server, full, previous_response_id=first["id"])
+    headers = {"x-agent-user-id": "user", "x-agent-foundry-call-id": "call"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        for replies, sandbox in (
+            ([full[0], dict(full[0]), full[1]], "sandbox"),
+            ([*full, {"type": "item_reference", "id": "missing-item"}], "sandbox"),
+            (full, "other"),
+        ):
+            rejected = _terminal(
+                await client.post(
+                    "/responses",
+                    headers=headers,
+                    json={
+                        "input": replies,
+                        "agent_session_id": sandbox,
+                        "previous_response_id": first["id"],
+                        "stream": stream,
+                    },
+                ),
+                stream,
+            )
+            assert rejected["status"] == "failed"
+            assert not rejected["output"]
+        redelivery = _terminal(
+            await client.post(
+                "/responses",
+                headers={**headers, "x-agent-response-id": first["id"]},
+                json={
+                    "input": full,
+                    "agent_session_id": "sandbox",
+                    "previous_response_id": first["id"],
+                    "stream": stream,
+                },
+            ),
+            stream,
+        )
+        assert redelivery["status"] == "failed"
+        assert not redelivery["output"]
+    direct_request = ResponsesRequest(
+        CreateResponse(input=[*full, ItemReferenceParam(type="item_reference", id="missing-item")]),
+        MagicMock(response_id="handler-revalidation", get_input_items=AsyncMock(return_value=full)),
+        MagicMock(spec=FoundryRequestScope),
+        {},
+    )
+    pending_run = MagicMock(spec=HostedWorkflowRun)
+    pending_run.pending_requests = {"first": object(), "second": object()}
+    with pytest.raises(_WorkflowRequestError, match="unresolved input references"):
+        await _load_replies(direct_request, pending_run)
+
+    referenced_id = "resolved-decision"
+    await provider.create_response(
+        cast(ResponseObject, {**first, "id": "reference-seed", "output": []}),
+        [cast(OutputItem, {**full[0], "id": referenced_id})],
+        [],
+    )
+    continuation_id = IdGenerator.new_response_id(first["id"])
+    continuation = [{"type": "item_reference", "id": referenced_id}, full[1]]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        completed = _terminal(
+            await client.post(
+                "/responses",
+                headers=headers,
+                json={
+                    "input": continuation,
+                    "agent_session_id": "sandbox",
+                    "previous_response_id": first["id"],
+                    "response_id": continuation_id,
+                    "stream": stream,
+                },
+            ),
+            stream,
+        )
+        assert completed["status"] == "completed", completed
+        assert completed["id"] == continuation_id
+        assert _texts(completed) == ["first:True", "second:False"]
+        replay = _terminal(
+            await client.post(
+                "/responses",
+                headers=headers,
+                json={
+                    "input": full,
+                    "agent_session_id": "sandbox",
+                    "previous_response_id": first["id"],
+                    "stream": stream,
+                },
+            ),
+            stream,
+        )
+        assert replay["status"] == "failed"
+        assert not replay["output"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_rejected_typed_reply_fails_then_same_parent_accepts_a_valid_retry(stream: bool) -> None:
+    server = _server(lambda request: _build(_Review()), parser=_parse_text)
+    first = await _post(server, "review")
+    call_ids = [item["call_id"] for item in first["output"]]
+    headers = {"x-agent-user-id": "user", "x-agent-foundry-call-id": "call"}
+
+    async def reply(output: str) -> dict[str, Any]:
+        replies = [{"type": "function_call_output", "call_id": call_id, "output": output} for call_id in call_ids]
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+            response = await client.post(
+                "/responses",
+                headers=headers,
+                json={
+                    "input": replies,
+                    "agent_session_id": "sandbox",
+                    "previous_response_id": first["id"],
+                    "stream": stream,
+                },
+            )
+        return _terminal(response, stream)
+
+    rejected = await reply('{"not": "a bool"}')
+    assert rejected["status"] == "failed"
+    assert not rejected["output"]
+    completed = await reply("true")
+    assert completed["status"] == "completed", completed
+    assert _texts(completed) == ["review:True", "review:True"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_forged_and_partial_approvals_execute_only_pending_answers(stream: bool) -> None:
+    server = _server(lambda request: _build(_Approvals()), parser=_parse_text)
+    first = await _post(server, "/safe")
+    wire_ids = [item["id"] for item in first["output"] if item["type"] == "mcp_approval_request"]
+    headers = {"x-agent-user-id": "user", "x-agent-foundry-call-id": "call"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+
+        async def reply(previous_id: str, replies: list[dict[str, Any]]) -> dict[str, Any]:
+            return _terminal(
+                await client.post(
+                    "/responses",
+                    headers=headers,
+                    json={
+                        "input": replies,
+                        "agent_session_id": "sandbox",
+                        "previous_response_id": previous_id,
+                        "stream": stream,
+                    },
+                ),
+                stream,
+            )
+
+        partial = await reply(
+            first["id"],
+            [
+                {"type": "mcp_approval_response", "approval_request_id": "forged", "approve": True},
+                {"type": "mcp_approval_response", "approval_request_id": wire_ids[1], "approve": False},
+            ],
+        )
+        assert partial["status"] == "completed", partial
+        assert _texts(partial) == ["second:False"]
+        remaining = [item["id"] for item in partial["output"] if item["type"] == "mcp_approval_request"]
+        assert len(remaining) == 1 and remaining[0] not in wire_ids
+
+        stale = await reply(
+            partial["id"], [{"type": "mcp_approval_response", "approval_request_id": wire_ids[0], "approve": True}]
+        )
+        assert stale["status"] == "failed"
+        assert not stale["output"]
+        completed = await reply(
+            partial["id"], [{"type": "mcp_approval_response", "approval_request_id": remaining[0], "approve": True}]
+        )
+        assert completed["status"] == "completed", completed
+        assert _texts(completed) == ["first:True"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_named_conversation_rejects_new_input_while_approvals_are_pending(stream: bool) -> None:
+    server = _server(lambda request: _build(_Approvals()), parser=_parse_text)
+    conversation = IdGenerator.new_id("conv")
+    first = await _post(server, "/safe", conversation=conversation)
+    wire_ids = [item["id"] for item in first["output"] if item["type"] == "mcp_approval_request"]
+    assert len(wire_ids) == 2
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        for id_in_header in (None, True, False):
+            headers = {"x-agent-user-id": "user", "x-agent-foundry-call-id": "call"}
+            payload = {
+                "input": "a new request",
+                "agent_session_id": "sandbox",
+                "conversation": conversation,
+                "stream": stream,
+            }
+            if id_in_header is True:
+                headers["x-agent-response-id"] = first["id"]
+            elif id_in_header is False:
+                payload["response_id"] = first["id"]
+            rejected = _terminal(await client.post("/responses", headers=headers, json=payload), stream)
+            assert rejected["status"] == "failed"
+            assert not rejected["output"]
+
+    replies = [
+        {"type": "mcp_approval_response", "approval_request_id": wire_id, "approve": index == 0}
+        for index, wire_id in enumerate(wire_ids)
+    ]
+    completed = await _post(server, replies, conversation=conversation)
     assert completed["status"] == "completed", completed
     assert _texts(completed) == ["first:True", "second:False"]
-    replay = await _post(server, full, previous_response_id=first["id"])
-    assert replay["status"] == "failed"
 
 
 async def test_store_false_has_no_durable_native_state_and_cannot_pause() -> None:
@@ -486,7 +728,7 @@ async def test_unsupported_shared_workflow_is_not_cloned_or_unwrapped() -> None:
         ResponsesWorkflowHostServer(
             workflow=cast(Any, _build()),
             parse_input=_parse,
-            options=ResponsesServerOptions(resilient_background=True),
+            enable_background_recovery=True,
         )
 
 
@@ -510,10 +752,21 @@ async def test_new_workflow_wrapper_does_not_hide_shared_builder_executors() -> 
 
 
 @pytest.mark.parametrize("stream", [False, True])
-async def test_workflow_host_prefix_preserves_create_and_retrieval_routes(stream: bool) -> None:
-    server = _server(prefix="api/v1")
+@pytest.mark.parametrize(
+    ("prefix", "path"),
+    [
+        ("api/v1", "/api/v1"),
+        (" /api/v1/ ", "/api/v1"),
+        ("//api/v1/", "//api/v1"),
+        (" / ", ""),
+    ],
+)
+async def test_workflow_host_prefix_preserves_create_and_retrieval_routes(stream: bool, prefix: str, path: str) -> None:
+    server = _server(prefix=prefix)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
-        created = await client.post("/api/v1/responses", json={"input": '{"text":"prefixed"}', "stream": stream})
+        created = await client.post(
+            f"http://test{path}/responses", json={"input": '{"text":"prefixed"}', "stream": stream}
+        )
         assert created.status_code == 200
         if stream:
             events = [json.loads(line[6:]) for line in created.text.splitlines() if line.startswith("data: {")]
@@ -522,7 +775,7 @@ async def test_workflow_host_prefix_preserves_create_and_retrieval_routes(stream
             result = created.json()
         assert result["status"] == "completed", result
         assert result["output"][0]["output"] == {"text": "prefixed", "count": 1}
-        stored = await client.get(f"/api/v1/responses/{result['id']}")
+        stored = await client.get(f"http://test{path}/responses/{result['id']}")
         assert stored.status_code == 200
         assert stored.json()["output"] == result["output"]
 
@@ -645,7 +898,10 @@ async def test_streaming_framework_output_keeps_occurrence_relative_citation_off
     assert message["content"][0]["annotations"] == [_expected_url_citation(start_index=4, end_index=10)]
 
 
-async def test_native_agent_executor_applies_options_without_mutating_defaults_or_double_keywords() -> None:
+@pytest.mark.parametrize("forward_options", [False, True])
+async def test_native_agent_executor_applies_options_without_mutating_defaults_or_double_keywords(
+    forward_options: bool,
+) -> None:
     calls: list[dict[str, Any]] = []
     lifecycle: list[str] = []
     agents: list[Agent[Any]] = []
@@ -662,14 +918,21 @@ async def test_native_agent_executor_applies_options_without_mutating_defaults_o
     async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", await request.get_input_text() or "")])
 
-    server = _server(create, parser=parse)
+    server = _server(
+        create,
+        parser=parse,
+        prepare_options=(lambda _request, options: options) if forward_options else None,
+    )
     first = await _post(server, "one", temperature=0.7, max_output_tokens=12, store=True)
     assert first["status"] == "completed", first
     second = await _post(server, "two", temperature=0.4, store=False, call="call-two")
     assert second["status"] == "completed", second
     assert [call["options"]["store"] for call in calls] == [False, False]
-    assert [call["options"]["temperature"] for call in calls] == [0.7, 0.4]
-    assert calls[0]["options"]["max_tokens"] == 12
+    assert [call["options"]["temperature"] for call in calls] == ([0.7, 0.4] if forward_options else [0.2, 0.2])
+    if forward_options:
+        assert calls[0]["options"]["max_tokens"] == 12
+    else:
+        assert all("max_tokens" not in call["options"] for call in calls)
     assert all(
         agent.default_options["temperature"] == 0.2 and agent.default_options["store"] is True for agent in agents
     )
@@ -690,7 +953,11 @@ async def test_registry_backed_executor_gets_native_options_and_resource_lifecyc
         )
         return _build(_RegistryExecutor(agent))
 
-    response = await _post(_server(create, parser=_parse_text), "hello", temperature=0.7)
+    response = await _post(
+        _server(create, parser=_parse_text, prepare_options=lambda _request, options: options),
+        "hello",
+        temperature=0.7,
+    )
 
     assert response["status"] == "completed", response
     assert _texts(response) == ["safe"]
@@ -769,7 +1036,7 @@ async def test_raw_agent_fresh_factory_matches_explicit_defaults(stored: bool, s
     async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", await request.get_input_text() or "")])
 
-    server = _server(create, parser=parse)
+    server = _server(create, parser=parse, prepare_options=lambda _request, options: options)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
         response = await client.post(
             "/responses",
@@ -901,6 +1168,32 @@ async def test_real_sdk_background_cancel_drains_suspended_executor_and_blocks_c
         response_id
     )
     assert record is not None and record.status == "blocked"
+
+
+@pytest.mark.parametrize(
+    ("prefix", "path"), [("api/v1", "/api/v1"), (" /api/v1/ ", "/api/v1"), ("//api/v1/", "//api/v1")]
+)
+async def test_prefixed_workflow_background_cancel_uses_sdk_routes(prefix: str, path: str) -> None:
+    started, release, stopped = (asyncio.Event() for _ in range(3))
+    server = _server(_progress_factory(started, release, stopped), parser=_parse_count, prefix=prefix)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        created = await client.post(
+            f"http://test{path}/responses",
+            json={"input": "2", "agent_session_id": "sandbox", "store": True, "background": True},
+        )
+        assert created.status_code == 200, created.text
+        response_id = created.json()["id"]
+        await asyncio.wait_for(started.wait(), 2)
+        cancelled = await client.post(f"http://test{path}/responses/{response_id}/cancel")
+        assert cancelled.status_code == 200, cancelled.text
+        await asyncio.wait_for(stopped.wait(), 2)
+        for _ in range(150):
+            fetched = await client.get(f"http://test{path}/responses/{response_id}")
+            if fetched.status_code == 200 and fetched.json()["status"] == "cancelled":
+                break
+            await asyncio.sleep(0.01)
+        assert fetched.status_code == 200, fetched.text
+        assert fetched.json()["status"] == "cancelled"
 
 
 async def test_real_sdk_raw_agent_cancel_closes_request_owned_client_in_trusted_context() -> None:
@@ -1052,8 +1345,13 @@ async def test_real_sdk_shutdown_and_restart_recovers_exact_background_output(
 
     provider = FailingCheckpointStore(storage_dir=tmp_path / "responses")
     factory = _progress_factory(started, release, stopped)
-    options = ResponsesServerOptions(resilient_background=True, shutdown_grace_period_seconds=1)
-    server = _server(factory, parser=_parse_count, response_store=provider, options=options)
+    server = _server(
+        factory,
+        parser=_parse_count,
+        response_store=provider,
+        enable_background_recovery=True,
+        shutdown_grace_period_seconds=1,
+    )
     paired = asyncio.Event()
     original = HostedWorkflowRun.stage
 
@@ -1090,7 +1388,8 @@ async def test_real_sdk_shutdown_and_restart_recovers_exact_background_output(
             factory,
             parser=_parse_count,
             response_store=provider,
-            options=ResponsesServerOptions(resilient_background=True, shutdown_grace_period_seconds=1),
+            enable_background_recovery=True,
+            shutdown_grace_period_seconds=1,
         )
         async with (
             restarted.router.lifespan_context(restarted),

@@ -13,9 +13,9 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
-from copy import copy
-from dataclasses import dataclass
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing
+from copy import copy, deepcopy
+from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from agent_framework import (
@@ -51,6 +51,7 @@ from azure.ai.agentserver.responses.models import (
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 
+from ._approvals import SessionApprovalState
 from ._feature_usage import FeatureIndex
 from ._responses_shared import (
     _HOSTED_CONVERSATION_CLAIM_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -61,6 +62,7 @@ from ._responses_shared import (
     _HOSTED_SERVICE_CHILD_KEY,  # pyright: ignore[reportPrivateUsage]
     _HOSTED_SOURCE_CONVERSATION_KEY,  # pyright: ignore[reportPrivateUsage]
     _PUBLIC_STREAM_FAILURE_MESSAGE,  # pyright: ignore[reportPrivateUsage]
+    _activate_toolbox_consent_scope,  # pyright: ignore[reportPrivateUsage]
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
     _await_before_signal,  # pyright: ignore[reportPrivateUsage]
     _create_response_event_stream,  # pyright: ignore[reportPrivateUsage]
@@ -75,7 +77,6 @@ from ._responses_shared import (
     _reject_busy_conversation,  # pyright: ignore[reportPrivateUsage]
     _set_agent_session,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
-    _validate_response_server_options,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
 from ._scope import FoundryRequestScope
@@ -84,10 +85,12 @@ from ._shared import (
     OptionsHook,
     ResponsesRequest,
     UnsupportedOptions,
+    build_response_server_options,
     is_agent,
     prepare_response_options,
     resolve_agent,
     response_run_options,
+    validate_agent_background_options,
     validate_agent_source,
     validate_default_transport_options,
     validate_request_options,
@@ -95,8 +98,6 @@ from ._shared import (
 )
 from ._state_store import (
     AgentSessionStoreProvider,
-    FunctionApprovalStore,
-    FunctionApprovalStoreProvider,
     StoreProvider,
 )
 
@@ -127,6 +128,26 @@ class _AgentConfiguration:
     hosted_history: bool
 
 
+@dataclass
+class _DeferredOutput:
+    snapshot: dict[str, Any] | None = None
+    events: list[ResponseStreamEvent | ResponseCheckpointEvent] = field(
+        default_factory=lambda: list[ResponseStreamEvent | ResponseCheckpointEvent]()
+    )
+
+    def defer(self, event: ResponseStreamEvent | ResponseCheckpointEvent) -> bool:
+        if self.snapshot is None:
+            return False
+        self.events.append(event)
+        return True
+
+
+def _validate_agent_defaults(agent: SupportsAgentRun, *, provider_background: bool, allow_agent_store: bool) -> None:
+    validate_agent_background_options(agent, provider_background=provider_background)
+    if isinstance(agent, RawAgent):
+        validate_default_transport_options(agent.default_options, allow_agent_store=allow_agent_store)
+
+
 def _validate_agent_configuration(
     agent: SupportsAgentRun,
     history_source: _HistorySource,
@@ -137,7 +158,7 @@ def _validate_agent_configuration(
     resilient_background = bool(options and options.resilient_background)
     if resilient_background and background_source != "inference_service":
         raise RuntimeError(
-            "resilient_background=True requires background_source='inference_service' for regular agents. "
+            "enable_background_recovery=True requires background_source='inference_service' for regular agents. "
             "Use ResponsesWorkflowHostServer for checkpoint-based workflow recovery."
         )
     if background_source == "inference_service" and (
@@ -224,13 +245,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent: AgentSource[ResponsesRequest],
         *,
         prefix: str = "",
-        options: ResponsesServerOptions | None = None,
         response_store: ResponseProviderProtocol | None = None,
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
-        function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
         allowed_oauth_consent_origins: Sequence[str] | None = None,
         history_source: Literal["host_managed", "agent_managed", "inference_service"] = "host_managed",
         background_source: Literal["host_managed", "inference_service"] = "host_managed",
+        max_history_items: int | None = None,
+        sse_keep_alive_interval_seconds: int | None = None,
+        shutdown_grace_period_seconds: int = 10,
+        enable_background_recovery: bool = False,
         prepare_options: OptionsHook | None = None,
         unsupported_options: UnsupportedOptions = "warn",
         **kwargs: Any,
@@ -247,12 +270,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 `WorkflowAgent` instances and factory results are rejected. Use `ResponsesWorkflowHostServer`
                 with a native workflow factory instead.
             prefix: The URL prefix for the server.
-            options: Optional server options.
             response_store: Optional response store for caller-facing persistence and history.
             agent_session_store_provider: Optional provider for MAF agent session storage.
-                If not provided, a default `AgentSessionStoreProvider` will be used.
-            function_approval_store_provider: Optional provider for function approval storage.
-                If not provided, a default `FunctionApprovalStoreProvider` will be used.
+                If not provided, a default `AgentSessionStoreProvider` will be used. MCP approval
+                continuations use the same saved `AgentSession`.
             allowed_oauth_consent_origins: Optional exact HTTPS origins allowed for OAuth consent links.
                 When omitted, hosting retains its existing safe-HTTPS validation without restricting the
                 destination origin. When provided, every link must match an entry; an empty sequence rejects
@@ -275,16 +296,23 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                   the host-persisted MAF `AgentSession`. With `default_options={"store": True}`,
                   the downstream service retains history instead.
 
-                For example, after a stored response to "My name is Ada", a stored follow-up
-                "What is my name?" sends both turns to the model with `"host_managed"`, but
-                sends only the follow-up with `"inference_service"` (plus a private service continuation).
-                With `"agent_managed"`, the developer chooses either of those agent-owned history sources.
             background_source: `"host_managed"` (default) runs background work in the Responses host
                 without invoking provider-native background APIs; `"inference_service"` opts a storing, resumable
                 client into provider background polling and requires `history_source="inference_service"`.
                 Each poll retains the caller's run options and `background=True`; local tools must be
                 idempotent because a crash before the next private token is saved can replay them.
-            prepare_options: Developer hook to remove or replace caller model options for an agent.
+            max_history_items: Positive outer history limit for host-managed history. `None` leaves the
+                installed SDK default unchanged; it does not mean unlimited.
+            sse_keep_alive_interval_seconds: Positive streaming heartbeat interval. If omitted, the SDK
+                uses a positive `SSE_KEEPALIVE_INTERVAL` environment value, or disables heartbeats.
+            shutdown_grace_period_seconds: Positive shutdown wait. The SDK also uses this duration when
+                DELETE waits for response persistence. Defaults to 10 seconds.
+            enable_background_recovery: Allow eligible provider-background work to recover after shutdown.
+                Defaults to `False`; it does not enable background execution or guarantee exactly-once effects.
+            prepare_options: Developer hook selecting caller model options after factory resolution.
+                Only its returned, validated mapping is forwarded. Without a hook, caller options are omitted.
+                A returned `background` value is application-owned on ordinary runs. Host-selected provider
+                background submission and polling retain `background=True`.
             unsupported_options: `"warn"` (default), `"error"`, or `"ignore"` when a custom agent
                 cannot accept runtime model options.
             **kwargs: Additional keyword arguments.
@@ -297,24 +325,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             The former constructor `store=` alias is rejected. Outer `response.id` is the polling/continuation handle;
             any inner `service_session_id` is private and never replaces it.
 
-            1. With `history_source="host_managed"`,
-               the agent must not have a load-enabled history provider: the host supplies the transcript.
-            2. Context providers must not keep required state only on their Python instances,
+            1. Context providers must not keep required state only on their Python instances,
                because the hosting environment may get deactivated between requests. Provider
                state carried by `AgentSession`, including `InMemoryHistoryProvider` messages in
                `history_source="agent_managed"` mode, is persisted by the configured session store.
-            3. The server owns the supplied agent instance and may add hosting-specific providers.
+            2. The server owns the supplied agent instance and may add hosting-specific providers.
                Do not reuse the same agent with another host or invoke it directly after construction.
                An agent returned by a callable belongs to that request.
-            4. `resilient_background=True` supports regular agents configured with
+            3. `enable_background_recovery=True` supports regular agents configured with
                `history_source="inference_service", background_source="inference_service"`.
                For provider background, only a saved private continuation token can be polled after a crash;
                a crash before the token is saved cannot be replayed safely.
                Other regular-agent runs are not crash-recoverable.
-            5. Steering is temporarily unavailable for all agents. `steerable_conversations=True` fails
-               at construction, before starting a host or enabling the process-wide TaskManager. The current
-               AgentServer SDK retains futures for rejected turns after the steering queue fills.
-            6. A stored, named `"inference_service"` or `"agent_managed"` conversation is claimed in the scoped
+            4. Steering is unavailable. The upstream `options` bag and steering settings are not host parameters.
+            5. A stored, named `"inference_service"` or `"agent_managed"` conversation is claimed in the scoped
                session store before the agent runs. Conditional writes prevent a concurrent turn from mutating the same
                provider thread. If the turn fails or is cancelled, start a new conversation instead of
                reusing a potentially changed downstream thread.
@@ -322,26 +346,35 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         Raises:
             TypeError: If the agent is a `WorkflowAgent`, or native workflow settings are supplied.
             ValueError: If the history, background, or unsupported-options policy is invalid.
-            RuntimeError: If the agent configuration conflicts with the selected history source,
-                `resilient_background=True` is requested for a regular agent without provider background, or
-                `steerable_conversations=True` is requested while steering is unavailable.
+            RuntimeError: If the agent configuration conflicts with the selected history or background source.
         """
+        if "function_approval_store_provider" in kwargs:
+            raise TypeError("Approval state is managed by agent_session_store_provider.")
         if "store" in kwargs:
             raise TypeError("The constructor store= alias was removed; use response_store= instead.")
-        _validate_response_server_options(options)
-        if history_source not in ("host_managed", "agent_managed", "inference_service"):
-            raise ValueError("history_source must be 'host_managed', 'agent_managed', or 'inference_service'.")
-        if background_source not in ("host_managed", "inference_service"):
-            raise ValueError("background_source must be 'host_managed' or 'inference_service'.")
-        if background_source == "inference_service" and history_source != "inference_service":
-            raise ValueError("Provider background requires history_source='inference_service'.")
-        if background_source == "inference_service" and options and options.steerable_conversations:
-            raise ValueError("Provider background and steerable_conversations cannot be combined.")
         if {"workflow", "parse_input", "parse_response", "checkpoint_store_provider"}.intersection(kwargs):
             raise TypeError("Use ResponsesWorkflowHostServer for native workflows and checkpoint storage.")
         validate_agent_source(agent)
+        if prepare_options is not None and not callable(prepare_options):
+            raise TypeError("prepare_options must be a callable.")
+        unsupported_options = validate_unsupported_options(unsupported_options)
+        options = build_response_server_options(
+            is_workflow=False,
+            history_source=history_source,
+            background_source=background_source,
+            max_history_items=max_history_items,
+            sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
+            shutdown_grace_period_seconds=shutdown_grace_period_seconds,
+            enable_background_recovery=enable_background_recovery,
+        )
 
         resolved_agent = agent if is_agent(agent) else None
+        if resolved_agent is not None:
+            _validate_agent_defaults(
+                resolved_agent,
+                provider_background=background_source == "inference_service",
+                allow_agent_store=history_source == "agent_managed",
+            )
         configuration = (
             _validate_agent_configuration(resolved_agent, history_source, options, background_source=background_source)
             if resolved_agent is not None
@@ -356,34 +389,24 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             store=response_store,
             **kwargs,
         )
-        if options and options.steerable_conversations:
-            from azure.ai.agentserver.core.tasks import set_resilient_tasks_enabled
-
-            set_resilient_tasks_enabled(True)
-
         self._agent_source = agent
         self._agent = resolved_agent
         self._configuration = configuration
         self._history_source: _HistorySource = history_source
         self._background_source: Literal["host_managed", "inference_service"] = background_source
         self._prepare_options = prepare_options
-        self._unsupported_options = validate_unsupported_options(unsupported_options)
+        self._unsupported_options = unsupported_options
         self._host_options = options
         self._uses_agent_server_history = (
             configuration.agent_server_history if configuration is not None else history_source == "host_managed"
         )
-        self._resilient_background = bool(options and options.resilient_background)
+        self._resilient_background = enable_background_recovery
         if resolved_agent is not None and configuration is not None:
             _initialize_agent_history(resolved_agent, configuration)
 
         # Storage providers
         self._session_storage_provider = (
             AgentSessionStoreProvider() if agent_session_store_provider is None else agent_session_store_provider
-        )
-        self._function_approval_storage_provider = (
-            FunctionApprovalStoreProvider()
-            if function_approval_store_provider is None
-            else function_approval_store_provider
         )
 
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
@@ -456,6 +479,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 raise _PublicResponseFailure(exc) from None
             agent = await resolve_agent(self._agent_source, hosted_request)
             try:
+                provider_background = (
+                    self._background_source == "inference_service" and request.get("background") is True
+                )
+                _validate_agent_defaults(
+                    agent,
+                    provider_background=provider_background,
+                    allow_agent_store=self._history_source == "agent_managed" and request.get("store") is not False,
+                )
                 configuration = self._configuration or _validate_agent_configuration(
                     agent, self._history_source, self._host_options, background_source=self._background_source
                 )
@@ -465,7 +496,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 _initialize_agent_history(agent, configuration)
             await prepare_response_options(hosted_request, self._prepare_options)
             try:
-                validate_request_options(hosted_request.options)
+                validate_request_options(hosted_request.options, allow_background=True)
+                _validate_agent_defaults(
+                    agent,
+                    provider_background=provider_background,
+                    allow_agent_store=self._history_source == "agent_managed" and request.get("store") is not False,
+                )
             except (TypeError, ValueError) as exc:
                 raise _PublicResponseFailure(exc) from None
         except Exception as exc:
@@ -634,6 +670,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             return
 
         tracker = _OutputItemTracker(response_event_stream, self._allowed_oauth_consent_origins)
+        deferred = _DeferredOutput()
         try:
             inner = self._handle_inner_agent(
                 request,
@@ -644,14 +681,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 agent,
                 configuration,
                 hosted_request,
+                deferred,
             )
 
-            try:
+            async with aclosing(inner):
                 async for event in inner:
                     yield event
-            except BaseException:
-                await inner.aclose()
-                raise
 
             if cancellation_signal.is_set() and context.client_cancelled:
                 # A cancelled run drains the inner generator without raising
@@ -684,14 +719,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             else:
                 yield response_event_stream.emit_completed(usage=tracker.usage)
         except Exception as ex:
-            for event in tracker.close():
-                yield event
-
+            failure_tracker: _OutputItemTracker | None = tracker
+            if deferred.snapshot is not None:
+                response_event_stream.response.clear()
+                response_event_stream.response.update(deferred.snapshot)
+                failure_tracker = None
             for event in self._emit_failure(
                 context.response_id,
                 "response production",
                 response_event_stream,
-                tracker,
+                failure_tracker,
                 ex,
             ):
                 yield event
@@ -700,8 +737,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self,
         context: ResponseContext,
         *,
-        approval_storage: FunctionApprovalStore | None,
+        approval_storage: SessionApprovalState | None,
         configuration: _AgentConfiguration | None = None,
+        approval_ready: asyncio.Future[SessionApprovalState] | None = None,
     ) -> list[Message]:
         """Load the request's input and prior history concurrently, assembled for the run.
 
@@ -722,13 +760,23 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         async def _load_input() -> list[Message]:
             input_items = await context.get_input_items()
-            return await _items_to_messages(input_items, approval_storage=approval_storage)
+            resolved_storage = await approval_ready if approval_ready is not None else approval_storage
+            messages = await _items_to_messages(input_items, approval_storage=resolved_storage)
+            if (
+                input_items
+                and not messages
+                and all(cast(Mapping[str, Any], item).get("type") == "mcp_approval_response" for item in input_items)
+            ):
+                # Do not run the model, or consume a single-use parent, when every reply was dropped.
+                raise _PublicResponseFailure(ValueError("No approval reply matches a request in this session."))
+            return messages
 
         async def _load_history() -> list[Message]:
             if not uses_agent_server_history:
                 return []
             history = await context.get_history()
-            return await _output_items_to_messages(history, approval_storage=approval_storage)
+            resolved_storage = await approval_ready if approval_ready is not None else approval_storage
+            return await _output_items_to_messages(history, approval_storage=resolved_storage)
 
         input_task = asyncio.ensure_future(_load_input())
         history_task = asyncio.ensure_future(_load_history())
@@ -754,6 +802,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent: SupportsAgentRun,
         configuration: _AgentConfiguration,
         hosted_request: ResponsesRequest,
+        deferred: _DeferredOutput,
     ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle a regular (non-workflow) agent.
 
@@ -830,11 +879,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         )
 
             request_context = get_request_context()
-            approval_storage = (
-                self._function_approval_storage_provider.get_store(config=self.config, platform_context=request_context)
-                if stored
-                else None
-            )
             previous_response_id = request.get("previous_response_id")
             session_load_id = (
                 context.response_id
@@ -848,26 +892,25 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
             session_storage = (
                 self._session_storage_provider.get_store(config=self.config, platform_context=request_context)
-                if stored or (session_load_id is not None and self._history_source == "agent_managed")
+                if stored or session_load_id is not None
                 else None
             )
-
-            # Load the caller's input items and prior conversation history concurrently with the
-            # session load below. These are independent storage round-trips with no data dependency
-            # between them, so overlapping them removes serial latency from the request critical path.
+            # Reads start before the session loads; wire-ID translation waits for the session's approval map.
+            approval_ready: asyncio.Future[SessionApprovalState] = asyncio.get_running_loop().create_future()
             request_messages_task = asyncio.ensure_future(
                 self._load_request_messages(
                     context,
-                    approval_storage=approval_storage,
+                    approval_storage=None,
                     configuration=configuration,
+                    approval_ready=approval_ready,
                 )
             )
-
-            session = (
+            stored_session = (
                 await session_storage.get(session_load_id)
                 if session_storage is not None and session_load_id is not None
                 else None
             )
+            session = stored_session if stored or self._history_source == "agent_managed" else None
             if session is None:
                 if context.is_recovery and provider_background:
                     raise _PublicResponseFailure(
@@ -880,6 +923,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         )
                     )
                 session = agent.create_session()
+            # Core's session approval tracking binds and consumes replies; this map only translates wire IDs.
+            approval_storage = SessionApprovalState(session)
+            approval_ready.set_result(approval_storage)
             provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
             if context.conversation_id is not None:
                 if context.is_recovery and provider_background:
@@ -940,8 +986,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # task so it is not orphaned, and log only ordinary failures.
             if request_messages_task is not None:
                 request_messages_task.cancel()
-                with suppress(BaseException):
-                    await request_messages_task
+                await asyncio.gather(request_messages_task, return_exceptions=True)
             if isinstance(ex, Exception):
                 _log_response_failure("state storage preparation", context.response_id, ex)
             raise
@@ -963,8 +1008,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "messages": messages,
                 "session": session,
             }
-            chat_options = cast(ChatOptions[Any], dict(hosted_request.options))
+            chat_options = dict(hosted_request.options)
             are_options_set = bool(chat_options)
+            if self._background_source == "inference_service":
+                chat_options.setdefault("background", provider_background)
             if configuration.agent_server_history:
                 if configuration.client_stores_by_default:
                     # The response provider already owns the transcript used for this run. Keep a
@@ -1030,6 +1077,38 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 finally:
                     session.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
 
+            consent_scope = _activate_toolbox_consent_scope(allowed_origins=self._allowed_oauth_consent_origins)
+
+            async def track_update(
+                update: AgentResponseUpdate, *, complete_message: bool = False
+            ) -> AsyncGenerator[ResponseStreamEvent]:
+                if consent_scope.consent_rejected:
+                    raise _PublicResponseFailure(ValueError("OAuth consent link rejected."))
+                has_continuation = any(
+                    content.type in ("function_approval_request", "oauth_consent_request") or content.user_input_request
+                    for content in update.contents
+                )
+                if not stored and (has_continuation or consent_scope.consent_required):
+                    raise _PublicResponseFailure(
+                        ValueError("OAuth consent or approval continuation requires store=true.")
+                    )
+                if self._history_source == "inference_service" and (
+                    consent_scope.consent_required
+                    or any(content.type == "oauth_consent_request" for content in update.contents)
+                ):
+                    raise _PublicResponseFailure(
+                        ValueError(
+                            "Invocation-time OAuth consent is unsupported with history_source='inference_service'."
+                        )
+                    )
+                if deferred.snapshot is None and has_continuation:
+                    deferred.snapshot = deepcopy(response_event_stream.response)
+                async for event in tracker.handle_update(
+                    update, approval_storage=approval_storage, complete_message=complete_message
+                ):
+                    if not deferred.defer(event):
+                        yield event
+
             inner_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] | None = None
             updates: _SignalledIterator[AgentResponseUpdate] | None = None
             if provider_background:
@@ -1045,7 +1124,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     messages=messages,
                     session=session,
                     session_storage=session_storage,
-                    options=chat_options,
+                    options=cast(ChatOptions[Any], chat_options),
                     context=context,
                     cancellation_signal=cancellation_signal,
                     emitted_output_count=output_count,
@@ -1055,32 +1134,31 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         for update in _agent_response_updates(response, context.response_id):
                             if context.shutdown.is_set() or cancellation_signal.is_set():
                                 break
-                            async for event in tracker.handle_update(
-                                update, approval_storage=approval_storage, complete_message=True
-                            ):
+                            async for event in track_update(update, complete_message=True):
                                 yield event
                         if context.shutdown.is_set() or cancellation_signal.is_set():
                             continue
                         for event in tracker.close():
-                            yield event
+                            if not deferred.defer(event):
+                                yield event
                         private_metadata = _hosted_internal_metadata(response_event_stream)
                         private_metadata[_HOSTED_PROVIDER_OUTPUT_COUNT_KEY] = output_count
                         private_metadata[_HOSTED_PROVIDER_USAGE_KEY] = tracker.usage_details
                         if self._resilient_background:
-                            yield response_event_stream.checkpoint()
+                            checkpoint = response_event_stream.checkpoint()
+                            if not deferred.defer(checkpoint):
+                                yield checkpoint
             else:
                 inner_stream = agent.run(stream=True, **run_kwargs)  # type: ignore[reportUnknownMemberType]
                 updates = _SignalledIterator(inner_stream, context.shutdown, cancellation_signal)
                 async with aclosing(updates):
                     async for update in updates:
-                        if not stored and any(
-                            content.type in ("function_approval_request", "oauth_consent_request")
-                            or content.user_input_request
-                            for content in update.contents
-                        ):
-                            raise ValueError("Approval and user-input continuation requires store=true.")
-                        async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                        async for event in track_update(update):
                             yield event
+            if consent_scope.consent_rejected:
+                raise _PublicResponseFailure(ValueError("OAuth consent link rejected."))
+            if consent_scope.consent_required and not stored:
+                raise _PublicResponseFailure(ValueError("OAuth consent continuation requires store=true."))
             if inner_stream is not None and isinstance(updates, _SignalledIterator) and not updates.signalled:
                 final = await inner_stream.get_final_response()
                 if final.continuation_token is not None and final.finish_reason is None:
@@ -1182,6 +1260,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             raise request_failure
         elif save_failure is not None:
             raise save_failure
+        if not request_interrupted and not context.shutdown.is_set() and not cancellation_signal.is_set():
+            for event in deferred.events:
+                yield event
 
     async def _provider_background_responses(
         self,
@@ -1210,7 +1291,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if has_token and self._resilient_background:
                     await context.exit_for_recovery()
                 if has_token:
-                    raise RuntimeError("Provider background recovery requires resilient_background=True.")
+                    raise RuntimeError("Provider background recovery requires enable_background_recovery=True.")
                 raise _PublicResponseFailure(
                     RuntimeError(
                         "Provider background submission stopped before its token was saved; cannot safely retry it."
@@ -1224,7 +1305,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             options: ChatOptions[Any], *, input_messages: list[Message] | None, phase: Literal["submit", "poll"]
         ) -> AgentResponse[Any]:
             try:
-                return await agent.run(input_messages, session=session, options=options)
+                return await agent.run(
+                    input_messages,
+                    session=session,
+                    options=options,
+                )
             except Exception as exc:
                 logger.warning("Inner provider background %s failed (%s).", phase, type(exc).__name__)
             raise RuntimeError(f"Inner provider background {phase} failed; inspect the host logs.")

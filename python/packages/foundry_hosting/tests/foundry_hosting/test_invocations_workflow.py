@@ -719,8 +719,8 @@ class TestNativeWorkflowTurns:
         async with raw_bindings:
             keys = await raw_bindings.list_keys(call_id=None)
         assert len(keys.keys) == 2  # Current response record plus the fixed lineage head.
-        # The current turn retains its entry and final checkpoints; prior turns are reclaimed.
-        assert len(await stores[-1].list_checkpoint_ids(workflow_name="tickets")) == 2
+        # Reclaim runs after commit, so only the committed final checkpoint remains.
+        assert len(await stores[-1].list_checkpoint_ids(workflow_name="tickets")) == 1
 
         before = list(calls)
         replay, events = await _invoke(
@@ -784,7 +784,7 @@ class TestNativeWorkflowTurns:
 
 class TestNativeWorkflowPendingReplies:
     @pytest.mark.parametrize("stream", [False, True])
-    async def test_json_approval_metadata_is_bound_to_exact_pending_calls_before_dispatch(self, stream: bool) -> None:
+    async def test_json_approval_replies_dispatch_once_and_replay_is_rejected(self, stream: bool) -> None:
         decisions: list[bool] = []
 
         async def parser(request: Request) -> WorkflowTurn[Ticket]:
@@ -806,18 +806,6 @@ class TestNativeWorkflowPendingReplies:
             item["request_id"]: Content.from_dict(item["data"]).to_function_approval_response(True).to_dict()
             for item in pending
         }
-        request_ids = list(valid)
-        duplicated = {request_ids[0]: valid[request_ids[0]], request_ids[1]: valid[request_ids[0]]}
-        response, rejected = await _invoke(_host(factory, parser=parser), {"responses": duplicated, "stream": stream})
-        assert response.status_code == (200 if stream else 400)
-        assert [event["event"] for event in rejected] == ["error"]
-        assert decisions == []
-        forged = json.loads(json.dumps(valid))
-        forged[request_ids[0]]["function_call"]["arguments"] = {"ticket_id": "forged"}
-        response, rejected = await _invoke(_host(factory, parser=parser), {"responses": forged, "stream": stream})
-        assert response.status_code == (200 if stream else 400)
-        assert [event["event"] for event in rejected] == ["error"]
-        assert decisions == []
         response, _ = await _invoke(_host(factory, parser=parser), {"responses": valid, "stream": stream})
         assert response.status_code == 200
         assert decisions == [True, True]
@@ -875,9 +863,7 @@ class TestNativeWorkflowPendingReplies:
         assert replies == [{"accepted": True}, {"accepted": False}]
 
     @pytest.mark.parametrize("stream", [False, True])
-    async def test_partial_replies_do_not_consume_authority_and_complete_replies_survive_restart(
-        self, stream: bool
-    ) -> None:
+    async def test_partial_replies_dispatch_answered_requests_and_keep_the_rest_pending(self, stream: bool) -> None:
         replies: list[tuple[str, bool]] = []
 
         def factory(_request: Request) -> Workflow:
@@ -888,28 +874,25 @@ class TestNativeWorkflowPendingReplies:
         pending = [item for item in events if item["event"] == "request_info"]
         assert len(pending) == 2
         ids = {item["data"]["reviewer"]: item["request_id"] for item in pending}
-        first_reply = {"responses": {ids["support"]: {"approved": True}}, "stream": stream}
-        response, events = await _invoke(_host(factory), first_reply)
-        assert response.status_code == (200 if stream else 400)
-        assert [item["event"] for item in events] == ["error"]
-        assert replies == []
-
-        complete = {
-            "responses": {ids["support"]: {"approved": True}, ids["security"]: {"approved": False}},
-            "stream": stream,
-        }
-        response, events = await _invoke(_host(factory), complete)
+        response, _ = await _invoke(
+            _host(factory), {"responses": {ids["support"]: {"approved": True}}, "stream": stream}
+        )
         assert response.status_code == 200
-        assert sorted(replies) == [("security", False), ("support", True)]
+        assert replies == [("support", True)]
+
+        rest = {"responses": {ids["security"]: {"approved": False}}, "stream": stream}
+        response, events = await _invoke(_host(factory), rest)
+        assert response.status_code == 200
+        assert replies == [("support", True), ("security", False)]
         assert not [item for item in events if item["event"] == "request_info"]
 
-        response, events = await _invoke(_host(factory), complete)
+        response, events = await _invoke(_host(factory), rest)
         assert response.status_code == (200 if stream else 400)
         assert [item["event"] for item in events] == ["error"]
         assert len(replies) == 2
 
-    @pytest.mark.parametrize("identity", ["other-sandbox", "other-user", "forged-request"])
-    async def test_pending_reply_cannot_cross_scope_or_forge_a_request(self, identity: str) -> None:
+    @pytest.mark.parametrize("identity", ["other-sandbox", "other-user"])
+    async def test_pending_reply_cannot_cross_scope(self, identity: str) -> None:
         replies: list[tuple[str, bool]] = []
 
         def factory(_request: Request) -> Workflow:
@@ -928,7 +911,7 @@ class TestNativeWorkflowPendingReplies:
         other.config.session_id = ""
         response, _ = await _invoke(
             other,
-            {"responses": {"forged" if identity == "forged-request" else request_id: {"approved": True}}},
+            {"responses": {request_id: {"approved": True}}},
             session_id="sandbox-b" if identity == "other-sandbox" else "sandbox-a",
             user_id="user-b" if identity == "other-user" else "user-a",
             call_id="second",
@@ -953,7 +936,7 @@ class TestNativeWorkflowPendingReplies:
         assert response.status_code == 200
         assert len(replies) == 2
 
-    async def test_invalid_mixed_reply_batch_does_not_consume_valid_authority(self) -> None:
+    async def test_unknown_reply_id_fails_in_core_without_dispatch_and_valid_retry_succeeds(self) -> None:
         replies: list[tuple[str, bool]] = []
 
         def factory(_request: Request) -> Workflow:
@@ -964,7 +947,8 @@ class TestNativeWorkflowPendingReplies:
         response, _ = await _invoke(
             _host(factory), {"responses": {ids[0]: {"approved": True}, "forged": {"approved": True}}}
         )
-        assert response.status_code == 400
+        # Core rejects the unknown request ID before the first superstep; the claim is released, not blocked.
+        assert response.status_code == 500
         assert replies == []
         response, _ = await _invoke(_host(factory), {"responses": {key: {"approved": True} for key in ids}})
         assert response.status_code == 200

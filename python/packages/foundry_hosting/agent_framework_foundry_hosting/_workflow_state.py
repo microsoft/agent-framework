@@ -18,15 +18,11 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     CheckpointStorage,
-    Content,
     Workflow,
     WorkflowCheckpoint,
     WorkflowEvent,
     WorkflowInvocationKwargs,
     WorkflowRunState,
-)
-from agent_framework._workflows._agent_executor import (
-    _validate_computer_tool_result,  # pyright: ignore[reportPrivateUsage]
 )
 from agent_framework._workflows._checkpoint_encoding import encode_checkpoint_value
 from agent_framework._workflows._const import (
@@ -35,9 +31,6 @@ from agent_framework._workflows._const import (
     WORKFLOW_RUN_KWARGS_KEY,
 )
 from agent_framework._workflows._typing_utils import is_instance_of
-from agent_framework._workflows._workflow import (
-    _coerce_request_info_response,  # pyright: ignore[reportPrivateUsage]
-)
 from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
 from azure.ai.agentserver.core.storage import (
     FoundryStateStore,
@@ -345,8 +338,9 @@ class HostedWorkflowRun:
     """A native turn with explicit validation, claim, pairing, commit, and abort boundaries.
 
     Protocol hosts own output encoding and lifecycle signals. Closing ``events``
-    never commits a turn. A failed or cancelled claim is blocked rather than
-    releasing potentially consumed approvals or replaying external side effects.
+    never commits a turn. A claim that fails before the first superstep starts is
+    released, because no executor or reply handler has run. Later failures block
+    the lineage rather than replaying consumed replies or external side effects.
     """
 
     def __init__(
@@ -369,6 +363,8 @@ class HostedWorkflowRun:
         self.binding: WorkflowBinding
         self._head: WorkflowHead | None = None
         self._head_etag: str | None = None
+        self._pre_claim_head: WorkflowHead | None = None
+        self._superstep_started = False
         self._record: WorkflowRecord | None = None
         self._record_etag: str | None = None
         self._storage: _CheckpointWrites | None = None
@@ -652,49 +648,11 @@ class HostedWorkflowRun:
             return turn
         pending = self.pending_requests
         if turn.responses is not None:
-            if not self.stored or self._checkpoint is None:
+            # Core validates each reply against its pending request before the first superstep.
+            if not self.stored or self._checkpoint is None or not pending:
                 raise ValueError("Workflow replies require a pending stored checkpoint.")
-            if set(turn.responses) != set(pending) or not pending:
-                raise ValueError("Workflow replies must answer exactly the complete pending request batch.")
-            replies: dict[str, Any] = {}
-            reply_ids: set[tuple[str, str]] = set()
-            for request_id, reply in turn.responses.items():
-                event = pending[request_id]
-                try:
-                    reply = _coerce_request_info_response(reply, event.response_type, request_id)
-                except (TypeError, ValueError) as exc:
-                    raise ValueError("A workflow reply does not match its pending request type.") from exc
-                if isinstance(event.data, Content):
-                    request = event.data
-                    if isinstance(reply, Content):
-                        identifier = reply.id if reply.type == "function_approval_response" else reply.call_id
-                        if identifier is not None:
-                            key = (reply.type, identifier)
-                            if key in reply_ids:
-                                raise ValueError("Duplicate workflow reply authority is not allowed.")
-                            reply_ids.add(key)
-                    if request.type == "function_approval_request" and (
-                        not isinstance(reply, Content)
-                        or reply.type != "function_approval_response"
-                        or reply.id != request.id
-                        or type(reply.approved) is not bool
-                        or reply.function_call is None
-                        or request.function_call is None
-                        or reply.function_call.to_dict() != request.function_call.to_dict()
-                    ):
-                        raise ValueError("The approval decision does not match its exact pending function call.")
-                    if request.type == "function_call" and (
-                        not isinstance(reply, Content)
-                        or reply.type != "function_result"
-                        or reply.call_id != request.call_id
-                    ):
-                        raise ValueError("The function result does not match its pending call.")
-                    if request.type == "computer_tool_call":
-                        if not isinstance(reply, Content):
-                            raise ValueError("A computer reply must be typed Content.")
-                        _validate_computer_tool_result(request, reply)
-                replies[request_id] = reply
-            turn = replace(turn, responses=replies)
+            if not turn.responses:
+                raise ValueError("Workflow replies must answer at least one pending request.")
         else:
             if pending:
                 raise ValueError("This workflow is awaiting replies; do not replace them with new input.")
@@ -715,6 +673,7 @@ class HostedWorkflowRun:
             self._claimed = True
             return
         owner = secrets.token_hex(16)
+        self._pre_claim_head = self._head
         head = replace(
             self._head or WorkflowHead(self.binding.lineage_id, self.binding.conversation_id),
             response_id=self.binding.response_id,
@@ -730,7 +689,6 @@ class HostedWorkflowRun:
         )
         self._record_etag = await self.store.save_response(record, expected_etag=self._record_etag)
         self._record = record
-        await self._reclaim_completed_ancestors()
 
     async def assert_claim(self) -> None:
         if not self._claimed:
@@ -776,6 +734,8 @@ class HostedWorkflowRun:
                     and data.continuation_token is not None
                 ):
                     raise RuntimeError("Native workflows cannot checkpoint unfinished provider background output.")
+                if event.type == "superstep_started":
+                    self._superstep_started = True
                 if event.type == "superstep_completed":
                     validate_workflow_provider_state(self.workflow)
                 if event.type == "request_info" and not self.stored:
@@ -871,6 +831,7 @@ class HostedWorkflowRun:
         self._head_etag = await self.store.save_head(head, expected_etag=self._head_etag)
         self._head = head
         self._claimed = False
+        await self._reclaim_completed_ancestors()
 
     async def _reclaim_completed_ancestors(self) -> None:
         """Best-effort reclaim after the new head is durably committed.
@@ -911,10 +872,23 @@ class HostedWorkflowRun:
             logger.exception("Failed to reclaim superseded native workflow state; a later commit can retry cleanup")
 
     async def abort(self) -> None:
-        """Block interrupted/failed authority instead of permitting unsafe reply or effect replay."""
+        """Release a claim that never started a superstep; otherwise block the lineage against unsafe replay."""
         if not self.stored or not self._claimed or self.already_completed:
             return
         await self.assert_claim()
+        if (
+            not self._superstep_started
+            and not self.recovery
+            and self._pre_claim_head is not None
+            and self._record_etag is not None
+        ):
+            # Core rejects invalid replies before any executor runs, so the head and checkpoint stay usable.
+            self._head_etag = await self.store.save_head(self._pre_claim_head, expected_etag=self._head_etag)
+            self._head = self._pre_claim_head
+            await self.store.delete_response(self.binding.response_id, expected_etag=self._record_etag)
+            self._record = self._record_etag = None
+            self._claimed = False
+            return
         if self._record is not None:
             record = replace(self._record, status="blocked")
             self._record_etag = await self.store.save_response(record, expected_etag=self._record_etag)

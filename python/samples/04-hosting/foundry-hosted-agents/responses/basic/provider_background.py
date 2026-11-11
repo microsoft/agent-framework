@@ -7,7 +7,6 @@ import os
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_foundry_hosting import ResponsesHostServer, ResponsesRequest
-from azure.ai.agentserver.responses import ResponsesServerOptions
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
@@ -31,7 +30,7 @@ def main() -> None:
         agent=create_agent,
         history_source="inference_service",
         background_source="inference_service",
-        options=ResponsesServerOptions(resilient_background=True),
+        enable_background_recovery=True,
     ).run()
 
 

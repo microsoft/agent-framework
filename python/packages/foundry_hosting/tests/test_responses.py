@@ -17,7 +17,6 @@ import logging
 import os
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass
 from importlib import import_module
@@ -71,6 +70,7 @@ from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.models import (
     CreateResponse,
     Item,
+    MCPApprovalResponse,
     Metadata,
     OutputItem,
     ResponseIncompleteReason,
@@ -85,10 +85,13 @@ from openai.types.responses.response_usage import ResponseUsage as OpenAIRespons
 from pydantic import TypeAdapter
 
 from agent_framework_foundry_hosting import ResponsesHostServer, ResponsesRequest
+from agent_framework_foundry_hosting._approvals import SessionApprovalState
 from agent_framework_foundry_hosting._responses_shared import (
     _INCOMPLETE_REASON_KEY,  # pyright: ignore[reportPrivateUsage]
     _LATEST_CHECKPOINT_ID_KEY,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
+    OAUTH_CONSENT_NOT_EXECUTED_RESULT,
+    OAUTH_CONSENT_REQUIRED_RESULT,
     ConsentError,
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
     _annotations_to_output_text,  # pyright: ignore[reportPrivateUsage]
@@ -109,7 +112,27 @@ from agent_framework_foundry_hosting._responses_shared import (
 from agent_framework_foundry_hosting._state_store import (
     AgentSessionStoreProvider,
     FoundryAgentSessionStore,
-    FunctionApprovalStoreProvider,
+)
+
+from .foundry_hosting.approval_helpers import SqliteSessionStore
+from .foundry_hosting.responses_host_helpers import (
+    ApprovalPublishingClient,
+    BackgroundAgentMiddleware,
+    BackgroundChatMiddleware,
+    BackgroundPollingClient,
+    FailingAgentMiddleware,
+    GatedAgentStream,
+    GatedRequestRead,
+    GatedSessionLoadStore,
+    StatefulConsentClient,
+    UnlayeredClient,
+    collect_host_events,
+)
+from .foundry_hosting.toolbox_consent_helpers import (
+    CONSENT_LINK,
+    BatchToolCallClient,
+    ToolboxConsentServer,
+    consent_toolbox,
 )
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
@@ -1346,6 +1369,68 @@ def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
 
 
 @pytest.mark.parametrize("stream", [False, True])
+async def test_agent_host_prefix_preserves_response_routes(stream: bool) -> None:
+    agent = _make_agent(
+        response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Prefixed")])])
+    )
+    server = _make_server(agent, prefix="api/v1")
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        created = await client.post("/api/v1/responses", json={"input": "hello", "stream": stream, "store": True})
+        assert created.status_code == 200, created.text
+        if stream:
+            result = next(
+                event["data"]["response"]
+                for event in _parse_sse_events(created.text)
+                if event["event"] == "response.completed"
+            )
+        else:
+            result = created.json()
+        assert result["status"] == "completed"
+        response_id = result["id"]
+
+        stored = await client.get(f"/api/v1/responses/{response_id}")
+        assert stored.status_code == 200, stored.text
+        assert stored.json()["output"] == result["output"]
+
+        inputs = await client.get(f"/api/v1/responses/{response_id}/input_items")
+        assert inputs.status_code == 200, inputs.text
+        assert inputs.json()["data"]
+
+        deleted = await client.delete(f"/api/v1/responses/{response_id}")
+        assert deleted.status_code == 200, deleted.text
+        assert (await client.get(f"/api/v1/responses/{response_id}")).status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("prefix", "path"), [("api/v1", "/api/v1"), (" /api/v1/ ", "/api/v1"), ("//api/v1/", "//api/v1")]
+)
+async def test_prefixed_agent_background_cancel_uses_sdk_routes(prefix: str, path: str) -> None:
+    gated = GatedAgentStream()
+    agent = _make_agent()
+    agent.run = MagicMock(side_effect=lambda **kwargs: ResponseStream(gated.updates()))
+    server = _make_server(agent, prefix=prefix)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        created = await client.post(
+            f"http://test{path}/responses", json={"input": "wait", "store": True, "background": True}
+        )
+        assert created.status_code == 200, created.text
+        response_id = created.json()["id"]
+        await asyncio.wait_for(gated.started.wait(), 2)
+        cancelled = await client.post(f"http://test{path}/responses/{response_id}/cancel")
+        assert cancelled.status_code == 200, cancelled.text
+        await asyncio.wait_for(gated.stopped.wait(), 2)
+        for _ in range(150):
+            fetched = await client.get(f"http://test{path}/responses/{response_id}")
+            if fetched.status_code == 200 and fetched.json()["status"] == "cancelled":
+                break
+            await asyncio.sleep(0.01)
+        assert fetched.status_code == 200, fetched.text
+        assert fetched.json()["status"] == "cancelled"
+        assert "too late" not in fetched.text
+
+
+@pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("metadata", [None, {}, {"foo": "bar", "view": "concise"}])
 async def test_request_metadata_is_returned_and_stored(stream: bool, metadata: dict[str, str] | None) -> None:
     agent = _make_agent(
@@ -1580,6 +1665,67 @@ class TestSerializationHelpers:
 
 
 class TestResponsesHostServerInit:
+    @pytest.mark.parametrize(
+        ("setting", "value", "error"),
+        [
+            ("max_history_items", True, TypeError),
+            ("max_history_items", 0, ValueError),
+            ("sse_keep_alive_interval_seconds", False, TypeError),
+            ("sse_keep_alive_interval_seconds", 0, ValueError),
+            ("shutdown_grace_period_seconds", True, TypeError),
+            ("shutdown_grace_period_seconds", 0, ValueError),
+            ("enable_background_recovery", 1, TypeError),
+        ],
+    )
+    def test_invalid_host_setting_fails_before_sdk_or_agent_mutation(
+        self, setting: str, value: Any, error: type[Exception]
+    ) -> None:
+        agent = _make_agent()
+        with (
+            patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize,
+            pytest.raises(error, match=setting),
+        ):
+            ResponsesHostServer(agent, **{setting: value})
+        initialize.assert_not_called()
+        assert agent.context_providers == []
+
+    def test_history_limit_is_an_explicit_host_managed_override(self) -> None:
+        default = _make_server(_make_agent())
+        limited = _make_server(_make_agent(), max_history_items=3)
+        assert default._host_options.default_fetch_history_count == (  # pyright: ignore[reportPrivateUsage]
+            ResponsesServerOptions().default_fetch_history_count
+        )
+        assert limited._host_options.default_fetch_history_count == 3  # pyright: ignore[reportPrivateUsage]
+        with pytest.warns(UserWarning, match="max_history_items is ignored"):
+            ignored = _make_server(_make_agent(), history_source="agent_managed", max_history_items=3)
+        assert ignored._host_options.default_fetch_history_count == (  # pyright: ignore[reportPrivateUsage]
+            ResponsesServerOptions().default_fetch_history_count
+        )
+
+    @pytest.mark.parametrize("env", [None, "0", "3"])
+    @pytest.mark.parametrize("explicit", [None, 5])
+    def test_heartbeat_precedence(self, monkeypatch: pytest.MonkeyPatch, env: str | None, explicit: int | None) -> None:
+        if env is None:
+            monkeypatch.delenv("SSE_KEEPALIVE_INTERVAL", raising=False)
+        else:
+            monkeypatch.setenv("SSE_KEEPALIVE_INTERVAL", env)
+        host = _make_server(_make_agent(), sse_keep_alive_interval_seconds=explicit)
+        assert host._endpoint._runtime_options.sse_keep_alive_interval_seconds == (  # pyright: ignore[reportPrivateUsage]
+            explicit if explicit is not None else (int(env) if env and int(env) > 0 else None)
+        )
+
+    def test_hidden_provider_background_fails_before_sdk_and_agent_mutation(self) -> None:
+        agent = _make_agent()
+        agent.default_options = {"background": True}
+        with (
+            patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize,
+            pytest.raises(ValueError, match="outer background"),
+        ):
+            ResponsesHostServer(agent)
+        initialize.assert_not_called()
+        assert agent.default_options == {"background": True}
+        assert agent.context_providers == []
+
     def test_rejects_workflow_agent_before_sdk_construction(self) -> None:
         agent = _WorkflowAgentMock()
         with (
@@ -1622,10 +1768,7 @@ class TestResponsesHostServerInit:
             server._session_storage_provider,  # pyright: ignore[reportPrivateUsage]
             AgentSessionStoreProvider,
         )
-        assert isinstance(
-            server._function_approval_storage_provider,  # pyright: ignore[reportPrivateUsage]
-            FunctionApprovalStoreProvider,
-        )
+        assert not hasattr(server, "_function_approval_storage_provider")
 
     def test_init_rejects_history_provider_with_load_messages(self) -> None:
 
@@ -1708,10 +1851,10 @@ class TestResponsesHostServerInit:
             default_options={"store": True},
         )
 
-        with pytest.raises(RuntimeError, match="resilient_background"):
+        with pytest.raises(ValueError, match="enable_background_recovery"):
             ResponsesHostServer(
                 agent,
-                options=ResponsesServerOptions(resilient_background=True),
+                enable_background_recovery=True,
             )
 
         assert agent.default_options["store"] is True
@@ -1721,50 +1864,18 @@ class TestResponsesHostServerInit:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
-        with pytest.raises(RuntimeError, match="resilient_background"):
+        with pytest.raises(ValueError, match="enable_background_recovery"):
             ResponsesHostServer(
                 agent,
                 response_store=FileResponseStore(storage_dir=tmp_path),
-                options=ResponsesServerOptions(resilient_background=True),
+                enable_background_recovery=True,
             )
-
-    def test_init_rejects_steerable_conversations(self) -> None:
-        with pytest.raises(RuntimeError, match="steerable_conversations=True is temporarily unavailable"):
-            ResponsesHostServer(
-                _make_agent(),
-                response_store=InMemoryResponseProvider(),
-                options=ResponsesServerOptions(steerable_conversations=True),
-            )
-
-    def test_steering_rejected_before_enabling_task_manager_or_starting_host(self) -> None:
-        agent_factory = MagicMock()
-
-        def construct(_turn: int) -> str:
-            with pytest.raises(RuntimeError, match="steerable_conversations=True is temporarily unavailable") as error:
-                ResponsesHostServer(
-                    agent=agent_factory,
-                    options=ResponsesServerOptions(steerable_conversations=True),
-                )
-            return str(error.value)
-
-        with (
-            patch("azure.ai.agentserver.core.tasks.set_resilient_tasks_enabled") as enable,
-            patch("agent_framework_foundry_hosting._responses_agent.ResponsesAgentServerHost.__init__") as base_init,
-            ThreadPoolExecutor(max_workers=12) as executor,
-        ):
-            failures = list(executor.map(construct, range(24)))
-
-        assert len(failures) == 24
-        assert all("Azure/azure-sdk-for-python#49233" in failure for failure in failures)
-        enable.assert_not_called()
-        base_init.assert_not_called()
-        agent_factory.assert_not_called()
 
     async def test_non_steerable_background_still_uses_outer_response_id(self) -> None:
         agent = _make_agent(
             stream_updates=[AgentResponseUpdate(contents=[Content.from_text("finished")], role="assistant")]
         )
-        server = _make_server(agent, options=ResponsesServerOptions(steerable_conversations=False))
+        server = _make_server(agent)
 
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as http:
             pending = await http.post("/responses", json={"input": "hello", "store": True, "background": True})
@@ -1781,17 +1892,10 @@ class TestResponsesHostServerInit:
         assert final.json()["id"] == response_id
         assert "finished" in str(final.json()["output"])
 
-    def test_provider_background_rejects_steering_and_wrong_history_source(self) -> None:
+    def test_provider_background_rejects_wrong_history_source(self) -> None:
         agent = Agent(client=_ServiceStorageRecordingClient())
         with pytest.raises(ValueError, match="history_source='inference_service'"):
             _make_server(agent, background_source="inference_service")
-        with pytest.raises(RuntimeError, match="temporarily unavailable"):
-            _make_server(
-                agent,
-                history_source="inference_service",
-                background_source="inference_service",
-                options=ResponsesServerOptions(steerable_conversations=True),
-            )
 
     @pytest.mark.parametrize("old_store", [None, InMemoryResponseProvider()])
     @pytest.mark.parametrize("with_response_store", [False, True])
@@ -1863,6 +1967,157 @@ class TestResponsesHostServerInit:
         assert "Cannot find an existing agent session for previous_response_id=response-missing." in error["message"]
         agent.run.assert_not_called()
         agent.create_session.assert_not_called()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("kind", ["agent", "chat"])
+    async def test_application_middleware_background_is_not_intercepted(self, stream: bool, kind: str) -> None:
+        client = StatefulConsentClient(["tool"])
+        middleware = (
+            BackgroundAgentMiddleware(nested=False) if kind == "agent" else BackgroundChatMiddleware(nested=False)
+        )
+        agent = Agent(client=client, middleware=[middleware])
+        server = _make_server(agent, history_source="inference_service")
+
+        response = await _post(server, stream=stream)
+
+        assert response.status_code == 200
+        if stream:
+            assert "response.completed" in _sse_event_types(_parse_sse_events(response.text))
+        else:
+            assert response.json()["status"] == "completed"
+        assert client.calls
+        assert client.options[0]["background"] is True
+        assert agent.middleware == [middleware]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("background_source", ["host_managed", "inference_service"])
+    @pytest.mark.parametrize("hook_background", [None, False, True])
+    async def test_hook_background_is_forwarded_on_ordinary_runs(
+        self, stream: bool, background_source: str, hook_background: bool | None
+    ) -> None:
+        client = StatefulConsentClient(["tool"])
+        server = _make_server(
+            Agent(client=client),
+            history_source="inference_service",
+            background_source=background_source,
+            prepare_options=(
+                (lambda _request, _options: {"background": hook_background}) if hook_background is not None else None
+            ),
+        )
+
+        response = await _post(server, stream=stream)
+
+        assert response.status_code == 200
+        if stream:
+            assert "response.completed" in _sse_event_types(_parse_sse_events(response.text))
+        else:
+            assert response.json()["status"] == "completed"
+        assert len(client.calls) == 1
+        if hook_background is not None:
+            assert client.options[0]["background"] is hook_background
+        elif background_source == "inference_service":
+            assert client.options[0]["background"] is False
+        else:
+            assert "background" not in client.options[0]
+
+    @pytest.mark.parametrize("conflicting_hook", [False, True])
+    async def test_host_selected_provider_background_retains_submit_and_poll_precedence(
+        self, conflicting_hook: bool
+    ) -> None:
+        client = BackgroundPollingClient()
+        agent = Agent(client=client)
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            history_source="inference_service",
+            background_source="inference_service",
+            prepare_options=(lambda _request, _options: {"background": False}) if conflicting_hook else None,
+        )
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch("agent_framework_foundry_hosting._responses_agent.asyncio.sleep", new=AsyncMock()),
+        ):
+            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert any(isinstance(event, Mapping) and event.get("type") == "response.completed" for event in events)
+        assert [call["background"] for call in client.calls] == [True, True]
+        assert client.calls[1]["continuation_token"] == {"response_id": "provider-token"}
+        assert not agent.middleware
+        assert not client.chat_middleware
+
+    async def test_raw_agent_client_chat_middleware_background_is_not_intercepted(self) -> None:
+        client = StatefulConsentClient(["tool"])
+        middleware = BackgroundChatMiddleware(nested=False)
+        client.chat_middleware.append(middleware)
+        agent = RawAgent(client=client)
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            history_source="inference_service",
+            background_source="inference_service",
+        )
+        request = CreateResponse(input="hello", store=True, background=False)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert any(isinstance(event, Mapping) and event.get("type") == "response.completed" for event in events)
+        assert len(client.calls) == 1
+        assert client.options[0]["background"] is True
+        assert client.chat_middleware == [middleware]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_middleware_failure_on_approval_reply_leaves_parent_pending(
+        self, stream: bool, tmp_path: Path
+    ) -> None:
+        client = ApprovalPublishingClient(_make_function_approval_request_content())
+        agent = Agent(client=client, middleware=[])
+        server = _make_server(agent, session_store=SqliteSessionStore(tmp_path / "middleware-approval.sqlite"))
+        first = await _post(server)
+        approval_id = next(item["id"] for item in first.json()["output"] if item["type"] == "mcp_approval_request")
+        agent.middleware = [FailingAgentMiddleware()]
+        payload = {
+            "input": [{"type": "mcp_approval_response", "approval_request_id": approval_id, "approve": True}],
+            "previous_response_id": first.json()["id"],
+            "stream": stream,
+        }
+
+        rejected = await _post_json(server, payload)
+
+        assert rejected.status_code == 200
+        if stream:
+            assert "response.failed" in _sse_event_types(_parse_sse_events(rejected.text))
+        else:
+            assert rejected.json()["status"] == "failed"
+        assert client.calls == 1
+        # The failed turn saved nothing, so the parent still holds the pending request.
+        agent.middleware = []
+        replay = await _post_json(server, payload)
+        assert replay.status_code == 200
+        assert client.calls == 2
+
+    @pytest.mark.parametrize("provider_background", [False, True])
+    @pytest.mark.parametrize("layered_agent", [False, True])
+    async def test_unlayered_clients_receive_no_middleware_kwarg(
+        self, provider_background: bool, layered_agent: bool
+    ) -> None:
+        client = UnlayeredClient()
+        agent = Agent(client=client) if layered_agent else RawAgent(client=client)
+        server = _make_server(
+            agent,
+            history_source="inference_service",
+            background_source="inference_service" if provider_background else "host_managed",
+        )
+        request = CreateResponse(input="hello", store=True, background=provider_background)
+        context = ResponseContext(response_id="unlayered-response", mode_flags=MagicMock())
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert any(isinstance(event, Mapping) and event.get("type") == "response.completed" for event in events)
+        assert client.kwargs
+        assert all("middleware" not in kwargs for kwargs in client.kwargs)
 
 
 # endregion
@@ -2160,8 +2415,9 @@ class TestAgentSessionPersistence:
             },
         )
 
+        assert invalid.status_code == 200
         assert invalid.json()["status"] == "failed"
-        assert "unknown-approval" in invalid.json()["error"]["message"]
+        assert "No approval reply matches" in invalid.json()["error"]["message"]
         parent = await store.get(parent_id)
         assert parent is not None and "_foundry_service_child" not in parent.state
         assert len(client.calls) == 1
@@ -2201,8 +2457,6 @@ class TestAgentSessionPersistence:
         agent = Agent(client=client, default_options=OpenAIChatOptions(store=True))
         store = SessionStore()
         server = _make_server(agent, session_store=store, history_source=mode)
-        approvals = MagicMock(spec=FunctionApprovalStoreProvider)
-        server._function_approval_storage_provider = approvals  # pyright: ignore[reportPrivateUsage]
 
         response = await _post_json(server, {"input": "one shot", "store": False, "model": "test-model"})
 
@@ -2213,7 +2467,6 @@ class TestAgentSessionPersistence:
         assert agent.default_options["store"] is True
         provider = cast(MagicMock, server._session_storage_provider)  # pyright: ignore[reportPrivateUsage]
         provider.get_store.assert_not_called()
-        approvals.get_store.assert_not_called()
 
     async def test_store_false_rejects_external_history_and_custom_agent(self) -> None:
         history = _PerServiceCallHistoryProvider()
@@ -2244,6 +2497,35 @@ class TestAgentSessionPersistence:
 
         assert "store=false cannot continue agent-managed downstream service history" in _failure_message(events)
         assert len(client.calls) == 1
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_caller_options_without_hook_preserve_agent_defaults(self, stream: bool) -> None:
+        client = _RecordingHistoryClient()
+        agent = Agent(client=client, default_options=OpenAIChatOptions(temperature=0.2, max_tokens=256))
+        defaults = dict(agent.default_options)
+        server = _make_server(agent)
+
+        response = await _post_json(
+            server,
+            {
+                "input": "hello",
+                "stream": stream,
+                "temperature": 0.8,
+                "max_output_tokens": 300,
+                "extra_body": {"top_p": 0.4},
+            },
+        )
+
+        assert response.status_code == 200
+        if stream:
+            assert _sse_event_types(_parse_sse_events(response.text))[-1] == "response.completed"
+        else:
+            assert response.json()["status"] == "completed"
+        assert len(client.options) == 1
+        assert client.options[0]["temperature"] == 0.2
+        assert client.options[0]["max_tokens"] == 256
+        assert "top_p" not in client.options[0]
+        assert agent.default_options == defaults
 
     async def test_extra_options_overlay_then_developer_hook_preserves_defaults(self) -> None:
         client = _RecordingHistoryClient()
@@ -2339,7 +2621,7 @@ class TestAgentSessionPersistence:
             max_retries=0,
         ) as openai:
             agent = Agent(client=OpenAIChatClient(model="test-model", async_client=openai))
-            server = _make_server(agent)
+            server = _make_server(agent, prepare_options=lambda _request, options: options)
             rejected = await _post_json(
                 server,
                 {"input": "unsafe", "store": False, "extra_body": {"extra_body": {"store": True}}},
@@ -2371,7 +2653,12 @@ class TestAgentSessionPersistence:
 
     async def test_unsupported_options_policy_rejects_custom_agent(self) -> None:
         agent = _StrictCustomAgent()
-        server = _make_server(agent, history_source="agent_managed", unsupported_options="error")
+        server = _make_server(
+            agent,
+            history_source="agent_managed",
+            unsupported_options="error",
+            prepare_options=lambda _request, options: options,
+        )
         response = await _post_json(server, {"input": "hello", "temperature": 0.8})
 
         assert response.json()["status"] == "failed"
@@ -2383,7 +2670,12 @@ class TestAgentSessionPersistence:
         self, policy: str, warn: bool, caplog: pytest.LogCaptureFixture
     ) -> None:
         agent = _StrictCustomAgent()
-        server = _make_server(agent, history_source="agent_managed", unsupported_options=policy)
+        server = _make_server(
+            agent,
+            history_source="agent_managed",
+            unsupported_options=policy,
+            prepare_options=lambda _request, options: options,
+        )
 
         with caplog.at_level(logging.WARNING):
             response = await _post(server, temperature=0.5)
@@ -2495,7 +2787,7 @@ class TestAgentSessionPersistence:
             session_store=SessionStore(),
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            enable_background_recovery=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         request = CreateResponse(input="hello", store=True, background=True)
@@ -2555,8 +2847,9 @@ class TestAgentSessionPersistence:
             session_store=store,
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            enable_background_recovery=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
+            prepare_options=lambda _request, options: options,
         )
         request = CreateResponse(input="hello", store=True, background=True, temperature=0.35)
         context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
@@ -2629,7 +2922,7 @@ class TestAgentSessionPersistence:
             session_store=store,
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            enable_background_recovery=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         context = ResponseContext(
@@ -2665,7 +2958,7 @@ class TestAgentSessionPersistence:
             session_store=SessionStore(),
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            enable_background_recovery=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         request = CreateResponse(input="hello", store=True, background=True)
@@ -2708,7 +3001,7 @@ class TestAgentSessionPersistence:
             session_store=store,
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            enable_background_recovery=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         request = CreateResponse(
@@ -2740,7 +3033,7 @@ class TestAgentSessionPersistence:
             session_store=store,
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            enable_background_recovery=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         recovered_context = ResponseContext(response_id="outer-recover", mode_flags=MagicMock())
@@ -2790,8 +3083,9 @@ class TestAgentSessionPersistence:
                 agent,
                 history_source="inference_service",
                 background_source="inference_service",
-                options=ResponsesServerOptions(resilient_background=True),
+                enable_background_recovery=True,
                 response_store=FileResponseStore(storage_dir=tmp_path),
+                prepare_options=lambda _request, options: options,
             )
 
         request = CreateResponse(input="hello", store=True, background=True, temperature=0.25)
@@ -2876,7 +3170,7 @@ class TestAgentSessionPersistence:
                 agent,
                 history_source="inference_service",
                 background_source="inference_service",
-                options=ResponsesServerOptions(resilient_background=True),
+                enable_background_recovery=True,
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
 
@@ -3066,8 +3360,9 @@ class TestAgentSessionPersistence:
             session_store=store,
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            enable_background_recovery=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
+            prepare_options=lambda _request, options: options,
         )
         context = ResponseContext(response_id="outer-tool-response", mode_flags=MagicMock())
         request = CreateResponse(input="email bob", store=True, background=True, temperature=0.42)
@@ -3209,7 +3504,7 @@ class TestAgentSessionPersistence:
             session_store=store,
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            enable_background_recovery=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         response_id = f"outer-{stage}-{interruption}"
@@ -3325,7 +3620,7 @@ class TestAgentSessionPersistence:
                 agent,
                 history_source="inference_service",
                 background_source="inference_service",
-                options=ResponsesServerOptions(resilient_background=True),
+                enable_background_recovery=True,
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
 
@@ -3434,7 +3729,7 @@ class TestAgentSessionPersistence:
                 session_store=store,
                 history_source="inference_service",
                 background_source="inference_service",
-                options=ResponsesServerOptions(resilient_background=True),
+                enable_background_recovery=True,
                 response_store=FileResponseStore(storage_dir=tmp_path),
             )
 
@@ -3513,7 +3808,7 @@ class TestAgentSessionPersistence:
             session_store=FailingTokenStore() if phase == "save" else SessionStore(),
             history_source="inference_service",
             background_source="inference_service",
-            options=ResponsesServerOptions(resilient_background=True),
+            enable_background_recovery=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
         )
         request = CreateResponse(input="hello", store=True, background=True)
@@ -5134,7 +5429,7 @@ class TestNonStreaming:
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
             raw_agent=True,
         )
-        server = _make_server(agent)
+        server = _make_server(agent, prepare_options=lambda _request, options: options)
         resp = await _post(
             server,
             stream=False,
@@ -5176,7 +5471,7 @@ class TestStreaming:
             stream_updates=[AgentResponseUpdate(contents=[Content.from_text("ok")], role="assistant")],
             raw_agent=True,
         )
-        server = _make_server(agent)
+        server = _make_server(agent, prepare_options=lambda _request, options: options)
         resp = await _post(
             server,
             stream=True,
@@ -6696,7 +6991,6 @@ class TestItemToMessage:
         assert msg.contents[0].type == "function_approval_request"
 
     async def test_mcp_approval_response(self) -> None:
-        from azure.ai.agentserver.responses.models import MCPApprovalResponse
 
         saved = _make_function_approval_request_content(request_id="apr-1")
         storage = _function_approval_store(saved)
@@ -8121,7 +8415,6 @@ class TestFunctionApprovalConversion:
         assert msg.contents[0].id == "apr-1"
 
     async def test_input_item_mcp_approval_response_resolves_to_approval_response(self) -> None:
-        from azure.ai.agentserver.responses.models import MCPApprovalResponse
 
         saved = _make_function_approval_request_content(request_id="apr-1")
         storage = _function_approval_store(saved)
@@ -8150,10 +8443,11 @@ class TestFunctionApprovalRoundTrip:
         `function_approval_response` content delivered to the agent.
     """
 
-    async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
+    async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self, tmp_path: Path) -> None:
         request_content = _make_function_approval_request_content()
         agent = _make_agent(response=AgentResponse(messages=[Message(role="assistant", contents=[request_content])]))
-        server = _make_server(agent)
+        store = SqliteSessionStore(tmp_path / "approvals.sqlite")
+        server = _make_server(agent, session_store=store)
 
         resp = await _post(server, stream=False)
 
@@ -8167,15 +8461,17 @@ class TestFunctionApprovalRoundTrip:
         assert approval_items[0]["server_label"] == "my_server"
 
         # Storage must contain a saved entry under the emitted request id.
-        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config, platform_context=get_request_context()
-        ).load_approval_request(approval_request_id)
+        session = await store.get(body["id"])
+        assert session is not None
+        loaded = await SessionApprovalState(session).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert loaded.function_call is not None
         assert loaded.function_call.name == "delete_file"
 
     @pytest.mark.parametrize("with_preamble", [False, True])
-    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self, with_preamble: bool) -> None:
+    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(
+        self, with_preamble: bool, tmp_path: Path
+    ) -> None:
         request_content = _make_function_approval_request_content(request_id="apr_streaming")
         updates: list[AgentResponseUpdate] = []
         preambles = ("Checking the refund policy.", "The refund requires approval.")
@@ -8202,7 +8498,8 @@ class TestFunctionApprovalRoundTrip:
                     )
         updates.append(AgentResponseUpdate(contents=[request_content], role="assistant"))
         agent = _make_agent(stream_updates=updates)
-        server = _make_server(agent)
+        store = SqliteSessionStore(tmp_path / "approvals.sqlite")
+        server = _make_server(agent, session_store=store)
 
         resp = await _post(server, stream=True)
 
@@ -8227,12 +8524,13 @@ class TestFunctionApprovalRoundTrip:
                 break
         assert approval_request_id is not None
 
-        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config, platform_context=get_request_context()
-        ).load_approval_request(approval_request_id)
+        response_id = next(e["data"]["response"]["id"] for e in events if e["event"] == "response.completed")
+        session = await store.get(response_id)
+        assert session is not None
+        loaded = await SessionApprovalState(session).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
 
-    async def test_round_trip_approval_response_reaches_agent(self) -> None:
+    async def test_round_trip_approval_response_reaches_agent(self, tmp_path: Path) -> None:
         """Two-turn: turn 1 emits an approval request; turn 2 sends an
         approval response and the agent receives a `function_approval_response`."""
         request_content = _make_function_approval_request_content()
@@ -8243,7 +8541,7 @@ class TestFunctionApprovalRoundTrip:
                 AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])]),
             ]
         )
-        server = _make_server(agent)
+        server = _make_server(agent, session_store=SqliteSessionStore(tmp_path / "approvals.sqlite"))
 
         first = await _post(server, stream=False)
         assert first.status_code == 200
@@ -8263,6 +8561,7 @@ class TestFunctionApprovalRoundTrip:
                 }
             ],
             "stream": False,
+            "previous_response_id": first_body["id"],
         }
         second = await _post_json(server, second_payload)
         assert second.status_code == 200
@@ -8278,7 +8577,7 @@ class TestFunctionApprovalRoundTrip:
         assert approval_responses[0].approved is True
         assert approval_responses[0].function_call.name == "delete_file"
 
-    async def test_round_trip_approval_response_rejected(self) -> None:
+    async def test_round_trip_approval_response_rejected(self, tmp_path: Path) -> None:
         """Same as above but the user rejects the approval; the agent must
         receive `approved=False`."""
         request_content = _make_function_approval_request_content()
@@ -8289,7 +8588,7 @@ class TestFunctionApprovalRoundTrip:
                 AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
             ]
         )
-        server = _make_server(agent)
+        server = _make_server(agent, session_store=SqliteSessionStore(tmp_path / "approvals.sqlite"))
 
         first = await _post(server, stream=False)
         approval_request_id = next(
@@ -8308,6 +8607,7 @@ class TestFunctionApprovalRoundTrip:
                     }
                 ],
                 "stream": False,
+                "previous_response_id": first.json()["id"],
             },
         )
         assert second.status_code == 200
@@ -8319,12 +8619,37 @@ class TestFunctionApprovalRoundTrip:
         assert len(approval_responses) == 1
         assert approval_responses[0].approved is False
 
-    async def test_approval_response_referencing_unknown_id_fails(self) -> None:
-        """Sending an `mcp_approval_response` for a request id that was
-        never persisted must surface as a ``response.failed`` event whose
-        ``error.message`` contains the missing approval request id."""
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_approval_response_referencing_unknown_id_fails_without_running(self, stream: bool) -> None:
+        """An unknown wire ID is not translated; a reply with nothing left fails before the agent runs."""
         agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])])
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
+            stream_updates=[AgentResponseUpdate(contents=[Content.from_text("ok")], role="assistant")],
+        )
+        server = _make_server(agent)
+
+        resp = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [{"type": "mcp_approval_response", "approval_request_id": "apr_unknown", "approve": True}],
+                "stream": stream,
+            },
+        )
+
+        assert resp.status_code == 200, resp.text
+        if stream:
+            assert "response.failed" in _sse_event_types(_parse_sse_events(resp.text))
+        else:
+            assert resp.json()["status"] == "failed"
+        agent.run.assert_not_called()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_unknown_approval_id_is_dropped_beside_other_input(self, stream: bool) -> None:
+        """An unknown wire ID beside other input is dropped; Core never sees an approval to authorize."""
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
+            stream_updates=[AgentResponseUpdate(contents=[Content.from_text("ok")], role="assistant")],
         )
         server = _make_server(agent)
 
@@ -8333,24 +8658,53 @@ class TestFunctionApprovalRoundTrip:
             {
                 "model": "test-model",
                 "input": [
-                    {
-                        "type": "mcp_approval_response",
-                        "approval_request_id": "apr_unknown",
-                        "approve": True,
-                    }
+                    {"type": "mcp_approval_response", "approval_request_id": "apr_unknown", "approve": True},
+                    {"type": "message", "role": "user", "content": "hello"},
                 ],
-                "stream": False,
+                "stream": stream,
             },
         )
-        # The handler converts the underlying KeyError into a terminal
-        # ``response.failed`` event, so non-streaming callers see HTTP 200
-        # with status="failed" and a meaningful error message rather than
-        # a generic 5xx response.
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "failed"
-        error: dict[str, Any] = body.get("error") or {}
-        assert "apr_unknown" in (error.get("message") or "")
+
+        assert resp.status_code == 200, resp.text
+        assert agent.run.call_count == 1
+        sent = [content for message in agent.run.call_args.kwargs["messages"] for content in message.contents]
+        assert not any(content.type.startswith("function_approval") for content in sent)
+        assert any(content.type == "text" and content.text == "hello" for content in sent)
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_approval_from_another_platform_user_is_dropped(self, stream: bool, tmp_path: Path) -> None:
+        approval = _make_function_approval_request_content()
+        agent = _make_multi_response_agent([
+            AgentResponse(messages=[Message(role="assistant", contents=[approval])]),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("other")])]),
+            AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])]),
+        ])
+        stores = {
+            "owner": SqliteSessionStore(tmp_path / "owner.sqlite"),
+            "other": SqliteSessionStore(tmp_path / "other.sqlite"),
+        }
+        provider = MagicMock(spec=AgentSessionStoreProvider)
+        provider.get_store.side_effect = lambda **kwargs: stores[kwargs["platform_context"].user_id]
+        server = _make_server(agent, agent_session_store_provider=provider)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+            first = await client.post("/responses", json={"input": "go"}, headers={"x-agent-user-id": "owner"})
+            assert first.status_code == 200, first.text
+            approval_id = next(item["id"] for item in first.json()["output"] if item["type"] == "mcp_approval_request")
+            payload = {
+                "input": [{"type": "mcp_approval_response", "approval_request_id": approval_id, "approve": True}],
+                "previous_response_id": first.json()["id"],
+                "stream": stream,
+            }
+            await client.post("/responses", json=payload, headers={"x-agent-user-id": "other"})
+            if agent.run.call_count == 2:
+                sent = [c for m in agent.run.call_args.kwargs["messages"] for c in m.contents]
+                assert not any(content.type == "function_approval_response" for content in sent)
+            calls_before_owner = agent.run.call_count
+            accepted = await client.post("/responses", json=payload, headers={"x-agent-user-id": "owner"})
+            assert accepted.status_code == 200, accepted.text
+        assert agent.run.call_count == calls_before_owner + 1
+        sent = [c for m in agent.run.call_args.kwargs["messages"] for c in m.contents]
+        assert [content.approved for content in sent if content.type == "function_approval_response"] == [True]
 
 
 # endregion
@@ -8359,6 +8713,178 @@ class TestFunctionApprovalRoundTrip:
 
 
 # region Agent lifecycle (lazy entry & OAuth consent surfacing)
+
+
+@pytest.mark.xdist_group("session_isolation")
+class TestToolboxConsentHost:
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_consent_preserves_function_results_and_stored_continuation(
+        self, stream: bool, tmp_path: Path
+    ) -> None:
+        gateway = ToolboxConsentServer(["before", "secure", "after"])
+        gateway.require_consent("secure")
+        async with consent_toolbox(gateway) as toolbox:
+            client = BatchToolCallClient([function.name for function in toolbox.functions])
+            client.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[index]
+            agent = Agent(client=client, tools=toolbox, default_options=ChatOptions(allow_multiple_tool_calls=True))
+            server = _make_server(agent, session_store=SqliteSessionStore(tmp_path / "consent.sqlite"))
+
+            first = await _post(server, stream=stream)
+            assert first.status_code == 200, first.text
+            if stream:
+                events = _parse_sse_events(first.text)
+                response = next(
+                    event["data"]["response"] for event in events if event["event"] == "response.incomplete"
+                )
+            else:
+                response = first.json()
+            assert response["status"] == "incomplete"
+            outputs = response["output"]
+            calls = [item for item in outputs if item["type"] == "function_call"]
+            results = [item for item in outputs if item["type"] == "function_call_output"]
+            consents = [item for item in outputs if item["type"] == "oauth_consent_request"]
+            assert len(calls) == len(results) == 3
+            assert {item["call_id"] for item in calls} == {item["call_id"] for item in results}
+            assert len({item["call_id"] for item in results}) == 3
+            by_call = {item["call_id"]: item["output"] for item in results}
+            assert "before-result" in str(by_call["call-0"])
+            assert by_call["call-1"] == OAUTH_CONSENT_REQUIRED_RESULT
+            assert by_call["call-2"] == OAUTH_CONSENT_NOT_EXECUTED_RESULT
+            assert len(consents) == 1
+            assert consents[0]["consent_link"] == CONSENT_LINK
+            assert gateway.calls == ["before", "secure"]
+
+            gateway.consent_errors.clear()
+            second = await _post_json(
+                server,
+                {"input": "Consent granted", "previous_response_id": response["id"], "stream": stream},
+            )
+            assert second.status_code == 200, second.text
+            if stream:
+                assert "response.completed" in _sse_event_types(_parse_sse_events(second.text))
+            else:
+                assert second.json()["status"] == "completed"
+            assert len(client.calls) == 2
+            history_results = [
+                content.call_id
+                for message in client.calls[1]
+                for content in message.contents
+                if content.type == "function_result"
+            ]
+            assert len(history_results) == 3
+            assert set(history_results) == {"call-0", "call-1", "call-2"}
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_service_history_fails_on_invocation_time_consent_before_publication(
+        self, stream: bool, tmp_path: Path
+    ) -> None:
+        gateway = ToolboxConsentServer(["before", "secure", "after"])
+        gateway.require_consent("secure")
+        async with consent_toolbox(gateway) as toolbox:
+            client = StatefulConsentClient([function.name for function in toolbox.functions])
+            client.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[index]
+            agent = Agent(client=client, tools=toolbox, default_options=ChatOptions(allow_multiple_tool_calls=True))
+            server = _make_server(
+                agent,
+                session_store=SqliteSessionStore(tmp_path / "service-consent.sqlite"),
+                history_source="inference_service",
+            )
+            response = await _post(server, stream=stream)
+            assert response.status_code == 200, response.text
+            assert CONSENT_LINK not in response.text
+            assert "oauth_consent_request" not in response.text
+            assert (
+                "Invocation-time OAuth consent is unsupported with history_source='inference_service'." in response.text
+            )
+            if stream:
+                events = _parse_sse_events(response.text)
+                assert "response.failed" in _sse_event_types(events)
+                assert "response.incomplete" not in _sse_event_types(events)
+            else:
+                assert response.json()["status"] == "failed"
+            assert len(client.calls) == 2
+            assert gateway.calls == ["before", "before", "secure"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("background_source", ["host_managed", "inference_service"])
+    async def test_service_history_background_fails_on_invocation_time_consent_before_publication(
+        self, stream: bool, background_source: str, tmp_path: Path
+    ) -> None:
+        gateway = ToolboxConsentServer(["before", "secure", "after"])
+        gateway.require_consent("secure")
+        async with consent_toolbox(gateway) as toolbox:
+            client = StatefulConsentClient([function.name for function in toolbox.functions])
+            client.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[index]
+            agent = Agent(client=client, tools=toolbox)
+            server = _make_server(
+                agent,
+                session_store=SqliteSessionStore(tmp_path / "background-consent.sqlite"),
+                history_source="inference_service",
+                background_source=background_source,
+            )
+            request = CreateResponse(input="go", store=True, background=True, stream=stream)
+            context = ResponseContext(response_id="background-consent", mode_flags=MagicMock())
+            with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+                events = [event async for event in server._handle_response(request, context, asyncio.Event())]
+
+        assert CONSENT_LINK not in str(events)
+        assert "oauth_consent_request" not in str(events)
+        assert "Invocation-time OAuth consent is unsupported with history_source='inference_service'." in str(events)
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert "response.failed" in types
+        assert "response.incomplete" not in types
+        assert gateway.calls == ["before", "before", "secure"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_new_store_false_consent_fails_without_exposing_continuation(
+        self, stream: bool, tmp_path: Path
+    ) -> None:
+        gateway = ToolboxConsentServer(["secure"])
+        gateway.require_consent("secure")
+        async with consent_toolbox(gateway) as toolbox:
+            client = BatchToolCallClient([function.name for function in toolbox.functions])
+            agent = Agent(client=client, tools=toolbox)
+            server = _make_server(agent, session_store=SqliteSessionStore(tmp_path / "consent.sqlite"))
+            response = await _post_json(server, {"input": "go", "store": False, "stream": stream})
+
+        assert response.status_code == 200
+        assert CONSENT_LINK not in response.text
+        assert "oauth_consent_request" not in response.text
+        assert "requires store=true" in response.text
+        if stream:
+            events = _parse_sse_events(response.text)
+            assert "response.failed" in _sse_event_types(events)
+        else:
+            assert response.json()["status"] == "failed"
+        assert gateway.calls == ["secure"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("link", [CONSENT_LINK, "http://consent.example.com/authorize?state=secret"])
+    async def test_disallowed_consent_fails_without_exposing_link(
+        self, stream: bool, link: str, tmp_path: Path
+    ) -> None:
+        gateway = ToolboxConsentServer(["secure", "after"])
+        gateway.require_consent("secure", message=f"Request failed (remote): {link}")
+        async with consent_toolbox(gateway) as toolbox:
+            client = BatchToolCallClient([function.name for function in toolbox.functions])
+            client.function_invocation_configuration["allow_concurrent_invocation"] = False  # type: ignore[index]
+            agent = Agent(client=client, tools=toolbox)
+            server = _make_server(
+                agent,
+                session_store=SqliteSessionStore(tmp_path / "rejected-consent.sqlite"),
+                allowed_oauth_consent_origins=["https://allowed.example.com"],
+            )
+            response = await _post(server, stream=stream)
+
+        assert response.status_code == 200
+        assert link not in response.text
+        assert "oauth_consent_request" not in response.text
+        assert "OAuth consent link rejected" in response.text
+        if stream:
+            assert "response.failed" in _sse_event_types(_parse_sse_events(response.text))
+        else:
+            assert response.json()["status"] == "failed"
+        assert gateway.calls == ["secure"]
 
 
 def _make_consent_error(
@@ -8683,16 +9209,26 @@ class TestOAuthConsentSurfacing:
         oauth_items = [item for item in body["output"] if item["type"] == "oauth_consent_request"]
         assert [item["consent_link"] for item in oauth_items] == ["https://external.example/authorize"]
 
-    async def test_configured_origin_allowlist_accepts_connect_time_consent(self) -> None:
+    @pytest.mark.parametrize("history_source", ["host_managed", "inference_service"])
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_configured_origin_allowlist_accepts_connect_time_consent(
+        self, history_source: str, stream: bool
+    ) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
         agent.__aenter__.side_effect = _make_consent_error("https://auth.example.com/authorize?state=1")
-        server = _make_server(agent, allowed_oauth_consent_origins=["https://auth.example.com"])
+        agent.client.STORES_BY_DEFAULT = history_source == "inference_service"
+        server = _make_server(
+            agent, allowed_oauth_consent_origins=["https://auth.example.com"], history_source=history_source
+        )
 
-        resp = await _post(server, input_text="hello", stream=False)
+        resp = await _post(server, input_text="hello", stream=stream)
 
-        assert resp.json()["status"] == "incomplete"
+        if stream:
+            assert "response.incomplete" in _sse_event_types(_parse_sse_events(resp.text))
+        else:
+            assert resp.json()["status"] == "incomplete"
 
     async def test_configured_origin_allowlist_rejects_connect_time_consent(
         self, caplog: pytest.LogCaptureFixture
@@ -9582,6 +10118,39 @@ class TestParallelRequestReads:
         assert types[-1] == "response.failed"
         # The in-flight input read must have been cancelled by the handler's cleanup, not orphaned.
         await asyncio.wait_for(sibling_cancelled.wait(), timeout=1)
+
+    async def test_session_preparation_cancellation_drains_reads_and_propagates(self) -> None:
+        reader = GatedRequestRead()
+        store = GatedSessionLoadStore(reader.started)
+        agent = _make_agent()
+        server = _make_server(agent, session_store=store)
+        request = CreateResponse(input="hi", previous_response_id="previous", stream=True)
+        context = ResponseContext(response_id="response-cancel", mode_flags=MagicMock())
+        events: list[Any] = []
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(side_effect=reader.load)),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            task = asyncio.create_task(
+                collect_host_events(
+                    cast(AsyncIterator[Any], server._handle_response(request, context, asyncio.Event())),
+                    events,
+                )
+            )
+            try:
+                await asyncio.wait_for(store.started.wait(), timeout=2)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            finally:
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+        assert reader.stopped.is_set()
+        assert store.stopped.is_set()
+        agent.run.assert_not_called()
 
 
 # endregion

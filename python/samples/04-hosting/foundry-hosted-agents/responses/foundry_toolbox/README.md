@@ -2,6 +2,8 @@
 
 An [Agent Framework](https://github.com/microsoft/agent-framework) agent that uses **Foundry Toolbox** for tool discovery, hosted on Microsoft Foundry using the **Responses protocol**. Foundry Toolbox is a managed tool registry in Microsoft Foundry that lets you define tools centrally and share them across agents.
 
+The Agent Framework `FoundryToolbox` integration is experimental.
+
 ## Creating a Foundry Toolbox
 
 You can create a Foundry Toolbox by code. Refer to this sample for an example: [Foundry Toolbox CRUD Sample](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/samples/toolboxes/sample_toolboxes_crud.py).
@@ -98,16 +100,17 @@ See [main.py](main.py) for the full implementation.
 ### Request-owned resources
 
 The host receives `agent=create_agent`, not a process-wide agent instance.
-Every request creates a fresh client and Toolbox MCP connection, then closes
-them afterward. This gives the sample one clear owner for its model transports,
-credential and Toolbox lifecycle. `FoundryToolbox` also supports long-lived
-instances: it resolves the current platform headers before each operation and
+The factory creates a fresh client and Toolbox configuration for the request.
+Successfully entered contexts are unwound after the request. `FoundryToolbox`
+also supports long-lived instances: it resolves the current platform headers before each operation and
 reconnects the MCP session when that identity changes, so a shared instance does
 not retain an earlier caller's `x-agent-foundry-call-id`.
 
-The sample client closes only its own model/project transports and credential,
-including when MCP entry fails or the request is cancelled. Local authentication
-uses `AzureCliCredential`; deployed authentication uses managed identity.
+After entry, the sample client context closes its own model/project transports
+and credential on exit, including if later MCP entry fails or the request is
+cancelled. If the request ends before client entry, those allocations may not
+be cleaned up. Local authentication uses `AzureCliCredential`; deployed
+authentication uses managed identity.
 `history_source="host_managed"` reconstructs the outer Responses transcript and
 disables inner model storage. Caller `store=false` prevents host-managed state,
 not external tool side effects.
@@ -117,6 +120,9 @@ PAT-backed tools act as the configured external account; user-identity tools
 require the appropriate pass-through connection and the current call ID. A fresh
 Python object does not by itself grant external permissions. GitHub PAT/OAuth
 connections, project roles and consent are separate setup, not offline coverage.
+If a Toolbox tool call needs OAuth consent, the response is `incomplete` and
+contains an `oauth_consent_request`. Continuation needs `store=true`. See
+[Invocation-time OAuth consent](../../../../../packages/foundry_hosting/README.md#invocation-time-oauth-consent).
 Native code-interpreter file citations are a separate tracked behavior
 (microsoft/agent-framework#7916), not implemented by this lifecycle change.
 

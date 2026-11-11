@@ -21,8 +21,9 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import suppress
-from dataclasses import asdict, dataclass, is_dataclass
-from typing import Any, Generic, Literal, TypeGuard, TypeVar, cast
+from contextvars import ContextVar
+from dataclasses import asdict, dataclass, field, is_dataclass
+from typing import Any, Generic, Literal, Protocol, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
 from agent_framework import (
@@ -45,10 +46,7 @@ from agent_framework import (
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._types import _get_annotation_text_span_regions  # pyright: ignore[reportPrivateUsage]
 from agent_framework.observability import OBSERVABILITY_SETTINGS
-from azure.ai.agentserver.responses import (
-    ResponseContext,
-    ResponsesServerOptions,
-)
+from azure.ai.agentserver.responses import ResponseContext
 from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.models import (
@@ -94,11 +92,22 @@ from azure.ai.agentserver.responses.streaming._builders import (
 )
 from mcp import MCPError
 
-from ._state_store import (
-    FunctionApprovalStore,
-)
+from ._approvals import SessionApprovalState, _InvalidApproval  # pyright: ignore[reportPrivateUsage]
 
 logger = logging.getLogger(__name__)
+
+
+class _ApprovalRecorder(Protocol):
+    """Records the wire ID of each approval item before the output tracker yields it.
+
+    The mapping only translates IDs. The host must buffer the yielded events until the state that holds the
+    mapping is saved.
+    """
+
+    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
+        """Record the original ``function_approval_request`` content under its generated public ID."""
+        ...
+
 
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
@@ -786,19 +795,104 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     return None
 
 
+_REMOTE_ERROR_PREFIX = "Request failed (remote): "
+
+OAUTH_CONSENT_REQUIRED_RESULT = (
+    "Error: OAuth consent is required. This tool invocation did not complete. The user must authorize access "
+    "before this tool can be invoked in a later request."
+)
+OAUTH_CONSENT_NOT_EXECUTED_RESULT = (
+    "Error: This tool invocation was not executed because another tool requires OAuth consent. The user must "
+    "authorize access before protected tools can be invoked in a later request."
+)
+
+
+def tool_call_consent_url_from_error(exc: BaseException) -> str | None:
+    """Return the consent URL from a Foundry Toolbox ``tools/call`` consent error, if ``exc`` wraps one.
+
+    The gateway reports invocation-time consent as MCP error ``-32006``. The URL is read from a string
+    ``error.data["detail"]``; when ``detail`` is absent, the error message is used after removing the
+    ``"Request failed (remote): "`` prefix. A ``detail`` value that is present but not a string yields an empty
+    URL so the caller fails closed. The ``tools/list`` JSON ``errors`` shape is also accepted.
+
+    Args:
+        exc: The exception to inspect. ``exc`` itself or one of its ``args`` must be the ``MCPError``.
+
+    Returns:
+        The raw consent URL (not yet validated), an empty string when the payload is malformed, or ``None`` when
+        ``exc`` is not a consent error.
+    """
+    inner_exception = (
+        exc if isinstance(exc, MCPError) else next((arg for arg in exc.args if isinstance(arg, MCPError)), None)
+    )
+    if inner_exception is None or inner_exception.code != CONSENT_ERROR_CODE:
+        return None
+    data = inner_exception.error.data
+    if isinstance(data, Mapping) and "detail" in data:
+        detail = cast(Mapping[str, Any], data)["detail"]
+        return detail.strip() if isinstance(detail, str) else ""
+    message = inner_exception.error.message or ""
+    if "{" in message:
+        listed = consent_url_from_error(Exception(inner_exception))
+        return listed[0].consent_url if listed else ""
+    message = message.removeprefix(_REMOTE_ERROR_PREFIX)
+    return message.strip()
+
+
+@dataclass
+class _ToolboxConsentScope:
+    """Request-wide invocation-time OAuth consent state shared by all tool-call tasks of one hosted request.
+
+    The scope is a mutable object so state recorded in a copied task context remains visible to the host and to
+    later tool calls. Hosts must create a fresh scope for every request.
+    """
+
+    allowed_origins: frozenset[str] | None = None
+    consents: list[ConsentError] = field(default_factory=lambda: [])
+    consent_rejected: bool = False
+
+    @property
+    def consent_required(self) -> bool:
+        """Whether a protected tool in this request requires OAuth consent."""
+        return bool(self.consents)
+
+    @property
+    def blocks_toolbox_calls(self) -> bool:
+        """Whether later Foundry Toolbox calls in this request must not contact the gateway."""
+        return self.consent_required or self.consent_rejected
+
+
+_toolbox_consent_scope: ContextVar[_ToolboxConsentScope | None] = ContextVar(
+    "_foundry_toolbox_consent_scope", default=None
+)
+
+
+def _activate_toolbox_consent_scope(  # pyright: ignore[reportUnusedFunction]
+    *, allowed_origins: frozenset[str] | None = None
+) -> _ToolboxConsentScope:
+    """Activate a fresh invocation-time OAuth consent scope in the current context.
+
+    Call this in the request task before the agent run starts and before the first stream item is pulled, so all
+    tool-call tasks inherit the scope. The scope is intentionally not reset: async generator finalization may run
+    in a different context, and a fresh scope replaces it for the next request.
+
+    Args:
+        allowed_origins: Normalized consent origin allowlist from ``_normalize_allowed_oauth_consent_origins``.
+
+    Returns:
+        The active scope.
+    """
+    scope = _ToolboxConsentScope(allowed_origins=allowed_origins)
+    _toolbox_consent_scope.set(scope)
+    return scope
+
+
+def _current_toolbox_consent_scope() -> _ToolboxConsentScope | None:  # pyright: ignore[reportUnusedFunction]
+    """Return the active invocation-time OAuth consent scope, if a host activated one."""
+    return _toolbox_consent_scope.get()
+
+
 # endregion Foundry Toolbox Auth integration
-
-
-def _validate_response_server_options(  # pyright: ignore[reportUnusedFunction]
-    options: ResponsesServerOptions | None,
-) -> None:
-    if options and options.steerable_conversations:
-        # TODO(foundry-hosting): Remove after Azure/azure-sdk-for-python#49233 ships and queue overflow is verified.
-        raise RuntimeError(
-            "steerable_conversations=True is temporarily unavailable: the current AgentServer SDK "
-            "retains futures for rejected steering turns. Wait for the official fix in "
-            "Azure/azure-sdk-for-python#49233, then update the dependency and verify queue overflow."
-        )
 
 
 # region Active Builder State
@@ -983,7 +1077,7 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
         self,
         update: AgentResponseUpdate,
         *,
-        approval_storage: FunctionApprovalStore | None = None,
+        approval_storage: _ApprovalRecorder | None = None,
         complete_message: bool = False,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Process one agent update: note its finish reason, then handle each of its contents.
@@ -1008,7 +1102,7 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
         content: Content,
         message_id: str | None = None,
         *,
-        approval_storage: FunctionApprovalStore | None = None,
+        approval_storage: _ApprovalRecorder | None = None,
         start_new_content_part: bool = False,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Process a content item, yielding its events.
@@ -1019,8 +1113,9 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
                 change in ``message_id`` across otherwise same-typed text content marks a new
                 logical message and forces the previous output item closed, rather than being
                 merged into it.
-            approval_storage: Used for content types that fall back to one-shot emission
-                (anything not recognized as a streaming delta type) to save/load approval requests.
+            approval_storage: Recorder that receives each ``function_approval_request`` under its generated
+                public ID before the approval item event is yielded. The host must buffer yielded approval
+                events until the state that holds the mapping is saved.
             start_new_content_part: Whether text and refusal content start a new independent
                 content part instead of continuing the current streaming occurrence.
         """
@@ -1281,15 +1376,14 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
                         if isinstance(item, Mapping)
                         else getattr(item, "id", None)
                     )
-                    if isinstance(approval_request_id, str):
-                        await approval_storage.save_approval_request(approval_request_id, content)
-                        request_saved = True
+                    if not isinstance(approval_request_id, str) or not approval_request_id:
+                        raise RuntimeError(
+                            "The approval request ID could not be extracted from the stream event, "
+                            "so the approval request could not be recorded."
+                        )
+                    await approval_storage.save_approval_request(approval_request_id, content)
+                    request_saved = True
                 yield event
-            if approval_storage is not None and not request_saved:
-                logger.warning(
-                    "Approval request was not saved to approval storage because the approval request ID "
-                    "could not be extracted from the stream event."
-                )
 
         elif content.type == "oauth_consent_request":
             for event in self._close():
@@ -1586,21 +1680,24 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
 
 
 async def _items_to_messages(  # pyright: ignore[reportUnusedFunction]
-    input_items: Sequence[Item], *, approval_storage: FunctionApprovalStore | None = None
+    input_items: Sequence[Item], *, approval_storage: SessionApprovalState | None = None
 ) -> list[Message]:
     """Converts a sequence of input items to a list of Messages, one per item.
 
     Args:
         input_items: The input items to convert.
-        approval_storage: An optional ApprovalStorage instance used to look up
-            approval requests when converting MCP approval response items.
+        approval_storage: Optional session-backed approval state used to read
+            approval requests without consuming their authority.
 
     Returns:
         A list of Messages, one per supported input item.
     """
     messages: list[Message] = []
     for item in input_items:
-        messages.append(await _item_to_message(item, approval_storage=approval_storage))
+        try:
+            messages.append(await _item_to_message(item, approval_storage=approval_storage))
+        except _InvalidApproval as exc:
+            _log_dropped_approval(exc)
     return messages
 
 
@@ -1692,18 +1789,29 @@ def _shell_command_output_to_content(output: Mapping[str, Any]) -> Content:
     )
 
 
+async def _load_approval_request(approval_storage: SessionApprovalState | None, wire_id: str) -> Content:
+    if approval_storage is None:
+        raise ValueError("ApprovalStorage is required to load approval request.")
+    return await approval_storage.load_approval_request(wire_id)
+
+
+def _log_dropped_approval(exc: _InvalidApproval) -> None:
+    # Core authorizes approvals against the session's pending requests; an unknown wire ID is dropped.
+    logger.warning("Ignoring an MCP approval item: %s", exc)
+
+
 async def _item_to_message(
     item: Item,
     *,
-    approval_storage: FunctionApprovalStore | None = None,
+    approval_storage: SessionApprovalState | None = None,
     _item_type_name: Literal["Item", "OutputItem"] = "Item",
 ) -> Message:
     """Converts an Item to a Message.
 
     Args:
         item: The Item to convert.
-        approval_storage: An optional ApprovalStorage instance used to look up
-            approval requests when converting MCP approval response items.
+        approval_storage: Optional session-backed approval state used to read
+            approval requests without consuming their authority.
         _item_type_name: The item type name to include in unsupported-type errors.
 
     Returns:
@@ -1711,6 +1819,7 @@ async def _item_to_message(
 
     Raises:
         ValueError: If the Item type is not supported.
+        _InvalidApproval: If an MCP approval item's wire ID is not in the session.
     """
     if item["type"] == "message":
         if isinstance(item["content"], str):
@@ -1787,32 +1896,12 @@ async def _item_to_message(
         )
 
     if item["type"] == "mcp_approval_request":
-        if approval_storage is not None:
-            try:
-                function_approval_request_content = await approval_storage.load_approval_request(item["id"])
-            except (KeyError, ValueError) as exc:
-                raise _PublicResponseFailure(exc) from None
-        else:
-            raise ValueError("ApprovalStorage is required to load approval request.")
-        return Message(
-            role="assistant",
-            contents=[function_approval_request_content],
-        )
+        request_content = await _load_approval_request(approval_storage, item["id"])
+        return Message(role="assistant", contents=[request_content])
 
     if item["type"] == "mcp_approval_response":
-        if approval_storage is not None:
-            try:
-                function_approval_request_content = await approval_storage.load_approval_request(
-                    item["approval_request_id"]
-                )
-            except (KeyError, ValueError) as exc:
-                raise _PublicResponseFailure(exc) from None
-        else:
-            raise ValueError("ApprovalStorage is required to load approval request.")
-        return Message(
-            role="user",
-            contents=[function_approval_request_content.to_function_approval_response(item["approve"])],
-        )
+        request_content = await _load_approval_request(approval_storage, item["approval_request_id"])
+        return Message(role="user", contents=[request_content.to_function_approval_response(item["approve"])])
 
     if item["type"] == "code_interpreter_call":
         return Message(
@@ -1999,39 +2088,41 @@ async def _item_to_message(
 async def _output_items_to_messages(  # pyright: ignore[reportUnusedFunction]
     history: Sequence[OutputItem],
     *,
-    approval_storage: FunctionApprovalStore | None = None,
+    approval_storage: SessionApprovalState | None = None,
 ) -> list[Message]:
     """Converts a sequence of OutputItem objects to a list of Message objects.
 
     Args:
         history (Sequence[OutputItem]): The sequence of OutputItem objects to convert.
-        approval_storage (ApprovalStorage | None, optional): The approval storage to use for
-            resolving MCP approval requests. Defaults to None.
+        approval_storage: Optional session-backed approval state used to read
+            approval requests without consuming their authority.
 
     Returns:
         list[Message]: The list of Message objects.
     """
     messages: list[Message] = []
     for item in history:
-        messages.append(await _output_item_to_message(item, approval_storage=approval_storage))
+        try:
+            messages.append(await _output_item_to_message(item, approval_storage=approval_storage))
+        except _InvalidApproval as exc:
+            _log_dropped_approval(exc)
     return messages
 
 
-async def _output_item_to_message(
-    item: OutputItem, *, approval_storage: FunctionApprovalStore | None = None
-) -> Message:
+async def _output_item_to_message(item: OutputItem, *, approval_storage: SessionApprovalState | None = None) -> Message:
     """Converts an OutputItem to a Message.
 
     Args:
         item (OutputItem): The OutputItem to convert.
-        approval_storage (ApprovalStorage | None, optional): The approval storage to use for
-            resolving MCP approval requests. Defaults to None.
+        approval_storage: Optional session-backed approval state used to read
+            approval requests without consuming their authority.
 
     Returns:
         Message: The converted Message.
 
     Raises:
         ValueError: If the OutputItem type is not supported.
+        _InvalidApproval: If an MCP approval item's wire ID is not in the session.
     """
     if item["type"] == "oauth_consent_request":
         item_data = cast("Mapping[str, Any]", item)

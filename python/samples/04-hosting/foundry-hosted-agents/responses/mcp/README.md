@@ -10,8 +10,9 @@ The agent uses `FoundryChatClient` from the Agent Framework to create an OpenAI-
 
 See [main.py](main.py) for the full implementation.
 
-`agent=create_agent` creates fresh client and hosted-MCP tool configuration for
-each request and closes the request's own SDK transports and credential.
+The `create_agent` factory creates fresh client and hosted-MCP tool configuration
+for the request. Once entered, the client context closes its own SDK transports
+and credential on exit; pre-entry allocations may not be cleaned up.
 Local model authentication uses `AzureCliCredential`; deployed calls use managed
 identity. `history_source="host_managed"` supplies the outer transcript and
 disables inner model storage.

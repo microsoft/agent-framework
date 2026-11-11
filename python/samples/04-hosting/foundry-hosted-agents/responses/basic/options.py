@@ -16,8 +16,8 @@ load_dotenv()
 
 
 def prepare_options(_request: ResponsesRequest, options: dict[str, Any]) -> dict[str, Any]:
-    """Use the agent's output-token default instead of the caller's override."""
-    options.pop("max_tokens", None)
+    """Keep the developer's model while preserving other caller generation settings."""
+    options.pop("model", None)
     return options
 
 

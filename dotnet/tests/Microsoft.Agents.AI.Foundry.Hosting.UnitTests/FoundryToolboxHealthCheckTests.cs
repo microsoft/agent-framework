@@ -5,7 +5,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -68,12 +67,12 @@ public class FoundryToolboxHealthCheckTests
         // Arrange: a pre-registered toolbox at an unreachable endpoint forces StartAsync to defer
         // the toolbox (non-consent failure). The container must stay routable so the toolbox can be
         // retried per-request, where the platform injects the per-user isolation key on egress.
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "http://127.0.0.1:1/unreachable",
         };
         options.ToolboxNames.Add("broken-toolbox");
-        var service = new FoundryToolboxService(Options.Create(options), Mock.Of<TokenCredential>());
+        var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>());
         await service.StartAsync(CancellationToken.None);
 
         var check = new FoundryToolboxHealthCheck(service);
@@ -94,11 +93,11 @@ public class FoundryToolboxHealthCheckTests
     {
         // Arrange: an endpoint set but no pre-registered toolboxes is the legitimate
         // lazy-only setup. StartAsync reports Healthy and the check must agree.
-        var options = new FoundryToolboxOptions
+        var options = new FoundryToolboxServiceOptions
         {
             EndpointOverride = "http://127.0.0.1:1/unused",
         };
-        var service = new FoundryToolboxService(Options.Create(options), Mock.Of<TokenCredential>());
+        var service = new FoundryToolboxService(options, Mock.Of<TokenCredential>());
         await service.StartAsync(CancellationToken.None);
 
         var check = new FoundryToolboxHealthCheck(service);
@@ -113,12 +112,12 @@ public class FoundryToolboxHealthCheckTests
 
     private static FoundryToolboxService CreateServiceWithoutStarting(string? toolbox = null)
     {
-        var options = new FoundryToolboxOptions();
+        var options = new FoundryToolboxServiceOptions();
         if (toolbox is not null)
         {
             options.ToolboxNames.Add(toolbox);
         }
-        return new FoundryToolboxService(Options.Create(options), Mock.Of<TokenCredential>());
+        return new FoundryToolboxService(options, Mock.Of<TokenCredential>());
     }
 
     private static HealthCheckContext NewContext(HealthStatus failureStatus) =>

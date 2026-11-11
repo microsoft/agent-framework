@@ -37,6 +37,7 @@ Choose separate agent and native workflow hosts. Share protocol internals, but k
 configuration, and state ownership specific to each execution model.
 
 The decisions below define the intended hosting contracts, not the implementation status of each feature.
+See the [Foundry Hosting README](../../python/packages/foundry_hosting/README.md) for the current usage contract.
 
 ### Host boundaries
 
@@ -56,8 +57,8 @@ remain experimental. Separate classes do not require separate distribution packa
 ### Request adaptation and construction
 
 Use `parse_input` for custom input adaptation across both protocols. Agent parsers return `InvocationRun`;
-workflow parsers return `WorkflowTurn` containing either typed start input or complete pending replies.
-Parsing does not replace the host's checkpoint and pending-authority validation.
+workflow parsers return `WorkflowTurn` containing either typed start input or pending replies.
+Parsing does not replace the host's checkpoint binding or the workflow runtime's reply validation.
 Use `ResponsesRequest` for the Responses wrapper, including factory and option-hook inputs.
 Do not retain aliases for the former parser keywords or request-type name.
 
@@ -73,19 +74,31 @@ before `prepare_options`. Invocations agent factories receive the Starlette `Req
 and option preparation. Preserve these protocol-specific timings rather than forcing identical signatures
 or inventing a shared options-precedence policy.
 
+Caller model-run options are opt-in for Responses agents, Responses workflows, and Invocations agents.
+Without `prepare_options`, do not forward caller generation settings; preserve developer defaults and
+host-owned storage/background controls. With a hook, forward only its returned, validated mapping.
+This does not prevent application code from inspecting the original request. Responses agent factories
+see translated options before the hook. Native Responses workflow factories run after the hook and
+see its selected options, or an empty option mapping when no hook is configured.
+
 Native workflow factories are request-aware and must allocate fresh workflows, executors, agents,
 clients, providers, and mutable tools. A new graph wrapper around shared executors is not isolation.
 Reject known shared execution resources rather than cloning them. This guard cannot prove that arbitrary
 application globals are isolated. Keep workflow names and executor IDs stable for checkpoint restoration.
 
-Close factory-owned context-managed agents for the request, including failure and cancellation cleanup.
-Applications own cleanup of other resources they create; caller-owned shared resources must not be closed.
-State needed across requests belongs in supported stores, not request-owned instance fields.
+Unwind successfully entered factory-agent contexts when a request finishes, fails, or is cancelled.
+`Agent` also unwinds client and MCP contexts already entered if a later context fails to enter.
+Allocations before agent entry and partial allocations from a failed client `__aenter__` may not be
+cleaned up; calling `agent.close()` before entry does not dispose an unentered client.
+Applications own cleanup of other resources they create. An entered caller-supplied context-managed
+client can be closed on agent exit; ownership depends on its context contract, and the host cannot
+reliably identify shared clients on first use. State needed across requests belongs in supported stores,
+not request-owned instance fields.
 
 ### Persistence and history ownership
 
 Regular agents continue through agent-session storage. Native workflows continue through their exact
-scoped checkpoints, including pending-reply authority. Neither execution model converts the other's state.
+scoped checkpoints, including pending `request_info` requests. Neither execution model converts the other's state.
 Native workflow agents use checkpoint-owned history, not private inference-service continuation.
 
 Keep three storage decisions distinct:
@@ -104,11 +117,25 @@ including acceptance of `None`, without changing the wire flag or downstream sto
 Treat outer background execution, inner inference-service background execution, and recovery permission
 as separate controls. Use `background_source="host_managed"` by default. Retain `"inference_service"`
 for supported regular agents with inference-service history and outer-background passthrough.
-Reject hidden provider background under an outer foreground request.
+Validate hosting-visible agent and factory defaults against the selected background mode.
 
 Outer workflow background must not enable background on constituent agents. Native inner provider
 background is unsupported. Do not introduce a per-agent workflow-host background switch.
 Recovery permission neither selects an execution mode nor guarantees exactly-once external side effects.
+
+For regular Responses and Invocations agents, allow an application options hook to select `background`;
+the application owns that choice. Ordinary Responses agent runs preserve hook-selected values. When the host
+explicitly selects provider background, retain `background=True` for submission and polling even if the hook
+returns `False`. Hook-selected background alone does not enable host-managed polling or recovery. Invocations
+does not inject an outer background value.
+
+Do not inject background-specific enforcement middleware or add a Core interception hook. Application agent/chat
+middleware owns its changes to background options. Keep validation of caller envelope fields, hook results
+other than the agent hook's background choice, and developer defaults before execution. Reject nested caller
+`extra_body.background` before the Responses hook. Native workflow option hooks cannot select inner provider
+background; make native `WorkflowTurn` reject client-level and run-level middleware. The existing native agent
+options middleware still validates transport controls, storage, and unfinished provider responses to preserve
+checkpoint ownership; it is not the removed background-specific guard.
 
 ### Supported host settings
 
@@ -134,27 +161,44 @@ or other request-option precedence.
 
 ### Approvals and consent
 
-Use session-backed authority for regular-agent approvals rather than a separate public approval-store API.
-Native workflow pending authority remains checkpoint-owned. Canonical pending state, conditional consumption,
-persistence ordering, custom-store capabilities, and failure semantics require a complete design before
-replacing existing approval storage.
+Use the framework's built-in approval handling and do not add a host approval authority.
+Regular agents keep pending approval requests in the same `AgentSession` that the host loads and saves through
+the configured session store. Core binds each approval response to a recorded pending request, rebuilds the call
+from that request, and consumes it. The host stores only a translation map from the SDK-generated wire item ID to
+the original request in that session's state. This map does not authorize execution. Native workflows use
+`request_info` and their exact checkpoint; the host translates wire IDs to request IDs in its checkpoint binding.
+There is no separate public approval-store API, no conditional-write capability for custom session stores, and no
+silent migration of old separate-store approvals.
 
-Reject incomplete hosted MCP approval sets with HTTP 400 before streaming, response headers,
-`response.created`, or protected dispatch, without consuming pending authority.
-A complete batch may mix approvals and rejections.
+Do not preflight approval replies before the response starts. The host drops a reply with an unknown wire ID
+with a warning, and the framework does not execute a reply that matches no pending request. A turn whose input
+contains only dropped replies fails. Partial batches follow the framework: an agent holds the batch until every
+request has a reply, and a workflow runs the answered requests. Responses hosts emit requests that are still
+pending again under new wire IDs; Invocations workflows keep their request IDs. A batch may mix approvals and rejections. A workflow reply that the runtime rejects before its first superstep releases the
+lineage head unchanged; a failure after a superstep starts blocks that lineage. Concurrent replies, forks, and
+retries have the same guarantees as any agent run with a shared session or any workflow checkpoint resume.
+No path provides exactly-once external side effects.
 
 Represent invocation-time OAuth consent as structured consent with incomplete response status.
 Pair each emitted function call with one terminal result, preserve completed sibling results, and stop
 later protected calls. Require `store=true` so continuation can retain the required state;
 do not support ephemeral consent under `store=false`.
+Buffer consent and approval output until the session snapshots are saved. Invocation-time consent with
+inference-service history is unsupported and fails explicitly; connection-time consent remains separate.
+A consent failure after execution starts is a failed response, not a pre-header HTTP 400.
+
+### Caller options
+
+Preserve protocol-specific option ordering. Responses translates generation fields before factory resolution
+and its hook; Invocations parses and applies its hook before factory resolution. Deep-copy per-run hook input
+and replacement mappings without changing developer defaults. Protect hosting and execution controls after
+the hook, and reject those controls inside nested transport options. The host split does not authorize
+removing existing hooks or applying workflow-only assumptions to regular agents.
 
 ### Unresolved boundaries
 
 Do not infer a single-target restriction or a multi-target router without a documented Foundry platform
 contract. Request `model` is not implicitly an agent selector.
-
-Broader option precedence and validation details require separate design. The host split does not
-authorize removing existing hooks or applying workflow-only assumptions to regular agents.
 
 Keep current dependency requirements and the steering guard until published-wheel compatibility and
 concurrent queue-overflow behavior are verified. An upstream merge alone is not release evidence.
@@ -171,7 +215,8 @@ These decisions do not redesign Core, concurrency, checkpoints, retries, or exte
 ## Validation
 
 Cover public imports and signatures, invalid construction before SDK side effects, sync/async factory
-invocation, failure/cancellation cleanup, and rejection of shared workflow resources.
+invocation, cleanup of successfully entered contexts on failure/cancellation, and rejection of shared
+workflow resources.
 Exercise streaming and non-streaming execution, session/checkpoint continuation, pending replies,
 and model-free process crash/recovery. Validate maintained samples against public exports.
 Offline checks do not establish live Foundry deployment compatibility.

@@ -423,9 +423,11 @@ class TestClaudeAgentRun:
 
         assert response.finish_reason == expected_finish_reason
         assert response.usage_details == {
-            "input_token_count": 42,
+            # input_tokens (42) + cache_creation (3) + cache_read (5) = 50
+            "input_token_count": 50,
             "output_token_count": 18,
-            "total_token_count": 60,
+            # 50 + 18 = 68
+            "total_token_count": 68,
             "cache_creation_input_token_count": 3,
             "cache_read_input_token_count": 5,
         }

@@ -25,8 +25,9 @@ a production default. Never log platform identity values or tokens.
 The host receives `agent=create_agent` and builds a new client/credential for
 each request, capturing only that request's first-party platform headers. Native
 OpenTelemetry context propagation links spans to the incoming request rather
-than a preceding caller. The context-managed sample client closes its own SDK
-transports and credential after the request. Local authentication uses
+than a preceding caller. Once entered, the sample client context closes its own
+SDK transports and credential on exit; pre-entry allocations may not be cleaned
+up. Local authentication uses
 `AzureCliCredential`; hosted authentication uses managed identity.
 `history_source="host_managed"` owns the outer transcript and disables inner
 model storage.

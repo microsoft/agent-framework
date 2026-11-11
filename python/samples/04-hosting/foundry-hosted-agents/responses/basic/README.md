@@ -8,7 +8,7 @@ who supplies the agent's model history:
 | [main.py](main.py) | `"host_managed"` | The outer Responses transcript; the inner client runs with `store=False`. |
 | [service_history.py](service_history.py) | `"inference_service"` | Only new input goes to the model; its private `service_session_id` persists for later turns. |
 | [agent_history.py](agent_history.py) | `"agent_managed"` | This agent opts into `InMemoryHistoryProvider` with `default_options={"store": False}`; another `"agent_managed"` configuration with `store=True` can use service history instead. |
-| [options.py](options.py) | `"host_managed"` | The hook removes the caller's token limit so the agent default is used. |
+| [options.py](options.py) | `"host_managed"` | The hook removes the effective caller model so the configured client model is used; other generation settings remain. |
 | [provider_background.py](provider_background.py) | `"inference_service"` | `background_source="inference_service"` opts into provider background with a private recovery token. |
 
 For the same two stored requests—first **"My name is Ada"**, then **"What is my name?"** with the first
@@ -77,13 +77,34 @@ the existing thread may have changed even if its outer response did not complete
 
 ## Options and compatibility
 
+Caller generation options are suppressed unless the host has a `prepare_options` hook.
+Without a hook, the agent/client defaults apply. With a hook, only its returned, validated mapping
+is forwarded. The options sample explicitly opts in; the other basic hosts do not.
+
 Native CreateResponse generation fields become MAF run options (`max_output_tokens` becomes `max_tokens` and
-`parallel_tool_calls` becomes `allow_multiple_tool_calls`). Flattened OpenAI `extra_body` values overlay translated
-keys **last**. The developer's `prepare_options(request, options)` hook can then remove or replace *caller* options;
-removing one exposes the agent's own unchanged `default_options`. In [options.py](options.py),
-`max_output_tokens=300` plus `extra_body={"max_tokens": 150}` becomes `max_tokens=150` before the hook removes it;
-the model receives the agent's `max_tokens=256` default instead. Platform IDs, storage flags, and private
-continuation tokens are never caller model options; the hook cannot add them back.
+`parallel_tool_calls` becomes `allow_multiple_tool_calls`). Flattened unknown generation fields override those
+translated fields; generation fields inside a literal `extra_body` mapping override both. The developer's
+`prepare_options(request, options)` hook then returns the replacement *caller* options. The host deep-copies
+both its input and result, and keeps developer defaults unchanged.
+
+In [options.py](options.py), the hook removes `"model"` from the effective merged options, so the client uses
+the configured `FOUNDRY_MODEL` (or hosted deployment-name fallback). It preserves `"temperature"` and
+`"max_tokens"` if supplied. For example:
+
+```bash
+curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" \
+  -d '{"input":"Hi","model":"caller-selected-model","temperature":0.3,"max_output_tokens":150}'
+```
+
+The client uses the developer's model with `temperature=0.3` and `max_tokens=150`, not the caller's model.
+If the caller omits a token limit, the agent's `max_tokens=256` default applies.
+Responses agent factories see translated caller options before the hook. Native Responses workflow factories
+run after the hook and see its selected options, or an empty mapping without a hook; the original request
+is still available through `request.request`. Platform IDs, storage flags, and private
+continuation tokens are never caller model options; the hook cannot add them back. Host controls inside
+`extra_body` fail before the hook, rather than being silently stripped.
+See [explicit host configuration](../../../../../packages/foundry_hosting/README.md#explicit-host-configuration)
+for history caps, heartbeat intervals, shutdown waiting, and eligible recovery modes.
 
 `history_source="host_managed"` and `history_source="agent_managed"` retain their existing meaning without a
 deprecation warning. For **stored** requests, `"agent_managed"` passes only new input to the agent, whose

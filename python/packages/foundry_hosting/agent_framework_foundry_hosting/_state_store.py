@@ -1,17 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
 
 import hashlib
 import json
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Generic, TypeVar
 
 from agent_framework import (
     AgentSession,
     CheckpointID,
     CheckpointStorage,
-    Content,
     SessionStore,
     WorkflowCheckpoint,
     WorkflowCheckpointException,
@@ -333,79 +333,6 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
 
 # endregion Checkpoint persistence
 
-# region Function approval persistence
-
-
-class FunctionApprovalStore(Protocol):
-    """Store for saving function approval requests."""
-
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
-        """Save a function approval request under the given ID."""
-        ...
-
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        """Load a function approval request by its ID."""
-        ...
-
-
-class FoundryFunctionApprovalStore:
-    """Function approval store backed by the `FoundryStateStore`."""
-
-    DEFAULT_ROOT_SCOPE = "function_approvals"
-
-    def __init__(
-        self,
-        platform_context: FoundryAgentRequestContext,
-        *,
-        scope: FoundryRequestScope | None = None,
-    ) -> None:
-        self.platform_context = platform_context
-        self._scope = scope
-
-    async def _get_store(self) -> FoundryStateStore:
-        return await FoundryStateStore.get_or_create(
-            _store_name(self.DEFAULT_ROOT_SCOPE, self._scope),
-            user_isolation=True,
-        )
-
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
-        store = await self._get_store()
-        async with store:
-            try:
-                await store.create_item(approval_request_id, request.to_dict(), call_id=self.platform_context.call_id)
-            except FoundryStorageConflictError as ex:
-                raise ValueError(f"Approval request with ID '{approval_request_id}' already exists.") from ex
-
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        store = await self._get_store()
-        async with store:
-            item = await store.get_item(approval_request_id, call_id=self.platform_context.call_id)
-        if item is None:
-            raise KeyError(f"Approval request with ID '{approval_request_id}' does not exist.")
-        return Content.from_dict(item.value)
-
-
-class FunctionApprovalStoreProvider(StoreProvider[FunctionApprovalStore]):
-    """Provide function approval store for the active hosting environment.
-
-    This defaults to using the `FoundryFunctionApprovalStore` in all environments.
-    """
-
-    def get_store(
-        self,
-        *,
-        config: AgentConfig,
-        platform_context: FoundryAgentRequestContext,
-    ) -> FunctionApprovalStore:
-        """Get function approval store for the requested hosting environment."""
-        return FoundryFunctionApprovalStore(
-            platform_context,
-            scope=_store_scope(config, platform_context),
-        )
-
-
-# endregion Function approval persistence
-
 # region Agent session persistence
 
 
@@ -442,6 +369,7 @@ class FoundryAgentSessionStore(SessionStore):
         )
 
     async def get(self, session_id: str) -> AgentSession | None:
+        SessionStore.validate_session_id(session_id)
         store = await self._get_store()
         async with store:
             item = await store.get_item(session_id, call_id=self.platform_context.call_id)

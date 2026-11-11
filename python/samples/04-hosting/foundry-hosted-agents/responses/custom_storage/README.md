@@ -1,8 +1,10 @@
 # Custom session storage (Responses protocol)
 
 This sample implements custom **MAF agent-session persistence**, including user
-and sandbox isolation and optimistic concurrency. The outer Responses store and
-function-approval store remain host-managed. This is not a workflow example.
+and sandbox isolation and optimistic concurrency. The outer Responses store
+remains host-managed. Pending tool approvals are part of the saved
+`AgentSession`, so the store needs only `get`/`set`/`delete`. This is not a
+workflow example.
 
 ## Identity and storage keys
 
@@ -51,10 +53,14 @@ newer snapshot. An absent delete is idempotent. Missing ETags and mismatched
 stored scope fail closed; other Cosmos failures propagate without a local
 fallback.
 
-Local runs use isolated in-memory snapshots with the same conditional behavior.
-They are lost when the process exits and are **single-user development only**:
-local headers/session selectors are not a trusted platform authentication
-boundary. Explicit local sessions have separate namespaces.
+For local runs, each `CustomSessionStoreProvider` owns its in-memory snapshots.
+Only the stores from that provider in **one process and event loop** coordinate
+their conditional writes. Separate provider instances do not share snapshots,
+even in the same process. Use one provider and one worker for local development.
+Snapshots are lost when the provider and its stores are discarded or the
+process exits. They are **single-user development only**: local headers and
+session selectors are not a trusted platform authentication boundary. Explicit
+local sessions have separate namespaces.
 
 ## Cosmos prerequisites
 
@@ -94,9 +100,10 @@ does not access/write this custom session store.
 
 For hosted use, configure the endpoint/database/container in the manifest and
 follow the [parent deployment instructions](../../README.md#deploying-the-agent-to-foundry).
-The provider closes the Cosmos client and its own credential at shutdown;
-request clients are closed after their request, including failed tool entry and
-cancellation.
+The provider closes the Cosmos client and its own credential at shutdown.
+After a request client enters, its context closes its own transports and
+credential on exit, including cancellation. If a request ends before client
+entry, those allocations may not be cleaned up.
 
 Live Cosmos access and deployment need separately approved resources and
 permissions.

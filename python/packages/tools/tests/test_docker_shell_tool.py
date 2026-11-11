@@ -14,12 +14,13 @@ import asyncio
 import json
 import subprocess
 import sys
-from collections.abc import Sequence
-from typing import TypeAlias
+from collections.abc import Callable, Iterable, Sequence
+from typing import TypeAlias, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import agent_framework_tools.shell._docker as docker_module
 from agent_framework_tools._feature_usage import FeatureIndex
 from agent_framework_tools.shell import (
     DockerNotAvailableError,
@@ -30,9 +31,27 @@ from agent_framework_tools.shell import (
     is_docker_available,
 )
 from agent_framework_tools.shell._docker import build_exec_argv, build_run_argv
+from agent_framework_tools.shell._resolve import resolve_executable
 
 _CommunicateOutcome: TypeAlias = tuple[bytes, bytes] | BaseException
 _WaitOutcome: TypeAlias = int | None | BaseException
+_FakeWindowsHost: TypeAlias = Callable[[str, Iterable[str]], None]
+
+_RUNTIME_DIR = r"C:\Runtimes"
+_DOCKER_EXE = rf"{_RUNTIME_DIR}\docker.exe"
+_CREATE_PROCESS = "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec"
+
+
+@pytest.fixture(autouse=True)
+def _pin_runtime_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the launch tests independent of the container runtimes installed on the host."""
+    monkeypatch.setattr(docker_module, "resolve_executable", lambda name: name)
+
+
+@pytest.fixture
+def real_runtime_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use the real executable lookup for tests that check how the runtime is resolved."""
+    monkeypatch.setattr(docker_module, "resolve_executable", resolve_executable)
 
 
 class _FakeProcess:
@@ -716,6 +735,145 @@ async def test_as_function_surfaces_command_errors() -> None:
 
     assert result == "blocked"
     assert "persistent session" in function.description
+
+
+# --------------------------------------------------------------------- executable lookup
+
+
+async def test_persistent_lifecycle_launches_only_the_qualified_runtime_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(f".;{_RUNTIME_DIR}", {_DOCKER_EXE, r".\docker.exe", "docker.exe"})
+    tool = DockerShellTool()
+    started = _FakeProcess(returncode=0, communicate_results=[(b"abcdef123456\n", b"")])
+    stopped = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+
+    with (
+        patch(_CREATE_PROCESS, AsyncMock(side_effect=[started, stopped])) as create_proc,
+        patch("agent_framework_tools.shell._docker.ShellSession", return_value=AsyncMock()) as shell_session,
+    ):
+        await tool.start()
+        await tool.close()
+
+    assert [call.args[:2] for call in create_proc.await_args_list] == [(_DOCKER_EXE, "run"), (_DOCKER_EXE, "rm")]
+    assert shell_session.call_args.args[0][:2] == [_DOCKER_EXE, "exec"]
+
+
+async def test_stateless_run_launches_the_qualified_runtime_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(f".;{_RUNTIME_DIR}", {_DOCKER_EXE, r".\docker.exe", "docker.exe"})
+    tool = DockerShellTool(mode="stateless")
+    proc = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+
+    with patch(_CREATE_PROCESS, AsyncMock(return_value=proc)) as create_proc:
+        await tool._run_stateless("echo hi", timeout=5.0)
+
+    assert create_proc.await_args is not None
+    assert create_proc.await_args.args[:2] == (_DOCKER_EXE, "run")
+
+
+async def test_stateless_cleanup_launches_the_qualified_runtime_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(f".;{_RUNTIME_DIR}", {_DOCKER_EXE, r".\docker.exe", "docker.exe"})
+    tool = DockerShellTool(mode="stateless")
+    victim = _FakeProcess(returncode=None)
+    killer = _FakeProcess(returncode=1)
+    reaper = _FakeProcess(returncode=0)
+
+    with patch(_CREATE_PROCESS, AsyncMock(side_effect=[killer, reaper])) as create_proc:
+        await tool._terminate_stateless(cast(asyncio.subprocess.Process, victim), "af-shell-test")
+
+    assert [call.args[:2] for call in create_proc.await_args_list] == [(_DOCKER_EXE, "kill"), (_DOCKER_EXE, "rm")]
+    assert victim.killed
+
+
+async def test_launch_is_refused_when_the_runtime_exists_only_in_the_current_directory_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(f".;{_RUNTIME_DIR}", {r".\docker.exe", "docker.exe"})
+    persistent = DockerShellTool()
+    stateless = DockerShellTool(mode="stateless")
+
+    with patch(_CREATE_PROCESS, AsyncMock()) as create_proc:
+        with pytest.raises(FileNotFoundError, match="'docker'"):
+            await persistent.start()
+        with pytest.raises(FileNotFoundError, match="'docker'"):
+            await stateless.run("echo hi")
+
+    create_proc.assert_not_awaited()
+
+
+async def test_container_is_stopped_with_the_runtime_that_started_it_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(_RUNTIME_DIR, {_DOCKER_EXE})
+    tool = DockerShellTool()
+    started = _FakeProcess(returncode=0, communicate_results=[(b"abcdef123456\n", b"")])
+    stopped = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+
+    with (
+        patch(_CREATE_PROCESS, AsyncMock(side_effect=[started, stopped])) as create_proc,
+        patch("agent_framework_tools.shell._docker.ShellSession", return_value=AsyncMock()),
+    ):
+        await tool.start()
+        fake_windows_host(r"C:\Other", {r"C:\Other\docker.exe"})
+        await tool.close()
+
+    assert [call.args[0] for call in create_proc.await_args_list] == [_DOCKER_EXE, _DOCKER_EXE]
+
+
+async def test_explicit_runtime_path_is_launched_unchanged_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(_RUNTIME_DIR, {_DOCKER_EXE})
+    tool = DockerShellTool(mode="stateless", docker_binary=r"C:\Custom\podman.exe")
+    proc = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+
+    with patch(_CREATE_PROCESS, AsyncMock(return_value=proc)) as create_proc:
+        await tool._run_stateless("echo hi", timeout=5.0)
+
+    assert create_proc.await_args is not None
+    assert create_proc.await_args.args[0] == r"C:\Custom\podman.exe"
+
+
+async def test_run_stateless_uses_the_configured_binary_unchanged_on_other_platforms(
+    real_runtime_lookup: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = DockerShellTool(mode="stateless", docker_binary="podman")
+    proc = _FakeProcess(returncode=0, communicate_results=[(b"", b"")])
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    with patch(_CREATE_PROCESS, AsyncMock(return_value=proc)) as create_proc:
+        await tool._run_stateless("echo hi", timeout=5.0)
+
+    assert create_proc.await_args is not None
+    assert create_proc.await_args.args[0] == "podman"
+
+
+def test_is_docker_available_uses_the_qualified_runtime_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_windows_host(f".;{_RUNTIME_DIR}", {_DOCKER_EXE, r".\docker.exe", "docker.exe"})
+    monkeypatch.setattr(docker_module.shutil, "which", lambda name: name)
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"27.0.1\n", stderr=b"")
+
+    with patch("agent_framework_tools.shell._docker.subprocess.run", return_value=completed) as run:
+        assert is_docker_available() is True
+
+    assert run.call_args.args[0][0] == _DOCKER_EXE
+
+
+def test_is_docker_available_is_false_when_the_runtime_exists_only_in_the_current_directory_on_windows(
+    fake_windows_host: _FakeWindowsHost, real_runtime_lookup: None
+) -> None:
+    fake_windows_host(f".;{_RUNTIME_DIR}", {r".\docker.exe", "docker.exe"})
+
+    with patch("agent_framework_tools.shell._docker.subprocess.run") as run:
+        assert is_docker_available() is False
+
+    run.assert_not_called()
 
 
 # --------------------------------------------------------------------- integration

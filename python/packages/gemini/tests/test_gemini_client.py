@@ -211,6 +211,7 @@ def _make_response(
     response.candidates = [candidate]
     response.finish_reason = finish_reason
     response.model_version = model_version
+    response.prompt_feedback = None
 
     if prompt_tokens is not None or output_tokens is not None:
         usage = MagicMock()
@@ -2961,6 +2962,54 @@ async def test_empty_candidates_in_stream_does_not_raise(candidates: list | None
     assert len(updates) == 1
     assert updates[0].contents == []
     assert updates[0].finish_reason is None
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_blocked_prompt_reports_content_filter(stream: bool) -> None:
+    """A prompt blocked by Gemini (no candidates, prompt_feedback.block_reason set) reports content_filter."""
+    client, mock = _make_gemini_client()
+    blocked = types.GenerateContentResponse.model_validate({
+        "promptFeedback": {"blockReason": "SAFETY"},
+        "usageMetadata": {"promptTokenCount": 8, "totalTokenCount": 8},
+        "modelVersion": "gemini-2.5-flash",
+    })
+    mock.aio.models.generate_content = AsyncMock(return_value=blocked)
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([blocked]))
+    messages = [Message(role="user", contents=[Content.from_text("Hi")])]
+
+    if stream:
+        response = await client.get_response(messages=messages, stream=True).get_final_response()
+    else:
+        response = await client.get_response(messages=messages)
+
+    assert response.text == ""
+    assert response.finish_reason == "content_filter"
+    assert response.usage_details is not None
+    assert response.usage_details["input_token_count"] == 8
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_blocked_continuation_hop_reports_content_filter(stream: bool) -> None:
+    """A blocked automatic-continuation hop after an earlier hop returned text still reports content_filter."""
+    client, mock = _make_gemini_client()
+    partial = {"candidates": [{"content": {"role": "model", "parts": [{"text": "partial answer"}]}}]}
+    blocked = {"promptFeedback": {"blockReason": "SAFETY"}}
+    # generate_content merges the hops: the earlier candidate stays, with its finish_reason cleared.
+    mock.aio.models.generate_content = AsyncMock(
+        return_value=types.GenerateContentResponse.model_validate({**partial, **blocked})
+    )
+    mock.aio.models.generate_content_stream = AsyncMock(
+        return_value=_async_iter([types.GenerateContentResponse.model_validate(hop) for hop in (partial, blocked)])
+    )
+    messages = [Message(role="user", contents=[Content.from_text("Hi")])]
+
+    if stream:
+        response = await client.get_response(messages=messages, stream=True).get_final_response()
+    else:
+        response = await client.get_response(messages=messages)
+
+    assert response.text == "partial answer"
+    assert response.finish_reason == "content_filter"
 
 
 # service_url

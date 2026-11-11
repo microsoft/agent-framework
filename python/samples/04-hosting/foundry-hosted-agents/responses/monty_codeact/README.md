@@ -24,8 +24,9 @@ See [main.py](main.py) for the full implementation.
 `ResponsesHostServer(agent=create_agent, history_source="host_managed")`
 constructs a fresh CodeAct provider, client and credential for each request.
 No interpreter/provider instance, tool connection or model client is reused
-from an earlier caller. The factory's client context closes its owned SDK
-transports and credential after the request. Local calls use
+from an earlier caller. Once entered, the factory's client context closes its
+owned SDK transports and credential on exit; pre-entry allocations may not be
+cleaned up. Local calls use
 `AzureCliCredential`; hosted calls use managed identity.
 
 The host supplies conversation history and disables inner model storage. The

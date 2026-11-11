@@ -159,7 +159,38 @@ def _is_reasoning_only_assistant(message: Message) -> bool:
     return all(content.type == "text_reasoning" for content in message.contents)
 
 
-def _unambiguous_tool_call_result_pairs(messages: Sequence[Message]) -> list[tuple[int, int]]:
+def _approval_request_identity(content: Content) -> str | None:
+    """Return the shared identity of an approval request/response wrapper."""
+    function_call = getattr(content, "function_call", None)
+    identity = getattr(function_call, "call_id", None) or getattr(function_call, "id", None)
+    if not isinstance(identity, str) or not identity:
+        identity = content.id
+    return identity if isinstance(identity, str) and identity else None
+
+
+def _unambiguous_approval_pairs(messages: Sequence[Message]) -> list[tuple[int, int]]:
+    """Pair approval responses with their latest matching request occurrence."""
+    unmatched_request_indices: dict[str, list[int]] = {}
+    resolved_identities: set[str] = set()
+    pairs: list[tuple[int, int]] = []
+    for message_index in range(len(messages)):
+        message = messages[message_index]
+        for content in message.contents:
+            if message.role == "assistant" and content.type == "function_approval_request":
+                identity = _approval_request_identity(content)
+                if identity:
+                    unmatched_request_indices.setdefault(identity, []).append(message_index)
+            elif content.type == "function_approval_response":
+                identity = _approval_request_identity(content)
+                candidates = unmatched_request_indices.get(identity) if identity else None
+                if candidates and identity is not None and identity not in resolved_identities:
+                    pairs.append((candidates[-1], message_index))
+                    resolved_identities.add(identity)
+    return pairs
+
+
+def _unambiguous_tool_call_output_pairs(messages: Sequence[Message]) -> list[tuple[int, int]]:
+    """Pair tool results and approval requests with unambiguous declaration occurrences."""
     unmatched_declaration_indices: dict[tuple[str, str], list[int]] = {}
     pairs: list[tuple[int, int]] = []
 
@@ -173,6 +204,14 @@ def _unambiguous_tool_call_result_pairs(messages: Sequence[Message]) -> list[tup
                 and content.call_id
             ):
                 unmatched_declaration_indices.setdefault((content.type, content.call_id), []).append(message_index)
+                continue
+            if message.role == "assistant" and content.type == "function_approval_request":
+                function_call = getattr(content, "function_call", None)
+                call_id = getattr(function_call, "call_id", None)
+                candidates = unmatched_declaration_indices.get(("function_call", call_id)) if call_id else None
+                if candidates is not None and len(candidates) == 1:
+                    # The same declaration also owns the later tool result.
+                    pairs.append((candidates[0], message_index))
                 continue
             if content.type not in ("function_result", "computer_tool_result") or not content.call_id:
                 continue
@@ -240,7 +279,8 @@ def _link_tool_call_result_spans(messages: Sequence[Message], spans: list[dict[s
         return True
 
     linked = False
-    for declaration_message_index, result_message_index in _unambiguous_tool_call_result_pairs(messages):
+    pairs = [*_unambiguous_tool_call_output_pairs(messages), *_unambiguous_approval_pairs(messages)]
+    for declaration_message_index, result_message_index in pairs:
         declaration_span_index = span_by_message_index[declaration_message_index]
         result_span_index = span_by_message_index[result_message_index]
         if declaration_span_index < result_span_index and union(result_span_index, declaration_span_index):

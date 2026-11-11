@@ -24,10 +24,10 @@ Set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`, plus either
 see the [Toolbox sample](../foundry_toolbox/). Authenticate local runs with
 `az login`. Deployed runs use the sandbox's managed identity.
 
-`ResponsesHostServer(agent=create_agent, history_source="host_managed")` creates
-fresh clients and a Toolbox MCP connection for each request and closes their
-transports afterward. This request-owned lifecycle gives the sample a clear
-cleanup boundary; `FoundryToolbox` also rebinds its MCP session to current
+`ResponsesHostServer(agent=create_agent, history_source="host_managed")` uses a
+factory that creates a fresh client and Toolbox configuration for the request.
+Successfully entered contexts are unwound after the request; pre-entry allocations
+may not be cleaned up. `FoundryToolbox` also rebinds its MCP session to current
 platform headers if an instance is reused across requests. The outer Responses
 service supplies history; the host disables downstream model storage. An outer
 `store=false` request writes no host-managed state, but does not undo external
