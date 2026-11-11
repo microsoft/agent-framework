@@ -89,7 +89,6 @@ from ._shared import (
     build_response_server_options,
     is_agent,
     prepare_response_options,
-    reject_removed_host_settings,
     resolve_agent,
     response_run_options,
     validate_agent_background_options,
@@ -311,7 +310,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 DELETE waits for response persistence. Defaults to 10 seconds.
             enable_background_recovery: Allow eligible provider-background work to recover after shutdown.
                 Defaults to `False`; it does not enable background execution or guarantee exactly-once effects.
-            prepare_options: Developer hook to remove or replace caller model options for an agent.
+            prepare_options: Developer hook selecting caller model options after factory resolution.
+                Only its returned, validated mapping is forwarded. Without a hook, caller options are omitted.
             unsupported_options: `"warn"` (default), `"error"`, or `"ignore"` when a custom agent
                 cannot accept runtime model options.
             **kwargs: Additional keyword arguments.
@@ -347,7 +347,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             ValueError: If the history, background, or unsupported-options policy is invalid.
             RuntimeError: If the agent configuration conflicts with the selected history or background source.
         """
-        reject_removed_host_settings(kwargs)
         if "function_approval_store_provider" in kwargs:
             raise TypeError("Approval state is managed by agent_session_store_provider.")
         if "store" in kwargs:

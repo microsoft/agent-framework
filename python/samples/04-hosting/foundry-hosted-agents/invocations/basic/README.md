@@ -7,6 +7,8 @@ Invocations protocol. The sample accepts application JSON with a `prompt`
 field rather than the host's default `message` field. Its `parse_input`
 callback returns `InvocationRun(messages, options, stream)`, and
 `prepare_options` allows only `temperature` and `max_tokens` from the caller.
+Only the hook's returned, validated mapping is forwarded. Without a hook, caller
+model-run options are suppressed and the agent/client defaults apply.
 The host also rejects platform IDs, `store`, and private continuation options
 even if a hook tries to return them. The agent keeps `store=False` as a
 developer default; caller options cannot enable service-managed history.

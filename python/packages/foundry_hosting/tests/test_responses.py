@@ -17,7 +17,6 @@ import logging
 import os
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass
 from importlib import import_module
@@ -1666,30 +1665,6 @@ class TestSerializationHelpers:
 
 class TestResponsesHostServerInit:
     @pytest.mark.parametrize(
-        "name",
-        [
-            "options",
-            "default_fetch_history_count",
-            "default_model",
-            "create_span_hook",
-            "additional_server_version",
-            "steerable_conversations",
-            "resilient_background",
-        ],
-    )
-    def test_removed_host_setting_fails_before_sdk_or_agent_mutation(self, name: str) -> None:
-        agent = _make_agent()
-        kwargs: dict[str, Any] = {name: None}
-        with (
-            patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize,
-            pytest.raises(TypeError, match=name),
-        ):
-            ResponsesHostServer(agent, **kwargs)
-        initialize.assert_not_called()
-        assert agent.context_providers == []
-        assert agent.default_options == {}
-
-    @pytest.mark.parametrize(
         ("setting", "value", "error"),
         [
             ("max_history_items", True, TypeError),
@@ -1720,8 +1695,11 @@ class TestResponsesHostServerInit:
             ResponsesServerOptions().default_fetch_history_count
         )
         assert limited._host_options.default_fetch_history_count == 3  # pyright: ignore[reportPrivateUsage]
-        with pytest.raises(ValueError, match="host_managed"):
-            _make_server(_make_agent(), history_source="agent_managed", max_history_items=3)
+        with pytest.warns(UserWarning, match="max_history_items is ignored"):
+            ignored = _make_server(_make_agent(), history_source="agent_managed", max_history_items=3)
+        assert ignored._host_options.default_fetch_history_count == (  # pyright: ignore[reportPrivateUsage]
+            ResponsesServerOptions().default_fetch_history_count
+        )
 
     @pytest.mark.parametrize("env", [None, "0", "3"])
     @pytest.mark.parametrize("explicit", [None, 5])
@@ -1892,30 +1870,6 @@ class TestResponsesHostServerInit:
                 enable_background_recovery=True,
             )
 
-    def test_steering_rejected_before_enabling_task_manager_or_starting_host(self) -> None:
-        agent_factory = MagicMock()
-
-        def construct(_turn: int) -> str:
-            with pytest.raises(TypeError, match="options is no longer a supported host setting") as error:
-                ResponsesHostServer(
-                    agent=agent_factory,
-                    options=ResponsesServerOptions(steerable_conversations=True),
-                )
-            return str(error.value)
-
-        with (
-            patch("azure.ai.agentserver.core.tasks.set_resilient_tasks_enabled") as enable,
-            patch("agent_framework_foundry_hosting._responses_agent.ResponsesAgentServerHost.__init__") as base_init,
-            ThreadPoolExecutor(max_workers=12) as executor,
-        ):
-            failures = list(executor.map(construct, range(24)))
-
-        assert len(failures) == 24
-        assert all("options is no longer a supported host setting" in failure for failure in failures)
-        enable.assert_not_called()
-        base_init.assert_not_called()
-        agent_factory.assert_not_called()
-
     async def test_non_steerable_background_still_uses_outer_response_id(self) -> None:
         agent = _make_agent(
             stream_updates=[AgentResponseUpdate(contents=[Content.from_text("finished")], role="assistant")]
@@ -1937,17 +1891,10 @@ class TestResponsesHostServerInit:
         assert final.json()["id"] == response_id
         assert "finished" in str(final.json()["output"])
 
-    def test_provider_background_rejects_steering_and_wrong_history_source(self) -> None:
+    def test_provider_background_rejects_wrong_history_source(self) -> None:
         agent = Agent(client=_ServiceStorageRecordingClient())
         with pytest.raises(ValueError, match="history_source='inference_service'"):
             _make_server(agent, background_source="inference_service")
-        with pytest.raises(TypeError, match="options is no longer a supported host setting"):
-            _make_server(
-                agent,
-                history_source="inference_service",
-                background_source="inference_service",
-                options=ResponsesServerOptions(steerable_conversations=True),
-            )
 
     @pytest.mark.parametrize("old_store", [None, InMemoryResponseProvider()])
     @pytest.mark.parametrize("with_response_store", [False, True])
@@ -2576,6 +2523,35 @@ class TestAgentSessionPersistence:
         assert "store=false cannot continue agent-managed downstream service history" in _failure_message(events)
         assert len(client.calls) == 1
 
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_caller_options_without_hook_preserve_agent_defaults(self, stream: bool) -> None:
+        client = _RecordingHistoryClient()
+        agent = Agent(client=client, default_options=OpenAIChatOptions(temperature=0.2, max_tokens=256))
+        defaults = dict(agent.default_options)
+        server = _make_server(agent)
+
+        response = await _post_json(
+            server,
+            {
+                "input": "hello",
+                "stream": stream,
+                "temperature": 0.8,
+                "max_output_tokens": 300,
+                "extra_body": {"top_p": 0.4},
+            },
+        )
+
+        assert response.status_code == 200
+        if stream:
+            assert _sse_event_types(_parse_sse_events(response.text))[-1] == "response.completed"
+        else:
+            assert response.json()["status"] == "completed"
+        assert len(client.options) == 1
+        assert client.options[0]["temperature"] == 0.2
+        assert client.options[0]["max_tokens"] == 256
+        assert "top_p" not in client.options[0]
+        assert agent.default_options == defaults
+
     async def test_extra_options_overlay_then_developer_hook_preserves_defaults(self) -> None:
         client = _RecordingHistoryClient()
         agent = Agent(client=client, default_options=OpenAIChatOptions(temperature=0.2, max_tokens=256))
@@ -2670,7 +2646,7 @@ class TestAgentSessionPersistence:
             max_retries=0,
         ) as openai:
             agent = Agent(client=OpenAIChatClient(model="test-model", async_client=openai))
-            server = _make_server(agent)
+            server = _make_server(agent, prepare_options=lambda _request, options: options)
             rejected = await _post_json(
                 server,
                 {"input": "unsafe", "store": False, "extra_body": {"extra_body": {"store": True}}},
@@ -2702,7 +2678,12 @@ class TestAgentSessionPersistence:
 
     async def test_unsupported_options_policy_rejects_custom_agent(self) -> None:
         agent = _StrictCustomAgent()
-        server = _make_server(agent, history_source="agent_managed", unsupported_options="error")
+        server = _make_server(
+            agent,
+            history_source="agent_managed",
+            unsupported_options="error",
+            prepare_options=lambda _request, options: options,
+        )
         response = await _post_json(server, {"input": "hello", "temperature": 0.8})
 
         assert response.json()["status"] == "failed"
@@ -2714,7 +2695,12 @@ class TestAgentSessionPersistence:
         self, policy: str, warn: bool, caplog: pytest.LogCaptureFixture
     ) -> None:
         agent = _StrictCustomAgent()
-        server = _make_server(agent, history_source="agent_managed", unsupported_options=policy)
+        server = _make_server(
+            agent,
+            history_source="agent_managed",
+            unsupported_options=policy,
+            prepare_options=lambda _request, options: options,
+        )
 
         with caplog.at_level(logging.WARNING):
             response = await _post(server, temperature=0.5)
@@ -2888,6 +2874,7 @@ class TestAgentSessionPersistence:
             background_source="inference_service",
             enable_background_recovery=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
+            prepare_options=lambda _request, options: options,
         )
         request = CreateResponse(input="hello", store=True, background=True, temperature=0.35)
         context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
@@ -3123,6 +3110,7 @@ class TestAgentSessionPersistence:
                 background_source="inference_service",
                 enable_background_recovery=True,
                 response_store=FileResponseStore(storage_dir=tmp_path),
+                prepare_options=lambda _request, options: options,
             )
 
         request = CreateResponse(input="hello", store=True, background=True, temperature=0.25)
@@ -3399,6 +3387,7 @@ class TestAgentSessionPersistence:
             background_source="inference_service",
             enable_background_recovery=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
+            prepare_options=lambda _request, options: options,
         )
         context = ResponseContext(response_id="outer-tool-response", mode_flags=MagicMock())
         request = CreateResponse(input="email bob", store=True, background=True, temperature=0.42)
@@ -5465,7 +5454,7 @@ class TestNonStreaming:
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
             raw_agent=True,
         )
-        server = _make_server(agent)
+        server = _make_server(agent, prepare_options=lambda _request, options: options)
         resp = await _post(
             server,
             stream=False,
@@ -5507,7 +5496,7 @@ class TestStreaming:
             stream_updates=[AgentResponseUpdate(contents=[Content.from_text("ok")], role="assistant")],
             raw_agent=True,
         )
-        server = _make_server(agent)
+        server = _make_server(agent, prepare_options=lambda _request, options: options)
         resp = await _post(
             server,
             stream=True,

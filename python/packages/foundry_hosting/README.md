@@ -25,6 +25,13 @@ Rename `HostedResponseRequest` imports and annotations to `ResponsesRequest`, in
 or a complete batch of pending replies; they are not limited to initial input or raw JSON deserialization.
 The old parser keywords and request-type name have no compatibility aliases.
 
+**Caller-options migration:** caller model-run options are no longer forwarded by default.
+For Responses agents, Responses workflows, and Invocations agents, configure `prepare_options`
+to select the options the application accepts. Only the hook's returned, validated mapping is forwarded.
+Without a hook, agent/client defaults still apply. Responses agent factories see translated caller
+options before the hook; native Responses workflow factories see options after the hook.
+The original request remains available to application code.
+
 Agent history/background source literals also change without aliases:
 
 | Setting | Previous literal | New literal |
@@ -76,7 +83,7 @@ server = ResponsesHostServer(
 ```
 
 Explicit integer settings reject booleans and non-integers with `TypeError`, and nonpositive values with
-`ValueError`. A positive history cap in another history mode raises `ValueError`. Workflow hosts reject
+`ValueError`. A positive history cap in another agent history mode emits a warning and is ignored. Workflow hosts reject
 `max_history_items`, including explicit `None`; they do not use outer transcript history caps.
 Invocations hosts reject the Responses-only settings `history_source`, `background_source`,
 `max_history_items`, `shutdown_grace_period_seconds`, and `enable_background_recovery`, even when `None`.
@@ -403,7 +410,11 @@ No future SDK version is assumed. Agent background polling without steering is u
 
 ### Preparing caller options
 
-Native CreateResponse generation fields become MAF runtime options, notably `max_output_tokens` -> `max_tokens`
+Caller model-run options are opt-in. Without `prepare_options`, the host clears the translated option mapping
+and does not forward caller generation settings. Agent/client defaults and host-owned storage/background controls
+still apply. Application factories can still inspect the original request; this default is not an access restriction.
+
+Native CreateResponse generation fields are translated to MAF runtime options, notably `max_output_tokens` -> `max_tokens`
 and `parallel_tool_calls` -> `allow_multiple_tool_calls`. Precedence, from lowest to highest, is:
 native generation fields, flattened unknown generation fields, generation fields inside a literal `extra_body`
 mapping, then the `prepare_options` replacement. The OpenAI client normally flattens its `extra_body` into the
@@ -413,17 +424,21 @@ A sync or async `prepare_options(request: ResponsesRequest, options: dict[str, A
 deep copy of this turn's effective caller options. It must return a replacement mapping with string keys;
 the host deep-copies that result again. Mutating the argument without returning a mapping is invalid.
 Removing `"model"` lets the developer's unchanged agent/client model default apply, while other caller
-settings such as `"temperature"` remain. This works for streaming and non-streaming requests.
+settings such as `"temperature"` remain only if the hook returns them. Return an explicit allowlist to limit
+caller control, or return the supplied mapping to opt in to all options that pass validation.
+This works for streaming and non-streaming requests.
 
 Responses agent ordering is translation, factory resolution and configuration checks, hook, then protected-option
 validation before execution. The factory therefore sees translated options **before** the hook. Invocations
 agent ordering is parser, hook, protected-option validation, factory, then default validation before entering
-the agent. Do not rely on identical HTTP error timing between protocols. Responses workflows retain their
-hook before `parse_input`; Invocations workflows have no option hook.
+the agent. Do not rely on identical HTTP error timing between protocols. Responses workflows run their hook
+before factory resolution and `parse_input`; without a hook their factories see an empty `request.options`,
+but can still inspect `request.request`. Invocations workflows have no option hook.
 
 Native request-envelope controls such as identity, storage, and continuation fields are not forwarded as
-generation options. Putting those controls or agent execution controls inside `extra_body` raises `ValueError`
-before the hook; the host does not silently strip them. Hook results also cannot contain host controls,
+generation options. Putting those controls inside `extra_body` raises `ValueError`
+before the hook; the host does not silently strip them. Agent execution controls can reach the hook for filtering,
+but cannot be returned. Hook results also cannot contain host controls,
 `extra_body`, or execution controls such as `client_kwargs`, `middleware`, `session`, and tool-invocation kwargs.
 Responses native `instructions` and `tools` remain supported; Invocations agent options additionally reject both.
 Developer defaults cannot use nested transport controls to bypass storage or background policy.
@@ -633,8 +648,9 @@ By default, `POST /invocations` accepts `{"message": "Hi", "options": {}, "strea
 a sync or async `parse_input(request)` returning a typed `InvocationRun(messages, options, stream)` to accept their
 own JSON shape and MAF `Message` inputs. A sync or async `prepare_options(request, options)` hook can filter or replace
 a **copy** of this turn's caller options without changing the agent's `default_options`. It must return a mapping
-with string keys. The host rejects reserved platform/session fields, `store`, `extra_body`, and private continuation
-fields after the hook; callers cannot select another sandbox or enable downstream service continuation through
+with string keys; only the returned, validated options are forwarded. Without a hook, caller model-run options
+are suppressed and developer defaults apply. The host rejects reserved platform/session fields, `store`,
+`extra_body`, and private continuation fields after the hook; callers cannot select another sandbox or enable downstream service continuation through
 runtime options. It also rejects agent execution controls: `additional_function_arguments`, `function_invocation_kwargs`,
 `client_kwargs`, `middleware`, `session`, `tools`, `instructions`, `compaction_strategy`, and `tokenizer`. Trusted tool
 arguments belong in developer-configured agent defaults or middleware/factories, not in request options or hook output.

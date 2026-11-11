@@ -77,6 +77,10 @@ the existing thread may have changed even if its outer response did not complete
 
 ## Options and compatibility
 
+Caller generation options are suppressed unless the host has a `prepare_options` hook.
+Without a hook, the agent/client defaults apply. With a hook, only its returned, validated mapping
+is forwarded. The options sample explicitly opts in; the other basic hosts do not.
+
 Native CreateResponse generation fields become MAF run options (`max_output_tokens` becomes `max_tokens` and
 `parallel_tool_calls` becomes `allow_multiple_tool_calls`). Flattened unknown generation fields override those
 translated fields; generation fields inside a literal `extra_body` mapping override both. The developer's
@@ -94,7 +98,9 @@ curl -X POST http://localhost:8088/responses -H "Content-Type: application/json"
 
 The client uses the developer's model with `temperature=0.3` and `max_tokens=150`, not the caller's model.
 If the caller omits a token limit, the agent's `max_tokens=256` default applies.
-Responses factories see translated caller options before the hook. Platform IDs, storage flags, and private
+Responses agent factories see translated caller options before the hook. Native Responses workflow factories
+run after the hook and see its selected options, or an empty mapping without a hook; the original request
+is still available through `request.request`. Platform IDs, storage flags, and private
 continuation tokens are never caller model options; the hook cannot add them back. Host controls inside
 `extra_body` fail before the hook, rather than being silently stripped.
 See [explicit host configuration](../../../../../packages/foundry_hosting/README.md#explicit-host-configuration)

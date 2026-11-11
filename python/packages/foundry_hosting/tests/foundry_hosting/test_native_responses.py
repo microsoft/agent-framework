@@ -898,7 +898,10 @@ async def test_streaming_framework_output_keeps_occurrence_relative_citation_off
     assert message["content"][0]["annotations"] == [_expected_url_citation(start_index=4, end_index=10)]
 
 
-async def test_native_agent_executor_applies_options_without_mutating_defaults_or_double_keywords() -> None:
+@pytest.mark.parametrize("forward_options", [False, True])
+async def test_native_agent_executor_applies_options_without_mutating_defaults_or_double_keywords(
+    forward_options: bool,
+) -> None:
     calls: list[dict[str, Any]] = []
     lifecycle: list[str] = []
     agents: list[Agent[Any]] = []
@@ -915,14 +918,21 @@ async def test_native_agent_executor_applies_options_without_mutating_defaults_o
     async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", await request.get_input_text() or "")])
 
-    server = _server(create, parser=parse)
+    server = _server(
+        create,
+        parser=parse,
+        prepare_options=(lambda _request, options: options) if forward_options else None,
+    )
     first = await _post(server, "one", temperature=0.7, max_output_tokens=12, store=True)
     assert first["status"] == "completed", first
     second = await _post(server, "two", temperature=0.4, store=False, call="call-two")
     assert second["status"] == "completed", second
     assert [call["options"]["store"] for call in calls] == [False, False]
-    assert [call["options"]["temperature"] for call in calls] == [0.7, 0.4]
-    assert calls[0]["options"]["max_tokens"] == 12
+    assert [call["options"]["temperature"] for call in calls] == ([0.7, 0.4] if forward_options else [0.2, 0.2])
+    if forward_options:
+        assert calls[0]["options"]["max_tokens"] == 12
+    else:
+        assert all("max_tokens" not in call["options"] for call in calls)
     assert all(
         agent.default_options["temperature"] == 0.2 and agent.default_options["store"] is True for agent in agents
     )
@@ -943,7 +953,11 @@ async def test_registry_backed_executor_gets_native_options_and_resource_lifecyc
         )
         return _build(_RegistryExecutor(agent))
 
-    response = await _post(_server(create, parser=_parse_text), "hello", temperature=0.7)
+    response = await _post(
+        _server(create, parser=_parse_text, prepare_options=lambda _request, options: options),
+        "hello",
+        temperature=0.7,
+    )
 
     assert response["status"] == "completed", response
     assert _texts(response) == ["safe"]
@@ -1022,7 +1036,7 @@ async def test_raw_agent_fresh_factory_matches_explicit_defaults(stored: bool, s
     async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", await request.get_input_text() or "")])
 
-    server = _server(create, parser=parse)
+    server = _server(create, parser=parse, prepare_options=lambda _request, options: options)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
         response = await client.post(
             "/responses",

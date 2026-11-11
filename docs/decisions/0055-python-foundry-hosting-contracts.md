@@ -74,6 +74,13 @@ before `prepare_options`. Invocations agent factories receive the Starlette `Req
 and option preparation. Preserve these protocol-specific timings rather than forcing identical signatures
 or inventing a shared options-precedence policy.
 
+Caller model-run options are opt-in for Responses agents, Responses workflows, and Invocations agents.
+Without `prepare_options`, do not forward caller generation settings; preserve developer defaults and
+host-owned storage/background controls. With a hook, forward only its returned, validated mapping.
+This does not prevent application code from inspecting the original request. Responses agent factories
+see translated options before the hook. Native Responses workflow factories run after the hook and
+see its selected options, or an empty option mapping when no hook is configured.
+
 Native workflow factories are request-aware and must allocate fresh workflows, executors, agents,
 clients, providers, and mutable tools. A new graph wrapper around shared executors is not isolation.
 Reject known shared execution resources rather than cloning them. This guard cannot prove that arbitrary

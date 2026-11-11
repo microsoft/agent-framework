@@ -184,15 +184,6 @@ def test_legacy_responses_request_name_is_not_exported() -> None:
         hosting.__getattr__("HostedResponseRequest")
 
 
-def test_responses_workflow_host_rejects_removed_options() -> None:
-    with pytest.raises(TypeError, match="options is no longer a supported host setting"):
-        cast(Any, hosting.ResponsesWorkflowHostServer)(
-            workflow=lambda _: None,
-            parse_input=lambda _: None,
-            options=None,
-        )
-
-
 def test_responses_workflow_host_rejects_agent_history_limit_even_when_none() -> None:
     with (
         patch("azure.ai.agentserver.responses.hosting.ResponsesAgentServerHost.__init__") as initialize,

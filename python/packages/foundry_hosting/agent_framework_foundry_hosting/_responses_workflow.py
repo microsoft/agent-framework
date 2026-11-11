@@ -66,7 +66,6 @@ from ._shared import (
     build_response_server_options,
     prepare_response_options,
     prepare_workflow_kwargs,
-    reject_removed_host_settings,
     response_run_options,
     validate_request_options,
     validate_workflow_source,
@@ -357,7 +356,8 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
             checkpoint_store_provider: Scoped checkpoint storage. Defaults to `CheckpointStoreProvider`.
                 Native workflow history and pending replies are checkpoint-owned, not agent-session-owned.
             prepare_options: Sync or async hook receiving the hosted request and a copy of caller model
-                options before parsing/execution. Return the replacement mapping; hosting validates it.
+                options before factory resolution and parsing. Return the replacement mapping; hosting validates it.
+                Without a hook, caller options are omitted.
                 This does not enable inner provider background or service-owned history.
             allowed_oauth_consent_origins: Optional exact HTTPS origins for consent links. Omission retains
                 safe-HTTPS validation; an empty sequence rejects all origins.
@@ -374,7 +374,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
                 agent-only setting is supplied.
             ValueError: If a supported setting has an invalid value.
         """
-        reject_removed_host_settings(kwargs)
         forbidden = {
             "agent",
             "agent_session_store_provider",
