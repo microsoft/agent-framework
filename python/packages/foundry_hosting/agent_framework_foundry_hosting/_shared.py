@@ -306,7 +306,7 @@ class ResponsesRequest:
 
     @property
     def options(self) -> Mapping[str, Any]:
-        """Return this turn's effective caller options after the hook."""
+        """Return this turn's caller options, replaced by the ``prepare_options`` result on agent hosts."""
         return self._options
 
     def set_options(self, options: Mapping[str, Any]) -> None:

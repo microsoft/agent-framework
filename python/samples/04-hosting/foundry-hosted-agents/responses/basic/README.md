@@ -75,7 +75,7 @@ turns fail rather than mutating the same service thread. An invalid input does n
 `previous_response_id` parent. If a named turn fails or is cancelled after dispatch, start a new conversation;
 the existing thread may have changed even if its outer response did not complete.
 
-## Options and compatibility
+## Options
 
 Caller generation options are suppressed unless the host has a `prepare_options` hook.
 Without a hook, the agent/client defaults apply. With a hook, only its returned, validated mapping
@@ -98,16 +98,17 @@ curl -X POST http://localhost:8088/responses -H "Content-Type: application/json"
 
 The client uses the developer's model with `temperature=0.3` and `max_tokens=150`, not the caller's model.
 If the caller omits a token limit, the agent's `max_tokens=256` default applies.
-Responses agent factories see translated caller options before the hook. Native Responses workflow factories
-run after the hook and see its selected options, or an empty mapping without a hook; the original request
-is still available through `request.request`. Platform IDs, storage flags, and private
+Responses agent factories see translated caller options before the hook. Native Responses workflow hosts have
+no option hook: their factories and required parsers see the translated caller options through `request.options`
+and the original request through `request.request`, and the workflow receives model options only from the
+parser's `WorkflowTurn(client_kwargs={"options": ...})`. Platform IDs, storage flags, and private
 continuation tokens are never caller model options; the hook cannot add them back. Host controls inside
 `extra_body` fail before the hook, rather than being silently stripped.
 See [explicit host configuration](../../../../../packages/foundry_hosting/README.md#explicit-host-configuration)
 for history caps, heartbeat intervals, shutdown waiting, and eligible recovery modes.
 
-`history_source="host_managed"` and `history_source="agent_managed"` retain their existing meaning without a
-deprecation warning. For **stored** requests, `"agent_managed"` passes only new input to the agent, whose
+`history_source="host_managed"` keeps outer history in the host. For **stored** requests,
+`"agent_managed"` passes only new input to the agent, whose
 developer-owned defaults may choose either a HistoryProvider **or downstream service storage**.
 `history_source="inference_service"` explicitly requires service-managed history and overrides the agent's
 `store` default on stored requests. The constructor accepts `response_store=` for the outer storage
