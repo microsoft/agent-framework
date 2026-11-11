@@ -20,12 +20,8 @@ from agent_framework import (
     AgentContext,
     AgentExecutor,
     AgentMiddleware,
-    AgentMiddlewareLayer,
     AgentResponse,
     AgentRunInputs,
-    ChatContext,
-    ChatMiddleware,
-    ChatMiddlewareLayer,
     Content,
     FunctionTool,
     HistoryProvider,
@@ -348,11 +344,17 @@ async def response_input_messages(request: ResponsesRequest) -> list[Message]:
     return await _items_to_messages(await request.get_input_items(), approval_storage=None)
 
 
-def validate_request_options(options: Mapping[str, Any]) -> None:
-    """Keep hosting identity, storage decisions, and private continuation out of model options."""
+def validate_request_options(options: Mapping[str, Any], *, allow_background: bool = False) -> None:
+    """Keep hosting identity, storage decisions, and private continuation out of model options.
+
+    With ``allow_background``, a ``background`` value set by the application's
+    options hook is passed to the agent unchanged; the application owns that choice.
+    """
     if not isinstance(options, Mapping) or any(not isinstance(key, str) for key in options):
         raise TypeError("Run options must be a mapping with string keys.")
-    reserved = (_HOST_CONTROLLED_FIELDS | _RUN_CONTROLLED_FIELDS).intersection(options)
+    reserved = set((_HOST_CONTROLLED_FIELDS | _RUN_CONTROLLED_FIELDS).intersection(options))
+    if allow_background:
+        reserved.discard("background")
     if reserved:
         raise ValueError(f"prepare_options cannot set host-controlled fields: {', '.join(sorted(reserved))}.")
 
@@ -389,50 +391,6 @@ def validate_provider_background_options(options: Mapping[str, Any], *, provider
     extra_body = options.get("extra_body")
     if isinstance(extra_body, Mapping) and "background" in extra_body:
         raise ValueError("Provider extra_body cannot set host-controlled fields: background.")
-
-
-class _ForegroundChatOptions(ChatMiddleware):
-    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
-        validate_provider_background_options(context.options or {}, provider_background=False)
-        validate_provider_background_options(context.kwargs, provider_background=False)
-        await call_next()
-
-
-_FOREGROUND_CHAT_OPTIONS = _ForegroundChatOptions()
-
-
-def _append_foreground_chat_options(agent: SupportsAgentRun, client_kwargs: dict[str, Any]) -> None:
-    if not isinstance(agent, RawAgent) or not isinstance(cast(RawAgent[Any], agent).client, ChatMiddlewareLayer):
-        return
-    middleware = client_kwargs.get("middleware", ())
-    if not isinstance(middleware, Sequence) or isinstance(middleware, (str, bytes)):
-        raise TypeError("Client middleware must be a sequence.")
-    client_kwargs["middleware"] = [*middleware, _FOREGROUND_CHAT_OPTIONS]
-
-
-class _ForegroundAgentOptions(AgentMiddleware):
-    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-        validate_agent_background_options(context.agent, provider_background=False)
-        validate_provider_background_options(context.options or {}, provider_background=False)
-        validate_provider_background_options(context.client_kwargs, provider_background=False)
-        _append_foreground_chat_options(context.agent, context.client_kwargs)
-        await call_next()
-
-
-_FOREGROUND_AGENT_OPTIONS = _ForegroundAgentOptions()
-
-
-def foreground_agent_run_kwargs(agent: SupportsAgentRun) -> dict[str, Any]:
-    """Guard ordinary agent and chat middleware using request-local run arguments.
-
-    Custom clients and context-provider-contributed chat middleware must not
-    enable provider background internally; they have no final hosting hook.
-    """
-    if isinstance(agent, AgentMiddlewareLayer):
-        return {"middleware": [_FOREGROUND_AGENT_OPTIONS]}
-    kwargs: dict[str, Any] = {}
-    _append_foreground_chat_options(agent, kwargs)
-    return {"client_kwargs": kwargs} if kwargs else {}
 
 
 def validate_default_transport_options(defaults: Mapping[str, Any], *, allow_agent_store: bool) -> None:
@@ -608,7 +566,6 @@ class _NativeAgentOptions(AgentMiddleware):
             "user_id": self.scope.user_id,
             "call_id": self.scope.call_id,
         }
-        _append_foreground_chat_options(context.agent, context.client_kwargs)
 
         def check_result(result: AgentResponse[Any]) -> None:
             if context.session is not None and context.session.service_session_id is not None:
@@ -723,9 +680,6 @@ def prepare_workflow_kwargs(
                     "RawAgent workflow generation overrides must be materialized in the fresh factory defaults."
                 )
             values.pop("options", None)
-            if isinstance(agent.client, ChatMiddlewareLayer):
-                # Run kwargs are checkpointed; install policy on the fresh factory-owned client instead.
-                agent.client.chat_middleware = [*(agent.client.chat_middleware or ()), _FOREGROUND_CHAT_OPTIONS]
     global_functions = validate_values(functions.get("global_kwargs", {}))
     specific_functions = {
         key: validate_values(value) for key, value in cast(dict[str, Any], functions.get("executor_kwargs", {})).items()

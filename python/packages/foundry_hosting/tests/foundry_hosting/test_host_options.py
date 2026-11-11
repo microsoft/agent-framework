@@ -11,6 +11,7 @@ import httpx
 import pytest
 from agent_framework import Agent, AgentContext, AgentSession, ChatOptions, RawAgent
 from azure.ai.agentserver.responses import ResponsesServerOptions
+from starlette.requests import Request
 
 from agent_framework_foundry_hosting import (
     InvocationsHostServer,
@@ -189,6 +190,34 @@ async def test_invocations_options_are_opt_in(stream: bool) -> None:
     assert response.status_code == 200
     assert callbacks.client.calls[0]["model"] == "developer"
     assert callbacks.client.calls[0]["temperature"] == 0.4
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("background", [False, True])
+async def test_invocations_hook_background_is_passed_to_agent(stream: bool, background: bool) -> None:
+    callbacks = OptionCallbacks()
+
+    def prepare(request: Request, options: dict[str, Any]) -> dict[str, Any]:
+        return {**options, "background": background}
+
+    host = InvocationsHostServer(callbacks.factory, prepare_options=prepare)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=host), base_url="http://test") as client:
+        response = await client.post("/invocations?agent_session_id=options", json={"message": "hi", "stream": stream})
+    assert response.status_code == 200
+    assert callbacks.client.calls[0]["background"] is background
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_invocations_without_hook_passes_no_background(stream: bool) -> None:
+    callbacks = OptionCallbacks()
+    host = InvocationsHostServer(callbacks.factory)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=host), base_url="http://test") as client:
+        response = await client.post(
+            "/invocations?agent_session_id=options",
+            json={"message": "hi", "stream": stream, "options": {"background": True}},
+        )
+    assert response.status_code == 200
+    assert "background" not in callbacks.client.calls[0]
 
 
 @pytest.mark.parametrize("stream", [False, True])

@@ -57,7 +57,6 @@ from ._shared import (
     WorkflowResolver,
     WorkflowSource,
     WorkflowTurn,
-    foreground_agent_run_kwargs,
     is_agent,
     resolve_agent,
     validate_agent_background_options,
@@ -566,7 +565,7 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
         reserved = _AGENT_CONTROLLED_FIELDS.intersection(options)
         if reserved:
             raise ValueError(f"Invocations options cannot set agent-controlled fields: {', '.join(sorted(reserved))}.")
-        validate_request_options(options)
+        validate_request_options(options, allow_background=True)
         return options
 
     def _agent_kwargs(self, agent: SupportsAgentRun, options: dict[str, Any]) -> dict[str, Any]:
@@ -629,7 +628,7 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
                 try:
                     lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
                     async with lock, self._request_agent(request) as agent:
-                        run_kwargs = {**self._agent_kwargs(agent, options), **foreground_agent_run_kwargs(agent)}
+                        run_kwargs = self._agent_kwargs(agent, options)
                         async with self._request_session(partition_key, context, hosted_scope=hosted_scope) as session:
                             stream = agent.run(parsed.messages, session=session, stream=True, **run_kwargs)
                             completed = False
@@ -678,7 +677,7 @@ class _InvocationsHostServer(InvocationAgentServerHost):  # pyright: ignore[repo
         try:
             lock = self._session_locks.setdefault(partition_key, asyncio.Lock())
             async with lock, self._request_agent(request) as agent:
-                run_kwargs = {**self._agent_kwargs(agent, options), **foreground_agent_run_kwargs(agent)}
+                run_kwargs = self._agent_kwargs(agent, options)
                 async with self._request_session(partition_key, context, hosted_scope=hosted_scope) as session:
                     response = await agent.run(parsed.messages, session=session, **run_kwargs)
             return JSONResponse({"response": response.text})
