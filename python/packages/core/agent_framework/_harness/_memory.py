@@ -1,13 +1,21 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Legacy memory provider and its storage types.
+
+``DEFAULT_MEMORY_SOURCE_ID`` is retained for use with this deprecated provider.
+For new file-based memory, use :class:`~agent_framework.FileMemoryProvider`.
+"""
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import re
+import sys
 import threading
 import uuid
+import warnings
 import weakref
 from abc import ABC, abstractmethod
 from base64 import b32decode
@@ -16,6 +24,11 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Final, cast
+
+if sys.version_info >= (3, 13):
+    from warnings import deprecated  # pragma: no cover
+else:
+    from typing_extensions import deprecated  # pragma: no cover
 
 from .._clients import SupportsChatGetResponse
 from .._compaction import group_messages
@@ -72,6 +85,9 @@ Rules:
 - keep the memory list short and high-signal
 """
 _FILE_HISTORY_ENCODED_SESSION_PREFIX = "~session-"
+_MEMORY_STORE_DEPRECATION_MESSAGE = (
+    "MemoryStore is deprecated. Use AgentFileStore with FileMemoryProvider for new file-based memory."
+)
 HistoryMessageFilter = Callable[[Message], Message | None]
 # Match word-like tokens of >=2 characters. ``[^\W_]`` is a Unicode letter or
 # digit (excluding underscore), so CJK/Cyrillic/etc. text yields keywords too
@@ -249,8 +265,12 @@ def _format_search_results(results: Sequence[Mapping[str, Any]]) -> str:
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
+@deprecated("MemoryIndexEntry is deprecated. Use FileMemoryProvider for new file-based memory.", stacklevel=2)
 class MemoryIndexEntry:
-    """Represent one pointer entry written into ``MEMORY.md``."""
+    """Represent one pointer entry written into ``MEMORY.md``.
+
+    This type is deprecated along with :class:`MemoryContextProvider`.
+    """
 
     topic: str
     slug: str
@@ -286,7 +306,7 @@ class MemoryIndexEntry:
         }
 
     @classmethod
-    def from_dict(cls, raw_entry: Mapping[str, Any]) -> MemoryIndexEntry:
+    def from_dict(cls, raw_entry: Mapping[str, Any]) -> MemoryIndexEntry:  # pyright: ignore[reportDeprecated]
         """Parse one index entry from JSON-compatible data.
 
         Args:
@@ -310,7 +330,7 @@ class MemoryIndexEntry:
         return cls(topic=topic, slug=slug, summary=summary, updated_at=updated_at)
 
     @classmethod
-    def from_topic_record(cls, record: MemoryTopicRecord) -> MemoryIndexEntry:
+    def from_topic_record(cls, record: MemoryTopicRecord) -> MemoryIndexEntry:  # pyright: ignore[reportDeprecated]
         """Create one index entry from a topic record.
 
         Args:
@@ -340,7 +360,7 @@ class MemoryIndexEntry:
 
     def __eq__(self, other: object) -> bool:
         """Compare two index entries by value."""
-        if not isinstance(other, MemoryIndexEntry):
+        if not isinstance(other, MemoryIndexEntry):  # pyright: ignore[reportDeprecated]
             return NotImplemented
         return self.to_dict() == other.to_dict()
 
@@ -353,8 +373,12 @@ class MemoryIndexEntry:
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
+@deprecated("MemoryTopicRecord is deprecated. Use FileMemoryProvider for new file-based memory.", stacklevel=2)
 class MemoryTopicRecord:
-    """Represent one topic memory markdown file."""
+    """Represent one topic memory markdown file.
+
+    This type is deprecated along with :class:`MemoryContextProvider`.
+    """
 
     topic: str
     slug: str
@@ -408,7 +432,7 @@ class MemoryTopicRecord:
         }
 
     @classmethod
-    def from_dict(cls, raw_record: Mapping[str, Any]) -> MemoryTopicRecord:
+    def from_dict(cls, raw_record: Mapping[str, Any]) -> MemoryTopicRecord:  # pyright: ignore[reportDeprecated]
         """Parse one topic record from structured data.
 
         Args:
@@ -482,7 +506,7 @@ class MemoryTopicRecord:
         ]).rstrip()
 
     @classmethod
-    def from_markdown(cls, markdown: str, *, fallback_topic: str | None = None) -> MemoryTopicRecord:
+    def from_markdown(cls, markdown: str, *, fallback_topic: str | None = None) -> MemoryTopicRecord:  # pyright: ignore[reportDeprecated]
         """Parse one topic record from the canonical markdown format.
 
         Args:
@@ -549,7 +573,7 @@ class MemoryTopicRecord:
 
     def __eq__(self, other: object) -> bool:
         """Compare two topic records by value."""
-        if not isinstance(other, MemoryTopicRecord):
+        if not isinstance(other, MemoryTopicRecord):  # pyright: ignore[reportDeprecated]
             return NotImplemented
         return self.to_dict() == other.to_dict()
 
@@ -563,8 +587,18 @@ class MemoryTopicRecord:
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
+@deprecated(
+    "MemoryStore is deprecated. Use AgentFileStore with FileMemoryProvider for new file-based memory.",
+    category=None,
+)
 class MemoryStore(ABC):
-    """Abstract backing store for the memory harness."""
+    """Define the deprecated backing store for the legacy memory harness."""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # The built-in store has its own warning and must not warn during import.
+        if MemoryStore in cls.__bases__ and cls.__module__ != __name__:  # pyright: ignore[reportDeprecated]
+            warnings.warn(_MEMORY_STORE_DEPRECATION_MESSAGE, DeprecationWarning, stacklevel=4)
 
     def get_owner_id(self, session: AgentSession) -> str | None:
         """Return the logical owner ID for one session, if the store uses one."""
@@ -595,15 +629,15 @@ class MemoryStore(ABC):
         del session, state
 
     @abstractmethod
-    def list_topics(self, session: AgentSession, *, source_id: str) -> list[MemoryTopicRecord]:
+    def list_topics(self, session: AgentSession, *, source_id: str) -> list[MemoryTopicRecord]:  # pyright: ignore[reportDeprecated]
         """Return all topic memory files visible from the current owner."""
 
     @abstractmethod
-    def get_topic(self, session: AgentSession, *, source_id: str, topic: str) -> MemoryTopicRecord:
+    def get_topic(self, session: AgentSession, *, source_id: str, topic: str) -> MemoryTopicRecord:  # pyright: ignore[reportDeprecated]
         """Return one topic memory file by topic name or slug."""
 
     @abstractmethod
-    def write_topic(self, session: AgentSession, record: MemoryTopicRecord, *, source_id: str) -> None:
+    def write_topic(self, session: AgentSession, record: MemoryTopicRecord, *, source_id: str) -> None:  # pyright: ignore[reportDeprecated]
         """Persist one topic memory file."""
 
     @abstractmethod
@@ -618,7 +652,7 @@ class MemoryStore(ABC):
         source_id: str,
         line_limit: int,
         line_length: int,
-    ) -> list[MemoryIndexEntry]:
+    ) -> list[MemoryIndexEntry]:  # pyright: ignore[reportDeprecated]
         """Rebuild ``MEMORY.md`` from the current topic files and return its entries."""
 
     @abstractmethod
@@ -629,7 +663,7 @@ class MemoryStore(ABC):
         source_id: str,
         line_limit: int,
         line_length: int,
-        index_entries: Sequence[MemoryIndexEntry] | None = None,
+        index_entries: Sequence[MemoryIndexEntry] | None = None,  # pyright: ignore[reportDeprecated]
     ) -> str:
         """Return the current ``MEMORY.md`` text, rebuilding it when needed."""
 
@@ -665,8 +699,14 @@ class MemoryStore(ABC):
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
-class MemoryFileStore(MemoryStore):
+@deprecated(
+    "MemoryFileStore is deprecated. Use FileSystemAgentFileStore with FileMemoryProvider for new file-based memory.",
+    stacklevel=2,
+)
+class MemoryFileStore(MemoryStore):  # pyright: ignore[reportDeprecated]
     """Store memory files under ``MEMORY.md``, ``topics/``, and ``transcripts/``.
+
+    This store is deprecated along with :class:`MemoryContextProvider`.
 
     The storage directory must not be writable by untrusted users, because they could
     replace the final memory files independently of this store's secure temporary writes.
@@ -819,30 +859,30 @@ class MemoryFileStore(MemoryStore):
         raw_session_id = session_id or FileHistoryProvider.DEFAULT_SESSION_FILE_STEM
         return _storage_key_segment(raw_session_id, encoded_prefix=_FILE_HISTORY_ENCODED_SESSION_PREFIX)
 
-    def list_topics(self, session: AgentSession, *, source_id: str) -> list[MemoryTopicRecord]:
+    def list_topics(self, session: AgentSession, *, source_id: str) -> list[MemoryTopicRecord]:  # pyright: ignore[reportDeprecated]
         """Return all topic memory files visible from the current owner."""
-        topics: list[MemoryTopicRecord] = []
+        topics: list[MemoryTopicRecord] = []  # pyright: ignore[reportDeprecated]
         topics_directory = self._get_topics_directory(session, source_id=source_id)
         if not topics_directory.exists():
             return topics
         for topic_path in sorted(topics_directory.glob("*.md")):
             if not topic_path.is_file():
                 continue
-            record = MemoryTopicRecord.from_markdown(
+            record = MemoryTopicRecord.from_markdown(  # pyright: ignore[reportDeprecated]
                 topic_path.read_text(encoding="utf-8"),
                 fallback_topic=topic_path.stem.replace("-", " "),
             )
             topics.append(record)
         return sorted(topics, key=lambda record: (record.topic.lower(), record.updated_at))
 
-    def get_topic(self, session: AgentSession, *, source_id: str, topic: str) -> MemoryTopicRecord:
+    def get_topic(self, session: AgentSession, *, source_id: str, topic: str) -> MemoryTopicRecord:  # pyright: ignore[reportDeprecated]
         """Return one topic memory file by topic name or slug."""
         topic_path = self._topic_path(session, source_id=source_id, topic=topic)
         if not topic_path.exists():
             raise FileNotFoundError(f"No memory topic named '{topic}' was found for this owner.")
-        return MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)
+        return MemoryTopicRecord.from_markdown(topic_path.read_text(encoding="utf-8"), fallback_topic=topic)  # pyright: ignore[reportDeprecated]
 
-    def write_topic(self, session: AgentSession, record: MemoryTopicRecord, *, source_id: str) -> None:
+    def write_topic(self, session: AgentSession, record: MemoryTopicRecord, *, source_id: str) -> None:  # pyright: ignore[reportDeprecated]
         """Persist one topic memory file."""
         topic_path = self._topic_path(session, source_id=source_id, topic=record.slug)
         _atomic_write_text(topic_path, f"{record.to_markdown()}\n")
@@ -861,10 +901,10 @@ class MemoryFileStore(MemoryStore):
         source_id: str,
         line_limit: int,
         line_length: int,
-    ) -> list[MemoryIndexEntry]:
+    ) -> list[MemoryIndexEntry]:  # pyright: ignore[reportDeprecated]
         """Rebuild ``MEMORY.md`` from the current topic files and return its entries."""
         topics = self.list_topics(session, source_id=source_id)
-        entries = [MemoryIndexEntry.from_topic_record(topic) for topic in topics]
+        entries = [MemoryIndexEntry.from_topic_record(topic) for topic in topics]  # pyright: ignore[reportDeprecated]
         pointer_lines = [entry.to_pointer_line(max_length=line_length) for entry in entries[:line_limit]]
         index_lines = [
             DEFAULT_MEMORY_INDEX_HEADER,
@@ -885,7 +925,7 @@ class MemoryFileStore(MemoryStore):
         source_id: str,
         line_limit: int,
         line_length: int,
-        index_entries: Sequence[MemoryIndexEntry] | None = None,
+        index_entries: Sequence[MemoryIndexEntry] | None = None,  # pyright: ignore[reportDeprecated]
     ) -> str:
         """Return the current ``MEMORY.md`` text, rebuilding it when needed."""
         if index_entries is None:
@@ -1029,13 +1069,19 @@ class MemoryFileStore(MemoryStore):
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
+@deprecated("MemoryContextProvider is deprecated. Use FileMemoryProvider for new file-based memory.", stacklevel=2)
 class MemoryContextProvider(HistoryProvider):
-    """Inject ``MEMORY.md``, topic memory tools, and transcript-backed extraction."""
+    """Inject ``MEMORY.md``, topic memory tools, and transcript-backed extraction.
+
+    This provider is deprecated. :class:`~agent_framework.FileMemoryProvider` uses a
+    different storage format and does not automatically extract memories or provide
+    transcript history.
+    """
 
     _LOCKS_GUARD: ClassVar[threading.Lock] = threading.Lock()
     _STORE_LOCKS_BY_LOOP: ClassVar[
         weakref.WeakKeyDictionary[
-            asyncio.AbstractEventLoop, weakref.WeakKeyDictionary[MemoryStore, dict[str, asyncio.Lock]]
+            asyncio.AbstractEventLoop, weakref.WeakKeyDictionary[MemoryStore, dict[str, asyncio.Lock]]  # pyright: ignore[reportDeprecated]
         ]
     ] = weakref.WeakKeyDictionary()
 
@@ -1044,7 +1090,7 @@ class MemoryContextProvider(HistoryProvider):
         recent_turns: int = 0,
         load_tool_turns: bool = True,
         *,
-        store: MemoryStore,
+        store: MemoryStore,  # pyright: ignore[reportDeprecated]
         source_id: str = DEFAULT_MEMORY_SOURCE_ID,
         context_prompt: str | None = None,
         index_line_limit: int = DEFAULT_MEMORY_INDEX_LINE_LIMIT,
@@ -1128,11 +1174,11 @@ class MemoryContextProvider(HistoryProvider):
         owner_id = self.store.get_owner_id(session) or ""
         lock_key = f"{self.source_id}:{owner_id}:{kind}:{key}"
         with self._LOCKS_GUARD:
-            store_locks_by_loop: weakref.WeakKeyDictionary[MemoryStore, dict[str, asyncio.Lock]] | None = (
+            store_locks_by_loop: weakref.WeakKeyDictionary[MemoryStore, dict[str, asyncio.Lock]] | None = (  # pyright: ignore[reportDeprecated]
                 self._STORE_LOCKS_BY_LOOP.get(loop)
             )
             if store_locks_by_loop is None:
-                store_locks_by_loop = weakref.WeakKeyDictionary[MemoryStore, dict[str, asyncio.Lock]]()
+                store_locks_by_loop = weakref.WeakKeyDictionary[MemoryStore, dict[str, asyncio.Lock]]()  # pyright: ignore[reportDeprecated]
                 self._STORE_LOCKS_BY_LOOP[loop] = store_locks_by_loop
             store_locks = store_locks_by_loop.get(self.store)
             if store_locks is None:
@@ -1181,16 +1227,16 @@ class MemoryContextProvider(HistoryProvider):
         return None
 
     @staticmethod
-    def _topic_score(entry: MemoryIndexEntry, keywords: set[str]) -> int:
+    def _topic_score(entry: MemoryIndexEntry, keywords: set[str]) -> int:  # pyright: ignore[reportDeprecated]
         topic_keywords = {match.group(0).lower() for match in _WORD_PATTERN.finditer(f"{entry.topic} {entry.summary}")}
         return len(topic_keywords & keywords)
 
     def _select_topics(
         self,
         *,
-        entries: Sequence[MemoryIndexEntry],
+        entries: Sequence[MemoryIndexEntry],  # pyright: ignore[reportDeprecated]
         input_messages: Sequence[Message],
-    ) -> list[MemoryIndexEntry]:
+    ) -> list[MemoryIndexEntry]:  # pyright: ignore[reportDeprecated]
         if self.selection_limit == 0 or not entries:
             return []
         keywords = _extract_keywords(input_messages)
@@ -1514,7 +1560,7 @@ class MemoryContextProvider(HistoryProvider):
         session: AgentSession,
         context: SessionContext,
         now: datetime,
-    ) -> list[MemoryTopicRecord]:
+    ) -> list[MemoryTopicRecord]:  # pyright: ignore[reportDeprecated]
         if client is None or self.max_extractions == 0 or context.response is None or not context.response.messages:
             return []
         transcript_delta = _format_messages_for_memory_model([*context.input_messages, *context.response.messages])
@@ -1552,7 +1598,7 @@ class MemoryContextProvider(HistoryProvider):
             )
             return []
 
-        updated_records: list[MemoryTopicRecord] = []
+        updated_records: list[MemoryTopicRecord] = []  # pyright: ignore[reportDeprecated]
         for raw_item in cast(list[object], raw_items)[: self.max_extractions]:
             if not isinstance(raw_item, Mapping):
                 LOGGER.warning(
@@ -1588,14 +1634,14 @@ class MemoryContextProvider(HistoryProvider):
         topic: str,
         memory: str,
         now: datetime,
-    ) -> MemoryTopicRecord:
+    ) -> MemoryTopicRecord:  # pyright: ignore[reportDeprecated]
         normalized_topic = _normalize_topic(topic)
         normalized_memory = _normalize_memory_text(memory)
         async with self._topic_async_lock(session, normalized_topic):
             try:
                 existing_record = self.store.get_topic(session, source_id=self.source_id, topic=normalized_topic)
             except FileNotFoundError:
-                updated_record = MemoryTopicRecord(
+                updated_record = MemoryTopicRecord(  # pyright: ignore[reportDeprecated]
                     topic=normalized_topic,
                     summary=normalized_memory,
                     memories=[normalized_memory],
@@ -1603,7 +1649,7 @@ class MemoryContextProvider(HistoryProvider):
                     session_ids=[session.session_id],
                 )
             else:
-                updated_record = MemoryTopicRecord(
+                updated_record = MemoryTopicRecord(  # pyright: ignore[reportDeprecated]
                     topic=existing_record.topic,
                     slug=existing_record.slug,
                     summary=existing_record.summary,
@@ -1708,9 +1754,9 @@ class MemoryContextProvider(HistoryProvider):
         self,
         *,
         client: SupportsChatGetResponse[Any] | None,
-        record: MemoryTopicRecord,
+        record: MemoryTopicRecord,  # pyright: ignore[reportDeprecated]
         now: datetime,
-    ) -> tuple[MemoryTopicRecord, bool]:
+    ) -> tuple[MemoryTopicRecord, bool]:  # pyright: ignore[reportDeprecated]
         """Return the consolidated record and a flag indicating whether consolidation succeeded.
 
         ``succeeded`` is False when the LLM call raises a transient error or returns malformed
@@ -1720,7 +1766,7 @@ class MemoryContextProvider(HistoryProvider):
         """
         if client is None:
             return (
-                MemoryTopicRecord(
+                MemoryTopicRecord(  # pyright: ignore[reportDeprecated]
                     topic=record.topic,
                     slug=record.slug,
                     summary=_coerce_summary(record.summary, record.memories),
@@ -1777,7 +1823,7 @@ class MemoryContextProvider(HistoryProvider):
             return record, False
         consolidated_memories = [memory for memory in cast(list[object], raw_memories) if isinstance(memory, str)]
         return (
-            MemoryTopicRecord(
+            MemoryTopicRecord(  # pyright: ignore[reportDeprecated]
                 topic=record.topic,
                 slug=record.slug,
                 summary=summary,
