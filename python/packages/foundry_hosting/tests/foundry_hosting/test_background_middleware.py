@@ -78,10 +78,12 @@ async def test_middleware_background_is_rejected_before_provider(
 
 @pytest.mark.parametrize("workflow", [False, True])
 @pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("location", ["options", "kwargs"])
+@pytest.mark.parametrize("injected", [{"background": True}, {"extra_body": {"background": True}}])
 async def test_raw_agent_client_middleware_background_is_rejected(
-    workflow: bool, stream: bool, caplog: pytest.LogCaptureFixture
+    workflow: bool, stream: bool, location: str, injected: dict[str, Any], caplog: pytest.LogCaptureFixture
 ) -> None:
-    callbacks = BackgroundCallbacks(source="chat", location="options", injected={"background": True}, raw=True)
+    callbacks = BackgroundCallbacks(source="chat", location=location, injected=injected, raw=True)
     host = (
         InvocationsWorkflowHostServer(
             callbacks.workflow, parse_input=lambda request: WorkflowTurn(input="hi", stream=stream)
@@ -95,6 +97,26 @@ async def test_raw_agent_client_middleware_background_is_rejected(
         )
     assert response.status_code == (200 if stream else 500)
     assert "background" in caplog.text
+    assert callbacks.client.calls == []
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("shape", ["flat", "options"])
+async def test_native_raw_agent_rejects_run_level_middleware(stream: bool, shape: str) -> None:
+    callbacks = BackgroundCallbacks(source="none", location="options", injected={"background": True}, raw=True)
+    client_kwargs: dict[str, Any] = {"middleware": [callbacks.inject_chat]}
+    if shape == "options":
+        client_kwargs = {"options": client_kwargs}
+    host = InvocationsWorkflowHostServer(
+        callbacks.workflow,
+        parse_input=lambda request: WorkflowTurn(input="hi", stream=stream, client_kwargs=client_kwargs),
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=host), base_url="http://test") as client:
+        response = await client.post("/invocations?agent_session_id=raw-middleware", json={"message": "hi"})
+    assert response.status_code == (200 if stream else 400)
+    assert "cannot override hosting" in response.text
+    if stream:
+        assert "event: error" in response.text
     assert callbacks.client.calls == []
 
 
