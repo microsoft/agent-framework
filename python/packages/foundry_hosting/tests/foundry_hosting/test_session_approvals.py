@@ -246,10 +246,11 @@ async def test_unsupported_canonical_version_fails_without_consumption(tmp_path,
 async def test_history_tampering_does_not_authorize_a_different_call(tmp_path) -> None:
     store = SqliteSessionStore(tmp_path / "sessions.db")
     session = await pending_session(store)
+    state = SessionApprovalState(session, store)
     session.state[_APPROVAL_STATE_KEY]["history"]["wire-0"] = json.dumps(approval_request(9).to_dict())
     before = store.write_count
     with pytest.raises(_InvalidApproval, match="does not match"):
-        await SessionApprovalState(session, store).preflight(["wire-0", "wire-1"])
+        await state.preflight(["wire-0", "wire-1"])
     assert store.write_count == before
 
 

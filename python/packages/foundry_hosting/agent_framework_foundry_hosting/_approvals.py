@@ -246,12 +246,15 @@ class SessionApprovalState:
         if type(record.get("version")) is not int or record["version"] != 1:
             raise RuntimeError("Unsupported canonical approval version; start a fresh conversation.")
         requests = _requests(record.get("requests"))
-        if (
-            authority.session_id != self.session.session_id
-            or record.get("response_id") != pending["response_id"]
-            or set(requests) != set(pending["wire_ids"])
-            or any(_requests(self._state["history"]).get(key) != value for key, value in requests.items())
-        ):
+        matches_owner = (
+            authority.session_id == self.session.session_id
+            and record.get("response_id") == pending["response_id"]
+            and set(requests) == set(pending["wire_ids"])
+        )
+        if matches_owner:
+            history = _requests(self._state["history"])
+            matches_owner = all(history.get(key) == value for key, value in requests.items())
+        if not matches_owner:
             raise _InvalidApproval("Pending approval authority does not match this session and response.")
         if record.get("phase") == "claimed":
             raise _InvalidApproval("Pending approval batch was already claimed; start a fresh approval turn.")
