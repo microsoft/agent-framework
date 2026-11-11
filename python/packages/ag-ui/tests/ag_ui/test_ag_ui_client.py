@@ -815,7 +815,7 @@ class TestAGUIChatClient:
         stream = client.inner_get_response(messages=messages, stream=True, options=chat_options)
         assert isinstance(stream, ResponseStream)
         async for update in stream:
-            updates.append(cast(ChatResponseUpdate, update))
+            updates.append(update)
 
         assert len(updates) == 4
         assert updates[0].additional_properties is not None
@@ -1835,7 +1835,7 @@ class TestAGUIChatClient:
         stream = client.inner_get_response(messages=messages, stream=True, options={"tools": [my_tool]})
         assert isinstance(stream, ResponseStream)
         async for update in stream:
-            updates.append(cast(ChatResponseUpdate, update))
+            updates.append(update)
 
         # Find the function_call content - it should have agui_thread_id
         found = False
