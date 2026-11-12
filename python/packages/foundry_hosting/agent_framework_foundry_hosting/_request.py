@@ -158,7 +158,18 @@ _HOST_CONTROLLED_FIELDS = frozenset({
     "user",
     "user_id",
 })
+"""Fields protected at caller-option and agent-default transport boundaries.
+
+Some are allowed in outer requests but are not forwarded as caller options; hooks cannot return them.
+The agent-default ``extra_body`` check also uses this set; it may permit ``store`` for agent-managed storage.
+"""
+
 _OPTION_NAMES = {"max_output_tokens": "max_tokens", "parallel_tool_calls": "allow_multiple_tool_calls"}
+"""Map Responses request names to Agent Framework run-option names.
+
+Applied to allowed top-level and ``extra_body`` fields before the latter take precedence.
+"""
+
 _NATIVE_FIELDS = frozenset(CreateResponse.__annotations__)
 
 
