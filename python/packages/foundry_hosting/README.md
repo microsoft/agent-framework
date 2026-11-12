@@ -2,6 +2,123 @@
 
 This package provides the integration of Agent Framework agents and workflows with the Foundry Agent Server, which can be hosted on Foundry infrastructure.
 
+Implementation is grouped by protocol: `_responses_agent.py` and `_responses_workflow.py` define the Responses hosts,
+and `_responses_shared.py` contains their wire and streaming helpers. Invocations uses the same `_invocations_agent.py`,
+`_invocations_workflow.py`, and `_invocations_shared.py` layout. Cross-protocol request contracts, option validation,
+and agent/workflow factories live in `_shared.py`. Applications use the public package imports below.
+Both Invocations hosts inherit directly from the SDK host; shared functions handle identity, wire conversion,
+and streaming cleanup without a combined agent/workflow host.
+
+## Choose the host
+
+Use `ResponsesHostServer` or `InvocationsHostServer` for agents. Use
+`ResponsesWorkflowHostServer` or `InvocationsWorkflowHostServer` for native workflows.
+Each workflow host requires a request-aware sync/async factory and an explicit parser.
+All four hosts remain in `agent-framework-foundry-hosting`, with matching lazy exports
+under `agent_framework.foundry`. Invocations and Toolbox retain their experimental boundary;
+the split does not promote them.
+
+**Breaking migration:** replace `ResponsesHostServer(workflow=..., parse_response=...)` with
+`ResponsesWorkflowHostServer(workflow=..., parse_input=...)`, and replace
+`InvocationsHostServer(workflow=..., parse_request=...)` with
+`InvocationsWorkflowHostServer(workflow=..., parse_input=...)`.
+There is no combined-host compatibility shim. Agent host construction still uses `agent=`.
+All custom parsers now use `parse_input`, including agent parsers on `InvocationsHostServer`.
+Rename `HostedResponseRequest` imports and annotations to `ResponsesRequest`, including factories and option hooks.
+`InvocationRun` and `WorkflowTurn` are unchanged. Workflow parsers still adapt either typed start input
+or a complete batch of pending replies; they are not limited to initial input or raw JSON deserialization.
+The old parser keywords and request-type name have no compatibility aliases.
+
+Agent history/background source literals also change without aliases:
+
+| Setting | Previous literal | New literal |
+| --- | --- | --- |
+| `history_source` | `"agent_server"` | `"host_managed"` |
+| `history_source` | `"agent"` | `"agent_managed"` |
+| `history_source` | `"service"` | `"inference_service"` |
+| `background_source` | `"agent_server"` | `"host_managed"` |
+| `background_source` | `"provider"` | `"inference_service"` |
+
+These are terminology changes only. The default remains host-managed history and background execution.
+`agent_managed` retains developer-owned provider **or** service storage, not just `HistoryProvider` storage.
+`response_store=` and the wire-level `store` flag keep their existing meanings.
+The deprecated constructor `store=` backend alias is removed. Replace it with `response_store=`;
+even `store=None` is rejected. This does not rename the caller's per-request `store` flag.
+
+`WorkflowSource` now describes a factory only; passing a built workflow fails at construction,
+including local one-shot use. Move graph and executor construction inside the factory;
+returning a new wrapper around shared executors does not isolate execution state.
+
+Workflow hosts expose checkpoint storage, not agent-session storage or agent history/background
+policies. Responses workflows retain `prepare_options`; Invocations workflows use the parser's
+explicit workflow kwargs instead. Regular-agent approval state belongs to the native
+agent and its `AgentSession`; no separate approval-store API is exposed.
+Agent hosts reject `WorkflowAgent`, whether supplied directly or returned by a factory.
+`checkpoint_store_provider` is available only on workflow hosts.
+No stored state is converted between native workflow and agent execution models.
+
+## Explicit host configuration
+
+Responses hosts construct the upstream
+[`ResponsesServerOptions`](https://pypi.org/project/azure-ai-agentserver-responses/) internally.
+Use first-class host parameters rather than importing an SDK options bag:
+
+| Parameter | Available on | Meaning and SDK consumer |
+| --- | --- | --- |
+| `log_level=None` | All four hosts | A literal `"DEBUG"`, `"INFO"`, `"WARNING"`, `"ERROR"`, or `"CRITICAL"`, forwarded unchanged to the AgentServer SDK constructor. `None` preserves the SDK default. |
+| `max_history_items: int \| None = None` | Responses agent host, with `history_source="host_managed"` | A positive cap on prior outer history items, passed to the SDK history loader as `default_fetch_history_count`. `None` supplies no override and inherits the installed supported SDK's default. |
+| `sse_keep_alive_interval_seconds: int \| None = None` | All four hosts with framed SSE | A positive streaming heartbeat interval in seconds. Responses forwards it to SDK streaming routes; Invocations sets the host's SDK heartbeat configuration. `None` inherits a positive `SSE_KEEPALIVE_INTERVAL`, otherwise heartbeats are disabled. |
+| `shutdown_grace_period_seconds: int = 10` | Both Responses hosts | A positive shutdown wait in seconds. The SDK also uses it when DELETE waits for response persistence. It is not a request or inference timeout. |
+| `resilient_background: bool = False` | Both Responses hosts | Uses the SDK's recovery setting without renaming it. It permits eligible recovery, not background execution or exactly-once side effects. |
+
+`max_history_items=None` does **not** promise unlimited history or map to SDK `-1`.
+Supported SDK versions can have different defaults. Explicit caps count prior history items, not tokens,
+turns, retention, or workflow checkpoints. Other agent history modes and workflow hosts do not accept a cap.
+
+Explicit heartbeat intervals must be positive: zero, negative values, and booleans are invalid, not
+force-disable switches or requests to inherit the environment. The SDK still parses its environment
+configuration during construction; a malformed `SSE_KEEPALIVE_INTERVAL` can fail even with an explicit interval.
+The agent-only `legacy_wire_format=True` disables heartbeats and cannot be combined with an explicit interval.
+
+For regular-agent recovery, select both `history_source="inference_service"` and
+`background_source="inference_service"`. Native workflows recover from their own checkpoints.
+The SDK recovery setting itself is provider-independent; the inference-service requirement is a limitation
+of the regular-agent adapter, which currently resumes only saved provider continuations.
+Follow the SDK's task-subsystem and persistent-store requirements. Neither outer workflow background execution nor
+recovery permission enables provider background on constituent agents.
+
+Host `default_model`, `create_span_hook`, `additional_server_version`, and `steerable_conversations`
+are not first-class parameters. Framework-generated SDK options leave model defaults, span callbacks, and
+custom version stamping unset, and keep steering disabled. Framework observability is unchanged.
+Configure inference defaults on the agent or client. The former SDK `default_model` could fill the outer
+request model and thereby override inference; it did not select a hosted agent. Removing that host fallback
+does not change caller-supplied request models, option-hook timing, option precedence, or routing.
+
+### SDK constructor arguments
+
+All four hosts accept `agent_server_kwargs: Mapping[str, Any] | None = None`.
+This caller-owned mapping is expanded only into the corresponding AgentServer SDK constructor.
+Hosting does not inspect, validate, filter, or mutate its contents. Python and the SDK report invalid
+arguments, including collisions with arguments the framework already supplies; there is no custom merge policy.
+An SDK argument reaching this boundary does not mean every adapter path supports its behavior.
+
+Move SDK-specific top-level arguments into this mapping. For an application-owned `agent` and `asyncapi_spec`:
+
+```python
+from agent_framework_foundry_hosting import InvocationsHostServer
+
+# Before: InvocationsHostServer(agent=agent, asyncapi_spec_json=asyncapi_spec)
+server = InvocationsHostServer(
+    agent=agent,
+    agent_server_kwargs={"asyncapi_spec_json": asyncapi_spec},
+)
+```
+
+The constructors no longer accept arbitrary `**kwargs`. Removed top-level names, including `options=`
+and old parser/storage aliases, raise Python `TypeError` before construction, even when their value is `None`.
+Use the first-class parameters above for framework-supported configuration. Runtime model options,
+`client_kwargs`, and `function_invocation_kwargs` keep their existing meanings and validation.
+
 ## Toolbox tool approvals
 
 `FoundryToolbox` uses each discovered tool's `_meta.tool_configuration.require_approval` when
@@ -27,53 +144,61 @@ general-purpose MCP approval policy.
 
 ## Agent instances and factories
 
-`ResponsesHostServer` and `InvocationsHostServer` accept an agent instance or a zero-argument callable through the
-existing `agent` parameter. The callable may be synchronous or asynchronous, must return an object implementing
-`SupportsAgentRun`, and is invoked once for each request:
+`ResponsesHostServer` and `InvocationsHostServer` accept an agent instance or a callable through the
+`agent` parameter. The callable may be synchronous or asynchronous, must return an object implementing
+`SupportsAgentRun`, and is invoked once for each request as `factory(request=request)`.
+Factories must declare a required parameter named `request`, either keyword-only or positional-or-keyword.
+Additional parameters may have defaults, and the factory may ignore the request.
+Zero-argument factories and factories with only optional configuration parameters are rejected at construction;
+add a required `request` parameter when migrating them. Responses factories receive a
+`ResponsesRequest`, with trusted scope, current-turn input helpers, and translated caller options.
+They run before `prepare_options`; the hook can subsequently replace those options.
+Invocations factories receive the Starlette `Request` after parsing and option preparation.
+Factory exceptions are not retried with another call shape.
 
 ```python
 server = ResponsesHostServer(agent=create_agent)
 ```
 
+For request-aware construction:
+
+```python
+from agent_framework_foundry_hosting import ResponsesRequest, ResponsesHostServer
+
+
+async def create_agent(*, request: ResponsesRequest):
+    return await build_agent_for_user(request.scope.user_id)
+
+
+server = ResponsesHostServer(agent=create_agent)
+```
+
 Passing an instance reuses that object for the lifetime of the host. Pass a callable when the agent keeps mutable state
-outside `AgentSession`. The Responses host continues regular agents through its existing session store and workflow
-agents through its existing checkpoint store. A callable does not make arbitrary instance fields persistent; state
+outside `AgentSession`. Agent hosts continue agents through their session stores. A callable does not make arbitrary
+instance fields persistent; state
 needed by later requests must remain in the supported stores.
 
-### Hosting a `WorkflowAgent` is deprecated
+### Migrate `WorkflowAgent` hosting
 
-Hosting a `WorkflowAgent` (for example `workflow.as_agent()`) through `agent=` is deprecated and should be avoided, and
-both `ResponsesHostServer` and `InvocationsHostServer` emit a `DeprecationWarning` for it and log the same message at
-`WARNING` level, once per host. A `WorkflowAgent` is stateful: its workflow state stays in memory between runs, so one
-instance must never serve requests from different users or conversations. Host the workflow natively with `workflow=`
-and a request-aware factory instead; see
+`ResponsesHostServer` and `InvocationsHostServer` reject `WorkflowAgent` instances and factory results.
+Host the workflow natively with a request-aware factory returning a built `Workflow`, not `workflow.as_agent()`.
+Workflow hosts also reject factories returning agents. See
 [Native Responses workflows](#native-responses-workflows) and
 [Native Invocations workflows](#native-invocations-workflows):
 
 ```python
 # build_workflow(request) returns a freshly built Workflow for each request.
-server = ResponsesHostServer(workflow=build_workflow, parse_response=parse_response)
+server = ResponsesWorkflowHostServer(workflow=build_workflow, parse_input=parse_input)
 ```
 
-Until you migrate `ResponsesHostServer`, pass a callable that builds a new workflow, executors, and wrapped agents for
-every request, and never return a shared instance. Keep the workflow name and executor IDs stable so later requests can
-find and restore its checkpoints:
-
-```python
-def create_agent():
-    return build_workflow().as_agent()
-
-
-server = ResponsesHostServer(agent=create_agent)
-```
-
-`InvocationsHostServer` does not restore workflow checkpoints for agents, so a per-request factory only suits stateless,
-single-turn workflows there. Use `workflow=` for any workflow that pauses or spans turns.
+Build fresh workflows, executors, and agents for every request. Keep the workflow name and executor IDs stable so
+later requests can find and restore checkpoints. Existing wrapper history, context providers, and event semantics
+are not automatically unwrapped or migrated.
 
 ## Native Responses workflows
 
-Use `workflow=` to host a built `Workflow` directly, without `.as_agent()`.
-`parse_response` is required and returns exactly one typed start input or a
+Use `ResponsesWorkflowHostServer` to host a native `Workflow` through a request-aware factory, without `.as_agent()`.
+`parse_input` is required and returns exactly one typed start input or a
 complete batch of validated pending replies:
 
 ```python
@@ -81,8 +206,8 @@ from pydantic import BaseModel
 
 from agent_framework_foundry_hosting import (
     CheckpointStoreProvider,
-    HostedResponseRequest,
-    ResponsesHostServer,
+    ResponsesRequest,
+    ResponsesWorkflowHostServer,
     WorkflowTurn,
 )
 
@@ -91,32 +216,43 @@ class Ticket(BaseModel):
     text: str
 
 
-def build_workflow(request: HostedResponseRequest):
+def build_workflow(request: ResponsesRequest):
     return build_fresh_graph()  # stable workflow/executor IDs; fresh mutable resources
 
 
-async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[Ticket]:
+async def parse_input(request: ResponsesRequest) -> WorkflowTurn[Ticket]:
     items = await request.get_input_items()
     if any(item.get("type") in ("function_call_output", "mcp_approval_response") for item in items):
         return WorkflowTurn(responses=await request.get_workflow_responses())
     return WorkflowTurn(input=Ticket.model_validate_json(await request.get_input_text() or ""))
 
 
-ResponsesHostServer(
+ResponsesWorkflowHostServer(
     workflow=build_workflow,
-    parse_response=parse_response,
+    parse_input=parse_input,
     checkpoint_store_provider=CheckpointStoreProvider(
         allowed_checkpoint_types=[f"{Ticket.__module__}:{Ticket.__qualname__}"],
     ),
 )
 ```
 
-A direct built workflow is single-use. Use a request-aware sync or async
-factory for continuation, approval/user-input pauses, or background recovery.
+Every native workflow host requires a request-aware sync or async factory,
+including local one-shot execution, continuation, approval/user-input pauses, and background recovery.
 The factory must return a freshly built graph and freshly owned executors,
 agents, clients, context providers, and mutable tools; hosting rejects known
 sharing rather than cloning or unwrapping it. Workflow names and executor IDs
 must remain stable so the exact scoped checkpoint can be restored.
+
+Construct tool objects inside the workflow factory as the default. A module-level
+`@tool` decorator constructs one shared `FunctionTool`, including its invocation
+counters and configured lifetime limits. The current ownership guard rejects
+reusing that object across native workflow requests, even if its function is pure.
+
+A plain Python function can be defined outside the factory and wrapped with
+`tool(function)` inside it to create a fresh tool object for each workflow.
+This does not copy state captured by the function, bound objects, wrapped agents,
+or connections. Developers must manage that state and its isolation explicitly;
+moving only the wrapper construction does not make shared mutable resources safe.
 
 Native workflow state is scoped to the trusted platform user plus Foundry
 sandbox. Each outer stored `response.id` is bound to its exact MAF checkpoint,
@@ -136,15 +272,13 @@ provider continuation is rejected before output is paired or committed.
 
 For legacy message-input workflows, `response_input_messages(request)` converts
 only the current Responses turn to `list[Message]`. It does not load outer
-history or decode pending replies. Existing `agent=workflow.as_agent()` hosting
-remains for this beta with a once-per-host deprecation warning because wrapper
-context providers, history, event projection, and request-info translation are
-real semantics and are not silently unwrapped. See
-[Hosting a `WorkflowAgent` is deprecated](#hosting-a-workflowagent-is-deprecated)
-for the instance-sharing restriction.
+history or decode pending replies. `agent=workflow.as_agent()` is no longer supported.
+Wrapper context providers, history, event projection, and request-info translation are
+not silently unwrapped. See [Migrate `WorkflowAgent` hosting](#migrate-workflowagent-hosting).
 
-With `resilient_background=True`, the application must also enable the
-AgentServer resilient task subsystem. Host-owned checkpoint/output pairs
+With `resilient_background=True`, native workflows recover through the
+AgentServer resilient task subsystem; SDK-specific task initialization and persistence requirements still apply.
+Host-owned checkpoint/output pairs
 recover emitted output and usage without selecting newer unpaired workflow
 state. This is not an exactly-once guarantee for external tools: make
 side-effecting operations idempotent. Legacy unscoped workflow state is not
@@ -175,21 +309,21 @@ MAF session and approval state is saved. The host's `history_source` independent
 
 | `history_source` | What the model receives | Inner storage on caller `store=True` |
 | --- | --- | --- |
-| `"agent_server"` (default) | Prior outer Responses transcript plus new input | Disabled. Storing clients run with `store=False`; non-storing clients receive no storage option. |
-| `"service"` | New input only | Enabled. The service-issued `AgentSession.service_session_id` is saved privately under the outer response ID or conversation. |
-| `"agent"` | New input only; the agent chooses how to load history | Developer-owned: `HistoryProvider` with `default_options={"store": False}` loads from host-persisted `AgentSession.state`, **or** a storing client with `default_options={"store": True}` uses downstream service history. The existing behavior is unchanged. |
+| `"host_managed"` (default) | Prior outer Responses transcript plus new input | Disabled. Storing clients run with `store=False`; non-storing clients receive no storage option. |
+| `"inference_service"` | New input only | Enabled. The service-issued `AgentSession.service_session_id` is saved privately under the outer response ID or conversation. |
+| `"agent_managed"` | New input only; the agent chooses how to load history | Developer-owned: `HistoryProvider` with `default_options={"store": False}` loads from host-persisted `AgentSession.state`, **or** a storing client with `default_options={"store": True}` uses downstream service history. The existing behavior is unchanged. |
 
 For example, suppose the first stored response answers **"My name is Ada"**, then the caller sends
 **"What is my name?"** with `previous_response_id` set to that response's **outer** `response.id`:
 
-- **`"agent_server"`:** The model receives the first user input, the first assistant output, and the new
+- **`"host_managed"`:** The model receives the first user input, the first assistant output, and the new
   question. The host reconstructs that transcript from the Responses store; the inner service
   does not retain it.
-- **`"service"`:** The model receives only the new question as *request input*, along with the
+- **`"inference_service"`:** The model receives only the new question as *request input*, along with the
   private `AgentSession.service_session_id` from the first turn. The downstream service retrieves
   its own transcript. A second branch from the first response cannot safely reuse that service
   thread and is rejected.
-- **`"agent"`:** The model receives the new question. With `InMemoryHistoryProvider` and agent
+- **`"agent_managed"`:** The model receives the new question. With `InMemoryHistoryProvider` and agent
   default `store=False`, the provider adds earlier messages from the saved MAF session; with agent
   default `store=True`, the downstream service owns the prior transcript instead.
 
@@ -202,39 +336,39 @@ Choose **one** mode when constructing each host; do not reuse the same `Agent` i
 For example, to use downstream service history:
 
 ```python
-server = ResponsesHostServer(agent=agent, history_source="service")
+server = ResponsesHostServer(agent=agent, history_source="inference_service")
 ```
 
-Omitting `history_source` selects `"agent_server"`. To use a provider in `"agent"` mode,
+Omitting `history_source` selects `"host_managed"`. To use a provider in `"agent_managed"` mode,
 configure that agent with `store=False` as shown in
 [agent_history.py](../../samples/04-hosting/foundry-hosted-agents/responses/basic/agent_history.py).
 
-`"agent_server"` and `"service"` reject a load-enabled `HistoryProvider` alongside their own history source;
-`"agent_server"` also rejects default downstream continuation IDs. Those modes require a `RawAgent` with a client declaring
-`STORES_BY_DEFAULT`; `"service"` requires a storing client that returns a private continuation ID. Hosting may
+`"host_managed"` and `"inference_service"` reject a load-enabled `HistoryProvider` alongside their own history source;
+`"host_managed"` also rejects default downstream continuation IDs. Those modes require a `RawAgent` with a client declaring
+`STORES_BY_DEFAULT`; `"inference_service"` requires a storing client that returns a private continuation ID. Hosting may
 add a transient in-memory provider to support function-call loops, but **never edits `agent.default_options`**.
 The host owns the provided agent instance and any providers it adds; do not reuse it with another host. A factory
 creates an independent agent for each request.
 
-The existing `history_source="agent"` still preserves the agent's own provider **or** service storage defaults
+The existing `history_source="agent_managed"` still preserves the agent's own provider **or** service storage defaults
 on stored requests, including `default_options={"store": True}`. Custom `SupportsAgentRun`
 implementations can continue using that mode for stored requests; it is not a forced-provider mode.
-The outer storage-backend constructor argument is now `response_store=`. The old `store=` backend
-argument remains an alias with its own once-per-host deprecation warning; supplying both is an error.
-Neither constructor argument sets the caller's per-request `store` flag.
+The outer storage-backend constructor argument is `response_store=`. The old `store=` backend
+argument is rejected, including `None` and calls that also supply `response_store=`.
+The backend selector does not set the caller's per-request `store` flag.
 
 `store=False` returns a one-shot response without **writing** host-managed session, conversation, or approval state;
 it also disables downstream service storage regardless of the developer's defaults. Unsafe custom agents, external
 history providers that store messages, and fixed downstream continuation defaults fail with an actionable error
 instead of silently persisting. An unstored service-mode request cannot resume a private service thread.
-`history_source="agent"` also rejects an unstored continuation if its restored session uses downstream storage. Application-owned
+`history_source="agent_managed"` also rejects an unstored continuation if its restored session uses downstream storage. Application-owned
 tools and external services may still have their own side effects. `background=True` requires outer `store=True`.
 
 Outer background work always uses the caller-visible `response.id` for polling; it does not enable provider-native
-background automatically. `background_source="agent_server"` (default) uses only the outer background worker.
-`background_source="provider"` is a separate opt-in for `history_source="service"` with a storing
+background automatically. `background_source="host_managed"` (default) uses only the outer background worker.
+`background_source="inference_service"` is a separate opt-in for `history_source="inference_service"` with a storing
 Responses client. Its private continuation token is saved under the outer ID and never returned to the caller.
-Use `ResponsesServerOptions(resilient_background=True)` to permit recovery from a **saved** token; a crash before
+Use `resilient_background=True` to permit recovery from a **saved** token; a crash before
 the token is saved cannot safely restart the inner job. Completed polling output, including local function calls,
 results, and usage, is saved together with the next token in the private response-ID snapshot before emission.
 Outer output checkpoints record which saved batches have been emitted, so recovery restores their usage and
@@ -247,18 +381,19 @@ another background response and saves its next token. A crash after a local tool
 next token is saved can still repeat the tool on recovery; use idempotent tools or avoid provider background
 for side-effecting local tools. This mechanism does not provide exactly-once tool execution.
 Provider background and steering cannot be combined.
-Regular agent runs without this opt-in are not crash-replayable. **Steering is temporarily unavailable:**
-`steerable_conversations=True` fails during host construction, before enabling the process-wide TaskManager.
+Regular agent runs without this opt-in are not crash-replayable. **Steering is unavailable:**
+`steerable_conversations` and the upstream `options` bag are not host parameters; framework-generated SDK
+options keep steering disabled.
 The current AgentServer SDK retains unbounded futures for rejected turns when its steering queue fills. Do not
-use a queue-length precheck: another worker can append before it. The guard can be removed only after
-[Azure/azure-sdk-for-python#49233](https://github.com/Azure/azure-sdk-for-python/pull/49233) ships in an
-official `azure-ai-agentserver-core` wheel, the minimum dependency and `uv.lock` are updated, and a
-concurrent queue-overflow regression proves rejected turns leave no pending futures. No future SDK
-version is assumed. Non-steerable background polling and legacy `WorkflowAgent` dispatch are unchanged.
+use a queue-length precheck: another worker can append before it. Future steering support requires an
+official `azure-ai-agentserver-core` wheel containing
+[Azure/azure-sdk-for-python#49233](https://github.com/Azure/azure-sdk-for-python/pull/49233), updated minimum
+dependencies and `uv.lock`, and a concurrent queue-overflow regression proving rejected turns leave no pending futures. No future SDK
+version is assumed. Non-steerable agent background polling is unchanged.
 
 Native CreateResponse generation fields become MAF runtime options (notably `max_output_tokens` -> `max_tokens` and
 `parallel_tool_calls` -> `allow_multiple_tool_calls`). Flattened OpenAI `extra_body` fields overlay translated keys
-**last**. A sync or async `prepare_options(request: HostedResponseRequest, options: dict)` hook can remove or replace
+**last**. A sync or async `prepare_options(request: ResponsesRequest, options: dict)` hook can remove or replace
 *caller* options before `Agent.run`; removed values fall back to the developer's unchanged agent defaults. Hosting
 filters caller platform IDs and private continuation/storage controls from model options and rejects attempts to
 reintroduce them through the hook. Nested `extra_body` transport overrides are rejected for both caller
@@ -360,7 +495,7 @@ conversation or response ID.
 | MAF `AgentSession.session_id` / `service_session_id` | Inner agent state and optional downstream service continuation; neither identifies the Foundry sandbox. |
 | Workflow checkpoint ID | Inner workflow state within a checkpoint context, not a Foundry session ID. |
 
-The default hosted MAF session, checkpoint, and approval stores use a `v2` namespace
+The default hosted MAF session and checkpoint stores use a `v2` namespace
 derived from the hashed platform identity, with `user_isolation=True` and an explicit
 platform `call_id` on each item operation. Checkpoint context IDs are hashed as well.
 The same user in two hosted sandboxes cannot read the other's default MAF state.
@@ -390,7 +525,7 @@ Invocations sessions use the separate `invocation_sessions` store.
 Each stored agent turn saves a snapshot under its **own** outer `response.id`. For a named `conversation`, a
 separate mutable conversation-head key is also updated. Loaded MAF sessions use PR1's ETag condition for that key:
 a competing turn that advanced the head causes a visible conflict rather than a stale overwrite. A superseded
-steered turn saves its response snapshot but skips the head update. In `"service"` or `"agent"` history mode, a
+steered turn saves its response snapshot but skips the head update. In `"inference_service"` or `"agent_managed"` history mode, a
 stored named-conversation turn first claims that head with a conditional write *before* calling the inner agent.
 Another request that read the old head loses the CAS; one that reads the claim fails before touching the provider.
 The claim is cleared when the winning turn successfully commits the new head. If a dispatched turn fails or is
@@ -422,7 +557,7 @@ Locally, the platform session ID is used unchanged.
 ### Invocations agent requests and wire compatibility
 
 By default, `POST /invocations` accepts `{"message": "Hi", "options": {}, "stream": false}`. Applications can supply
-a sync or async `parse_request(request)` returning a typed `InvocationRun(messages, options, stream)` to accept their
+a sync or async `parse_input(request)` returning a typed `InvocationRun(messages, options, stream)` to accept their
 own JSON shape and MAF `Message` inputs. A sync or async `prepare_options(request, options)` hook can filter or replace
 a **copy** of this turn's caller options without changing the agent's `default_options`. It must return a mapping
 with string keys. The host rejects reserved platform/session fields, `store`, `extra_body`, and private continuation
@@ -470,26 +605,53 @@ applications should use separate state roots or store providers.
 
 ### Workflow checkpoints
 
-`ResponsesHostServer` persists workflow checkpoints durably. By default, it uses the
-`FoundryCheckpointStore`, backed by Foundry storage when hosted and file-based storage
+`ResponsesWorkflowHostServer` and `InvocationsWorkflowHostServer` persist native workflow checkpoints.
+By default, they use the `FoundryCheckpointStore`, backed by Foundry storage when hosted and file-based storage
 locally. Stored checkpoints are scoped under `checkpoints`.
 
 ### Function approvals
 
-`ResponsesHostServer` persists function approvals durably. By default, it uses the
-`FoundryFunctionApprovalStore`, backed by Foundry storage when hosted and file-based
-storage locally. Stored approvals are scoped under `function_approvals`.
+The native agent tracks pending approvals, validates decisions, and consumes them
+in its `AgentSession`. Hosting persists and restores the complete native session
+through `agent_session_store_provider`; it does not maintain a second approval store.
+An approval reply must continue the issuing session through `previous_response_id`
+or a named conversation. The wire approval ID alone does not establish authority.
+
+Custom agents must establish matching native pending state by the end of a run
+that emits an approval request. Hosting rejects unmatched or unrecorded requests
+before publishing an approval item; it does not register approvals on an agent's behalf.
+
+AgentServer requires its own wire-ID format. The adapter stores only native-ID
+and session-ID correlation in the response item's internal metadata, which the SDK
+removes from client-facing responses. It resolves that metadata through the scoped
+response provider, independently of model-history limits, then delegates binding
+and consumption to Core. Native workflow authority remains in its exact checkpoint.
+
+Remove `function_approval_store_provider` and imports of `FunctionApprovalStore`,
+`FoundryFunctionApprovalStore`, and `FunctionApprovalStoreProvider` when upgrading.
+Old approval-store records are not migrated. Start a fresh conversation rather
+than resuming approvals emitted before this migration.
+
+Approval output waits for native finalization, and the session is saved before
+an approval request is published. This preserves Core's existing session-level
+guarantees, not durable single-consumption across
+concurrent workers or independently restored old snapshots. Stronger session-store
+coordination is separate work. Incomplete hosted MCP batches still need the SDK
+preflight support tracked by #9537 to return HTTP 400 before streaming starts;
+this migration does not claim that behavior.
 
 ## Native Invocations workflows
 
 Host a native workflow with an explicit application parser rather than wrapping it
-with `workflow.as_agent()`, which is deprecated for hosting (see
-[Hosting a `WorkflowAgent` is deprecated](#hosting-a-workflowagent-is-deprecated)):
+with `workflow.as_agent()`, which agent hosts reject (see
+[Migrate `WorkflowAgent` hosting](#migrate-workflowagent-hosting)):
 
 ```python
-server = InvocationsHostServer(
+from agent_framework_foundry_hosting import CheckpointStoreProvider, InvocationsWorkflowHostServer
+
+server = InvocationsWorkflowHostServer(
     workflow=build_workflow,
-    parse_request=parse_request,
+    parse_input=parse_input,
     checkpoint_store_provider=CheckpointStoreProvider(
         allowed_checkpoint_types=["my_app:Ticket", "my_app:TicketState"]
     ),
@@ -506,8 +668,8 @@ validates the entire reply batch against its exact pending checkpoint.
 A sync/async `build_workflow(request)` factory returns a **built**, fresh `Workflow`,
 with stable name, executor IDs and graph identity. Build fresh executors, agents,
 clients, providers and tools for each request; allocation must not execute tools or
-workflow side effects. Hosted workflows require a factory. Local built instances
-are single-use and remain application-owned. Factory-owned agents are entered and
+workflow side effects. Both hosted and local workflows require a factory; built instances
+are rejected at construction. Factory-owned agents are entered and
 closed per turn; applications must explicitly own external credentials/providers
 through their resource-managing agent subclasses. Do not configure another
 checkpoint store on `WorkflowBuilder` or share mutable graphs between requests.
@@ -555,9 +717,9 @@ If a connection drops after commit, retrying the same trusted user/sandbox/call 
 replays that response's complete stored snapshot without executing the workflow or
 replacing its head. A different call ID starts normal turn validation and cannot
 retrieve that snapshot.
-Local callers may pass one built workflow for a one-shot non-pausing run. Any
-workflow that can pause for external input must use a request-aware factory so a
-fresh graph can restore and consume the durable reply on the next request.
+Local callers also use a request-aware factory, including one-shot non-pausing
+runs. Each request receives a fresh graph; a continuation restores and consumes
+its durable reply from the exact scoped checkpoint.
 After a newer Invocations head is durably committed, the host reclaims completed
 ancestor response records and checkpoints oldest-first, retaining only current,
 pending, active or blocked authority. Cleanup failures are logged and retried by

@@ -23,13 +23,13 @@ from types import TracebackType
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient, FoundryToolbox
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework_foundry_hosting import ResponsesHostServer, ResponsesRequest
 from azure.ai.agentserver.core import AgentConfig, get_request_context
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
 
 
-def create_agent() -> Agent:
+def create_agent(*, request: ResponsesRequest) -> Agent:
     """Keep skill caches, credentials and the MCP lifecycle request-owned."""
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
@@ -71,7 +71,7 @@ def create_agent() -> Agent:
 
 async def main() -> None:
     load_dotenv()
-    server = ResponsesHostServer(agent=create_agent, history_source="agent_server")
+    server = ResponsesHostServer(agent=create_agent, history_source="host_managed")
     await server.run_async()
 
 

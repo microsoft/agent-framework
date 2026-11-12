@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import Any, cast
 from unittest.mock import patch
@@ -36,18 +35,19 @@ from agent_framework import (
 )
 from agent_framework._workflows._agent_utils import prepare_executor_run_kwargs
 from agent_framework._workflows._const import RESOLVED_WORKFLOW_RUN_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
-from azure.ai.agentserver.responses import FileResponseStore, InMemoryResponseProvider, ResponsesServerOptions
+from azure.ai.agentserver.responses import FileResponseStore, InMemoryResponseProvider
 from azure.ai.agentserver.responses._id_generator import IdGenerator
 from pydantic import BaseModel
 
 from agent_framework_foundry_hosting import (
     CheckpointStoreProvider,
     FoundryRequestScope,
-    HostedResponseRequest,
     ResponsesHostServer,
+    ResponsesRequest,
+    ResponsesWorkflowHostServer,
     WorkflowTurn,
 )
-from agent_framework_foundry_hosting._workflow_state import FoundryWorkflowBindingStore, HostedWorkflowRun
+from agent_framework_foundry_hosting._shared import FoundryWorkflowBindingStore, HostedWorkflowRun
 
 
 class _Ticket(BaseModel):
@@ -200,15 +200,15 @@ def _progress_factory(
     started: asyncio.Event,
     release: asyncio.Event,
     stopped: asyncio.Event,
-) -> Callable[[HostedResponseRequest], Workflow]:
-    def create(request: HostedResponseRequest) -> Workflow:
+) -> Callable[[ResponsesRequest], Workflow]:
+    def create(request: ResponsesRequest) -> Workflow:
         progress = _Progress(started, release, stopped)
         return WorkflowBuilder(name="progress", start_executor=progress).add_edge(progress, progress).build()
 
     return create
 
 
-async def _parse_count(request: HostedResponseRequest) -> WorkflowTurn[int]:
+async def _parse_count(request: ResponsesRequest) -> WorkflowTurn[int]:
     return WorkflowTurn(input=int(await request.get_input_text() or ""))
 
 
@@ -225,14 +225,14 @@ def _build(executor: Executor | None = None, *, name: str = "native-responses") 
     return WorkflowBuilder(name=name, start_executor=executor or _TypedCounter()).build()
 
 
-async def _parse(request: HostedResponseRequest) -> WorkflowTurn[Any]:
+async def _parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
     items = await request.get_input_items()
     if any(item.get("type") in ("function_call_output", "mcp_approval_response") for item in items):
         return WorkflowTurn(responses=await request.get_workflow_responses())
     return WorkflowTurn(input=_Ticket.model_validate_json(await request.get_input_text() or ""))
 
 
-async def _parse_text(request: HostedResponseRequest) -> WorkflowTurn[Any]:
+async def _parse_text(request: ResponsesRequest) -> WorkflowTurn[Any]:
     items = await request.get_input_items()
     if any(item.get("type") in ("function_call_output", "mcp_approval_response") for item in items):
         return WorkflowTurn(responses=await request.get_workflow_responses())
@@ -245,21 +245,21 @@ def _server(
     parser: Callable[..., Any] = _parse,
     response_store: Any = None,
     **kwargs: Any,
-) -> ResponsesHostServer:
-    return ResponsesHostServer(
+) -> ResponsesWorkflowHostServer:
+    return ResponsesWorkflowHostServer(
         workflow=source or (lambda request: _build()),
-        parse_response=parser,
+        parse_input=parser,
         response_store=response_store or InMemoryResponseProvider(),
         checkpoint_store_provider=CheckpointStoreProvider(
             allowed_checkpoint_types=[f"{_Ticket.__module__}:{_Ticket.__qualname__}"],
         ),
-        configure_observability=None,
+        agent_server_kwargs={"configure_observability": None},
         **kwargs,
     )
 
 
 async def _post(
-    server: ResponsesHostServer,
+    server: ResponsesWorkflowHostServer | ResponsesHostServer,
     input: Any,
     *,
     sandbox: str = "sandbox",
@@ -311,7 +311,7 @@ async def test_typed_native_turns_use_fresh_graphs_and_exact_state() -> None:
     graphs: list[Workflow] = []
     scopes: list[FoundryRequestScope] = []
 
-    def build(request: HostedResponseRequest) -> Workflow:
+    def build(request: ResponsesRequest) -> Workflow:
         scopes.append(request.scope)
         graph = _build()
         graphs.append(graph)
@@ -345,11 +345,11 @@ async def test_typed_native_turns_use_fresh_graphs_and_exact_state() -> None:
 
 
 async def test_default_checkpoint_provider_rejects_unallowlisted_typed_input_before_claim() -> None:
-    server = ResponsesHostServer(
+    server = ResponsesWorkflowHostServer(
         workflow=lambda request: _build(),
-        parse_response=_parse,
+        parse_input=_parse,
         response_store=InMemoryResponseProvider(),
-        configure_observability=None,
+        agent_server_kwargs={"configure_observability": None},
     )
 
     response = await _post(server, '{"text":"typed"}')
@@ -457,8 +457,8 @@ async def test_approval_wire_ids_bind_only_to_exact_pending_checkpoint() -> None
 
 async def test_store_false_has_no_durable_native_state_and_cannot_pause() -> None:
     with (
-        patch("agent_framework_foundry_hosting._workflow_state.FoundryStateStore.get_or_create") as bindings,
-        patch("agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create") as checkpoints,
+        patch("agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create") as bindings,
+        patch("agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create") as checkpoints,
     ):
         response = await _post(_server(), '{"text":"one"}', store=False)
         assert response["status"] == "completed", response
@@ -471,19 +471,60 @@ async def test_store_false_has_no_durable_native_state_and_cannot_pause() -> Non
 
 async def test_unsupported_shared_workflow_is_not_cloned_or_unwrapped() -> None:
     graph = _build()
-    server = _server(graph)
+    with pytest.raises(TypeError, match="request-aware factory"):
+        _server(graph)
+    server = _server(lambda _: graph)
     first = await _post(server, '{"text":"one"}', store=False)
     assert first["status"] == "completed", first
     second = await _post(server, '{"text":"two"}', store=False)
     assert second["status"] == "failed"
-    with pytest.raises(TypeError, match="parse_response"):
-        ResponsesHostServer(workflow=_build())
-    with pytest.raises(ValueError, match="exactly one"):
-        ResponsesHostServer()
-    with pytest.raises(ValueError, match="request-aware factory"):
-        ResponsesHostServer(
-            workflow=_build(), parse_response=_parse, options=ResponsesServerOptions(resilient_background=True)
+    with pytest.raises(TypeError, match="parse_input"):
+        cast(Any, ResponsesWorkflowHostServer)(workflow=lambda _: _build())
+    with pytest.raises(TypeError, match="agent"):
+        cast(Any, ResponsesHostServer)()
+    with pytest.raises(TypeError, match="request-aware factory"):
+        ResponsesWorkflowHostServer(
+            workflow=cast(Any, _build()),
+            parse_input=_parse,
+            resilient_background=True,
         )
+
+
+async def test_new_workflow_wrapper_does_not_hide_shared_builder_executors() -> None:
+    builder = WorkflowBuilder(name="shared-builder", start_executor=_TypedCounter())
+    graphs: list[Workflow] = []
+
+    def create(request: ResponsesRequest) -> Workflow:
+        graph = builder.build()
+        graphs.append(graph)
+        return graph
+
+    server = _server(create)
+    first = await _post(server, '{"text":"one"}', store=False)
+    second = await _post(server, '{"text":"two"}', store=False)
+    assert first["status"] == "completed", first
+    assert second["status"] == "failed"
+    assert not second["output"]
+    assert graphs[0] is not graphs[1]
+    assert graphs[0].get_start_executor() is graphs[1].get_start_executor()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_workflow_host_prefix_preserves_create_and_retrieval_routes(stream: bool) -> None:
+    server = _server(prefix="api/v1")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        created = await client.post("/api/v1/responses", json={"input": '{"text":"prefixed"}', "stream": stream})
+        assert created.status_code == 200
+        if stream:
+            events = [json.loads(line[6:]) for line in created.text.splitlines() if line.startswith("data: {")]
+            result = next(event["response"] for event in events if event["type"] == "response.completed")
+        else:
+            result = created.json()
+        assert result["status"] == "completed", result
+        assert result["output"][0]["output"] == {"text": "prefixed", "count": 1}
+        stored = await client.get(f"/api/v1/responses/{result['id']}")
+        assert stored.status_code == 200
+        assert stored.json()["output"] == result["output"]
 
 
 async def test_pair_write_failure_withholds_tentative_approval_output() -> None:
@@ -511,7 +552,7 @@ async def test_private_executor_error_never_reaches_wire_or_native_logs(caplog: 
         async def start(self, message: str, ctx: WorkflowContext[str, str]) -> None:
             raise RuntimeError("private-provider-token at /srv/private/path")
 
-    caplog.set_level(logging.ERROR, logger="agent_framework_foundry_hosting._workflow_responses")
+    caplog.set_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses_workflow")
     response = await _post(_server(lambda request: _build(_Fail()), parser=_parse_text), "fail")
     assert response["status"] == "failed"
     assert "private-provider-token" not in json.dumps(response)
@@ -609,7 +650,7 @@ async def test_native_agent_executor_applies_options_without_mutating_defaults_o
     lifecycle: list[str] = []
     agents: list[Agent[Any]] = []
 
-    def create(request: HostedResponseRequest) -> Workflow:
+    def create(request: ResponsesRequest) -> Workflow:
         agent = Agent(
             client=_RecordingClient(calls, lifecycle),
             name="model",
@@ -618,7 +659,7 @@ async def test_native_agent_executor_applies_options_without_mutating_defaults_o
         agents.append(agent)
         return _build(AgentExecutor(agent, id="model"))
 
-    async def parse(request: HostedResponseRequest) -> WorkflowTurn[Any]:
+    async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", await request.get_input_text() or "")])
 
     server = _server(create, parser=parse)
@@ -641,7 +682,7 @@ async def test_registry_backed_executor_gets_native_options_and_resource_lifecyc
     calls: list[dict[str, Any]] = []
     lifecycle: list[str] = []
 
-    def create(request: HostedResponseRequest) -> Workflow:
+    def create(request: ResponsesRequest) -> Workflow:
         agent = Agent(
             client=_RecordingClient(calls, lifecycle),
             name="registered",
@@ -663,11 +704,11 @@ async def test_request_owned_resources_close_when_pre_execution_preparation_fail
     calls: list[dict[str, Any]] = []
     lifecycle: list[str] = []
 
-    def create(request: HostedResponseRequest) -> Workflow:
+    def create(request: ResponsesRequest) -> Workflow:
         agent = Agent(client=_RecordingClient(calls, lifecycle), name="owned")
         return _build(AgentExecutor(agent, id="owned"))
 
-    async def parse(request: HostedResponseRequest) -> WorkflowTurn[Any]:
+    async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         raise ValueError("malformed typed input")
 
     kwargs = {"previous_response_id": IdGenerator.new_response_id()} if failure == "continuation" else {}
@@ -682,11 +723,11 @@ async def test_native_provider_that_ignores_store_false_cannot_commit_or_leak_to
     calls: list[dict[str, Any]] = []
     lifecycle: list[str] = []
 
-    def create(request: HostedResponseRequest) -> Workflow:
+    def create(request: ResponsesRequest) -> Workflow:
         agent = Agent(client=_RecordingClient(calls, lifecycle, violates_store=True), name="model")
         return _build(AgentExecutor(agent, id="model"))
 
-    async def parse(request: HostedResponseRequest) -> WorkflowTurn[Any]:
+    async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", "test")])
 
     response = await _post(_server(create, parser=parse), "one", store=False)
@@ -700,10 +741,10 @@ async def test_native_provider_that_ignores_store_false_cannot_commit_or_leak_to
 async def test_bare_raw_agent_fails_before_dispatch_instead_of_pretending_to_apply_options() -> None:
     calls: list[dict[str, Any]] = []
 
-    def create(request: HostedResponseRequest) -> Workflow:
+    def create(request: ResponsesRequest) -> Workflow:
         return _build(AgentExecutor(RawAgent(client=_RecordingClient(calls, []), name="raw"), id="raw"))
 
-    async def parse(request: HostedResponseRequest) -> WorkflowTurn[Any]:
+    async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", "test")])
 
     response = await _post(_server(create, parser=parse), "one", temperature=0.4)
@@ -717,7 +758,7 @@ async def test_raw_agent_fresh_factory_matches_explicit_defaults(stored: bool, s
     calls: list[dict[str, Any]] = []
     lifecycle: list[str] = []
 
-    def create(request: HostedResponseRequest) -> Workflow:
+    def create(request: ResponsesRequest) -> Workflow:
         agent = RawAgent(
             client=_RecordingClient(calls, lifecycle),
             name="raw",
@@ -725,7 +766,7 @@ async def test_raw_agent_fresh_factory_matches_explicit_defaults(stored: bool, s
         )
         return _build(AgentExecutor(agent, id="raw"))
 
-    async def parse(request: HostedResponseRequest) -> WorkflowTurn[Any]:
+    async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", await request.get_input_text() or "")])
 
     server = _server(create, parser=parse)
@@ -761,7 +802,7 @@ async def test_raw_agent_unverified_storage_defaults_fail_before_claim(default_s
     calls: list[dict[str, Any]] = []
     lifecycle: list[str] = []
 
-    def create(request: HostedResponseRequest) -> Workflow:
+    def create(request: ResponsesRequest) -> Workflow:
         options: ChatOptions[Any] = {}
         if default_store is not None:
             options["store"] = default_store
@@ -776,7 +817,7 @@ async def test_raw_agent_unverified_storage_defaults_fail_before_claim(default_s
             )
         )
 
-    async def parse(request: HostedResponseRequest) -> WorkflowTurn[Any]:
+    async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", "hello")])
 
     response = await _post(_server(create, parser=parse), "hello")
@@ -789,7 +830,7 @@ async def test_raw_agent_private_continuation_violation_never_publishes_output(s
     calls: list[dict[str, Any]] = []
     lifecycle: list[str] = []
 
-    def create(request: HostedResponseRequest) -> Workflow:
+    def create(request: ResponsesRequest) -> Workflow:
         return _build(
             AgentExecutor(
                 RawAgent(
@@ -801,7 +842,7 @@ async def test_raw_agent_private_continuation_violation_never_publishes_output(s
             )
         )
 
-    async def parse(request: HostedResponseRequest) -> WorkflowTurn[Any]:
+    async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", "hello")])
 
     response = await _post(_server(create, parser=parse), "hello", store=stored)
@@ -885,7 +926,7 @@ async def test_real_sdk_raw_agent_cancel_closes_request_owned_client_in_trusted_
             cleanup_calls.append(get_request_context().call_id)
             await super().__aexit__(*args)
 
-    def create(request: HostedResponseRequest) -> Workflow:
+    def create(request: ResponsesRequest) -> Workflow:
         agent = RawAgent(
             client=GatedClient([], lifecycle),
             name="raw",
@@ -893,7 +934,7 @@ async def test_real_sdk_raw_agent_cancel_closes_request_owned_client_in_trusted_
         )
         return _build(AgentExecutor(agent, id="raw"))
 
-    async def parse(request: HostedResponseRequest) -> WorkflowTurn[Any]:
+    async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", "wait")])
 
     server = _server(create, parser=parse)
@@ -934,7 +975,7 @@ async def test_real_sdk_foreground_disconnect_closes_native_raw_agent_and_blocks
 
             return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
 
-    def create(request: HostedResponseRequest) -> Workflow:
+    def create(request: ResponsesRequest) -> Workflow:
         return _build(
             AgentExecutor(
                 RawAgent(
@@ -946,7 +987,7 @@ async def test_real_sdk_foreground_disconnect_closes_native_raw_agent_and_blocks
             )
         )
 
-    async def parse(request: HostedResponseRequest) -> WorkflowTurn[Any]:
+    async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", "wait")])
 
     server = _server(create, parser=parse)
@@ -1011,8 +1052,13 @@ async def test_real_sdk_shutdown_and_restart_recovers_exact_background_output(
 
     provider = FailingCheckpointStore(storage_dir=tmp_path / "responses")
     factory = _progress_factory(started, release, stopped)
-    options = ResponsesServerOptions(resilient_background=True, shutdown_grace_period_seconds=1)
-    server = _server(factory, parser=_parse_count, response_store=provider, options=options)
+    server = _server(
+        factory,
+        parser=_parse_count,
+        response_store=provider,
+        resilient_background=True,
+        shutdown_grace_period_seconds=1,
+    )
     paired = asyncio.Event()
     original = HostedWorkflowRun.stage
 
@@ -1049,7 +1095,8 @@ async def test_real_sdk_shutdown_and_restart_recovers_exact_background_output(
             factory,
             parser=_parse_count,
             response_store=provider,
-            options=ResponsesServerOptions(resilient_background=True, shutdown_grace_period_seconds=1),
+            resilient_background=True,
+            shutdown_grace_period_seconds=1,
         )
         async with (
             restarted.router.lifespan_context(restarted),
@@ -1062,34 +1109,3 @@ async def test_real_sdk_shutdown_and_restart_recovers_exact_background_output(
     finally:
         release.set()
         set_resilient_tasks_enabled(enabled)
-
-
-async def test_legacy_wrapper_warns_once_per_host_and_keeps_message_semantics(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    class _Legacy(Executor):
-        def __init__(self) -> None:
-            super().__init__("legacy")
-
-        @handler
-        async def start(self, message: list[Message], ctx: WorkflowContext[str, str]) -> None:
-            await ctx.yield_output(message[-1].text)
-
-    def create() -> Any:
-        return _build(_Legacy()).as_agent()
-
-    server = ResponsesHostServer(agent=create, response_store=InMemoryResponseProvider(), configure_observability=None)
-    with warnings.catch_warnings(record=True) as captured:
-        warnings.simplefilter("always", DeprecationWarning)
-        first = await _post(server, "legacy")
-        second = await _post(server, "again", previous_response_id=first["id"])
-    assert first["status"] == second["status"] == "completed"
-    assert _texts(first) == ["legacy"]
-    assert _texts(second) == ["again"]
-    assert sum("Hosting WorkflowAgent" in str(item.message) for item in captured) == 1
-    message = next(str(item.message) for item in captured if "Hosting WorkflowAgent" in str(item.message))
-    assert "should be avoided" in message
-    assert "stateful" in message
-    assert "parse_response" in message
-    logged = [record for record in caplog.records if "DEPRECATION: Hosting WorkflowAgent" in record.getMessage()]
-    assert [record.levelno for record in logged] == [logging.WARNING]

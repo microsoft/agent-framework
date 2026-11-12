@@ -1,26 +1,32 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Expose Foundry agent hosts, native workflow hosts, and scoped storage integrations."""
+
+from __future__ import annotations
+
 import importlib.metadata
 from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
-    from ._invocations import InvocationsHostServer
-    from ._request import HostedResponseRequest, InvocationRun, WorkflowTurn, response_input_messages
-    from ._responses import ResponsesHostServer
+    from ._invocations_agent import InvocationsHostServer
+    from ._invocations_workflow import InvocationsWorkflowHostServer
+    from ._responses_agent import ResponsesHostServer
+    from ._responses_workflow import ResponsesWorkflowHostServer
     from ._scope import FoundryRequestScope
-    from ._state_store import (
+    from ._shared import (
         AgentSessionStoreProvider,
         CheckpointStoreProvider,
         ContextScopedStoreProvider,
         FoundryAgentSessionStore,
         FoundryCheckpointStore,
-        FoundryFunctionApprovalStore,
-        FunctionApprovalStore,
-        FunctionApprovalStoreProvider,
+        InvocationRun,
+        ResponsesRequest,
         StoreProvider,
+        WorkflowSource,
+        WorkflowTurn,
+        response_input_messages,
     )
     from ._toolbox import FoundryToolbox
-    from ._workflow_source import WorkflowSource
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -28,24 +34,23 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 
 _LAZY_EXPORTS: Final[dict[str, str]] = {
-    "AgentSessionStoreProvider": "._state_store",
-    "CheckpointStoreProvider": "._state_store",
-    "ContextScopedStoreProvider": "._state_store",
-    "FoundryAgentSessionStore": "._state_store",
-    "FoundryCheckpointStore": "._state_store",
-    "FoundryFunctionApprovalStore": "._state_store",
+    "AgentSessionStoreProvider": "._shared",
+    "CheckpointStoreProvider": "._shared",
+    "ContextScopedStoreProvider": "._shared",
+    "FoundryAgentSessionStore": "._shared",
+    "FoundryCheckpointStore": "._shared",
     "FoundryRequestScope": "._scope",
     "FoundryToolbox": "._toolbox",
-    "HostedResponseRequest": "._request",
-    "InvocationRun": "._request",
-    "FunctionApprovalStore": "._state_store",
-    "FunctionApprovalStoreProvider": "._state_store",
-    "InvocationsHostServer": "._invocations",
-    "ResponsesHostServer": "._responses",
-    "StoreProvider": "._state_store",
-    "WorkflowSource": "._workflow_source",
-    "WorkflowTurn": "._request",
-    "response_input_messages": "._request",
+    "InvocationRun": "._shared",
+    "InvocationsHostServer": "._invocations_agent",
+    "InvocationsWorkflowHostServer": "._invocations_workflow",
+    "ResponsesHostServer": "._responses_agent",
+    "ResponsesRequest": "._shared",
+    "ResponsesWorkflowHostServer": "._responses_workflow",
+    "StoreProvider": "._shared",
+    "WorkflowSource": "._shared",
+    "WorkflowTurn": "._shared",
+    "response_input_messages": "._shared",
 }
 
 __all__ = [
@@ -54,15 +59,14 @@ __all__ = [
     "ContextScopedStoreProvider",
     "FoundryAgentSessionStore",
     "FoundryCheckpointStore",
-    "FoundryFunctionApprovalStore",
     "FoundryRequestScope",
     "FoundryToolbox",
-    "FunctionApprovalStore",
-    "FunctionApprovalStoreProvider",
-    "HostedResponseRequest",
     "InvocationRun",
     "InvocationsHostServer",
+    "InvocationsWorkflowHostServer",
     "ResponsesHostServer",
+    "ResponsesRequest",
+    "ResponsesWorkflowHostServer",
     "StoreProvider",
     "WorkflowSource",
     "WorkflowTurn",

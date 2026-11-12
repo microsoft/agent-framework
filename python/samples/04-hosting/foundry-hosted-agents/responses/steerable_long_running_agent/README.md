@@ -1,16 +1,16 @@
 # Long-running Responses agent (steering temporarily unavailable)
 
-**Steering is currently gated.** `ResponsesHostServer` rejects
-`ResponsesServerOptions(steerable_conversations=True)` during construction rather than starting a
-TaskManager that can retain unbounded futures after rejected steering requests. The upstream fix is
+**Steering is not exposed.** `ResponsesHostServer` has no `options` or `steerable_conversations`
+parameter, and framework-generated SDK options keep steering disabled. The SDK TaskManager can retain
+unbounded futures after rejected steering requests. The upstream fix is
 [Azure/azure-sdk-for-python#49233](https://github.com/Azure/azure-sdk-for-python/pull/49233);
-steering will be re-enabled only after a patched official `azure-ai-agentserver-core` wheel is released,
-the package's minimum dependency and lockfile are updated, and a concurrent overflow test verifies
-that rejected turns leave no pending futures. Do not enable steering using a private SDK patch or a
+any future steering API needs a patched official `azure-ai-agentserver-core` wheel, updated minimum
+dependencies and lockfile, and a concurrent overflow test proving that rejected turns leave no pending futures.
+Do not enable steering using a private SDK patch or a
 queue-length precheck.
 
 [main.py](main.py) remains **runnable** as a regular non-steerable countdown agent. It uses
-`history_source="agent_server"` with a `FoundryChatClient` and returns the caller's **outer** `response.id` for
+`history_source="host_managed"` with a `FoundryChatClient` and returns the caller's **outer** `response.id` for
 background polling. Running a second turn concurrently does not steer the first. Start it using the
 [parent hosting guide](../../README.md), then send one stored background request. The deployment
 manifests keep their existing agent name for identity compatibility, not because steering is enabled:

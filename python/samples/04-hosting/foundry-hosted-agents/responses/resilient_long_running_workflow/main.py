@@ -10,12 +10,11 @@ import asyncio
 from agent_framework import Executor, Workflow, WorkflowBuilder, WorkflowContext, handler
 from agent_framework_foundry_hosting import (
     CheckpointStoreProvider,
-    HostedResponseRequest,
-    ResponsesHostServer,
+    ResponsesRequest,
+    ResponsesWorkflowHostServer,
     WorkflowTurn,
 )
 from azure.ai.agentserver.core.tasks import set_resilient_tasks_enabled
-from azure.ai.agentserver.responses import ResponsesServerOptions
 from pydantic import BaseModel, Field
 
 
@@ -48,7 +47,7 @@ class CountdownExecutor(Executor):
         await ctx.send_message(target - 1, target_id=self.id)
 
 
-def build_workflow(request: HostedResponseRequest) -> Workflow:
+def build_workflow(request: ResponsesRequest) -> Workflow:
     """Return freshly built executors with stable IDs for every invocation and recovery."""
     start, countdown = StartExecutor(), CountdownExecutor()
     return (
@@ -59,20 +58,20 @@ def build_workflow(request: HostedResponseRequest) -> Workflow:
     )
 
 
-async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[CountdownRequest]:
+async def parse_input(request: ResponsesRequest) -> WorkflowTurn[CountdownRequest]:
     return WorkflowTurn(input=CountdownRequest.model_validate_json(await request.get_input_text() or ""))
 
 
 def main() -> None:
     # The application's explicit SDK task opt-in is separate from output checkpointing.
     set_resilient_tasks_enabled(True)
-    ResponsesHostServer(
+    ResponsesWorkflowHostServer(
         workflow=build_workflow,
-        parse_response=parse_response,
+        parse_input=parse_input,
         checkpoint_store_provider=CheckpointStoreProvider(
             allowed_checkpoint_types=[f"{CountdownRequest.__module__}:{CountdownRequest.__qualname__}"],
         ),
-        options=ResponsesServerOptions(resilient_background=True),
+        resilient_background=True,
     ).run()
 
 

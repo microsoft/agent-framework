@@ -1,7 +1,7 @@
 # Native Responses workflows
 
 This sample hosts built Agent Framework workflows directly with
-`ResponsesHostServer(workflow=..., parse_response=...)`; it does not wrap them
+`ResponsesWorkflowHostServer(workflow=..., parse_input=...)`; it does not wrap them
 with `.as_agent()`.
 
 - [`main.py`](main.py) parses a typed `SloganRequest`, builds fresh agents,
@@ -18,8 +18,8 @@ inside that sandbox. The MAF checkpoint ID is private workflow state and is
 bound to the exact outer response; none of these IDs is a downstream model
 `service_session_id`.
 
-Use a request-aware factory for multi-turn workflows or pauses. A built
-`Workflow` instance is single-use and is not cloned. Every factory invocation
+The workflow host requires a request-aware factory, even for one-shot execution.
+A built `Workflow` instance is rejected at construction, not cloned. Every factory invocation
 must create fresh mutable resources, while workflow names and executor IDs
 remain stable. `store=False` is one-shot and cannot expose a resumable pause.
 

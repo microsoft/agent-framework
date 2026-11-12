@@ -18,7 +18,7 @@ See [main.py](main.py) for the full implementation.
 each request. The sample's context-managed client explicitly enters/closes the
 provider and closes its own SDK transports and credential, including failed
 entry and cancellation; `Agent` does not automatically enter every provider.
-`history_source="agent_server"` owns conversation history and disables inner
+`history_source="host_managed"` owns conversation history and disables inner
 model storage. Only first-party Foundry model calls receive the platform call
 ID; it is not forwarded to Search as an authorization substitute.
 

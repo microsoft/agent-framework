@@ -10,6 +10,8 @@ This module lazily re-exports objects from:
 - ``agent-framework-foundry-local``
 """
 
+from __future__ import annotations
+
 import importlib
 from typing import Any
 
@@ -39,10 +41,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "CheckpointStoreProvider": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "FoundryCheckpointStore": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "ContextScopedStoreProvider": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
-    "FoundryFunctionApprovalStore": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "FoundryRequestScope": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
-    "FunctionApprovalStore": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
-    "FunctionApprovalStoreProvider": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "FoundryToolbox": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "FoundryLocalChatOptions": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
     "FoundryLocalClient": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
@@ -54,7 +53,10 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "RawFoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "RawFoundryEmbeddingClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "InvocationsHostServer": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "InvocationsWorkflowHostServer": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "ResponsesHostServer": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "ResponsesRequest": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "ResponsesWorkflowHostServer": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "WorkflowSource": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "WorkflowTurn": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "response_input_messages": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),

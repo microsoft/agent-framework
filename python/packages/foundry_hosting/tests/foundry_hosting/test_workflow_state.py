@@ -35,13 +35,14 @@ from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
 from azure.ai.agentserver.core.storage import FoundryStorageConflictError, FoundryStoragePreconditionError
 
 from agent_framework_foundry_hosting import CheckpointStoreProvider, FoundryRequestScope, WorkflowTurn
-from agent_framework_foundry_hosting._workflow_source import WorkflowResolver, prepare_workflow_kwargs
-from agent_framework_foundry_hosting._workflow_state import (
+from agent_framework_foundry_hosting._shared import (
     FoundryWorkflowBindingStore,
     HostedWorkflowRun,
     WorkflowBlockedError,
     WorkflowConflictError,
     WorkflowHead,
+    WorkflowResolver,
+    prepare_workflow_kwargs,
 )
 
 
@@ -213,10 +214,39 @@ async def test_resolver_requires_fresh_built_graphs_and_resources() -> None:
     with pytest.raises(TypeError, match="built Workflow"):
         await builder_resolver.resolve(object())
     stored_resolver: WorkflowResolver[object] = WorkflowResolver(
-        WorkflowBuilder(start_executor=_Counter(), checkpoint_storage=InMemoryCheckpointStorage()).build()
+        lambda _: WorkflowBuilder(start_executor=_Counter(), checkpoint_storage=InMemoryCheckpointStorage()).build()
     )
     with pytest.raises(RuntimeError, match="without a store"):
         await stored_resolver.resolve(object())
+
+
+@pytest.mark.parametrize("wrapped_workflow", [False, True])
+@pytest.mark.parametrize("async_factory", [False, True])
+async def test_workflow_sources_reject_agents_before_dispatch(wrapped_workflow: bool, async_factory: bool) -> None:
+    regular_agent = Agent(client=MagicMock(spec=BaseChatClient))
+    agent = (
+        WorkflowBuilder(start_executor=AgentExecutor(regular_agent)).build().as_agent()
+        if wrapped_workflow
+        else regular_agent
+    )
+    requests: list[object] = []
+
+    def create(request: object) -> Any:
+        requests.append(request)
+        return agent
+
+    async def create_async(request: object) -> Any:
+        return create(request)
+
+    with patch.object(agent, "run") as run:
+        with pytest.raises(TypeError, match="request-aware factory"):
+            WorkflowResolver(cast(Any, agent))
+        resolver: WorkflowResolver[object] = WorkflowResolver(create_async if async_factory else create)
+        request = object()
+        with pytest.raises(TypeError, match="must return a built Workflow"):
+            await resolver.resolve(request)
+        assert requests == [request]
+        run.assert_not_called()
 
 
 async def test_request_aware_async_factory() -> None:
@@ -341,14 +371,14 @@ async def test_shared_real_agent_options_use_the_correct_existing_boundary(raw: 
 
     resolver = WorkflowResolver(create)
     workflow = await resolver.resolve(object())
-    run = await _prepare("model-turn", workflow=workflow, fresh_factory=resolver.is_factory)
+    run = await _prepare("model-turn", workflow=workflow, fresh_factory=True)
     turn = run.validate_turn(WorkflowTurn(input=[Message("user", "hello")]))
     clients, functions = prepare_workflow_kwargs(
         workflow,
         turn,
         run.scope,
         options={"temperature": 0.6},
-        fresh_factory=resolver.is_factory,
+        fresh_factory=True,
     )
     await run.claim()
     events = [event async for event in run.events(turn, client_kwargs=clients, function_invocation_kwargs=functions)]
@@ -422,7 +452,7 @@ async def test_completed_response_replay_is_explicit_and_does_not_advance_the_he
 async def test_default_store_integrity_hashes_the_persisted_encoding_without_repickling() -> None:
     first = await _prepare("one", workflow=_workflow(_Approval()))
     with patch(
-        "agent_framework_foundry_hosting._workflow_state._checkpoint_hash",
+        "agent_framework_foundry_hosting._shared._checkpoint_hash",
         side_effect=AssertionError("default storage must not re-pickle checkpoints for integrity"),
     ):
         await _finish(first, WorkflowTurn(input="/safe"))
@@ -542,13 +572,13 @@ async def test_both_sdk_cas_errors_are_visible_and_private(error: type[Exception
 
 
 async def test_store_false_writes_nothing_and_rejects_resumption() -> None:
-    with patch("agent_framework_foundry_hosting._workflow_state.FoundryStateStore.get_or_create") as get_store:
+    with patch("agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create") as get_store:
         run = await _prepare("one", stored=False)
         assert await _finish(run, WorkflowTurn(input=3)) == [3]
         get_store.assert_not_called()
     with pytest.raises(ValueError, match="one-shot"):
         await _prepare("two", stored=False, previous_response_id="one")
-    with patch("agent_framework_foundry_hosting._workflow_state.FoundryStateStore.get_or_create") as get_store:
+    with patch("agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create") as get_store:
         run = await _prepare("pause", workflow=_workflow(_Review()), stored=False)
         turn = run.validate_turn(WorkflowTurn(input="review"))
         await run.claim()

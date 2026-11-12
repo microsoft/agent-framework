@@ -3,7 +3,7 @@
 """Unit tests for InvocationsHostServer.
 
 These tests exercise ``InvocationsHostServer`` directly by constructing the
-host, driving ``_partition_key`` and ``_handle_invoke`` with a fake agent and
+host, driving the shared partition-key helper and ``_handle_invoke`` with a fake agent and
 mock requests. The Foundry request context is injected via the public
 ``set_request_context`` / ``reset_request_context`` helpers rather than by
 patching, matching the style used in ``test_toolbox.py``.
@@ -15,12 +15,10 @@ import asyncio
 import json
 import logging
 import uuid
-import warnings
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from itertools import product
-from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -62,7 +60,8 @@ from starlette.requests import ClientDisconnect, Request
 from starlette.responses import Response, StreamingResponse
 
 from agent_framework_foundry_hosting import InvocationRun, InvocationsHostServer, StoreProvider
-from agent_framework_foundry_hosting._state_store import FoundryAgentSessionStore
+from agent_framework_foundry_hosting._invocations_shared import invocation_partition_key
+from agent_framework_foundry_hosting._shared import FoundryAgentSessionStore
 
 pytestmark = pytest.mark.filterwarnings("ignore:.*SessionStore is experimental.*")
 
@@ -307,18 +306,6 @@ def _make_workflow_agent() -> WorkflowAgent:
     return WorkflowBuilder(name="legacy", start_executor=_EchoExecutor()).build().as_agent()
 
 
-def _workflow_agent_warnings(captured: Sequence[warnings.WarningMessage]) -> list[warnings.WarningMessage]:
-    return [item for item in captured if "Hosting WorkflowAgent" in str(item.message)]
-
-
-def _workflow_agent_logs(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
-    return [
-        record
-        for record in caplog.records
-        if record.levelno == logging.WARNING and "DEPRECATION: Hosting WorkflowAgent" in record.getMessage()
-    ]
-
-
 async def _invoke_text(server: InvocationsHostServer, message: str) -> str:
     request = _make_request({"message": message})
     with _request_context(session_id="session"):
@@ -380,7 +367,7 @@ class TestSessionLifecycle:
         identities = [("sandbox-a", "user-1"), ("sandbox-b", "user-1"), ("sandbox-a", "user-2")]
 
         with patch(
-            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
             new=capture_store_name,
         ):
             for round_number in (1, 2):
@@ -658,24 +645,28 @@ class TestInit:
 
     @pytest.mark.parametrize("agent", [None, 42])
     def test_rejects_invalid_agent_source(self, agent: Any) -> None:
-        with pytest.raises(TypeError, match="agent must be an agent instance or a zero-argument callable"):
+        with pytest.raises(TypeError, match="agent must be an agent instance or a callable"):
             InvocationsHostServer(agent)
 
-    def test_rejects_agent_class_requiring_constructor_arguments(self) -> None:
-        with pytest.raises(TypeError, match="agent callable must accept no arguments"):
-            InvocationsHostServer(cast(Any, _ContextAgent))
+    def test_rejects_agent_class_requiring_multiple_constructor_arguments(self) -> None:
+        class InvalidAgent:
+            def __init__(self, request: Request, dependency: object) -> None:
+                pass
 
-    def test_rejects_factory_requiring_arguments(self) -> None:
-        def create_agent(name: str) -> _FakeAgent:
+        with pytest.raises(TypeError, match="agent factory must declare a required named 'request' parameter"):
+            InvocationsHostServer(cast(Any, InvalidAgent))
+
+    def test_rejects_factory_requiring_multiple_arguments(self) -> None:
+        def create_agent(request: Request, name: str) -> _FakeAgent:
             return _make_agent(response_text=name)
 
-        with pytest.raises(TypeError, match="agent callable must accept no arguments"):
+        with pytest.raises(TypeError, match="agent factory must declare a required named 'request' parameter"):
             InvocationsHostServer(cast(Any, create_agent))
 
     @pytest.mark.parametrize(
         ("parameter", "value", "error"),
         [
-            ("parse_request", 42, "parse_request must be a callable"),
+            ("parse_input", 42, "parse_input must be a callable"),
             ("prepare_options", 42, "prepare_options must be a callable"),
             ("unsupported_options", "discard", "unsupported_options"),
             ("legacy_wire_format", "false", "legacy_wire_format must be a boolean"),
@@ -686,49 +677,46 @@ class TestInit:
             InvocationsHostServer(_make_agent(response_text="ok"), **{parameter: value})
 
 
-class TestLegacyWorkflowAgentHosting:
-    async def test_instance_warns_once_per_host(self, caplog: pytest.LogCaptureFixture) -> None:
-        with warnings.catch_warnings(record=True) as captured:
-            warnings.simplefilter("always", DeprecationWarning)
-            server = InvocationsHostServer(_make_workflow_agent())
-            texts = [await _invoke_text(server, "one"), await _invoke_text(server, "two")]
-
-        deprecations = _workflow_agent_warnings(captured)
-        assert len(deprecations) == 1
-        assert deprecations[0].category is DeprecationWarning
-        message = str(deprecations[0].message)
-        assert "should be avoided" in message
-        assert "stateful" in message
-        assert "parse_request" in message
-        assert "stateless, single-turn" in message
-        assert Path(deprecations[0].filename).name == Path(__file__).name
-        assert len(_workflow_agent_logs(caplog)) == 1
-        assert texts == ["one", "two"]
-
-    async def test_factory_warns_once_on_first_request(self, caplog: pytest.LogCaptureFixture) -> None:
-        with warnings.catch_warnings(record=True) as captured:
-            warnings.simplefilter("always", DeprecationWarning)
-            server = InvocationsHostServer(_make_workflow_agent)
-            assert _workflow_agent_warnings(captured) == []
-            assert _workflow_agent_logs(caplog) == []
-            texts = [await _invoke_text(server, "one"), await _invoke_text(server, "two")]
-
-        assert len(_workflow_agent_warnings(captured)) == 1
-        assert len(_workflow_agent_logs(caplog)) == 1
-        assert texts == ["one", "two"]
-
-    async def test_regular_agent_does_not_warn(self, caplog: pytest.LogCaptureFixture) -> None:
-        with warnings.catch_warnings(record=True) as captured:
-            warnings.simplefilter("always", DeprecationWarning)
-            server = InvocationsHostServer(_make_agent(response_text="hi"))
-            text = await _invoke_text(server, "hello")
-
-        assert text == "hi"
-        assert _workflow_agent_warnings(captured) == []
-        assert _workflow_agent_logs(caplog) == []
-
-
 # endregion
+
+
+class TestWorkflowAgentRejection:
+    def test_rejects_instance_before_sdk_construction(self) -> None:
+        agent = _make_workflow_agent()
+        with (
+            patch("azure.ai.agentserver.invocations.InvocationAgentServerHost.__init__") as initialize,
+            pytest.raises(TypeError, match="do not support WorkflowAgent"),
+        ):
+            InvocationsHostServer(agent)
+        initialize.assert_not_called()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("async_factory", [False, True])
+    async def test_rejects_factory_result_before_dispatch(self, stream: bool, async_factory: bool) -> None:
+        agent = _make_workflow_agent()
+
+        def create(*, request: Request) -> WorkflowAgent:
+            return agent
+
+        async def create_async(*, request: Request) -> WorkflowAgent:
+            return agent
+
+        server = InvocationsHostServer(create_async if async_factory else create)
+        with (
+            patch.object(agent, "run") as run,
+            _request_context(session_id="session"),
+        ):
+            response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                _make_request({"message": "hello", "stream": stream})
+            )
+            if stream:
+                assert isinstance(response, StreamingResponse)
+                body = await _collect_stream(response)
+                assert "error" in body
+                assert "done" not in body
+            else:
+                assert response.status_code == 500
+            run.assert_not_called()
 
 
 class TestParsedRequests:
@@ -764,7 +752,7 @@ class TestParsedRequests:
             options.pop("store")
             return {"temperature": options["temperature"], "reasoning_effort": options["reasoning_effort"]}
 
-        server = InvocationsHostServer(agent, parse_request=parse, prepare_options=prepare)
+        server = InvocationsHostServer(agent, parse_input=parse, prepare_options=prepare)
         with _request_context(session_id="parsed"):
             response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
             assert await _success_text(response) == "ok"
@@ -809,18 +797,18 @@ class TestParsedRequests:
     @pytest.mark.parametrize("result", [None, "hello", {"messages": "hello"}])
     async def test_custom_parser_must_return_invocation_run(self, result: Any) -> None:
         agent = _make_agent(response_text="ok")
-        server = InvocationsHostServer(agent, parse_request=lambda _request: result)
+        server = InvocationsHostServer(agent, parse_input=lambda _request: result)
         with _request_context(session_id="invalid"):
             response = await server._handle_invoke(_make_request({"message": "hi"}))  # pyright: ignore[reportPrivateUsage]
         assert response.status_code == 400
-        assert json.loads(bytes(response.body)) == {"error": "parse_request must return InvocationRun."}
+        assert json.loads(bytes(response.body)) == {"error": "parse_input must return InvocationRun."}
         assert agent.calls == []
 
     async def test_parser_failure_is_logged_but_not_exposed(self, caplog: pytest.LogCaptureFixture) -> None:
         def broken_parser(_request: Request) -> InvocationRun:
             raise RuntimeError("internal parser secret")
 
-        server = InvocationsHostServer(_make_agent(response_text="ok"), parse_request=broken_parser)
+        server = InvocationsHostServer(_make_agent(response_text="ok"), parse_input=broken_parser)
         with _request_context(session_id="invalid"):
             response = await server._handle_invoke(_make_request({"message": "hi"}))  # pyright: ignore[reportPrivateUsage]
         assert response.status_code == 500
@@ -874,14 +862,14 @@ class TestParsedRequests:
         provider = _SessionStoreProvider(_mock_session_store())
         options = {field: value}
 
-        def create_agent() -> _FakeAgent:
+        def create_agent(*, request: Request) -> _FakeAgent:
             factory_calls.append("created")
             return agent
 
         server = InvocationsHostServer(
             create_agent,
             agent_session_store_provider=provider,
-            parse_request=(lambda _request: InvocationRun(messages="hi", options=options, stream=stream))
+            parse_input=(lambda _request: InvocationRun(messages="hi", options=options, stream=stream))
             if source == "parser"
             else None,
             prepare_options=(lambda _request, _options: options) if source == "hook" else None,
@@ -977,7 +965,7 @@ class TestParsedRequests:
     async def test_factory_options_failure_is_framed_before_first_delta(self) -> None:
         provider = _SessionStoreProvider(_mock_session_store())
         server = InvocationsHostServer(
-            lambda: _NoOptionsAgent(),
+            lambda request: _NoOptionsAgent(),
             agent_session_store_provider=provider,
             unsupported_options="error",
         )
@@ -1129,7 +1117,7 @@ class TestSerializedSessions:
         def increment(session: AgentSession) -> None:
             session.state["turn"] = session.state.get("turn", 0) + 1
 
-        def create_agent() -> _FakeAgent:
+        def create_agent(*, request: Request) -> _FakeAgent:
             agent = _make_agent(response_text="ok", stream_texts=["ok"], update_session=increment)
             agents.append(agent)
             return agent
@@ -1244,7 +1232,7 @@ class TestStreamingFailuresAndCompatibility:
         assert persisted.state == {"partial": True}
 
     async def test_factory_failure_before_first_sse_event_is_sanitized(self, caplog: pytest.LogCaptureFixture) -> None:
-        async def unavailable_agent() -> _FakeAgent:
+        async def unavailable_agent(*, request: Request) -> _FakeAgent:
             raise RuntimeError("secret agent initialization failure")
 
         provider = _SessionStoreProvider(_mock_session_store())
@@ -1261,7 +1249,7 @@ class TestStreamingFailuresAndCompatibility:
         assert provider.contexts == []
 
     async def test_http_stream_failure_before_first_delta_is_an_error_event(self) -> None:
-        async def unavailable_agent() -> _FakeAgent:
+        async def unavailable_agent(*, request: Request) -> _FakeAgent:
             raise RuntimeError("private factory details")
 
         server = InvocationsHostServer(unavailable_agent)
@@ -1438,17 +1426,17 @@ class TestPartitionKey:
     def test_local_returns_session_id(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         with _request_context(session_id="sess-1"):
-            assert server._partition_key() == "sess-1"  # pyright: ignore[reportPrivateUsage]
+            assert invocation_partition_key(server.config) == "sess-1"
 
     def test_local_missing_session_id_raises(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         with _request_context(), pytest.raises(RuntimeError, match="missing session_id"):
-            server._partition_key()  # pyright: ignore[reportPrivateUsage]
+            invocation_partition_key(server.config)
 
     def test_local_ignores_user_id(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         with _request_context(session_id="sess-1", user_id="user-1"):
-            assert server._partition_key() == "sess-1"  # pyright: ignore[reportPrivateUsage]
+            assert invocation_partition_key(server.config) == "sess-1"
 
     @pytest.mark.parametrize("user_id", [None, ""])
     def test_hosted_requires_user_id(self, user_id: str | None) -> None:
@@ -1459,21 +1447,21 @@ class TestPartitionKey:
             _request_context(call_id="call-1", session_id="sess-1", user_id=user_id),
             pytest.raises(RuntimeError, match="missing user_id"),
         ):
-            server._partition_key()  # pyright: ignore[reportPrivateUsage]
+            invocation_partition_key(server.config)
 
     def test_hosted_returns_composite_key(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         server.config.is_hosted = True
         server.config.session_id = "sess-1"
         with _request_context(call_id="call-1", session_id="sess-1", user_id="user-1"):
-            assert server._partition_key() == ("sess-1", "user-1")  # pyright: ignore[reportPrivateUsage]
+            assert invocation_partition_key(server.config) == ("sess-1", "user-1")
 
     def test_hosted_uses_platform_session_when_context_omits_it(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         server.config.is_hosted = True
         server.config.session_id = "sess-1"
         with _request_context(call_id="call-1", user_id="user-1"):
-            assert server._partition_key() == ("sess-1", "user-1")  # pyright: ignore[reportPrivateUsage]
+            assert invocation_partition_key(server.config) == ("sess-1", "user-1")
 
     def test_hosted_rejects_a_different_request_session(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
@@ -1483,7 +1471,7 @@ class TestPartitionKey:
             _request_context(call_id="call-1", session_id="caller-session", user_id="user-1"),
             pytest.raises(RuntimeError, match="does not match"),
         ):
-            server._partition_key()  # pyright: ignore[reportPrivateUsage]
+            invocation_partition_key(server.config)
 
     def test_hosted_requires_platform_call_id(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
@@ -1493,7 +1481,7 @@ class TestPartitionKey:
             _request_context(session_id="sess-1", user_id="user-1"),
             pytest.raises(RuntimeError, match="trusted user ID and call ID"),
         ):
-            server._partition_key()  # pyright: ignore[reportPrivateUsage]
+            invocation_partition_key(server.config)
 
     async def test_hosted_keys_and_session_ids_preserve_identifier_values(self) -> None:
         agent = _make_agent(response_text="hi")
@@ -1506,7 +1494,7 @@ class TestPartitionKey:
         for session_id, user_id in product(identifiers, repeat=2):
             server.config.session_id = session_id
             with _request_context(call_id="call-1", session_id=session_id, user_id=user_id):
-                key = server._partition_key()  # pyright: ignore[reportPrivateUsage]
+                key = invocation_partition_key(server.config)
                 response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
 
             assert isinstance(key, tuple)
@@ -1807,7 +1795,7 @@ class TestHandleInvoke:
     async def test_factory_agent_context_lifetime_non_streaming(self) -> None:
         events: list[str] = []
         response = AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])])
-        server = InvocationsHostServer(lambda: _ContextAgent(events, response=response))
+        server = InvocationsHostServer(lambda request: _ContextAgent(events, response=response))
 
         with _request_context(session_id="sess-1"):
             result = await server._handle_invoke(_make_request({"message": "one"}))  # pyright: ignore[reportPrivateUsage]
@@ -1821,7 +1809,7 @@ class TestHandleInvoke:
             AgentResponseUpdate(contents=[Content.from_text("one")]),
             AgentResponseUpdate(contents=[Content.from_text("two")]),
         ]
-        server = InvocationsHostServer(lambda: _ContextAgent(events, stream_updates=updates))
+        server = InvocationsHostServer(lambda request: _ContextAgent(events, stream_updates=updates))
 
         with _request_context(session_id="sess-1"):
             response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
@@ -1838,7 +1826,7 @@ class TestHandleInvoke:
     async def test_agent_callable_is_resolved_for_each_request(self) -> None:
         agents: list[_FakeAgent] = []
 
-        def create_agent() -> _FakeAgent:
+        def create_agent(*, request: Request) -> _FakeAgent:
             agent = _make_agent(response_text=f"agent-{len(agents) + 1}")
             agents.append(agent)
             return agent
@@ -1861,6 +1849,91 @@ class TestHandleInvoke:
         assert agents[0].calls[0]["session"].session_id == agents[1].calls[0]["session"].session_id
 
     @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("async_factory", [False, True])
+    @pytest.mark.parametrize("configured_factory", [False, True])
+    async def test_agent_factory_receives_request_after_parsing(
+        self, stream: bool, async_factory: bool, configured_factory: bool
+    ) -> None:
+        requests: list[Request] = []
+        agents: list[_FakeAgent] = []
+        payloads: list[dict[str, Any]] = []
+
+        def create_agent(request: Request) -> _FakeAgent:
+            requests.append(request)
+            assert request.headers["x-application-context"] == "current-request"
+            agent = _make_agent(response_text="ok", stream_texts=["ok"])
+            agents.append(agent)
+            return agent
+
+        async def create_agent_async(request: Request) -> _FakeAgent:
+            payloads.append(await request.json())
+            return create_agent(request)
+
+        def configured_agent(model: str = "gpt-4", *, request: Request, temperature: float = 0.7) -> _FakeAgent:
+            assert model == "gpt-4"
+            assert temperature == 0.7
+            return create_agent(request)
+
+        async def configured_agent_async(
+            model: str = "gpt-4", *, request: Request, temperature: float = 0.7
+        ) -> _FakeAgent:
+            assert model == "gpt-4"
+            assert temperature == 0.7
+            return await create_agent_async(request)
+
+        factory = (
+            (configured_agent_async if async_factory else configured_agent)
+            if configured_factory
+            else (create_agent_async if async_factory else create_agent)
+        )
+        server = InvocationsHostServer(factory)
+        for text in ("first", "second"):
+            request = Request(
+                {
+                    "type": "http",
+                    "method": "POST",
+                    "path": "/invocations",
+                    "query_string": b"",
+                    "headers": [(b"x-application-context", b"current-request")],
+                },
+                receive=AsyncMock(
+                    return_value={
+                        "type": "http.request",
+                        "body": json.dumps({"message": text, "stream": stream}).encode(),
+                        "more_body": False,
+                    }
+                ),
+            )
+            with _request_context(session_id="sess-1"):
+                result = await server._handle_invoke(request)
+            assert await _success_text(result) == "ok"
+            assert requests[-1] is request
+        assert len(agents) == 2
+        assert agents[0] is not agents[1]
+        assert payloads == (
+            [{"message": text, "stream": stream} for text in ("first", "second")] if async_factory else []
+        )
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_factory_type_error_is_not_retried_without_request(self, stream: bool) -> None:
+        requests: list[Request] = []
+
+        def create_agent(*, request: Request) -> _FakeAgent:
+            requests.append(request)
+            raise TypeError("factory construction failed")
+
+        server = InvocationsHostServer(create_agent)
+        request = _make_request({"message": "test", "stream": stream})
+        with _request_context(session_id="sess-1"):
+            result = await server._handle_invoke(request)
+        if stream:
+            assert isinstance(result, StreamingResponse)
+            assert [event for event, _ in _parse_sse_events(await _collect_stream(result))] == ["error"]
+        else:
+            assert result.status_code == 500
+        assert requests == [request]
+
+    @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize("hosted", [False, True])
     async def test_reusing_session_restores_identifier(self, hosted: bool, stream: bool) -> None:
         agent = _make_agent(response_text="ok", stream_texts=["ok"])
@@ -1873,7 +1946,9 @@ class TestHandleInvoke:
 
         with (
             _request_context(call_id="call-1", session_id="sess-1", user_id="user-1"),
-            patch("agent_framework_foundry_hosting._invocations.AgentSession", wraps=AgentSession) as session_factory,
+            patch(
+                "agent_framework_foundry_hosting._invocations_agent.AgentSession", wraps=AgentSession
+            ) as session_factory,
         ):
             for _ in range(2):
                 response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]

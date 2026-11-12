@@ -4,8 +4,8 @@
 
 The agent is asked to count down from a target number, pacing its own output with a short remark
 before each number so a response takes a while to fully generate. This sample currently runs
-without steering; the hosting layer rejects ``steerable_conversations=True`` until a patched
-AgentServer SDK is released and verified.
+without steering; ``steerable_conversations`` is not a host parameter and framework-generated
+SDK options keep steering disabled.
 
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT: Microsoft Foundry project endpoint.
@@ -42,7 +42,7 @@ def main() -> None:
 
     server = ResponsesHostServer(
         agent=agent,
-        history_source="agent_server",
+        history_source="host_managed",
         log_level="DEBUG",
     )
     server.run()

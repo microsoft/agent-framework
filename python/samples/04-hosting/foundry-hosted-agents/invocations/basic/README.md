@@ -2,7 +2,7 @@
 
 [`main.py`](main.py) hosts an Agent Framework agent using the Foundry
 Invocations protocol. The sample accepts application JSON with a `prompt`
-field rather than the host's default `message` field. Its `parse_request`
+field rather than the host's default `message` field. Its `parse_input`
 callback returns `InvocationRun(messages, options, stream)`, and
 `prepare_options` allows only `temperature` and `max_tokens` from the caller.
 The host also rejects platform IDs, `store`, and private continuation options
@@ -85,7 +85,7 @@ when deploying this example to Foundry.
 
 [`workflow.py`](workflow.py) is an alternative entrypoint, not a wrapper around
 the agent above. It hosts a native `Workflow` with
-`InvocationsHostServer(workflow=build_workflow, parse_request=parse_request)`;
+`InvocationsWorkflowHostServer(workflow=build_workflow, parse_input=parse_input)`;
 there is no `workflow.as_agent()`. Its deterministic ticket/review executors
 need no model deployment or Azure credentials locally.
 
@@ -156,6 +156,7 @@ to the agent entrypoint.
 
 ### Checkpoints, fresh factories and pending replies
 
+`InvocationsWorkflowHostServer` requires a request-aware factory, not a built workflow.
 `build_workflow(request)` builds fresh executors on every request. The graph
 name `ticket-workflow` and executor ID `ticket_start` remain stable. Typed
 `TicketState` is saved in workflow state through `ctx.set_state`, and restored

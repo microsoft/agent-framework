@@ -1,8 +1,9 @@
 # Custom session storage (Responses protocol)
 
 This sample implements custom **MAF agent-session persistence**, including user
-and sandbox isolation and optimistic concurrency. The outer Responses store and
-function-approval store remain host-managed. This is not a workflow example.
+and sandbox isolation and optimistic concurrency. Native approval state is part
+of the same `AgentSession` snapshot. The outer Responses store remains
+host-managed; there is no separate function-approval store. This is not a workflow example.
 
 ## Identity and storage keys
 
@@ -87,7 +88,7 @@ curl -X POST http://localhost:8088/responses \
   -d '{"input":"Hi"}'
 ```
 
-The host uses `history_source="agent_server"` and a request-owned agent/client
+The host uses `history_source="host_managed"` and a request-owned agent/client
 factory. It reconstructs history from the outer transcript rather than retaining
 it on Python instances or enabling inner model storage. Outer `store=false`
 does not access/write this custom session store.

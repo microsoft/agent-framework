@@ -24,7 +24,7 @@ Set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`, plus either
 see the [Toolbox sample](../foundry_toolbox/). Authenticate local runs with
 `az login`. Deployed runs use the sandbox's managed identity.
 
-`ResponsesHostServer(agent=create_agent, history_source="agent_server")` creates
+`ResponsesHostServer(agent=create_agent, history_source="host_managed")` creates
 fresh clients and a Toolbox MCP connection for each request and closes their
 transports afterward. This request-owned lifecycle gives the sample a clear
 cleanup boundary; `FoundryToolbox` also rebinds its MCP session to current
