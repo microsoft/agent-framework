@@ -256,17 +256,24 @@ official `azure-ai-agentserver-core` wheel, the minimum dependency and `uv.lock`
 concurrent queue-overflow regression proves rejected turns leave no pending futures. No future SDK
 version is assumed. Non-steerable background polling and legacy `WorkflowAgent` dispatch are unchanged.
 
-Native CreateResponse generation fields become MAF runtime options (notably `max_output_tokens` -> `max_tokens` and
-`parallel_tool_calls` -> `allow_multiple_tool_calls`). Flattened OpenAI `extra_body` fields overlay translated keys
-**last**. A sync or async `prepare_options(request: HostedResponseRequest, options: dict)` hook can remove or replace
-*caller* options before `Agent.run`; removed values fall back to the developer's unchanged agent defaults. Hosting
-filters caller platform IDs and private continuation/storage controls from model options and rejects attempts to
-reintroduce them through the hook. Callers cannot supply `additional_function_arguments` (the hidden tool-execution
-context that reaches `FunctionInvocationContext.kwargs`), at the top level or in `extra_body`, on any request including
-an approval resume: the request fails before any tool runs and pending approvals remain usable. Set trusted values in
-the agent's `default_options` or return them from a `prepare_options` hook (for example, derived from
-`request.scope`). Nested `extra_body` transport overrides are rejected for both caller
-input and developer hooks, because they could override the host's `store=False` after the OpenAI SDK merges
+Allowed native CreateResponse generation fields become MAF runtime options (notably `max_output_tokens` ->
+`max_tokens` and `parallel_tool_calls` -> `allow_multiple_tool_calls`). Caller-supplied top-level fields and
+`extra_body` keys are checked against separate, hard-coded
+[default allowlists](./agent_framework_foundry_hosting/_request.py). Unlisted fields are rejected even when their
+value is `null`, unless an author explicitly opts them in through `prepare_options`. These allowlists check field
+names, not arbitrary values or nested contents of allowed fields. Allowed, flattened `extra_body` options overlay
+translated keys **last**, before the hook.
+
+A sync or async `prepare_options(request: HostedResponseRequest, options: dict)` hook can inspect a copy of the original
+request, remove or replace caller options, or opt an unlisted caller field in by returning it as a run option. Validate
+any caller-derived value before returning it; use trusted application or platform data for trusted context. Removed
+options fall back to the developer's unchanged agent defaults. The hook is supported for regular agents and native
+workflows, but not for legacy `WorkflowAgent` hosting. Requests rejected by this field policy do not run the agent or
+workflow; a rejected approval resume leaves the pending approval usable.
+
+Hosting filters caller platform IDs and private continuation/storage controls from model options and rejects attempts
+to reintroduce them through the hook. Nested `extra_body` transport overrides are rejected for both caller input and
+developer hooks, because they could override the host's `store=False` after the OpenAI SDK merges
 the body. Developer defaults also cannot use this transport channel for host-controlled fields on
 explicit history modes or unstored requests. A custom agent cannot accept MAF runtime options: choose
 `unsupported_options` as `"ignore"`, `"warn"` (default), or `"error"` for that case. See the

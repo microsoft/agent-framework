@@ -2270,19 +2270,22 @@ class TestAgentSessionPersistence:
         [
             ("top_level", "additional_function_arguments"),
             ("extra_body", "extra_body.additional_function_arguments"),
+            ("alias_collision", "max_tokens"),
         ],
     )
     @pytest.mark.parametrize("stream", [False, True])
     async def test_unlisted_caller_option_fails_before_agent_run(
-        self, location: Literal["top_level", "extra_body"], field_name: str, stream: bool
+        self, location: Literal["top_level", "extra_body", "alias_collision"], field_name: str, stream: bool
     ) -> None:
         agent = _make_agent()
         server = _make_server(agent)
         payload: dict[str, Any] = {"input": "one shot", "stream": stream}
         if location == "top_level":
             payload["additional_function_arguments"] = {"tenant_id": "forged"}
-        else:
+        elif location == "extra_body":
             payload["extra_body"] = {"additional_function_arguments": {"tenant_id": "forged"}}
+        else:
+            payload.update({"max_output_tokens": 30, "max_tokens": 999})
 
         response = await _post_json(server, payload)
 

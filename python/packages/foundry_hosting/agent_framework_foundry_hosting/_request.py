@@ -183,6 +183,13 @@ def response_run_options(request: CreateResponse) -> dict[str, Any]:
     """Translate allowed native generation fields, with flattened extra-body values winning collisions."""
     native: dict[str, Any] = {}
     nested_extra: dict[str, Any] = {}
+    unlisted_option_names = set(request).difference(_CALLER_ALLOWED_FIELDS)
+    extra_body = request.get("extra_body")
+    if isinstance(extra_body, Mapping):
+        for field_name in cast(Mapping[object, object], extra_body):
+            if isinstance(field_name, str) and field_name not in _CALLER_ALLOWED_EXTRA_BODY_FIELDS:
+                unlisted_option_names.add(field_name)
+
     for name, value in request.items():
         if value is None or (name == "model" and value == ""):
             continue
@@ -193,15 +200,16 @@ def response_run_options(request: CreateResponse) -> dict[str, Any]:
                 raise TypeError("extra_body must be a mapping of model options.")
             if "extra_body" in value:
                 raise ValueError("Nested extra_body is not supported; flatten provider options instead.")
-            nested_extra.update({
-                _OPTION_NAMES.get(name, name): item
-                for name, item in cast(Mapping[str, Any], value).items()
-                if name in _CALLER_ALLOWED_EXTRA_BODY_FIELDS
-            })
+            for name, item in cast(Mapping[str, Any], value).items():
+                option_name = _OPTION_NAMES.get(name, name)
+                if name in _CALLER_ALLOWED_EXTRA_BODY_FIELDS and option_name not in unlisted_option_names:
+                    nested_extra[option_name] = item
         elif name in _HOST_CONTROLLED_FIELDS:
             continue
         elif name in _CALLER_ALLOWED_FIELDS and name in _NATIVE_FIELDS:
-            native[_OPTION_NAMES.get(name, name)] = value
+            option_name = _OPTION_NAMES.get(name, name)
+            if option_name not in unlisted_option_names:
+                native[option_name] = value
     return {
         **native,
         **{name: value for name, value in nested_extra.items() if name not in _HOST_CONTROLLED_FIELDS},

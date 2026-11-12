@@ -55,6 +55,8 @@ def test_native_options_are_translated_before_flattened_extra_body() -> None:
         ({"instructions": None}, "instructions"),
         ({"extra_body": {"vendor_option": None}}, "extra_body.vendor_option"),
         ({"additional_function_arguments": {"tenant_id": "forged"}}, "additional_function_arguments"),
+        ({"max_output_tokens": 30, "max_tokens": 999}, "max_tokens"),
+        ({"parallel_tool_calls": False, "allow_multiple_tool_calls": True}, "allow_multiple_tool_calls"),
         (
             {"extra_body": {"additional_function_arguments": {"tenant_id": "forged"}}},
             "extra_body.additional_function_arguments",
@@ -159,7 +161,13 @@ async def test_hook_rejects_reserved_fields_and_non_mapping_result() -> None:
 async def test_options_hook_can_opt_a_request_field_into_the_allowlist() -> None:
     payload = cast(
         CreateResponse,
-        {"input": "hello", "vendor_option": "caller-value", "extra_body": {"provider_option": "nested-value"}},
+        {
+            "input": "hello",
+            "vendor_option": "caller-value",
+            "max_output_tokens": 30,
+            "max_tokens": 999,
+            "extra_body": {"provider_option": "nested-value"},
+        },
     )
     context = MagicMock(spec=ResponseContext)
     context.response_id = "outer-id"
@@ -171,6 +179,7 @@ async def test_options_hook_can_opt_a_request_field_into_the_allowlist() -> None
         return {
             **options,
             "vendor_option": view.request["vendor_option"],
+            "max_tokens": view.request["max_tokens"],
             "provider_option": view.request["extra_body"]["provider_option"],
         }
 
@@ -178,6 +187,7 @@ async def test_options_hook_can_opt_a_request_field_into_the_allowlist() -> None
     reject_disallowed_caller_fields(payload, request.options)
 
     assert request.options["vendor_option"] == "caller-value"
+    assert request.options["max_tokens"] == 999
     assert request.options["provider_option"] == "nested-value"
 
 
