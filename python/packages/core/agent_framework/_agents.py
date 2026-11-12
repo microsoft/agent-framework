@@ -1652,7 +1652,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             and not service_continuation[0]
             and not service_stores_history
         ):
-            self.context_providers.append(InMemoryHistoryProvider())
+            self.context_providers.insert(0, InMemoryHistoryProvider())
 
         active_session = session
         framework_created_session = False
@@ -1965,13 +1965,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             prepared_context = SessionContext(
                 session_id=provider_session.session_id,
                 service_session_id=provider_session.service_session_id,
-                input_messages=list(session_context.input_messages),
+                input_messages=session_context.input_messages.copy(),
                 context_messages={
-                    source_id: list(messages) for source_id, messages in session_context.context_messages.items()
+                    source_id: messages.copy() for source_id, messages in session_context.context_messages.items()
                 },
-                instructions=list(session_context.instructions),
-                tools=list(session_context.tools),
-                options=dict(session_context.options),
+                instructions=session_context.instructions.copy(),
+                tools=session_context.tools.copy(),
+                options=session_context.options.copy(),
                 metadata=session_context.metadata,
             )
             session_context.metadata[_PREPARED_PER_SERVICE_CALL_HISTORY_CONTEXT_KEY] = prepared_context

@@ -55,6 +55,7 @@ from ._sessions import (
     ContextProvider,
     HistoryProvider,
     SessionContext,
+    _get_initial_service_continuation,  # pyright: ignore[reportPrivateUsage]
     _get_service_continuation,  # pyright: ignore[reportPrivateUsage]
     _history_provider_covers_service_continuation,  # pyright: ignore[reportPrivateUsage]
 )
@@ -4585,7 +4586,7 @@ class SecureAgentConfig(ContextProvider):
     ) -> None:
         """Validate service continuation authority against restored state or loaded history."""
         restored_context_label = context.metadata.get(_RESTORED_CONTEXT_LABEL_METADATA_KEY) is True
-        continuation_present, continuation_identity = _get_service_continuation(context)
+        continuation_present, continuation_identity = _get_initial_service_continuation(context)
         if not continuation_present:
             return
         bound_identity = self._service_continuation_identity(state)

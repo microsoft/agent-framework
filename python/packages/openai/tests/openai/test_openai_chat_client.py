@@ -53,6 +53,7 @@ from agent_framework.exceptions import (
     ChatClientInvalidRequestException,
     SettingNotFoundError,
 )
+from agent_framework.security import SecureAgentConfig
 from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
 from openai.types.responses import (
     ResponseComputerToolCall,
@@ -10972,6 +10973,35 @@ async def test_streaming_resume_with_tools_runs_the_tool_once() -> None:
     assert create.await_args is not None
     assert create.await_args.kwargs.get("previous_response_id") == "resp_bg"
     assert final.text == "Email sent."
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_fides_rejects_background_resume_without_authoritative_state(stream: bool) -> None:
+    """A background-response token is service continuation authority, not a fresh request."""
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def blocked_tool(value: str) -> str:
+        executions.append(value)
+        return "unexpected"
+
+    retrieve = AsyncMock()
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    agent = Agent(client=client, tools=[blocked_tool], context_providers=[SecureAgentConfig()])
+    session = agent.create_session()
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_bg"}}
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        pytest.raises(RuntimeError, match="authoritative FIDES context label"),
+    ):
+        if stream:
+            await agent.run("Resume", session=session, stream=True, options=options).get_final_response()
+        else:
+            await agent.run("Resume", session=session, options=options)
+
+    assert retrieve.await_count == 0
+    assert executions == []
 
 
 @pytest.mark.parametrize("stream", [False, True])

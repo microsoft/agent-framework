@@ -1150,21 +1150,17 @@ class HistoryProvider(ContextProvider):
             await self.save_messages(context.session_id, messages_to_store, state=state)
         continuation_present, continuation_identity = _get_service_continuation(context)
         loaded = _loaded_history_messages(context, self.source_id)
-        if (
-            may_certify_history
-            and continuation_present
-            and continuation_identity is not None
-            and loaded is not None
-            and self.load_messages
-            and self.store_inputs
-            and self.store_outputs
-        ):
-            expected_history = _filter_approval_control_messages([*loaded, *messages_to_store])
-            if (fingerprint := _history_messages_fingerprint(expected_history)) is not None:
-                state[_SERVICE_HISTORY_COVERAGE_STATE_KEY] = {
-                    "identity": continuation_identity,
-                    "fingerprint": fingerprint,
-                }
+        stores_complete_history = self.load_messages and self.store_inputs and self.store_outputs
+        if not may_certify_history or not continuation_present or continuation_identity is None:
+            return
+        if loaded is None or not stores_complete_history:
+            return
+        expected_history = _filter_approval_control_messages([*loaded, *messages_to_store])
+        if (fingerprint := _history_messages_fingerprint(expected_history)) is not None:
+            state[_SERVICE_HISTORY_COVERAGE_STATE_KEY] = {
+                "identity": continuation_identity,
+                "fingerprint": fingerprint,
+            }
 
 
 # Run-scoped gate for durable persistence side effects. Egress-enforcement middleware

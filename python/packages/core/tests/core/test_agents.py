@@ -4881,6 +4881,20 @@ async def test_stores_by_default_false_injects_inmemory(
     assert any(isinstance(p, InMemoryHistoryProvider) for p in agent.context_providers)
 
 
+async def test_auto_inmemory_precedes_custom_security_labeler(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Framework-owned history keeps a customized SecureAgentConfig last."""
+    security = SecureAgentConfig(message_labeler=lambda _source_id, _message: ContentLabel())
+    agent = Agent(client=client, context_providers=[security])
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session)
+
+    assert isinstance(agent.context_providers[0], InMemoryHistoryProvider)
+    assert agent.context_providers[-1] is security
+
+
 async def test_stores_by_default_with_store_false_injects_inmemory(
     client: SupportsChatGetResponse,
 ) -> None:
@@ -5249,6 +5263,7 @@ class _PscSpyChatClient(MockBaseChatClient):
         stores_by_default: bool = False,
         script: list[tuple[str, ...]] | None = None,
         echo_conversation_id: bool = True,
+        conversation_ids: Sequence[str | None] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -5256,6 +5271,7 @@ class _PscSpyChatClient(MockBaseChatClient):
         self._provider = provider
         self._script = list(script) if script is not None else [("text", "ok")]
         self._echo_conversation_id = echo_conversation_id
+        self._conversation_ids = list(conversation_ids) if conversation_ids is not None else []
         self.received_messages: list[list[Message]] = []
         self.received_options: list[dict[str, Any]] = []
         self.saves_before_call: list[int] = []
@@ -5286,7 +5302,11 @@ class _PscSpyChatClient(MockBaseChatClient):
         self.received_options.append(dict(options))
         self.saves_before_call.append(self._provider.save_calls)
         store_and_echo = self._effective_store(options) and self._echo_conversation_id
-        conv_id = _PSC_SERVICE_CONVERSATION_ID if store_and_echo else None
+        conv_id = (
+            self._conversation_ids.pop(0)
+            if store_and_echo and self._conversation_ids
+            else (_PSC_SERVICE_CONVERSATION_ID if store_and_echo else None)
+        )
         contents = self._next_contents()
 
         if stream:
@@ -5834,6 +5854,52 @@ async def test_fides_continuation_state_is_bound_to_effective_identity(stream: b
         await _psc_run(agent, "Continue elsewhere", session, stream=stream)
 
     assert client.call_count == 2
+
+
+@_psc_stream_params
+async def test_fides_service_tool_loop_validates_initial_continuation(stream: bool) -> None:
+    """Continuation IDs issued by an authorized run do not invalidate its own tool loop."""
+    provider = _PscSpyHistoryProvider(load_messages=False)
+    executed = False
+
+    @tool(name="trusted_action", approval_mode="never_require")
+    def trusted_action() -> str:
+        nonlocal executed
+        executed = True
+        return "done"
+
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=True,
+        script=[
+            ("text", "seed done"),
+            ("call", "call-trusted-action", "trusted_action", "{}"),
+            ("text", "loop done"),
+            ("text", "continue done"),
+        ],
+        conversation_ids=["service-0", "service-1", "service-2", "service-3"],
+    )
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        tools=[trusted_action],
+        context_providers=[security, provider],
+        require_per_service_call_history_persistence=True,
+    )
+    session = agent.create_session()
+
+    assert await _psc_run(agent, "Seed", session, stream=stream) == "seed done"
+    assert executed is False
+    assert session.service_session_id == "service-0"
+
+    resumed = AgentSession.from_dict(session.to_dict())
+    assert await _psc_run(agent, "Start", resumed, stream=stream) == "loop done"
+    assert executed is True
+    assert resumed.service_session_id == "service-2"
+
+    restored = AgentSession.from_dict(resumed.to_dict())
+    assert await _psc_run(agent, "Continue", restored, stream=stream) == "continue done"
+    assert restored.service_session_id == "service-3"
 
 
 @_psc_stream_params

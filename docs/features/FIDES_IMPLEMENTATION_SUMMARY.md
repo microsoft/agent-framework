@@ -376,3 +376,5 @@ it, without mutating or stamping those messages. When configured, `SecureAgentCo
 provider.
 Local per-service-call history is prepared before approval execution. A resumed service-owned
 continuation requires authoritative FIDES state when no complete local snapshot is available.
+Chat middleware that rewrites outbound messages and restores them after downstream execution can make persisted
+history differ from the leaf request; applications that require exact durable requests must avoid that pattern.

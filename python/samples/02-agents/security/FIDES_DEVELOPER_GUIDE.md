@@ -289,11 +289,15 @@ checks remain independent.
   replay unless the history provider explicitly preserves FIDES provenance.
 - Messages from non-history context providers are not automatically folded into
   the FIDES context label unless `message_labeler` classifies them.
-- When `require_per_service_call_history_persistence=True`, run-level FIDES
-  cannot inspect the history owned by the per-call persistence path before an
-  approval can execute. It therefore marks the context **UNTRUSTED + PRIVATE**
-  and fails closed. Integrations that need more precise behavior must establish
-  history authority inside that persistence boundary.
+- Local per-service-call history is prepared before approval execution and
+  reused for the first service call. Service-owned continuation still requires
+  authoritative FIDES state when no complete local snapshot is available.
+- Audit chat middleware used with `SecureAgentConfig`. Per-service-call history
+  persistence observes `context.messages` after downstream middleware returns.
+  Middleware that rewrites messages before `call_next()` and restores the
+  original list afterward can therefore persist a different request from the
+  one sent to the model. Avoid that rewrite-and-restore pattern when exact
+  durable request history is required.
 
 This fail-closed behavior can block protected tools after an unsupported
 provider transformation. That is preferable to inferring trust from message
