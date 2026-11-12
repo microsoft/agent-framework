@@ -617,6 +617,10 @@ through `agent_session_store_provider`; it does not maintain a second approval s
 An approval reply must continue the issuing session through `previous_response_id`
 or a named conversation. The wire approval ID alone does not establish authority.
 
+Custom agents must establish matching native pending state by the end of a run
+that emits an approval request. Hosting rejects unmatched or unrecorded requests
+before publishing an approval item; it does not register approvals on an agent's behalf.
+
 AgentServer requires its own wire-ID format. The adapter stores only native-ID
 and session-ID correlation in the response item's internal metadata, which the SDK
 removes from client-facing responses. It resolves that metadata through the scoped
@@ -628,8 +632,9 @@ Remove `function_approval_store_provider` and imports of `FunctionApprovalStore`
 Old approval-store records are not migrated. Start a fresh conversation rather
 than resuming approvals emitted before this migration.
 
-The session is saved before an approval request is published. This preserves
-Core's existing session-level guarantees, not durable single-consumption across
+Approval output waits for native finalization, and the session is saved before
+an approval request is published. This preserves Core's existing session-level
+guarantees, not durable single-consumption across
 concurrent workers or independently restored old snapshots. Stronger session-store
 coordination is separate work. Incomplete hosted MCP batches still need the SDK
 preflight support tracked by #9537 to return HTTP 400 before streaming starts;

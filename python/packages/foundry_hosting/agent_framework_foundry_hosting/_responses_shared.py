@@ -1570,13 +1570,18 @@ async def _items_to_messages(  # pyright: ignore[reportUnusedFunction]
     *,
     session: AgentSession | None = None,
     approval_ids: Mapping[str, str] | None = None,
+    include_hosted_approval_requests: bool = False,
 ) -> list[Message]:
     """Convert input items and restore native context for current approval decisions.
 
     Args:
         input_items: The input items to convert.
+
+    Keyword Args:
         session: Native session holding the agent's authoritative pending requests.
         approval_ids: Transport-only mapping from stored wire IDs to native request IDs.
+        include_hosted_approval_requests: Replay hosted requests when hosting owns the stateless
+            model transcript. Agent-managed or service-side history supplies its own context.
 
     Returns:
         Native request context followed by the supported input messages.
@@ -1586,11 +1591,12 @@ async def _items_to_messages(  # pyright: ignore[reportUnusedFunction]
         requests = [
             request
             for request in _load_pending_approval_requests(session).values()
-            if request.function_call is not None and not request.function_call.hosted
+            if request.function_call is not None
+            and (include_hosted_approval_requests or not request.function_call.hosted)
         ]
         if requests:
-            # Capped wire history may omit calls. Core normalizes its own pending snapshots
-            # into call/result pairs, including previously staged decisions in the same batch.
+            # Capped wire history may omit calls. Local snapshots let Core restore call/result
+            # pairs; hosted snapshots belong only in the host-managed stateless transcript.
             messages.append(Message(role="assistant", contents=requests))
     for item in input_items:
         messages.append(await _item_to_message(item, session=session, approval_ids=approval_ids))

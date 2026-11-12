@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from functools import partial
 from pathlib import Path
@@ -14,6 +15,7 @@ import pytest
 
 if TYPE_CHECKING:
     from agent_framework import Agent, AgentSession, Content, Message
+    from agent_framework.openai import OpenAIChatClient
 
     from agent_framework_foundry_hosting import (
         InvocationsHostServer,
@@ -85,6 +87,107 @@ def native_approval_agent(request: pytest.FixtureRequest) -> tuple[Agent, list[s
             return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
 
     return Agent[ChatOptions](client=ApprovalClient(), tools=[delete_file]), executions, calls
+
+
+@pytest.fixture
+async def hosted_approval_client(
+    request: pytest.FixtureRequest,
+) -> AsyncIterator[tuple[OpenAIChatClient, list[dict[str, Any]]]]:
+    from importlib import import_module
+
+    from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
+    from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+
+    calls: list[dict[str, Any]] = []
+    fail_after_approval = getattr(request, "param", None) == "failure_after_approval"
+    # OpenAI supports both httpx and httpx2; match the SDK-selected transport.
+    sdk_httpx = import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0])
+
+    def respond(request: Any) -> Any:
+        assert request.method == "POST"
+        assert request.url.path == "/v1/responses"
+        payload = json.loads(request.content)
+        calls.append(payload)
+        stored = payload.get("store", True)
+        response: dict[str, Any] = {
+            "id": f"resp_hosted_{len(calls)}",
+            "object": "response",
+            "created_at": 1_700_000_000,
+            "model": "test-model",
+            "status": "in_progress",
+            "output": [],
+            "error": None,
+            "incomplete_details": None,
+            "instructions": None,
+            "metadata": {},
+            "parallel_tool_calls": False,
+            "temperature": 1.0,
+            "tool_choice": "auto",
+            "tools": [],
+            "top_p": 1.0,
+            "usage": None,
+            "store": stored,
+            "background": False,
+            "conversation": {"id": "conv_hosted"} if stored else None,
+        }
+        output: list[dict[str, Any]] = (
+            [
+                {
+                    "type": "mcp_approval_request",
+                    "id": "provider-approval",
+                    "arguments": '{"path": "/safe"}',
+                    "name": "delete_file",
+                    "server_label": "hosted-tools",
+                }
+            ]
+            if len(calls) == 1
+            else [
+                {
+                    "type": "message",
+                    "id": f"msg_hosted_{len(calls)}",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "done", "annotations": [], "logprobs": []}],
+                }
+            ]
+        )
+        events: list[dict[str, Any]] = [
+            {"type": "response.created", "response": response},
+            {
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": {**output[0], "content": []} if output[0]["type"] == "message" else output[0],
+            },
+        ]
+        if output[0]["type"] == "message":
+            events.append({
+                "type": "response.output_text.delta",
+                "item_id": output[0]["id"],
+                "output_index": 0,
+                "content_index": 0,
+                "delta": "done",
+                "logprobs": [],
+            })
+        if fail_after_approval and len(calls) == 1:
+            events.append({"type": "error", "code": "server_error", "message": "provider failed", "param": None})
+        else:
+            events.append({"type": "response.output_item.done", "output_index": 0, "item": output[0]})
+            events.append({
+                "type": "response.completed",
+                "response": {**response, "status": "completed", "output": output},
+            })
+        for index, event in enumerate(events):
+            event["sequence_number"] = index
+        body = "".join(f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events)
+        return sdk_httpx.Response(200, headers={"content-type": "text/event-stream"}, text=body + "data: [DONE]\n\n")
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://provider.test/v1",
+        max_retries=0,
+        http_client=DefaultAsyncHttpxClient(transport=sdk_httpx.MockTransport(respond)),
+    ) as api_client:
+        yield OpenAIChatClient[OpenAIChatOptions](model="test-model", async_client=api_client), calls
 
 
 @pytest.fixture(autouse=True)

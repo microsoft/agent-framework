@@ -36,6 +36,7 @@ from agent_framework import (
     SupportsAgentRun,
 )
 from agent_framework._telemetry import mark_feature_used
+from agent_framework._tools import _load_pending_approval_requests  # pyright: ignore[reportPrivateUsage]
 from agent_framework.exceptions import AgentFrameworkException
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
@@ -248,6 +249,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 that keep mutable state outside `AgentSession`.
                 `WorkflowAgent` instances and factory results are rejected. Use `ResponsesWorkflowHostServer`
                 with a native workflow factory instead.
+                Approval-emitting runs must finalize matching native pending session state;
+                hosting rejects unmatched requests before publishing them.
 
         Keyword Args:
             prefix: The URL prefix for the server.
@@ -758,7 +761,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     approval_ids[wire_id] = _native_approval_id(
                         cast(Mapping[str, Any], item), session_id=resolved_session.session_id
                     )
-            return await _items_to_messages(input_items, session=resolved_session, approval_ids=approval_ids)
+            return await _items_to_messages(
+                input_items,
+                session=resolved_session,
+                approval_ids=approval_ids,
+                include_hosted_approval_requests=uses_agent_server_history,
+            )
 
         async def _load_history() -> list[Message]:
             if not uses_agent_server_history:
@@ -1057,13 +1065,27 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             inner_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] | None = None
             updates: _SignalledIterator[AgentResponseUpdate] | None = None
+            deferred_updates: list[AgentResponseUpdate] = []
 
             async def publish_update(
                 update: AgentResponseUpdate, *, complete_message: bool = False
             ) -> AsyncGenerator[ResponseStreamEvent]:
-                if any(content.type == "function_approval_request" for content in update.contents):
+                approval_requests = [
+                    content for content in update.contents if content.type == "function_approval_request"
+                ]
+                if approval_requests:
                     if not stored or session_storage is None:
                         raise ValueError("Approval and user-input continuation requires store=true.")
+                    pending = _load_pending_approval_requests(session)
+                    for request in approval_requests:
+                        recorded = pending.get(request.id) if request.id is not None else None
+                        if recorded is None or recorded.to_dict() != request.to_dict():
+                            raise _PublicResponseFailure(
+                                ValueError(
+                                    "The agent emitted an approval request without matching native pending state. "
+                                    "Use native agent/session approval handling before the run completes."
+                                )
+                            )
                     await _set_agent_session(session_storage, context.response_id, session)
                     if context.conversation_id is not None:
                         await _set_agent_session(session_storage, context.conversation_id, session)
@@ -1117,8 +1139,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             for content in update.contents
                         ):
                             raise ValueError("Approval and user-input continuation requires store=true.")
-                        async for event in publish_update(update):
-                            yield event
+                        if deferred_updates or any(
+                            content.type == "function_approval_request" for content in update.contents
+                        ):
+                            # Native providers can record approval authority only after their stream
+                            # finishes. Keep subsequent output ordered behind that approval.
+                            deferred_updates.append(update)
+                        else:
+                            async for event in publish_update(update):
+                                yield event
             if inner_stream is not None and isinstance(updates, _SignalledIterator) and not updates.signalled:
                 final = await inner_stream.get_final_response()
                 if final.continuation_token is not None and final.finish_reason is None:
@@ -1127,6 +1156,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         "configure background_source='inference_service' with history_source='inference_service' "
                         "to resume it."
                     )
+                for update in deferred_updates:
+                    async for event in publish_update(update):
+                        yield event
         except (asyncio.CancelledError, GeneratorExit):
             request_interrupted = True
             raise
