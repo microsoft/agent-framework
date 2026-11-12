@@ -596,8 +596,8 @@ public static class ServiceCollectionExtensions
         });
 
     /// <summary>
-    /// Registers the Foundry Toolbox service, which eagerly connects to the Foundry Toolboxes
-    /// MCP proxy at startup and provides MCP tools to the registered response handler.
+    /// Registers the Foundry Toolbox service, which opens the configured Foundry toolboxes through the
+    /// Toolboxes MCP proxy for each response and provides their MCP tools to the registered response handler.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -608,15 +608,18 @@ public static class ServiceCollectionExtensions
     /// <para>
     /// The endpoint can also come from a configured override or the
     /// <c>AZURE_AI_PROJECT_ENDPOINT</c> local-development fallback. If no endpoint is resolved,
-    /// startup completes with toolbox support disabled and the toolbox health check reports <c>Healthy</c>.
+    /// startup completes with toolbox support disabled.
+    /// A toolbox name that would not resolve to a single path segment of the proxy URL fails startup.
     /// </para>
     /// <para>
-    /// The <c>foundry-toolbox</c> health check reports its registration's failure status
-    /// (<c>Unhealthy</c> by default) while startup is pending, and <c>Healthy</c> after normal startup,
-    /// including when toolboxes need user OAuth consent
-    /// or discovery failures are deferred to per-request resolution. This does not guarantee that
-    /// every toolbox is available or that other readiness checks pass. Startup cancellation
-    /// propagates to the host instead of being deferred.
+    /// Startup opens no connection. Each response opens its own MCP session per toolbox under its platform
+    /// call id, discovers the tools available to its caller, and ends every session when it completes. A
+    /// toolbox that needs the caller's OAuth consent stops the turn with an <c>oauth_consent_request</c>; a
+    /// toolbox that cannot be opened is skipped for that response.
+    /// </para>
+    /// <para>
+    /// This method does not register a toolbox health check. Toolbox connectivity is evaluated
+    /// when each response opens its connections, not by readiness probes.
     /// </para>
     /// <para>
     /// Example:
@@ -639,7 +642,7 @@ public static class ServiceCollectionExtensions
     /// Registers the Foundry Toolbox service with optional behavior configuration.
     /// </summary>
     /// <remarks>
-    /// Toolbox readiness follows the same startup and per-request resolution behavior as
+    /// Toolbox startup and per-response connection behavior follow
     /// <see cref="AddFoundryToolboxService(IServiceCollection, TokenCredential, string[])"/>.
     /// </remarks>
     /// <param name="services">The service collection.</param>
@@ -649,7 +652,7 @@ public static class ServiceCollectionExtensions
     /// <see cref="FoundryToolboxServiceOptions.TokenScope"/>, or
     /// <see cref="FoundryToolboxServiceOptions.AllowedOAuthConsentOrigins"/>.
     /// </param>
-    /// <param name="toolboxNames">Names of the Foundry toolboxes to pre-register at startup.</param>
+    /// <param name="toolboxNames">Names of the Foundry toolboxes to open for each response.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryToolboxService(
         this IServiceCollection services,
@@ -675,31 +678,6 @@ public static class ServiceCollectionExtensions
             credential: credential,
             sp.GetService<ILogger<FoundryToolboxService>>()));
         services.AddHostedService(sp => sp.GetRequiredService<FoundryToolboxService>());
-
-        // Register the toolbox health check on the same /readiness pipeline that
-        // MapFoundryResponses maps. This gates the Foundry hosted runtime's readiness
-        // probe (per container-image-spec.md §3.1) on the outcome of the pre-registered
-        // toolbox connections opened in FoundryToolboxService.StartAsync.
-        // AddCheck<T>(name, ...) does NOT dedupe by name, so guard against a host that
-        // already registered a health check with this name.
-        const string HealthCheckName = "foundry-toolbox";
-        services.AddHealthChecks();
-        services.Configure<HealthCheckServiceOptions>(opts =>
-        {
-            foreach (var existing in opts.Registrations)
-            {
-                if (string.Equals(existing.Name, HealthCheckName, StringComparison.Ordinal))
-                {
-                    return;
-                }
-            }
-
-            opts.Registrations.Add(new HealthCheckRegistration(
-                name: HealthCheckName,
-                factory: sp => ActivatorUtilities.CreateInstance<FoundryToolboxHealthCheck>(sp),
-                failureStatus: HealthStatus.Unhealthy,
-                tags: ["foundry", "toolbox", "readiness"]));
-        });
 
         MarkFeatureUsed(FeatureIndex.FoundryToolbox);
         return services;

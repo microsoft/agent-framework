@@ -10,6 +10,7 @@ using Azure.Core;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Moq;
 using OpenAI.Responses;
@@ -45,6 +46,22 @@ public class ServiceCollectionExtensionsTests
 
         // Assert
         AssertFeatureUsed(52);
+    }
+
+    [Fact]
+    public void AddFoundryToolboxService_DoesNotChangeHealthChecks()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddHealthChecks().AddCheck("custom", () => HealthCheckResult.Healthy());
+
+        // Act
+        services.AddFoundryToolboxService(Mock.Of<TokenCredential>(), "toolbox");
+        using ServiceProvider provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value;
+
+        // Assert
+        Assert.Equal("custom", Assert.Single(options.Registrations).Name);
     }
 
     private static void AssertFeatureUsed(int featureIndex)

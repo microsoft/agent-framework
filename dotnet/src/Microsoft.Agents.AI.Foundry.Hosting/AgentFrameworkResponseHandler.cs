@@ -176,16 +176,13 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
             session ??= await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        // Capture the platform per-request call id (x-agent-foundry-call-id, protocol 2.0.0 only).
-        // It is re-applied to the ambient HostedCallContext immediately before each outbound egress
-        // point below: AsyncLocal writes made in this streaming iterator are reverted across yield
-        // boundaries, so a single up-front assignment would be lost before the toolbox/MCP calls run.
-        var platformCallId = context.PlatformContext?.CallId;
-        var toolboxRequestScope = this._toolboxService?.CreateRequestScope()
-            ?? FoundryToolboxService.RequestToolboxScope.CreateInactive();
+        // Every toolbox connection opened for this response belongs to this scope and ends with the response,
+        // so no MCP session is shared with another response or caller. The scope binds each connection to the
+        // platform per-request call id (x-agent-foundry-call-id, protocol 2.0.0 only), which the toolbox proxy
+        // uses to resolve the caller.
+        var toolboxRequestScope = this._toolboxService?.CreateRequestScope(context.PlatformContext?.CallId)
+            ?? FoundryToolboxService.ToolboxRequestScope.CreateInactive();
         await using var configuredToolboxRequestScope = toolboxRequestScope.ConfigureAwait(false);
-        HostedCallContext.CallId = platformCallId;
-        HostedCallContext.ToolboxCacheScopeId = toolboxRequestScope?.Id;
 
         // Stamp/validate the hosted identity only when one was resolved. Locally (non-hosted) there is
         // no user identity, so there is nothing to partition or tamper-check and the session is shared.
@@ -270,19 +267,44 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
             this._options);
         chatOptions.Instructions = request.Instructions;
 
-        // Inject pre-registered Foundry Toolbox tools when the toolbox service is available.
+        // A resilient turn defers to recovery when the host shuts down; any other turn ends incomplete.
+        bool isResilientTurn = this.ShouldPersistForResilience(request) || context.IsRecovery;
+
+        // Open the pre-registered Foundry toolboxes for this response when the toolbox service is available.
         if (this._toolboxService is not null)
         {
-            // Re-apply the call id: the EmitCreated/EmitInProgress yields above reverted the ambient
-            // value, and the toolbox tools/list + consent egress below must carry it per request.
-            HostedCallContext.CallId = platformCallId;
-            HostedCallContext.ToolboxCacheScopeId = toolboxRequestScope?.Id;
+            // Opening toolboxes waits on the network before the agent runs, so it observes shutdown itself rather
+            // than holding the response through the transport timeouts. A shutdown here ends the turn the same way
+            // as one during the agent run below, before the agent or its session has advanced, so nothing is saved.
+            ToolboxRequestResolution toolboxResolution = ToolboxRequestResolution.Empty;
+            bool shutdownDuringToolboxOpen = false;
+            using (var toolboxOpenCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, context.Shutdown))
+            {
+                try
+                {
+                    toolboxResolution = await toolboxRequestScope.ResolveAsync(toolboxOpenCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (context.IsShutdownRequested)
+                {
+                    shutdownDuringToolboxOpen = true;
+                }
+            }
 
-            var toolboxResolution = await this.ResolveToolboxToolsAsync(
-                this._toolboxService,
-                cancellationToken).ConfigureAwait(false);
+            if (shutdownDuringToolboxOpen)
+            {
+                if (isResilientTurn)
+                {
+                    LogShutdownDeferredForRecovery(this._logger);
+                    await context.ExitForRecoveryAsync(cancellationToken).ConfigureAwait(false);
+                    yield break;
+                }
 
-            // A toolbox that still needs OAuth consent stops this turn instead of silently running
+                LogShutdownEmittingIncomplete(this._logger);
+                yield return stream.EmitIncomplete();
+                yield break;
+            }
+
+            // A toolbox that needs this caller's OAuth consent stops the turn instead of silently running
             // without its tools: the user completes consent out of band, then re-sends the request.
             if (toolboxResolution.Consents.Count > 0)
             {
@@ -357,8 +379,6 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         // process crash can reload a recent session snapshot. Workflow supersteps use a stronger
         // boundary below: save the session, record its workflow checkpoint id in internal response
         // metadata, then ask AgentServer to persist the matching ResponseObject snapshot.
-        bool isResilientTurn = this.ShouldPersistForResilience(request) || context.IsRecovery;
-
         bool emittedTerminal = false;
         bool notAllowedStoreUsageDetected = false;
 
@@ -382,12 +402,6 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         {
             while (true)
             {
-                // Re-apply the call id before each pull from the agent stream: the per-event yields
-                // below revert the ambient AsyncLocal, but the MCP tools/call egress that happens
-                // inside MoveNextAsync must carry the platform call id on every request.
-                HostedCallContext.CallId = platformCallId;
-                HostedCallContext.ToolboxCacheScopeId = toolboxRequestScope?.Id;
-
                 bool shutdownDetected = false;
                 IReadOnlyList<McpConsentInfo>? pendingConsents = null;
                 ResponseStreamEvent? failedEvent = null;
@@ -732,49 +746,13 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
     }
 
     /// <summary>
-    /// Resolves the pre-registered Foundry toolbox tools to add to this request.
-    /// </summary>
-    /// <returns>
-    /// The tools to add, or the OAuth consents still outstanding.
-    /// </returns>
-    private async ValueTask<ToolboxRequestResolution> ResolveToolboxToolsAsync(
-        FoundryToolboxService toolboxService,
-        CancellationToken cancellationToken)
-    {
-        // Retry any pre-registered toolbox that was deferred at startup because it could not be
-        // enumerated without a per-user context (non-consent failure). The request's egress now
-        // carries the platform-injected per-user isolation key, so a delegated tool source can
-        // enumerate as the user — or report that it needs OAuth consent, which is then surfaced
-        // by ResolvePendingConsentsAsync below.
-        await toolboxService
-            .RetryDeferredToolboxesAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        // Resolve any pre-registered toolbox that was awaiting user OAuth consent at startup
-        // (CONSENT_REQUIRED at tools/list time). If consent is still outstanding, surface it to
-        // the caller as an oauth_consent_request and stop: the user completes consent out of band,
-        // then re-sends the request, at which point enumeration succeeds and the tools appear.
-        var pendingConsents = await toolboxService
-            .ResolvePendingConsentsAsync(cancellationToken)
-            .ConfigureAwait(false);
-        if (pendingConsents.Count > 0)
-        {
-            return new(Tools: [], Consents: pendingConsents);
-        }
-
-        return new(
-            Tools: [.. toolboxService.Tools, .. toolboxService.GetCurrentRequestTools()],
-            Consents: []);
-    }
-
-    /// <summary>
     /// Emits the terminal events for a turn that stops on OAuth consent: one <c>oauth_consent_request</c>
     /// item per consent, then <c>response.incomplete</c>.
     /// </summary>
     /// <remarks>
     /// When any consent link fails the consent link policy, only <c>response.failed</c> is emitted, so
-    /// no link from that turn is surfaced. A pre-registered toolbox that is awaiting consent stays
-    /// pending, so a later request retries it.
+    /// no link from that turn is surfaced. Every later response opens the toolbox again, so it discovers
+    /// the tools once the caller has consented.
     /// </remarks>
     private IEnumerable<ResponseStreamEvent> EmitConsentRequiredResponse(
         ResponseEventStream stream,
@@ -1025,14 +1003,6 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
 
         return agentName;
     }
-
-    /// <summary>
-    /// The toolbox outcome for one request. A non-empty <see cref="Consents"/> stops the turn for OAuth consent, and
-    /// <see cref="Tools"/> holds the toolbox tools to add to the run.
-    /// </summary>
-    private readonly record struct ToolboxRequestResolution(
-        IReadOnlyList<AITool> Tools,
-        IReadOnlyList<McpConsentInfo> Consents);
 
     [LoggerMessage(
         EventId = 0,
