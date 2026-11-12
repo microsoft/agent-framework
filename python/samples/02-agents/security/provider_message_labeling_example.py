@@ -72,7 +72,7 @@ async def main() -> None:
     )
     planning = TodoProvider(source_id=TODO_SOURCE_ID)
 
-    # 2. Configure FIDES after the providers so their messages exist when the callback runs.
+    # 2. Configure FIDES last so every provider message exists when the callback runs.
     security = SecureAgentConfig(
         message_labeler=classify_provider_message,
         allow_untrusted_tools={"file_memory_read", "file_memory_write"},

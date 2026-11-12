@@ -140,6 +140,9 @@ framework providers:
 - `FileMemoryProvider`
 - `TodoProvider`
 
+`SecureAgentConfig` is the final context provider, so its labeler sees messages
+from every provider it classifies.
+
 The callback receives each provider's authoritative `source_id`. It applies
 a trusted private label to application-owned history, an untrusted private
 label to file memory, and an untrusted public label to todo content.

@@ -2,8 +2,8 @@
 
 """File-access harness provider exposing CRUD/search tools backed by an ``AgentFileStore``.
 
-Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
-session-scoped memory that may be isolated per session, :class:`FileAccessProvider`
+Unlike :class:`~agent_framework.FileMemoryProvider`, which provides memory
+isolated per session by default, :class:`FileAccessProvider`
 operates on a shared, persistent storage area whose contents are visible across
 sessions and agents. The provider exposes tools — ``file_access_write``,
 ``file_access_read``, ``file_access_read_lines``, ``file_access_delete``,
@@ -2018,8 +2018,8 @@ class FileAccessProvider(ContextProvider):
     When ``disable_write_tools`` is set, only the read-only tools (``file_access_read``,
     ``file_access_read_lines``, ``file_access_ls``, ``file_access_grep``) are advertised.
 
-    Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
-    session-scoped memory that may be isolated per session,
+    Unlike :class:`~agent_framework.FileMemoryProvider`, which provides memory
+    isolated per session by default,
     :class:`FileAccessProvider` operates by default on a shared, persistent
     store whose contents are visible across sessions and agents. Pass
     ``session_scoped=True`` (with an optional explicit ``scope``) to confine
