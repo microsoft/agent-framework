@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Annotated, Any, NoReturn, cast
 from weakref import WeakKeyDictionary
 
 from pydantic import BaseModel, Field
+from typing_extensions import Sentinel
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import (
@@ -142,7 +143,7 @@ _TOOL_POLICY_SOURCE_INTEGRITY_KEY = "source_integrity"
 _MAX_REPLAY_CONTENT_DEPTH = 32
 _builtin_id = builtins.id
 _REPLAY_STATE_COVERED_KEY = "_agent_framework_fides_replay_state_covered"
-_REPLAY_STATE_COVERED_MARKER = object()
+_REPLAY_STATE_COVERED_MARKER = Sentinel("_REPLAY_STATE_COVERED_MARKER")
 _TOOL_SECURITY_POLICY_KEYS = frozenset({
     _TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY,
     _TOOL_POLICY_CONFIDENTIALITY_KEY,
