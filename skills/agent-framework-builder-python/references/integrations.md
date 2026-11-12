@@ -63,6 +63,14 @@ Monty and Hyperlight redact host tool exception diagnostics by default. Enable
 is separate from the outer chat client's error policy and sensitive-data logging;
 outer redaction cannot repair a diagnostic already caught and returned by generated code.
 
+Hyperlight guest execution defaults to a 30-second budget. Configure the positive finite
+host-side `execution_timeout_seconds` option on `HyperlightCodeActProvider` or
+`HyperlightExecuteCodeTool` for longer work. Caller task cancellation interrupts guest execution
+and waits for the owning worker to finish before propagating. Neither cancellation nor the budget
+can interrupt runtime initialization or host tool callbacks; enforce limits inside host tools too.
+This requires a compatible SDK with `Sandbox.interrupt_handle()`; verify the selected package
+release supports it before relying on these limits.
+
 For Monty, distinguish interpreter `resource_limits` from host-side attachment capture. Capture has per-call
 file-count and raw-byte limits shared across read-write mounts. Omitted attachments do not undo filesystem writes.
 Monty requires `pydantic-monty>=1.0`. Use `max_feed_duration_secs` for the total sandbox execution budget or

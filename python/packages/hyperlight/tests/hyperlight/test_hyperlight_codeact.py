@@ -21,7 +21,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import DEFAULT, patch
 
@@ -324,6 +324,9 @@ class _FakeSandbox:
 
     def snapshot(self) -> str:
         return "snapshot"
+
+    def interrupt_handle(self) -> SimpleNamespace:
+        return SimpleNamespace(kill=lambda: False)
 
     def restore(self, snapshot: Any) -> None:
         self.restore_calls.append(snapshot)
@@ -2504,6 +2507,9 @@ async def test_execute_code_tool_retries_allowed_domains_with_urls_when_backend_
         def snapshot(self) -> str:
             return "snapshot"
 
+        def interrupt_handle(self) -> SimpleNamespace:
+            return SimpleNamespace(kill=lambda: False)
+
         def restore(self, snapshot: Any) -> None:
             del snapshot
 
@@ -2609,6 +2615,30 @@ async def test_provider_forwards_output_limits_to_run_tool_and_serializable_stat
     assert state[provider.source_id]["max_output_file_bytes"] == 11
     assert state[provider.source_id]["max_output_total_bytes"] == 13
     json.dumps(state)
+
+
+@pytest.mark.parametrize("constructor", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+@pytest.mark.parametrize("value", [True, "30", None, 0, -1, float("inf"), float("-inf"), float("nan")])
+def test_execution_timeout_requires_a_positive_finite_number(constructor: Any, value: Any) -> None:
+    with pytest.raises((TypeError, ValueError), match="execution_timeout_seconds"):
+        constructor(execution_timeout_seconds=value)
+
+
+async def test_provider_captures_execution_timeout_without_changing_sandbox_identity() -> None:
+    runtime = _FakeRuntime()
+    provider = HyperlightCodeActProvider(execution_timeout_seconds=0.25, _registry=runtime)
+    context = _FakeSessionContext()
+    state: dict[str, Any] = {}
+
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
+    run_tool = context.tools[0][1][0]
+    assert isinstance(run_tool, HyperlightExecuteCodeTool)
+    await run_tool.invoke(arguments={"code": "None"})
+
+    assert runtime.calls[0][0].execution_timeout_seconds == 0.25
+    assert state[provider.source_id]["execution_timeout_seconds"] == 0.25
+    default_config = HyperlightExecuteCodeTool(_registry=runtime)._build_run_config()
+    assert runtime.calls[0][0].cache_key() == default_config.cache_key()
 
 
 async def test_output_limits_are_isolated_when_registry_is_shared(

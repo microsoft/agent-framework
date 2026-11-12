@@ -513,6 +513,8 @@ _ToolParameterFormat: TypeAlias = Literal["compact", "json"]
 _ToolDescriptionFormat: TypeAlias = _ToolParameterFormat | Mapping[str, _ToolParameterFormat]
 _NormalizedToolDescriptionFormat: TypeAlias = _ToolParameterFormat | dict[str, _ToolParameterFormat]
 _TOOL_DESCRIPTION_FORMAT_ERROR = "tool_description_format must be 'compact', 'json', or a tool-name mapping."
+# model_dump's fallback (str for values JSON mode doesn't know) only exists on newer Pydantic 2 versions.
+_MODEL_DUMP_HAS_FALLBACK = "fallback" in inspect.signature(BaseModel.model_dump).parameters
 
 
 def _normalize_tool_description_format(  # pyright: ignore[reportUnusedFunction]
@@ -1430,12 +1432,34 @@ class FunctionTool(SerializationMixin):
         if isinstance(value, Content):
             return value.to_dict(exclude={"raw_representation", "additional_properties"})
         if isinstance(value, BaseModel):
-            return value.model_dump()
+            return FunctionTool._dump_model(value)
         if hasattr(value, "to_dict"):
             return value.to_dict()
         if hasattr(value, "text") and isinstance(value.text, str):
             return value.text
         return value
+
+    @staticmethod
+    def _dump_model(model: BaseModel) -> Any:
+        """Dump a Pydantic model in JSON mode.
+
+        JSON mode applies enum, datetime and UUID encoding and JSON-only serializers, and values it
+        doesn't know become their str() form. Pydantic versions without ``model_dump(..., fallback=...)``
+        get the same output from ``to_jsonable_python(..., serialize_unknown=True)``. If Pydantic still
+        can't dump the model (bytes that aren't valid UTF-8, a reference cycle), a placeholder is returned,
+        so no part of the model is sent without its serializers and exclusions.
+        """
+        try:
+            if _MODEL_DUMP_HAS_FALLBACK:
+                return model.model_dump(mode="json", fallback=str)
+            return to_jsonable_python(model, by_alias=False, serialize_unknown=True)
+        except Exception as exception:
+            logger.warning(
+                "Replacing %s in the tool result with a placeholder: it can't be serialized as JSON (%s).",
+                type(model).__name__,
+                type(exception).__name__,
+            )
+            return f"[{type(model).__name__} could not be serialized as JSON]"
 
     @staticmethod
     def parse_result(result: Any) -> list[Content]:

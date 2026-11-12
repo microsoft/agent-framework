@@ -723,6 +723,8 @@ class PostgresCollection(
         if keys is not None:
             if order_by:
                 raise ValueError("order_by applies only to filtered retrieval, not key lookup.")
+            if skip:
+                raise ValueError("PostgreSQL key retrieval cannot be combined with skip.")
             if not keys:
                 return []
             adapted = [self._prepare_key(key) for key in keys]

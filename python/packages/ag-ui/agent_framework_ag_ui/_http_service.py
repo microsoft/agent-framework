@@ -269,8 +269,11 @@ class AGUIHttpService:
 
             async for line in response.aiter_lines():
                 # Parse Server-Sent Events format
-                if line.startswith("data: "):
-                    data = line[6:]  # Remove "data: " prefix
+                if line.startswith("data:"):
+                    data = line[5:]
+                    # The space after "data:" is optional in SSE.
+                    if data.startswith(" "):
+                        data = data[1:]
                     try:
                         event = json.loads(data)
                         logger.debug(f"Received event: {event.get('type', 'UNKNOWN')}")

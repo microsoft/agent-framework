@@ -317,6 +317,20 @@ async def test_post_run_invalid_json(mock_http_client):
     assert events[0]["type"] == "RUN_FINISHED"
 
 
+async def test_post_run_accepts_data_lines_without_space(sample_events):
+    """The space after "data:" is optional in SSE, so "data:{...}" lines must be parsed too."""
+    body = "".join(f"data:{json.dumps(event)}\n\n" for event in sample_events)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, text=body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        service = AGUIHttpService("http://localhost:8888/", http_client=client)
+        events = [event async for event in service.post_run(thread_id="thread_123", run_id="run_456", messages=[])]
+
+    assert events == sample_events
+
+
 async def test_context_manager():
     """Test context manager functionality."""
     async with AGUIHttpService("http://localhost:8888/") as service:
