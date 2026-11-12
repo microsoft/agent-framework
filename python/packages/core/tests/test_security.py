@@ -7251,6 +7251,7 @@ class TestMCPIFCMetaLabels:
             "_mcp_remote_name": "plain_tool",
             "_mcp_normalized_name": "plain_tool",
             "_mcp_is_tool": True,
+            "_mcp_server_name": "helper",
         }
         assert getattr(function.func, "_ifc_wrapped", False) is False
         result = await _invoke_mcp_function(function)
