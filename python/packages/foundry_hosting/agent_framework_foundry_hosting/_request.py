@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -116,44 +116,72 @@ _HOST_CONTROLLED_FIELDS = frozenset({
 })
 _OPTION_NAMES = {"max_output_tokens": "max_tokens", "parallel_tool_calls": "allow_multiple_tool_calls"}
 _NATIVE_FIELDS = frozenset(CreateResponse.__annotations__)
-# Trusted tool-execution context that callers must not supply. Unlike ``_HOST_CONTROLLED_FIELDS``, a developer
-# ``prepare_options`` hook may still set it from trusted host state.
-_CALLER_REJECTED_FIELDS = frozenset({"additional_function_arguments"})
+_CALLER_ALLOWED_FIELDS = frozenset({
+    "agent_session_id",
+    "agent_reference",
+    "background",
+    "conversation",
+    "extra_body",
+    "include",
+    "input",
+    "max_output_tokens",
+    "metadata",
+    "model",
+    "parallel_tool_calls",
+    "previous_response_id",
+    "reasoning",
+    "store",
+    "stream",
+    "temperature",
+    "text",
+    "top_p",
+    "user",
+})
+_CALLER_ALLOWED_EXTRA_BODY_FIELDS = frozenset({
+    "allow_multiple_tool_calls",
+    "max_output_tokens",
+    "max_tokens",
+    "model",
+    "parallel_tool_calls",
+    "reasoning",
+    "temperature",
+    "text",
+    "top_p",
+})
 
 
-def _reject_caller_controls(names: Iterable[str]) -> None:
-    rejected = _CALLER_REJECTED_FIELDS.intersection(names)
+def reject_disallowed_caller_fields(request: CreateResponse, options: Mapping[str, Any]) -> None:
+    """Reject caller fields not allowed by the default policy or explicitly returned by the developer hook.
+
+    The hook can opt an individual caller field into the run options by returning it. Host-controlled
+    fields remain protected by ``validate_request_options``.
+
+    Raises:
+        TypeError: If ``extra_body`` is not a mapping of string keys.
+        ValueError: If a caller field is not allowed.
+    """
+    returned_fields = set(options)
+    rejected = set(request).difference(_CALLER_ALLOWED_FIELDS).difference(returned_fields)
+    extra_body = request.get("extra_body")
+    if extra_body is not None:
+        if not isinstance(extra_body, Mapping) or any(
+            not isinstance(key, str) for key in cast(Mapping[object, object], extra_body)
+        ):
+            raise TypeError("extra_body must be a mapping of model options.")
+        rejected.update(
+            f"extra_body.{name}"
+            for name in cast(Mapping[str, Any], extra_body)
+            if name not in _CALLER_ALLOWED_EXTRA_BODY_FIELDS and name not in returned_fields
+        )
     if rejected:
         raise ValueError(
-            f"Responses requests cannot set agent-controlled fields: {', '.join(sorted(rejected))}. "
-            "Configure trusted tool context in the agent's default options or a prepare_options hook."
+            f"Responses requests cannot set fields that are not in the caller allowlist: {', '.join(sorted(rejected))}."
         )
 
 
-def reject_caller_tool_context(request: CreateResponse) -> None:
-    """Reject caller-supplied agent-controlled tool context, at the top level or in ``extra_body``.
-
-    This applies to every hosted Responses request, whichever agent or workflow shape serves it, so callers can
-    never replace trusted values configured by the developer.
-
-    Raises:
-        ValueError: If the request sets an agent-controlled field.
-    """
-    _reject_caller_controls(cast(Mapping[str, Any], request))
-    extra_body = request.get("extra_body")
-    if isinstance(extra_body, Mapping):
-        _reject_caller_controls(cast(Mapping[str, Any], extra_body))
-
-
 def response_run_options(request: CreateResponse) -> dict[str, Any]:
-    """Translate native generation fields, with flattened extra-body values winning collisions.
-
-    Raises:
-        ValueError: If the caller supplies agent-controlled tool-execution context.
-    """
-    reject_caller_tool_context(request)
+    """Translate allowed native generation fields, with flattened extra-body values winning collisions."""
     native: dict[str, Any] = {}
-    extra: dict[str, Any] = {}
     nested_extra: dict[str, Any] = {}
     for name, value in request.items():
         if value is None or (name == "model" and value == ""):
@@ -165,16 +193,17 @@ def response_run_options(request: CreateResponse) -> dict[str, Any]:
                 raise TypeError("extra_body must be a mapping of model options.")
             if "extra_body" in value:
                 raise ValueError("Nested extra_body is not supported; flatten provider options instead.")
-            nested_extra.update(cast(Mapping[str, Any], value))
+            nested_extra.update({
+                _OPTION_NAMES.get(name, name): item
+                for name, item in cast(Mapping[str, Any], value).items()
+                if name in _CALLER_ALLOWED_EXTRA_BODY_FIELDS
+            })
         elif name in _HOST_CONTROLLED_FIELDS:
             continue
-        elif name in _NATIVE_FIELDS:
+        elif name in _CALLER_ALLOWED_FIELDS and name in _NATIVE_FIELDS:
             native[_OPTION_NAMES.get(name, name)] = value
-        else:
-            extra[name] = value
     return {
         **native,
-        **{name: value for name, value in extra.items() if name not in _HOST_CONTROLLED_FIELDS},
         **{name: value for name, value in nested_extra.items() if name not in _HOST_CONTROLLED_FIELDS},
     }
 

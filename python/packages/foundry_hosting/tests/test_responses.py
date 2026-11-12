@@ -2241,8 +2241,9 @@ class TestAgentSessionPersistence:
         agent = Agent(client=client, default_options=OpenAIChatOptions(temperature=0.2, max_tokens=256))
         defaults = dict(agent.default_options)
 
-        def prepare_options(_request: Any, options: dict[str, Any]) -> dict[str, Any]:
+        def prepare_options(request: Any, options: dict[str, Any]) -> dict[str, Any]:
             options.pop("temperature")
+            options["vendor_option"] = request.request["vendor_option"]
             return options
 
         server = _make_server(agent, prepare_options=prepare_options)
@@ -2253,18 +2254,45 @@ class TestAgentSessionPersistence:
                 "model": "test-model",
                 "temperature": 0.8,
                 "max_output_tokens": 300,
-                "max_tokens": 150,
-                "session_id": "forged-sandbox",
-                "call_id": "forged-call",
+                "extra_body": {"max_tokens": 150},
+                "vendor_option": "caller-value",
             },
         )
 
         assert response.json()["status"] == "completed"
         assert client.options[0]["temperature"] == 0.2
         assert client.options[0]["max_tokens"] == 150
-        assert "session_id" not in client.options[0]
-        assert "call_id" not in client.options[0]
+        assert client.options[0]["vendor_option"] == "caller-value"
         assert agent.default_options == defaults
+
+    @pytest.mark.parametrize(
+        ("location", "field_name"),
+        [
+            ("top_level", "additional_function_arguments"),
+            ("extra_body", "extra_body.additional_function_arguments"),
+        ],
+    )
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_unlisted_caller_option_fails_before_agent_run(
+        self, location: Literal["top_level", "extra_body"], field_name: str, stream: bool
+    ) -> None:
+        agent = _make_agent()
+        server = _make_server(agent)
+        payload: dict[str, Any] = {"input": "one shot", "stream": stream}
+        if location == "top_level":
+            payload["additional_function_arguments"] = {"tenant_id": "forged"}
+        else:
+            payload["extra_body"] = {"additional_function_arguments": {"tenant_id": "forged"}}
+
+        response = await _post_json(server, payload)
+
+        if stream:
+            assert "response.failed" in response.text
+            assert field_name in response.text
+        else:
+            assert response.json()["status"] == "failed"
+            assert field_name in response.json()["error"]["message"]
+        agent.run.assert_not_called()
 
     async def test_hook_cannot_reintroduce_host_owned_storage_or_identity(self) -> None:
         agent = _make_agent()
@@ -9971,6 +9999,24 @@ class TestWorkflowAgentHosting:
     relative to the regular agent path.
     """
 
+    @pytest.mark.parametrize("location", ["top_level", "extra_body"])
+    async def test_unlisted_caller_option_fails_before_workflow_run(
+        self, location: Literal["top_level", "extra_body"]
+    ) -> None:
+        workflow_agent, inner = _build_multi_update_workflow_agent(["done"])
+        server = _make_server(workflow_agent)
+        payload: dict[str, Any] = {"input": "one shot", "stream": False}
+        if location == "top_level":
+            payload["additional_function_arguments"] = {"tenant_id": "forged"}
+        else:
+            payload["extra_body"] = {"additional_function_arguments": {"tenant_id": "forged"}}
+
+        response = await _post_json(server, payload)
+
+        assert response.json()["status"] == "failed"
+        assert "additional_function_arguments" in response.json()["error"]["message"]
+        assert inner.run_count == 0
+
     async def test_async_factory_creates_workflow_agent_for_each_request(self) -> None:
         created: list[tuple[WorkflowAgent, _MultiUpdateWorkflowAgentMock]] = []
 
@@ -10352,6 +10398,15 @@ class TestWorkflowAgentHosting:
                 "stream": False,
                 "previous_response_id": first_response_id,
             }
+            rejected_payload = {
+                **second_payload,
+                "additional_function_arguments": {"tenant_id": "forged"},
+            }
+            rejected = await _post_json(server, rejected_payload)
+            assert rejected.json()["status"] == "failed"
+            assert "additional_function_arguments" in rejected.json()["error"]["message"]
+            assert mock_agent.run_count == 1
+
             second = await _post_json(server, second_payload)
         assert second.status_code == 200
         second_body = second.json()

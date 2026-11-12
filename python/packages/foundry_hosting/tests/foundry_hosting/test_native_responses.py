@@ -621,13 +621,18 @@ async def test_native_agent_executor_applies_options_without_mutating_defaults_o
     async def parse(request: HostedResponseRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", await request.get_input_text() or "")])
 
-    server = _server(create, parser=parse)
-    first = await _post(server, "one", temperature=0.7, max_output_tokens=12, store=True)
+    def prepare_options(request: HostedResponseRequest, options: dict[str, Any]) -> dict[str, Any]:
+        options["vendor_option"] = request.request["vendor_option"]
+        return options
+
+    server = _server(create, parser=parse, prepare_options=prepare_options)
+    first = await _post(server, "one", temperature=0.7, max_output_tokens=12, store=True, vendor_option="first")
     assert first["status"] == "completed", first
-    second = await _post(server, "two", temperature=0.4, store=False, call="call-two")
+    second = await _post(server, "two", temperature=0.4, store=False, call="call-two", vendor_option="second")
     assert second["status"] == "completed", second
     assert [call["options"]["store"] for call in calls] == [False, False]
     assert [call["options"]["temperature"] for call in calls] == [0.7, 0.4]
+    assert [call["options"]["vendor_option"] for call in calls] == ["first", "second"]
     assert calls[0]["options"]["max_tokens"] == 12
     assert all(
         agent.default_options["temperature"] == 0.2 and agent.default_options["store"] is True for agent in agents

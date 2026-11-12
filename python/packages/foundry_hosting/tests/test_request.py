@@ -14,6 +14,7 @@ from azure.ai.agentserver.responses.models import CreateResponse
 from agent_framework_foundry_hosting import HostedResponseRequest, InvocationRun, response_input_messages
 from agent_framework_foundry_hosting._request import (
     prepare_response_options,
+    reject_disallowed_caller_fields,
     response_run_options,
     validate_default_transport_options,
     validate_request_options,
@@ -31,19 +32,11 @@ def test_native_options_are_translated_before_flattened_extra_body() -> None:
             "store": True,
             "background": False,
             "conversation": "outer-conversation",
-            "agent_session_id": "forged-sandbox",
-            "session_id": "caller-session",
             "user": "forged-user",
-            "user_id": "forged-user",
-            "call_id": "forged-call",
-            "conversation_id": "inner-conversation",
-            "service_session_id": "private-session",
-            "continuation_token": {"response_id": "private"},
             "max_output_tokens": 300,
-            "max_tokens": 150,
             "parallel_tool_calls": False,
             "reasoning": {"effort": "high"},
-            "slogan_style": "retro",
+            "extra_body": {"max_tokens": 150, "temperature": 0.4},
         },
     )
 
@@ -52,8 +45,29 @@ def test_native_options_are_translated_before_flattened_extra_body() -> None:
         "max_tokens": 150,
         "allow_multiple_tool_calls": False,
         "reasoning": {"effort": "high"},
-        "slogan_style": "retro",
+        "temperature": 0.4,
     }
+
+
+@pytest.mark.parametrize(
+    ("payload", "field_name"),
+    [
+        ({"instructions": None}, "instructions"),
+        ({"extra_body": {"vendor_option": None}}, "extra_body.vendor_option"),
+        ({"additional_function_arguments": {"tenant_id": "forged"}}, "additional_function_arguments"),
+        (
+            {"extra_body": {"additional_function_arguments": {"tenant_id": "forged"}}},
+            "extra_body.additional_function_arguments",
+        ),
+    ],
+)
+def test_unlisted_request_fields_are_rejected(payload: dict[str, Any], field_name: str) -> None:
+    request = cast(CreateResponse, {"input": "hello", **payload})
+    options = response_run_options(request)
+
+    with pytest.raises(ValueError) as exc_info:
+        reject_disallowed_caller_fields(request, options)
+    assert field_name in str(exc_info.value)
 
 
 def test_nested_extra_body_is_also_overlaid_last_without_reserved_fields() -> None:
@@ -63,12 +77,15 @@ def test_nested_extra_body_is_also_overlaid_last_without_reserved_fields() -> No
             "max_output_tokens": 300,
             "extra_body": {
                 "max_tokens": 150,
-                "session_id": "forged",
-                "continuation_token": {"response_id": "private"},
             },
         },
     )
     assert response_run_options(request) == {"max_tokens": 150}
+    with pytest.raises(ValueError, match="extra_body.session_id"):
+        reject_disallowed_caller_fields(
+            cast(CreateResponse, {"extra_body": {"session_id": "forged"}}),
+            {},
+        )
     with pytest.raises(TypeError, match="extra_body must be a mapping"):
         response_run_options(cast(CreateResponse, {"extra_body": ["not a mapping"]}))
     with pytest.raises(ValueError, match="Nested extra_body is not supported"):
@@ -137,6 +154,31 @@ async def test_hook_rejects_reserved_fields_and_non_mapping_result() -> None:
         validate_request_options(request.options)
     with pytest.raises(TypeError, match="must return a mapping"):
         await prepare_response_options(request, lambda _view, _options: cast(Any, None))
+
+
+async def test_options_hook_can_opt_a_request_field_into_the_allowlist() -> None:
+    payload = cast(
+        CreateResponse,
+        {"input": "hello", "vendor_option": "caller-value", "extra_body": {"provider_option": "nested-value"}},
+    )
+    context = MagicMock(spec=ResponseContext)
+    context.response_id = "outer-id"
+    context.conversation_id = None
+    scope = FoundryRequestScope(session_id="sandbox", user_id="user", call_id="call", is_hosted=False)
+    request = HostedResponseRequest(payload, context, scope, response_run_options(payload))
+
+    def allow_request_fields(view: HostedResponseRequest, options: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **options,
+            "vendor_option": view.request["vendor_option"],
+            "provider_option": view.request["extra_body"]["provider_option"],
+        }
+
+    await prepare_response_options(request, allow_request_fields)
+    reject_disallowed_caller_fields(payload, request.options)
+
+    assert request.options["vendor_option"] == "caller-value"
+    assert request.options["provider_option"] == "nested-value"
 
 
 def test_default_transport_cannot_override_host_storage_or_identity() -> None:

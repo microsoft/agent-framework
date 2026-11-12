@@ -120,7 +120,7 @@ from ._request import (
     UnsupportedOptions,
     WorkflowTurn,
     prepare_response_options,
-    reject_caller_tool_context,
+    reject_disallowed_caller_fields,
     response_run_options,
     validate_default_transport_options,
     validate_request_options,
@@ -1046,7 +1046,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 client into provider background polling and requires `history_source="service"`.
                 Each poll retains the caller's run options and `background=True`; local tools must be
                 idempotent because a crash before the next private token is saved can replay them.
-            prepare_options: Developer hook to remove or replace caller model options for an agent.
+            prepare_options: Developer hook to remove or replace caller model options. Returning a caller field
+                not included in the default allowlist explicitly opts that field into this request; host-controlled
+                fields remain forbidden.
             unsupported_options: `"warn"` (default), `"error"`, or `"ignore"` when a custom agent
                 cannot accept runtime model options.
             **kwargs: Additional keyword arguments.
@@ -1302,14 +1304,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 _initialize_agent_history(agent, configuration)
             if configuration.workflow:
                 self._warn_legacy_workflow()
-            try:
-                reject_caller_tool_context(request)
-            except ValueError as exc:
-                raise _PublicResponseFailure(exc) from None
             hosted_request: HostedResponseRequest | None = None
             if configuration.workflow:
                 if self._prepare_options is not None:
                     raise _PublicResponseFailure(ValueError("prepare_options is only supported for regular agents."))
+                try:
+                    reject_disallowed_caller_fields(request, response_run_options(request))
+                except (TypeError, ValueError) as exc:
+                    raise _PublicResponseFailure(exc) from None
             else:
                 try:
                     hosted_request = HostedResponseRequest(request, context, scope, response_run_options(request))
@@ -1317,6 +1319,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     raise _PublicResponseFailure(exc) from None
                 await prepare_response_options(hosted_request, self._prepare_options)
                 try:
+                    reject_disallowed_caller_fields(request, hosted_request.options)
                     validate_request_options(hosted_request.options)
                 except (TypeError, ValueError) as exc:
                     raise _PublicResponseFailure(exc) from None

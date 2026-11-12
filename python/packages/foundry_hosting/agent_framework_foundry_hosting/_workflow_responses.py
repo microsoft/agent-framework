@@ -47,6 +47,7 @@ from ._request import (
     OptionsHook,
     WorkflowTurn,
     prepare_response_options,
+    reject_disallowed_caller_fields,
     response_run_options,
     validate_request_options,
 )
@@ -429,6 +430,7 @@ class NativeResponsesWorkflow:
             )
             hosted = HostedResponseRequest(request, context, scope, response_run_options(request))
             await prepare_response_options(hosted, self.options_hook)
+            reject_disallowed_caller_fields(request, hosted.options)
             validate_request_options(hosted.options)
             workflow = await self.resolver.resolve(hosted)
             resources = AsyncExitStack()
