@@ -1461,11 +1461,7 @@ def _normalize_service_continuation(
         value = options.get(option_name)
         if value is None or (isinstance(value, str) and value == ""):
             continue
-        if (
-            option_name == "conversation_id"
-            and isinstance(value, str)
-            and is_local_history_conversation_id(value)
-        ):
+        if option_name == "conversation_id" and isinstance(value, str) and is_local_history_conversation_id(value):
             continue
         continuation_present = True
         try:
@@ -1503,11 +1499,7 @@ def _service_continuation_from_metadata(value: Any) -> _ServiceContinuation:
     if not isinstance(value, tuple):
         return False, None
     items = cast(tuple[Any, ...], value)
-    if (
-        len(items) == 2
-        and isinstance(items[0], bool)
-        and (items[1] is None or isinstance(items[1], str))
-    ):
+    if len(items) == 2 and isinstance(items[0], bool) and (items[1] is None or isinstance(items[1], str)):
         return cast(_ServiceContinuation, items)
     return False, None
 
@@ -1985,10 +1977,7 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
 
         self._capture_finalized_messages(service_call_context, chat_context.messages)
         effective_options = dict(chat_context.options or {})
-        if (
-            response.conversation_id is not None
-            and not is_local_history_conversation_id(response.conversation_id)
-        ):
+        if response.conversation_id is not None and not is_local_history_conversation_id(response.conversation_id):
             for option_name in self._service_continuation_option_names:
                 if option_name != "conversation_id":
                     effective_options.pop(option_name, None)

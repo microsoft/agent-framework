@@ -8160,9 +8160,7 @@ async def test_endpoint_fides_approval_uses_backend_snapshot_provenance(
 
     assert approved.status_code == 200
     results = [event for event in _decode_sse_events(approved) if event.get("type") == "TOOL_CALL_RESULT"]
-    assert [(event["toolCallId"], event["content"]) for event in results] == [
-        ("call-guarded", "guarded result")
-    ]
+    assert [(event["toolCallId"], event["content"]) for event in results] == [("call-guarded", "guarded result")]
     assert executed == ["guarded"]
     finished = [event for event in _decode_sse_events(approved) if event.get("type") == "RUN_FINISHED"]
     assert "outcome" not in finished[-1]

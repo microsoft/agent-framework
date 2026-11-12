@@ -187,7 +187,6 @@ class TestInMemoryCacheProvider:
             assert cache._current_size_bytes == 0
 
 
-
 class TestCreateProtectionScopesCacheKey:
     """Test cache key generation for ProtectionScopesRequest."""
 
