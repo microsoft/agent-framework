@@ -211,7 +211,7 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
             {
                 hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
             }
-            catch (Exception ex) when (ShouldNotifyProvidersOfPartialMessages(agent, ex, runOptions, skipSimulation || isServiceManaged || continuationTokenReceived, cancellationToken))
+            catch (Exception ex) when (ShouldNotifyProvidersOfPartialMessages(agent, ex, runOptions, skipSimulation || isServiceManaged || continuationTokenObserved, cancellationToken))
             {
                 serviceErrorOccurred = true;
                 await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options, messagesForService).ConfigureAwait(false);
@@ -232,7 +232,7 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
                 // Track continuation tokens on the original update, because ChatResponseUpdate.Clone() does not copy them.
                 if (update.ContinuationToken is not null)
                 {
-                    continuationTokenReceived = true;
+                    continuationTokenObserved = true;
                 }
 
                 // If the service returned a real ConversationId on any update, remember that.
@@ -253,7 +253,7 @@ public sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingCh
                 {
                     hasUpdates = await enumerator.MoveNextAsync().ConfigureAwait(false);
                 }
-                catch (Exception ex) when (ShouldNotifyProvidersOfPartialMessages(agent, ex, runOptions, skipSimulation || isServiceManaged || continuationTokenReceived, cancellationToken))
+                catch (Exception ex) when (ShouldNotifyProvidersOfPartialMessages(agent, ex, runOptions, skipSimulation || isServiceManaged || continuationTokenObserved, cancellationToken))
                 {
                     serviceErrorOccurred = true;
                     await agent.NotifyProvidersOfPartialMessagesOnCancellationAsync(session, newMessages, responseUpdates, options, messagesForService).ConfigureAwait(false);
