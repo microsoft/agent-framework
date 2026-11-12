@@ -4,7 +4,7 @@ description = "Hyperlight CodeAct integrations for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.0.0b261106"
+version = "1.0.0b261112"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,9 +24,9 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
-    "hyperlight-sandbox>=0.8.0,<0.9",
-    "hyperlight-sandbox-backend-wasm>=0.8.0,<0.9 ; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
-    "hyperlight-sandbox-python-guest>=0.8.0,<0.9",
+    "hyperlight-sandbox>=0.9.0,<0.10",
+    "hyperlight-sandbox-backend-wasm>=0.9.0,<0.10 ; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
+    "hyperlight-sandbox-python-guest>=0.9.0,<0.10",
 ]
 
 [tool.uv]

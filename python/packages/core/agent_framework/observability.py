@@ -153,7 +153,6 @@ def _use_telemetry_conversation_id(
         _TELEMETRY_CONVERSATION_ID.reset(token)
 
 
-OTEL_METRICS: Final[str] = "__otel_metrics__"
 TOKEN_USAGE_BUCKET_BOUNDARIES: Final[tuple[float, ...]] = (
     1,
     4,
@@ -2017,13 +2016,14 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         model = merged_client_kwargs.get("model") or opts.get("model") or getattr(self, "model", None) or "unknown"
         service_url_func = getattr(self, "service_url", None)
         service_url = str(service_url_func() if callable(service_url_func) else "unknown")
-        attributes = _get_span_attributes(
+        span_kwargs = dict(merged_client_kwargs)
+        span_kwargs.update(
             operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
             provider_name=provider_name,
             model=model,
             service_url=service_url,
-            **merged_client_kwargs,
         )
+        attributes = _get_span_attributes(**span_kwargs)
         if (telemetry_conversation_id := _TELEMETRY_CONVERSATION_ID.get()) is not None:
             # Keep application-managed telemetry correlation separate from the
             # provider-owned conversation_id forwarded through chat options.

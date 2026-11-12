@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import subprocess
+import sys
 from pathlib import Path
 
 import agent_framework
@@ -42,3 +44,12 @@ def test_root_from_import_representative_symbols() -> None:
     assert tool is agent_framework.tool
     assert FileStoreEntry is agent_framework.FileStoreEntry
     assert SkillsSourceContext is agent_framework.SkillsSourceContext
+
+
+def test_memory_exports_do_not_warn_on_import() -> None:
+    code = """
+import warnings
+warnings.filterwarnings("error", message=r"Memory.* is deprecated", category=DeprecationWarning)
+from agent_framework import MemoryContextProvider, MemoryFileStore, MemoryIndexEntry, MemoryStore, MemoryTopicRecord
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)

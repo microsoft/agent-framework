@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <RootNamespace>Microsoft.Agents.AI.Foundry.Hosting.A2A</RootNamespace>
+    <VersionSuffix>preview</VersionSuffix>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <!-- Disable packing until this project is ready for release. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework A2A for Foundry Hosted Agents</Title>
+    <Description>Provides Microsoft Agent Framework support for hosting Foundry Agents using the Agent-to-Agent (A2A) protocol.</Description>
+  </PropertyGroup>
+
+</Project>

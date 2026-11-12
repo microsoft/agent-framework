@@ -3,6 +3,7 @@
 """Tests for Purview cache provider."""
 
 import asyncio
+from unittest.mock import patch
 
 from agent_framework_purview._cache import (
     InMemoryCacheProvider,
@@ -161,6 +162,29 @@ class TestInMemoryCacheProvider:
 
         result = await cache.get("key1")
         assert result is not None
+
+    async def test_growing_entry_at_capacity_maintains_size_and_evicts_other_entry(self) -> None:
+        """Test that updating an entry to a larger size at capacity correctly tracks size and evicts."""
+        cache = InMemoryCacheProvider(max_size_bytes=20)
+
+        with patch("agent_framework_purview._cache.time.time", return_value=1000.0):
+            # JSON string quotes add 2 bytes to string length.
+            await cache.set("older", "a" * 6, ttl_seconds=10)  # 8 bytes
+            await cache.set("newer", "b" * 6, ttl_seconds=20)  # 8 bytes
+            assert cache._current_size_bytes == 16
+
+            # Replace 'older' with 16-byte value. Total needed = 16.
+            # 'older' was 8 bytes. If 'older' was not removed from cache before eviction,
+            # eviction pops 'older' from heap and subtracts its size again.
+            await cache.set("older", "c" * 14, ttl_seconds=30)  # 16 bytes
+
+            assert await cache.get("newer") is None
+            assert await cache.get("older") == "c" * 14
+            assert cache._current_size_bytes == 16
+            assert sum(entry[2] for entry in cache._cache.values()) == 16
+
+            await cache.remove("older")
+            assert cache._current_size_bytes == 0
 
 
 class TestCreateProtectionScopesCacheKey:

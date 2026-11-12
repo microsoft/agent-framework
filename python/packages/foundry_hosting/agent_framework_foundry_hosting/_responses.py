@@ -2628,9 +2628,10 @@ class _OutputItemTracker:
                 call_id = persisted_item.get("call_id")
                 if isinstance(call_id, str):
                     self._outstanding_computer_calls.add(call_id)
-            elif persisted_item.get("type") == "computer_call_output":
-                if isinstance(call_id := persisted_item.get("call_id"), str):
-                    self._outstanding_computer_calls.discard(call_id)
+            elif persisted_item.get("type") == "computer_call_output" and isinstance(
+                call_id := persisted_item.get("call_id"), str
+            ):
+                self._outstanding_computer_calls.discard(call_id)
             if persisted_item.get("type") != "oauth_consent_request":
                 continue
             consent_link = persisted_item.get("consent_link")
@@ -2802,9 +2803,9 @@ class _OutputItemTracker:
                 for event in self._open_function_call(content):
                     yield event
             args_str = _json_safe_to_str(content.arguments)
-            self._accumulated.append(args_str)
-            if self._fc_builder is not None:
-                yield self._fc_builder.emit_arguments_delta(args_str)
+            delta = self._consume_text_update(args_str, content.merge_mode)
+            if delta and self._fc_builder is not None:
+                yield self._fc_builder.emit_arguments_delta(delta)
 
         elif content.type == "function_result":
             for event in self._close():
@@ -2830,9 +2831,9 @@ class _OutputItemTracker:
                 for event in self._open_mcp_call(content):
                     yield event
             args_str = _json_safe_to_str(content.arguments)
-            self._accumulated.append(args_str)
-            if self._mcp_builder is not None:
-                yield self._mcp_builder.emit_arguments_delta(args_str)
+            delta = self._consume_text_update(args_str, content.merge_mode)
+            if delta and self._mcp_builder is not None:
+                yield self._mcp_builder.emit_arguments_delta(delta)
 
         elif (
             content.type == "mcp_server_tool_result"

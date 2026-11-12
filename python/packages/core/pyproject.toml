@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.25.0"
+version = "1.26.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "msgspec>=0.20.0,<0.23",
-    "typing-extensions>=4.15.0,<5",
+    "typing-extensions>=4.16.0,<5",
     "pydantic>=2,<3",
     "python-dotenv>=1,<2",
     "opentelemetry-api>=1.39.0,<2",
@@ -35,36 +35,36 @@ dependencies = [
 [project.optional-dependencies]
 all = [
     "mcp>=2.2.0,<3",
-    "tenacity>=9.1.4,<9.2.0",
-    "agent-framework-a2a>=1.0.0b261106,<2",
-    "agent-framework-ag-ui>=1.8.0,<2",
-    "agent-framework-anthropic>=1.0.0b261106,<2",
+    "tenacity>=9.1.4,<10",
+    "agent-framework-a2a>=1.0.0b261112,<2",
+    "agent-framework-ag-ui>=1.8.1,<2",
+    "agent-framework-anthropic>=1.0.0b261112,<2",
     "agent-framework-azure-ai-search>=1.0.0b261106,<2",
     "agent-framework-azure-contentunderstanding>=1.0.0b261106,<2",
-    "agent-framework-azure-cosmos>=1.0.0b261106,<2",
+    "agent-framework-azure-cosmos>=1.0.0b261112,<2",
     "agent-framework-azurefunctions>=1.0.0b260922,<2",
-    "agent-framework-bedrock>=1.0.0b261106,<2",
+    "agent-framework-bedrock>=1.0.0b261112,<2",
     "agent-framework-chatkit>=1.0.0b261106,<2",
-    "agent-framework-claude>=1.0.0b261106,<2",
+    "agent-framework-claude>=1.0.0b261112,<2",
     "agent-framework-copilotstudio>=1.0.0b261106,<2",
-    "agent-framework-declarative>=1.5.0,<2",
-    "agent-framework-devui>=1.0.0b261106,<2",
+    "agent-framework-declarative>=1.5.1,<2",
+    "agent-framework-devui>=1.0.0b261112,<2",
     "agent-framework-durabletask>=1.0.0b260922,<2",
-    "agent-framework-foundry>=1.16.1,<2",
-    "agent-framework-foundry-hosting>=1.0.0b261106,<2",
+    "agent-framework-foundry>=1.16.2,<2",
+    "agent-framework-foundry-hosting>=1.0.0b261112,<2",
     "agent-framework-foundry-local>=1.0.0b261106,<2; python_version >= '3.11' and python_version < '3.15' and ((sys_platform == 'darwin' and platform_machine == 'arm64') or (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or (sys_platform == 'win32' and (platform_machine == 'AMD64' or platform_machine == 'ARM64' or platform_machine == 'x86_64' or platform_machine == 'aarch64')))",
-    "agent-framework-gemini>=1.0.0b261106,<2",
-    "agent-framework-github-copilot>=2.1.2,<3",
-    "agent-framework-hyperlight>=1.0.0b261106,<2; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
-    "agent-framework-mem0>=1.0.0b261106,<2",
-    "agent-framework-mistral>=1.0.0b261106,<2",
-    "agent-framework-monty>=1.0.0b261106,<2",
-    "agent-framework-ollama>=1.0.0b261106,<2",
-    "agent-framework-openai>=1.18.1,<2",
+    "agent-framework-gemini>=1.0.0b261112,<2",
+    "agent-framework-github-copilot>=2.2.0,<3",
+    "agent-framework-hyperlight>=1.0.0b261112,<2; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
+    "agent-framework-mem0>=1.0.0b261112,<2",
+    "agent-framework-mistral>=1.0.0b261112,<2",
+    "agent-framework-monty>=1.0.0b261112,<2",
+    "agent-framework-ollama>=1.0.0b261112,<2",
+    "agent-framework-openai>=1.18.2,<2",
     "agent-framework-orchestrations>=1.4.2,<2",
-    "agent-framework-purview>=1.0.0b261106,<2",
-    "agent-framework-redis>=1.0.0b261106,<2",
-    "agent-framework-tools>=1.0.0b261106,<2",
+    "agent-framework-purview>=1.0.0b261112,<2",
+    "agent-framework-redis>=1.0.0b261112,<2",
+    "agent-framework-tools>=1.0.0b261112,<2",
 ]
 
 [dependency-groups]
@@ -81,7 +81,7 @@ test = [
     "agent-framework-durabletask>=1.0.0b260922,<2",
     "httpx>=0.28,<1",
     "openai>=2.25.0,<4",
-    "tenacity>=9.1.4,<9.2.0",
+    "tenacity>=9.1.4,<10",
 ]
 
 [tool.uv]

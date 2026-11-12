@@ -80,7 +80,4 @@ public sealed class DockerShellExecutorOptions
 
     /// <summary>Per-stream cap before head+tail truncation. Defaults to 64 KiB.</summary>
     public int MaxOutputBytes { get; set; } = 64 * 1024;
-
-    /// <summary>Override (e.g. <c>podman</c>).</summary>
-    public string DockerBinary { get; set; } = "docker";
 }

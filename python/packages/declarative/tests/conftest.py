@@ -5,11 +5,21 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from agent_framework import (
+    BaseChatClient,
+    ChatOptions,
+    ChatResponse,
+    ChatResponseUpdate,
+    FunctionInvocationLayer,
+    Message,
+    ResponseStream,
+    _feature_stage,
+)
 
 if TYPE_CHECKING:
     import httpx2 as httpx
@@ -18,6 +28,42 @@ if TYPE_CHECKING:
 # Skip all tests in this directory on Python 3.14+ because powerfx doesn't support it yet
 if sys.version_info >= (3, 14):
     collect_ignore_glob = ["test_*.py"]
+
+
+class _FunctionCallingTestClient(FunctionInvocationLayer[ChatOptions], BaseChatClient[ChatOptions]):
+    """Minimal client that exercises the real function-invocation layer."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.responses: list[ChatResponse] = []
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if stream:
+            raise AssertionError("Streaming is not supported by this test client.")
+
+        async def get_response() -> ChatResponse:
+            return self.responses.pop(0)
+
+        return get_response()
+
+
+@pytest.fixture
+def function_call_client() -> _FunctionCallingTestClient:
+    """Create a client backed by the framework function-invocation layer."""
+    return _FunctionCallingTestClient()
+
+
+@pytest.fixture
+def fresh_feature_warnings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate once-per-feature warnings from other tests."""
+    monkeypatch.setattr(_feature_stage, "_WARNED_FEATURES", set())
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
