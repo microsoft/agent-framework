@@ -741,7 +741,7 @@ async def test_pydantic_alias_choices_records_round_trip_through_a_collection() 
     await collection.ensure_collection_exists()
 
     keys = await collection.upsert(
-        [AliasChoiceRecord(record_id="one", text="plain sample", embedding=[0.25, 0.75])],
+        [AliasChoiceRecord.model_validate({"record_id": "one", "text": "plain sample", "embedding": [0.25, 0.75]})],
         generate_vectors=False,
     )
     restored = await collection.get(keys, include_vectors=True)
