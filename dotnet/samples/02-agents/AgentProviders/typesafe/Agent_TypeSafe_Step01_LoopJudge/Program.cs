@@ -2,9 +2,11 @@
 
 // This sample uses Jev, the TypeSafe System One model, as the judge of a LoopAgent. A Foundry agent writes the
 // answer. After each answer, Jev checks every criterion with its own yes or no question, and the loop sends the agent
-// the criteria that are still missing, until the answer meets all of them.
+// the criteria that are still missing, until the answer meets all of them. The judge uses the decision API proposed
+// for Microsoft.Extensions.AI: an IDecisionClient and a typed DecisionDefinition.
 
 #pragma warning disable MAAI001 // LoopAgent and DelegateLoopEvaluator are experimental.
+#pragma warning disable MEAI001 // The decision API is experimental.
 
 using System.ClientModel;
 using Azure.AI.Projects;
@@ -17,18 +19,16 @@ var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ??
 var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 var typeSafeApiKey = Environment.GetEnvironmentVariable("TYPESAFE_API_KEY") ?? throw new InvalidOperationException("TYPESAFE_API_KEY is not set.");
 
-// 1. The criteria. Each one becomes a Noul question, whose answer is the probability that the answer meets it, so the
-// judge reports exactly which criteria are missing instead of a single verdict. The questions describe what a good
-// answer contains; wording that steers the judge, such as "only say yes if", tends to push every answer one way.
-Dictionary<string, string> criteria = new()
+// 1. The criteria, as a typed verdict. Each property is a Binary question, whose answer is the probability that the
+// answer meets the criterion, so the judge reports exactly which criteria are missing instead of a single verdict. The
+// questions describe what a good answer contains; wording that steers the judge, such as "only say yes if", tends to
+// push every answer one way.
+DecisionDefinition<Verdict> criteria = DecisionDefinition<Verdict>.Create(builder =>
 {
-    ["blue_sky"] = "explains why the daytime sky appears blue",
-    ["red_sunsets"] = "explains why sunsets appear red or orange",
-    ["plain_language"] = "uses clear language suitable for a general audience",
-};
-Dictionary<string, JevQuestion> questions = criteria.ToDictionary(
-    criterion => criterion.Key,
-    criterion => (JevQuestion)new JevNoulQuestion { Instructions = $"Does the assistant's latest response {criterion.Value}?" });
+    builder.BinaryProbability(verdict => verdict.BlueSky, "Does `answer` explain why the daytime sky appears blue?");
+    builder.BinaryProbability(verdict => verdict.RedSunsets, "Does `answer` explain why sunsets appear red or orange?");
+    builder.BinaryProbability(verdict => verdict.PlainLanguage, "Does `answer` use clear language suitable for a general audience?");
+});
 
 // A criterion is met when its probability is above this threshold. 0.5 is not calibrated for any task: a higher value
 // accepts fewer answers that still miss a criterion, at the cost of more loop runs. Choose it on labeled examples of
@@ -45,19 +45,21 @@ AIAgent answerer = new AIProjectClient(new Uri(endpoint), new DefaultAzureCreden
     name: "Answerer",
     instructions: """
         You answer science questions for a general audience in one short paragraph.
-        In your first answer, explain only why the daytime sky is blue, even if the user asks for more.
+        Your first answer is a single sentence about why the daytime sky is blue. It does not mention sunsets, even
+        if the user asks about them.
         When feedback lists missing points, rewrite the whole answer so that it covers them too.
         """);
 
-// 3. The judge. AIJudgeLoopEvaluator asks its chat client for JSON structured output, which Jev cannot write, so a
-// DelegateLoopEvaluator asks Jev the criteria questions instead. Jev reads the original request and the latest answer
-// as a conversation.
-using var judge = new JevChatClient(new ApiKeyCredential(typeSafeApiKey));
+// 3. The judge. AIJudgeLoopEvaluator asks a chat client for JSON structured output, which a decision model does not
+// write, so a DelegateLoopEvaluator asks the decision client the criteria questions instead. The state is the request
+// and the latest answer.
+using IDecisionClient judge = new JevDecisionClient(new ApiKeyCredential(typeSafeApiKey));
 bool accepted = false;
 var evaluator = new DelegateLoopEvaluator(async (context, cancellationToken) =>
 {
     Console.WriteLine($"\nAnswer {context.Iteration}:\n{context.LastResponse.Text}");
-    List<string> missing = await JudgeAsync(context.InitialMessages, context.LastResponse.Text, cancellationToken);
+    string request = string.Join("\n", context.InitialMessages.Select(message => message.Text));
+    List<string> missing = await JudgeAsync(request, context.LastResponse.Text, cancellationToken);
     accepted = missing.Count == 0;
 
     // The feedback names the missing criteria, which is the gap analysis that a generative judge would write.
@@ -77,26 +79,29 @@ AgentResponse response = await loop.RunAsync(Request);
 if (!accepted)
 {
     Console.WriteLine($"\nAnswer {MaxIterations} (the last run the loop allows):\n{response.Text}");
-    accepted = (await JudgeAsync([new ChatMessage(ChatRole.User, Request)], response.Text, CancellationToken.None)).Count == 0;
+    accepted = (await JudgeAsync(Request, response.Text, CancellationToken.None)).Count == 0;
 }
 
 Console.WriteLine(accepted ? "\nFinal answer:" : "\nFinal answer (some criteria are still missing):");
 Console.WriteLine(response.Text);
 
-// Asks Jev whether the answer meets each criterion, prints the probabilities, and returns the missing criteria.
-async Task<List<string>> JudgeAsync(IEnumerable<ChatMessage> request, string answer, CancellationToken cancellationToken)
+// Asks the judge whether the answer meets each criterion, prints the probabilities, and returns the missing criteria.
+async Task<List<string>> JudgeAsync(string request, string answer, CancellationToken cancellationToken)
 {
-    List<ChatMessage> conversation = [.. request, new ChatMessage(ChatRole.Assistant, answer)];
-    ChatResponse verdict = await judge.GetResponseAsync(conversation, new ChatOptions().WithJevQuestions(questions), cancellationToken);
-    JevResult result = verdict.GetJevResult()!;
+    DecisionResponse<Verdict> decision = await judge.GetResponseAsync(new JudgedAnswer(request, answer), criteria, cancellationToken: cancellationToken);
+    Verdict verdict = decision.Result;
 
     Console.WriteLine("Judge:");
     List<string> missing = [];
-    foreach ((string id, string description) in criteria)
+    foreach ((string name, string description, double probability) in new[]
     {
-        double probability = ((JevNoulResponse)result.Answers[id]).Noul;
+        ("blue_sky", "explain why the daytime sky appears blue", verdict.BlueSky),
+        ("red_sunsets", "explain why sunsets appear red or orange", verdict.RedSunsets),
+        ("plain_language", "use clear language suitable for a general audience", verdict.PlainLanguage),
+    })
+    {
         bool met = probability > CriterionThreshold;
-        Console.WriteLine($"  {id}: {(met ? "met" : "missing")} (probability {probability:F2})");
+        Console.WriteLine($"  {name}: {(met ? "met" : "missing")} (probability {probability:F2})");
         if (!met)
         {
             missing.Add(description);
@@ -105,3 +110,11 @@ async Task<List<string>> JudgeAsync(IEnumerable<ChatMessage> request, string ans
 
     return missing;
 }
+
+/// <summary>The state the judge reads: the user's request and the answer to judge.</summary>
+internal sealed record JudgedAnswer(string Request, string Answer);
+
+/// <summary>The probability that the answer meets each criterion.</summary>
+#pragma warning disable CA1812 // Instantiated by the decision definition, which creates the result from the answers.
+internal sealed record Verdict(double BlueSky, double RedSunsets, double PlainLanguage);
+#pragma warning restore CA1812

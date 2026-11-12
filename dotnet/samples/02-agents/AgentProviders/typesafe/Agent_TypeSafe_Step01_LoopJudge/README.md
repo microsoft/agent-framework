@@ -1,11 +1,14 @@
 # Jev as the judge of a loop
 
-This sample uses `JevChatClient` from `Microsoft.Agents.AI.TypeSafe` as the judge of a `LoopAgent`. A Foundry agent
-writes the answer, and Jev, the TypeSafe System One model, decides whether the answer is complete.
+This sample uses Jev, the TypeSafe System One model, as the judge of a `LoopAgent`. A Foundry agent writes the
+answer, and Jev decides whether the answer is complete. The judge uses the decision API proposed for
+Microsoft.Extensions.AI ([dotnet/extensions#7795](https://github.com/dotnet/extensions/pull/7795)), which
+`Microsoft.Agents.AI.TypeSafe` carries until it ships: `JevDecisionClient` is an `IDecisionClient`, and the criteria
+are a typed `DecisionDefinition<Verdict>`. Any other `IDecisionClient` can be the judge without changing the loop.
 
-A generative judge writes a verdict and a gap analysis. Jev writes no text, so the sample asks it one `JevNoulQuestion`
-per criterion instead. Each answer is the probability, from 0 to 1, that the answer meets that criterion, so the judge
-reports exactly which criteria are missing:
+A generative judge writes a verdict and a gap analysis. A decision model writes no text, so the sample asks one Binary
+question per criterion instead. Each answer is the probability, from 0 to 1, that the answer meets that criterion, so
+the judge reports exactly which criteria are missing:
 
 ```text
 Judge:
@@ -21,16 +24,40 @@ three runs. The agent's instructions hold back part of the first answer on purpo
 last run has not been judged. The sample judges that answer after the loop and labels the final answer when some
 criteria are still missing, instead of presenting it as accepted.
 
+## The criteria as a typed definition
+
+Each criterion is a `double` property of `Verdict`, declared as a Binary probability with its question:
+
+```csharp
+DecisionDefinition<Verdict> criteria = DecisionDefinition<Verdict>.Create(builder =>
+{
+    builder.BinaryProbability(verdict => verdict.BlueSky, "Does `answer` explain why the daytime sky appears blue?");
+    builder.BinaryProbability(verdict => verdict.RedSunsets, "Does `answer` explain why sunsets appear red or orange?");
+    builder.BinaryProbability(verdict => verdict.PlainLanguage, "Does `answer` use clear language suitable for a general audience?");
+});
+```
+
+The state is a `JudgedAnswer(Request, Answer)` record, so the questions can refer to its fields in backticks. One call
+answers every criterion and returns a `Verdict` with the probabilities, plus the complete decision response as
+`Evidence`:
+
+```csharp
+DecisionResponse<Verdict> decision = await judge.GetResponseAsync(new JudgedAnswer(request, answer), criteria);
+```
+
+The same pattern works with `builder.Score` for a graded rubric, or `builder.Choice` with an enum to classify what kind
+of revision is needed.
+
 ## Why a delegate evaluator
 
-`AIJudgeLoopEvaluator` asks its chat client for a `JudgeVerdict` as JSON structured output, which Jev cannot write;
-`JevChatClient` rejects the JSON response format with a `NotSupportedException`. The sample wraps the judge in a
-`DelegateLoopEvaluator` instead:
+`AIJudgeLoopEvaluator` asks a chat client for a `JudgeVerdict` as JSON structured output, which a decision model does
+not write. The sample wraps the decision client in a `DelegateLoopEvaluator` instead:
 
 ```csharp
 var evaluator = new DelegateLoopEvaluator(async (context, cancellationToken) =>
 {
-    List<string> missing = await JudgeAsync(context.InitialMessages, context.LastResponse.Text, cancellationToken);
+    string request = string.Join("\n", context.InitialMessages.Select(message => message.Text));
+    List<string> missing = await JudgeAsync(request, context.LastResponse.Text, cancellationToken);
     accepted = missing.Count == 0;
     return accepted
         ? LoopEvaluation.Stop()
@@ -38,13 +65,7 @@ var evaluator = new DelegateLoopEvaluator(async (context, cancellationToken) =>
 });
 ```
 
-`JudgeAsync` sends Jev the original request and the answer as a conversation, with
-`new ChatOptions().WithJevQuestions(questions)`, and returns the criteria whose Noul is at or below
-`CriterionThreshold`.
-
-Jev reads the original request and the latest answer as a conversation, and each question refers to "the assistant's
-latest response". The same pattern works with a `JevScoreQuestion` for a graded rubric, or a `JevChoiceQuestion` to
-classify what kind of revision is needed.
+`JudgeAsync` returns the criteria whose probability is at or below `CriterionThreshold`.
 
 ## Writing criteria for a judge
 
@@ -53,15 +74,15 @@ classify what kind of revision is needed.
   against each other: a higher value accepts fewer answers that still miss a criterion, and costs more loop runs, while
   a lower value stops sooner and lets more incomplete answers through. Pick it from labeled examples of the answers your
   agent writes, based on which error costs you more.
-- **Describe the criterion, do not steer the judge.** Ask what a good answer contains, as the sample does ("Does the
-  assistant's latest response explain why sunsets appear red?"). Directional wording such as "only say yes if" or
+- **Describe the criterion, do not steer the judge.** Ask what a good answer contains, as the sample does ("Does
+  `answer` explain why sunsets appear red or orange?"). Directional wording such as "only say yes if" or
   "lean towards yes" tends to push every answer the same way instead of making the judge more accurate. When a
   criterion is hard to judge, a neutral description of what is being judged helps more than stronger wording.
 - **Ask about the response, not the topic.** When the conversation contains harmful or sensitive content, a question
   such as "Is this safe?" can be read as a question about that content rather than about the answer. A correct
   refusal could then look like a missing criterion, and the loop would keep revising an answer that was already right.
-  Ask how the response handles the request, for example "Does the assistant's latest response decline to give
-  dangerous instructions?", and check such criteria on labeled examples, including refusals, before relying on them.
+  Ask how the response handles the request, for example "Does `answer` decline to give dangerous instructions?", and
+  check such criteria on labeled examples, including refusals, before relying on them.
 
 ## Prerequisites
 
