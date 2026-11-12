@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import os
 import sys
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -12,8 +13,9 @@ from agent_framework_tools.shell._resolve import (
     _ensure_command_flag,
     find_executable,
     is_powershell,
-    resolve_executable,
+    require_full_path,
     resolve_shell,
+    restrict_executable_search,
 )
 
 _FakeWindowsHost: TypeAlias = Callable[[str, Iterable[str]], None]
@@ -21,6 +23,12 @@ _FakeWindowsHost: TypeAlias = Callable[[str, Iterable[str]], None]
 _TRUSTED_BIN = r"C:\Trusted\bin"
 _POWERSHELL_7 = r"C:\Program Files\PowerShell\7"
 _WINDOWS_POWERSHELL = r"C:\Windows\System32\WindowsPowerShell\v1.0"
+
+
+@pytest.fixture
+def posix_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the process look like a POSIX host so POSIX paths are accepted on every platform."""
+    monkeypatch.setattr(sys, "platform", "linux")
 
 
 def test_empty_string_shell_override_rejected() -> None:
@@ -38,7 +46,7 @@ def test_empty_sequence_shell_override_rejected() -> None:
         resolve_shell([], interactive=True)
 
 
-def test_resolve_shell_prefers_environment_override(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_shell_prefers_environment_override(posix_host: None, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_FRAMEWORK_SHELL", "/custom/pwsh -NoProfile")
 
     assert resolve_shell(None, interactive=False) == ["/custom/pwsh", "-NoProfile", "-Command"]
@@ -79,40 +87,56 @@ def test_resolve_shell_windows_default_ignores_executables_in_the_current_direct
         resolve_shell(None, interactive=False)
 
 
-def test_resolve_shell_windows_resolves_bare_overrides(
-    fake_windows_host: _FakeWindowsHost, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "shell",
+    [
+        "pwsh",
+        "pwsh.exe",
+        r".\pwsh.exe",
+        r"bin\pwsh.exe",
+        "C:pwsh.exe",
+        r"\pwsh.exe",
+        rf"{_POWERSHELL_7}\pwsh",
+        "/opt/pwsh",
+    ],
+)
+def test_resolve_shell_windows_rejects_overrides_that_are_not_full_paths_with_an_extension(
+    fake_windows_host: _FakeWindowsHost, monkeypatch: pytest.MonkeyPatch, shell: str
 ) -> None:
+    # The file exists in every searched location, so only the path form decides the result.
+    fake_windows_host(f".;{_POWERSHELL_7}", {rf"{_POWERSHELL_7}\pwsh.exe", r".\pwsh.exe", "pwsh.exe"})
     monkeypatch.delenv("AGENT_FRAMEWORK_SHELL", raising=False)
-    fake_windows_host(f"{_POWERSHELL_7};{_TRUSTED_BIN}", {rf"{_POWERSHELL_7}\pwsh.exe", rf"{_TRUSTED_BIN}\bash.exe"})
 
-    assert resolve_shell("pwsh -NoProfile", interactive=True) == [rf"{_POWERSHELL_7}\pwsh.exe", "-NoProfile"]
-    assert resolve_shell(["bash", "--norc"], interactive=True) == [rf"{_TRUSTED_BIN}\bash.exe", "--norc"]
-    monkeypatch.setenv("AGENT_FRAMEWORK_SHELL", "bash")
-    assert resolve_shell(None, interactive=False) == [rf"{_TRUSTED_BIN}\bash.exe", "-c"]
-
-
-def test_resolve_shell_windows_rejects_a_bare_override_found_only_in_the_current_directory(
-    fake_windows_host: _FakeWindowsHost, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("AGENT_FRAMEWORK_SHELL", raising=False)
-    fake_windows_host(f".;{_TRUSTED_BIN}", {r".\bash.exe", "bash.exe"})
-
-    with pytest.raises(ShellExecutionError, match="'bash'"):
-        resolve_shell("bash", interactive=True)
-    monkeypatch.setenv("AGENT_FRAMEWORK_SHELL", "bash")
-    with pytest.raises(ShellExecutionError, match="'bash'"):
+    with pytest.raises(ShellExecutionError, match="shell must be a full path"):
+        resolve_shell(shell, interactive=True)
+    with pytest.raises(ShellExecutionError, match="shell must be a full path"):
+        resolve_shell([shell, "-NoProfile"], interactive=True)
+    monkeypatch.setenv("AGENT_FRAMEWORK_SHELL", shell)
+    with pytest.raises(ShellExecutionError, match="AGENT_FRAMEWORK_SHELL must be a full path"):
         resolve_shell(None, interactive=True)
+
+
+@pytest.mark.parametrize("shell", ["zsh", "bin/zsh", "./zsh", "../zsh"])
+def test_resolve_shell_posix_rejects_overrides_that_are_not_full_paths(
+    posix_host: None, monkeypatch: pytest.MonkeyPatch, shell: str
+) -> None:
+    monkeypatch.delenv("AGENT_FRAMEWORK_SHELL", raising=False)
+
+    with pytest.raises(ShellExecutionError, match="shell must be a full path"):
+        resolve_shell(shell, interactive=False)
+    monkeypatch.setenv("AGENT_FRAMEWORK_SHELL", f"{shell} -l")
+    with pytest.raises(ShellExecutionError, match="AGENT_FRAMEWORK_SHELL must be a full path"):
+        resolve_shell(None, interactive=False)
 
 
 @pytest.mark.parametrize(
     "shell",
     [
         [rf"{_POWERSHELL_7}\pwsh.exe", "-NoProfile"],
-        [r".\pwsh.exe"],
-        ["/opt/pwsh"],
+        [r"\\server\share\pwsh.exe"],
     ],
 )
-def test_resolve_shell_windows_keeps_explicit_paths(fake_windows_host: _FakeWindowsHost, shell: list[str]) -> None:
+def test_resolve_shell_windows_keeps_full_paths(fake_windows_host: _FakeWindowsHost, shell: list[str]) -> None:
     fake_windows_host(_TRUSTED_BIN, set())
 
     assert resolve_shell(shell, interactive=True) == shell
@@ -160,12 +184,19 @@ def test_find_executable_returns_the_first_match_in_path_order(fake_windows_host
 
 @pytest.mark.parametrize(
     ("name", "expected"),
-    [("pwsh", None), ("pwsh.exe", None), ("pwsh.cmd", rf"{_TRUSTED_BIN}\pwsh.cmd")],
+    [
+        ("pwsh", rf"{_TRUSTED_BIN}\pwsh.exe"),
+        ("pwsh.exe", rf"{_TRUSTED_BIN}\pwsh.exe"),
+        ("pwsh.cmd", None),
+        ("pwsh.bat", None),
+    ],
 )
-def test_find_executable_adds_exe_only_to_names_without_an_extension(
+def test_find_executable_finds_only_exe_files_on_windows(
     fake_windows_host: _FakeWindowsHost, name: str, expected: str | None
 ) -> None:
-    fake_windows_host(_TRUSTED_BIN, {rf"{_TRUSTED_BIN}\pwsh.cmd"})
+    fake_windows_host(
+        _TRUSTED_BIN, {rf"{_TRUSTED_BIN}\pwsh.exe", rf"{_TRUSTED_BIN}\pwsh.cmd", rf"{_TRUSTED_BIN}\pwsh.bat"}
+    )
 
     assert find_executable(name) == expected
 
@@ -196,38 +227,97 @@ def test_find_executable_accepts_unc_share_roots_without_a_trailing_separator(
     assert find_executable("docker") == expected
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        r"C:\tools\docker.exe",
-        r"\\server\share\docker.exe",
-        r".\docker.exe",
-        r"bin\docker.exe",
-        "C:docker.exe",
-        r"\docker.exe",
-        "/usr/bin/docker",
-    ],
-)
-def test_resolve_executable_returns_names_with_a_directory_or_drive_unchanged(
-    fake_windows_host: _FakeWindowsHost, name: str
+@pytest.mark.parametrize("value", [r"C:\tools\docker.exe", r"\\server\share\docker.exe", "//server/share/docker.exe"])
+def test_require_full_path_accepts_full_paths_with_an_extension_on_windows(
+    fake_windows_host: _FakeWindowsHost, value: str
 ) -> None:
     fake_windows_host(_TRUSTED_BIN, set())
 
-    assert resolve_executable(name) == name
+    assert require_full_path(value, source="docker_binary") == value
 
 
-def test_resolve_executable_never_falls_back_to_the_bare_name_on_windows(fake_windows_host: _FakeWindowsHost) -> None:
-    fake_windows_host(f".;{_TRUSTED_BIN}", {r".\docker.exe", "docker.exe"})
+@pytest.mark.parametrize("value", ["/usr/bin/docker", "/usr/local/bin/podman"])
+def test_require_full_path_accepts_absolute_paths_on_posix(posix_host: None, value: str) -> None:
+    # The file is not required to exist; a missing file fails when it is launched.
+    assert require_full_path(value, source="docker_binary") == value
 
-    with pytest.raises(FileNotFoundError, match="'docker'"):
-        resolve_executable("docker")
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executable lookup")
+def test_find_executable_skips_empty_and_relative_path_entries_on_posix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workdir = tmp_path / "repo"
+    trusted = tmp_path / "trusted"
+    for directory in (workdir, workdir / "bin", trusted):
+        directory.mkdir()
+        tool = directory / "git"
+        tool.write_text("#!/bin/sh\n")
+        tool.chmod(0o755)
+    monkeypatch.chdir(workdir)
+    monkeypatch.setenv("PATH", os.pathsep.join(["", ".", "bin", str(trusted)]))
+
+    assert find_executable("git") == str(trusted / "git")
 
 
-def test_resolve_executable_returns_names_unchanged_on_other_platforms(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX executable lookup")
+def test_find_executable_skips_files_that_are_not_executable_on_posix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "git").write_text("")
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    assert find_executable("git") is None
+
+
+def test_restrict_executable_search_keeps_only_absolute_path_entries_on_posix(posix_host: None) -> None:
+    env = {"PATH": ":.:bin:/usr/bin:../tools:/opt/tools", "HOME": "/home/user"}
+
+    restricted = restrict_executable_search(env)
+
+    assert restricted == {"PATH": "/usr/bin:/opt/tools", "HOME": "/home/user"}
+    assert env["PATH"] == ":.:bin:/usr/bin:../tools:/opt/tools"
+
+
+def test_restrict_executable_search_cleans_every_path_key_on_windows(fake_windows_host: _FakeWindowsHost) -> None:
+    fake_windows_host(_TRUSTED_BIN, set())
+    env = {
+        "Path": r'.;;bin;C:dir;\dir;C:\Windows;"C:\Program Files\Tools";\\server\share',
+        "PATH": rf".;{_TRUSTED_BIN}",
+        "OTHER": "1",
+    }
+
+    assert restrict_executable_search(env) == {
+        "Path": r'C:\Windows;"C:\Program Files\Tools";\\server\share',
+        "PATH": _TRUSTED_BIN,
+        "OTHER": "1",
+        "NoDefaultCurrentDirectoryInExePath": "1",
+    }
+
+
+def test_restrict_executable_search_sets_the_current_directory_switch_only_on_windows(
+    fake_windows_host: _FakeWindowsHost, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setenv("PATH", "")
+    assert restrict_executable_search({"PATH": "/usr/bin"}) == {"PATH": "/usr/bin"}
 
-    assert resolve_executable("docker") == "docker"
+    fake_windows_host(_TRUSTED_BIN, set())
+    assert restrict_executable_search({}) == {"NoDefaultCurrentDirectoryInExePath": "1"}
+
+
+@pytest.mark.parametrize("env", [{}, {"PATH": ""}, {"PATH": "."}, {"PATH": ".:bin:"}])
+def test_restrict_executable_search_rejects_a_path_without_full_directories_on_posix(
+    posix_host: None, env: dict[str, str]
+) -> None:
+    with pytest.raises(ValueError, match="at least one full directory path"):
+        restrict_executable_search(env)
+
+
+def test_restrict_executable_search_allows_a_path_without_full_directories_on_windows(
+    fake_windows_host: _FakeWindowsHost,
+) -> None:
+    fake_windows_host(_TRUSTED_BIN, set())
+
+    assert restrict_executable_search({"PATH": r".;bin"}) == {"PATH": "", "NoDefaultCurrentDirectoryInExePath": "1"}
 
 
 def test_resolve_shell_posix_fallbacks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -238,10 +328,10 @@ def test_resolve_shell_posix_fallbacks(monkeypatch: pytest.MonkeyPatch) -> None:
     assert resolve_shell(None, interactive=False) == ["/bin/sh", "-c"]
 
     monkeypatch.setattr(resolve_module.os.path, "exists", lambda candidate: False)
-    monkeypatch.setattr(resolve_module.shutil, "which", lambda name: "/usr/local/bin/sh" if name == "sh" else None)
+    monkeypatch.setattr(resolve_module, "find_executable", lambda name: "/usr/local/bin/sh" if name == "sh" else None)
     assert resolve_shell(None, interactive=True) == ["/usr/local/bin/sh"]
 
-    monkeypatch.setattr(resolve_module.shutil, "which", lambda name: None)
+    monkeypatch.setattr(resolve_module, "find_executable", lambda name: None)
     with pytest.raises(ShellExecutionError, match="No POSIX shell found"):
         resolve_shell(None, interactive=False)
 
@@ -251,30 +341,30 @@ def test_is_powershell_and_command_flag_helpers() -> None:
     assert _ensure_command_flag([]) == []
 
 
-def test_stateless_appends_dash_c_for_posix_shell_without_flag() -> None:
+def test_stateless_appends_dash_c_for_posix_shell_without_flag(posix_host: None) -> None:
     argv = resolve_shell("/bin/bash", interactive=False)
     assert argv == ["/bin/bash", "-c"]
 
 
-def test_stateless_appends_dash_c_for_pwsh_without_flag() -> None:
+def test_stateless_appends_dash_c_for_pwsh_without_flag(posix_host: None) -> None:
     argv = resolve_shell("/usr/bin/pwsh -NoProfile", interactive=False)
     assert argv[-1] == "-Command"
     assert "pwsh" in argv[0]
 
 
-def test_stateless_preserves_existing_dash_c_flag() -> None:
+def test_stateless_preserves_existing_dash_c_flag(posix_host: None) -> None:
     argv = resolve_shell("/bin/bash -c", interactive=False)
     assert argv == ["/bin/bash", "-c"]
 
 
-def test_stateless_preserves_existing_pwsh_command_flag() -> None:
+def test_stateless_preserves_existing_pwsh_command_flag(posix_host: None) -> None:
     argv = resolve_shell("/opt/pwsh -NoProfile -Command", interactive=False)
     assert argv[-1] == "-Command"
     # No second -Command appended.
     assert argv.count("-Command") == 1
 
 
-def test_interactive_does_not_append_command_flag() -> None:
+def test_interactive_does_not_append_command_flag(posix_host: None) -> None:
     argv = resolve_shell("/bin/bash --noprofile", interactive=True)
     assert "-c" not in argv
 

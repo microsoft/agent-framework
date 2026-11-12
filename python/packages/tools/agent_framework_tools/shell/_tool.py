@@ -17,7 +17,7 @@ from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from .._feature_usage import FeatureIndex
 from ._executor import run_stateless
 from ._policy import ShellPolicy, ShellRequest
-from ._resolve import is_powershell, resolve_shell
+from ._resolve import is_powershell, resolve_shell, restrict_executable_search
 from ._session import ShellSession
 from ._truncate import _validate_output_limit  # pyright: ignore[reportPrivateUsage] - shared limit validation
 from ._types import (
@@ -127,6 +127,17 @@ class LocalShellTool:
             variables are exported before the session is used.
         clean_env: When ``True``, do **not** inherit ``os.environ``; only
             the variables supplied in ``env`` are visible to commands.
+
+            In every case, empty and relative ``PATH`` entries are removed
+            from the shell's environment so commands are never looked up in
+            the current directory. On Windows
+            ``NoDefaultCurrentDirectoryInExePath=1`` is also set, so
+            ``cmd.exe`` runs a program from the working directory only when
+            the command includes its relative path. On Linux and macOS a
+            :class:`ValueError` is raised when no full directory path is left
+            in ``PATH`` (for example ``clean_env=True`` without a ``PATH`` in
+            ``env``), because an empty or missing ``PATH`` would search the
+            current directory.
         policy: Policy applied before approval. Defaults to an empty
             :class:`ShellPolicy()` which allows every command; supply
             explicit ``denylist``/``allowlist`` patterns to filter. The
@@ -195,14 +206,8 @@ class LocalShellTool:
         self._approval_mode: Literal["always_require", "never_require"] = approval_mode
         self._on_command = on_command
 
-        merged_env: dict[str, str] | None
-        if env is None and not clean_env:
-            merged_env = None  # inherit
-        elif clean_env:
-            merged_env = dict(env) if env is not None else {}
-        else:
-            merged_env = {**os.environ, **dict(env or {})}
-        self._env = merged_env
+        merged_env = dict(env or {}) if clean_env else {**os.environ, **dict(env or {})}
+        self._env = restrict_executable_search(merged_env)
 
         self._interactive_argv = resolve_shell(self._shell_override, interactive=True)
         self._stateless_argv = resolve_shell(self._shell_override, interactive=False)

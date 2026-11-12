@@ -111,7 +111,9 @@ output (`stdout`) and error output (`stderr`):
 from agent_framework.tools import DockerShellTool, LocalShellTool
 
 local_shell = LocalShellTool(max_stdout_bytes=16 * 1024, max_stderr_bytes=4 * 1024)
-docker_shell = DockerShellTool(max_stdout_bytes=16 * 1024, max_stderr_bytes=4 * 1024)
+docker_shell = DockerShellTool(
+    docker_binary="/usr/bin/docker", max_stdout_bytes=16 * 1024, max_stderr_bytes=4 * 1024
+)
 ```
 
 These settings limit retained output, not how much a command may produce.
@@ -126,13 +128,27 @@ are not stopped solely because either output allowance is exceeded.
 - **Linux / macOS**: `/bin/bash --noprofile --norc` (falls back to `/bin/sh`).
 - Override via the `shell=` constructor argument or the
   `AGENT_FRAMEWORK_SHELL` environment variable.
-- **Windows executable lookup**: a bare executable name (the default `pwsh` or
-  `powershell`, a bare `shell=` or `AGENT_FRAMEWORK_SHELL` value, and the
-  `docker_binary` of `DockerShellTool`) is looked up only in the fully
-  qualified entries of `PATH`. The current directory and relative `PATH`
-  entries are never searched. Pass an absolute path to select a specific
-  executable. A path, like a `PATH` match, shows only that the file exists, not
-  that it can be trusted, so keep `PATH` and the directories on it protected.
+- **Full paths required**: `shell=`, `AGENT_FRAMEWORK_SHELL`, and the
+  `docker_binary` of `DockerShellTool` must be full paths, such as
+  `/usr/bin/zsh` or `C:\Program Files\PowerShell\7\pwsh.exe`. On Windows the
+  path must also include the file extension. Short names (`zsh`) and relative
+  paths (`bin/zsh`, `.\pwsh.exe`) are rejected, because they could pick up a
+  file in the current directory.
+- **Default shell lookup**: the Windows default (`pwsh.exe`, then
+  `powershell.exe`) is looked up only in the fully qualified entries of
+  `PATH`. The current directory and relative `PATH` entries are never
+  searched.
+- **Shell `PATH`**: before the shell starts, empty and relative entries (such
+  as `.` or `bin`) are removed from its `PATH`, so commands it runs are never
+  looked up in the current directory. On Windows,
+  `NoDefaultCurrentDirectoryInExePath=1` is also set, so `cmd.exe` runs a
+  program from the working directory only when the command gives its relative
+  path (for example `.\tool`). On Linux and macOS, `LocalShellTool` raises
+  `ValueError` if no full directory path is left in `PATH` (for example
+  `clean_env=True` without a `PATH` in `env`), because an empty or missing
+  `PATH` would search the current directory. This can't be turned off.
+- A path, like a `PATH` match, shows only that the file exists, not that it can
+  be trusted, so keep `PATH` and the directories on it protected.
 
 ## `ShellEnvironmentProvider` — context provider
 
@@ -182,6 +198,7 @@ from agent_framework.tools import DockerShellTool
 
 async def main() -> None:
     async with DockerShellTool(
+        docker_binary="/usr/bin/docker",  # full path to the container runtime
         image="mcr.microsoft.com/azurelinux/base/core:3.0",
         approval_mode="never_require",  # container is the boundary
     ) as shell:
@@ -201,8 +218,11 @@ Defaults applied to every container:
 - `--memory 512m`, `--pids-limit 256`, ephemeral `tmpfs /tmp`.
 
 To expose a host directory, pass `host_workdir="/path"` (mounted
-read-only by default; `mount_readonly=False` to allow writes). Swap the
-container runtime with `docker_binary="podman"`.
+read-only by default; `mount_readonly=False` to allow writes).
+`docker_binary` is required and must be the full path to the container
+runtime (for example `docker_binary="/usr/bin/podman"` to use Podman). On
+Windows include the extension, for example
+`C:\Program Files\Docker\Docker\resources\bin\docker.exe`.
 
 Applications that must pass additional Docker options can use
 `unsafe_extra_run_args`. These trusted setup options are appended verbatim
