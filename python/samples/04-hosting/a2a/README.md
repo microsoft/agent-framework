@@ -77,7 +77,20 @@ You can run one agent or all three — each listens on its own port.
 
 ### 2. Run a Client
 
-Once a server is running, open a separate terminal at the repository root. Then run a client from [`samples/02-agents/a2a/`](../../02-agents/a2a/):
+Once a server is running, open a separate terminal at the repository root.
+
+**Option A — pip:** Activate the virtual environment created during server setup
+in this terminal, then install the `agent-framework-a2a` client package from the
+checkout:
+
+```powershell
+.\python\samples\04-hosting\a2a\.venv\Scripts\Activate.ps1  # Windows
+# source ./python/samples/04-hosting/a2a/.venv/bin/activate  # macOS / Linux
+python -m pip install -e ./python/packages/a2a
+```
+
+Run a client from [`samples/02-agents/a2a/`](../../02-agents/a2a/). For Option A,
+use `python agent_with_a2a.py` as described above.
 
 ```powershell
 cd python/samples/02-agents/a2a
