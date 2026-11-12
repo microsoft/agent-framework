@@ -326,14 +326,13 @@ class EditTableExecutor(DeclarativeActionExecutor):
             elif operation == "clear":
                 current_table = []
 
-            elif operation == "set" or operation == "update":
+            elif (operation == "set" or operation == "update") and index is not None:
                 # Update item at index
-                if index is not None:
-                    evaluated_value = state.eval_if_expression(value)
-                    evaluated_index = state.eval_if_expression(index)
-                    idx = int(evaluated_index) if evaluated_index is not None else 0
-                    if 0 <= idx < len(current_table):
-                        current_table[idx] = evaluated_value
+                evaluated_value = state.eval_if_expression(value)
+                evaluated_index = state.eval_if_expression(index)
+                idx = int(evaluated_index) if evaluated_index is not None else 0
+                if 0 <= idx < len(current_table):
+                    current_table[idx] = evaluated_value
 
             state.set(table_path, current_table)
 

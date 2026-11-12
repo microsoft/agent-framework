@@ -230,8 +230,7 @@ async def test_mistral_embedding_close_only_closes_owned_client() -> None:
     owned = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
     owned_http_client = owned.client.sdk_configuration.async_client
     await owned.close()
-    assert isinstance(owned_http_client, httpx.AsyncClient)
-    assert owned_http_client.is_closed
+    assert getattr(owned_http_client, "is_closed") is True
 
     http_client = httpx.AsyncClient(base_url="https://custom.mistral.ai")
     injected = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)

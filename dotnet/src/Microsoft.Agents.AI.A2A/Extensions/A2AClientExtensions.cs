@@ -23,7 +23,7 @@ namespace A2A;
 public static class A2AClientExtensions
 {
     /// <summary>
-    /// Retrieves an instance of <see cref="AIAgent"/> for an existing A2A agent.
+    /// Retrieves an instance of <see cref="A2AAgent"/> for an existing A2A agent.
     /// </summary>
     /// <remarks>
     /// This method can be used to access A2A agents that support the
@@ -36,8 +36,8 @@ public static class A2AClientExtensions
     /// When omitted or <see langword="null"/>, default options are used.
     /// </param>
     /// <param name="loggerFactory">Optional logger factory for enabling logging within the agent.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
-    public static AIAgent AsAIAgent(this IA2AClient client, A2AAgentOptions? options = null, ILoggerFactory? loggerFactory = null)
+    /// <returns>An <see cref="A2AAgent"/> instance backed by the A2A agent.</returns>
+    public static A2AAgent AsAIAgent(this IA2AClient client, A2AAgentOptions? options = null, ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(client);
 

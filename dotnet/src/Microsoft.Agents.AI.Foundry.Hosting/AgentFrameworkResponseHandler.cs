@@ -191,7 +191,7 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         // no user identity, so there is nothing to partition or tamper-check and the session is shared.
         if (session is not null && resolvedUserId is not null)
         {
-            string? existingUserId = session.GetHostedUserId();
+            string? existingUserId = session.GetFoundryHostedUserId();
             if (existingUserId is null)
             {
                 // Fresh path: the session has no hosted context yet (either freshly created here,

@@ -2,8 +2,8 @@
 
 """File-access harness provider exposing CRUD/search tools backed by an ``AgentFileStore``.
 
-Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
-session-scoped memory that may be isolated per session, :class:`FileAccessProvider`
+Unlike :class:`~agent_framework.FileMemoryProvider`, which provides memory
+isolated per session by default, :class:`FileAccessProvider`
 operates on a shared, persistent storage area whose contents are visible across
 sessions and agents. The provider exposes tools — ``file_access_write``,
 ``file_access_read``, ``file_access_read_lines``, ``file_access_delete``,
@@ -26,6 +26,7 @@ import errno
 import fnmatch
 import logging
 import os
+import sys
 import threading
 import time
 import unicodedata
@@ -98,6 +99,19 @@ _SEARCH_SNIPPET_RADIUS = 50
 # rejects the same extremes the filesystem backend's OS layer would refuse.
 _MAX_PATH_SEGMENTS: Final[int] = 255
 _MAX_PATH_LENGTH: Final[int] = 4096
+
+# Windows path length limits, counted the way Windows counts them: in UTF-16 code
+# units, not Python code points (a supplementary character is two units). They are
+# consulted only to explain an error the OS already raised (see
+# :func:`_raise_if_path_too_long`); they never gate a path up front. ``MAX_PATH`` is
+# 260 of those units including the drive, the separators and the terminating NUL, and
+# ``CreateDirectory`` needs room for the 8.3 name it may have to synthesize, which is
+# where the 248-unit directory limit comes from.
+# https://learn.microsoft.com/windows/win32/fileio/maximum-file-path-limitation
+_WINDOWS_MAX_PATH_CHARS: Final[int] = 260
+_WINDOWS_MAX_DIRECTORY_PATH_CHARS: Final[int] = 248
+# Pinned in a constant so tests can exercise both branches on any platform.
+_WINDOWS_PATH_LIMITS_APPLY: Final[bool] = sys.platform == "win32"
 
 # Hard cap on the length of a user-supplied search regex. The cap is a coarse bound on
 # how much work a single pattern can describe; it does not stop a short pathological
@@ -1330,6 +1344,50 @@ class InMemoryAgentFileStore(AgentFileStore):
                 self._explicit_dirs[key] = display
 
 
+def _windows_path_length(path: Path) -> int:
+    """Return the length Windows measures for *path*, in UTF-16 code units.
+
+    Windows path limits are expressed in UTF-16 code units, while ``len`` on a Python
+    string counts Unicode code points. A supplementary character such as an emoji is one
+    code point but two UTF-16 units, so counting code points would understate the path
+    and could miss a genuine length failure.
+    """
+    return len(str(path).encode("utf-16-le", "surrogatepass")) // 2
+
+
+def _raise_if_path_too_long(exc: OSError, path: Path, *, limit: int) -> None:
+    """Re-raise an over-long Windows path failure as :data:`errno.ENAMETOOLONG`.
+
+    Without long-path support Windows reports a path past its limit as a missing path,
+    which CPython surfaces as :class:`FileNotFoundError`. Callers then go looking for a
+    bug in their own path handling instead of shortening the key.
+
+    Only that missing-path symptom is rewritten. A collision or a permission failure has
+    its own exception type and must keep it, even when the path happens to be over the
+    limit: with long-path support enabled Windows reports those directly, and relabeling
+    them as a length problem would hide the real cause.
+
+    The length is used only to explain an error that already happened. Nothing here
+    rejects a path before it is used, so a host with long-path support behaves exactly as
+    before and every in-limit path stays untouched. The rewrite additionally requires a
+    prefix inside the limit to exist; without one the path is missing for an ordinary
+    reason and the original error is the accurate one.
+    """
+    if not _WINDOWS_PATH_LIMITS_APPLY or not isinstance(exc, FileNotFoundError):
+        return
+    if _windows_path_length(path) < limit:
+        return
+    prefix = path
+    while _windows_path_length(prefix) >= limit:
+        parent = prefix.parent
+        if parent == prefix:
+            return
+        prefix = parent
+    if not prefix.exists():
+        return
+    raise OSError(errno.ENAMETOOLONG, "File name too long", str(path)) from exc
+
+
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class FileSystemAgentFileStore(AgentFileStore):
     """A disk-backed :class:`AgentFileStore` rooted under a configurable directory.
@@ -1351,6 +1409,15 @@ class FileSystemAgentFileStore(AgentFileStore):
     symlink between the probe and the file open. This store is designed for
     single-tenant or co-operating-tenant use; it is not a sandbox against a
     hostile process that shares the root directory.
+
+    On Windows the length of the resolved path (root plus key) is limited to 260 UTF-16
+    code units for a file and 248 for a directory unless long-path support is enabled
+    (``LongPathsEnabled``). :meth:`write` reports that limit as :class:`OSError` with
+    :data:`errno.ENAMETOOLONG` instead of the ``FileNotFoundError`` the OS raises, so a
+    caller can tell "too long" apart from "missing". The limit only renames a failure
+    the OS already produced; paths are never rejected up front, and a host with
+    long-path support behaves exactly as before. :class:`InMemoryAgentFileStore` has no
+    such limit, so the two backends still differ at that bound.
     """
 
     # Case aliases can identify the same file while having different Path hashes.
@@ -1502,6 +1569,11 @@ class FileSystemAgentFileStore(AgentFileStore):
             if parent_file is not None:
                 raise NotADirectoryError(f"Parent path is not a directory: {parent_file}") from exc
             raise
+        except OSError as exc:
+            # Windows reports an over-long absolute path as FileNotFoundError; name the
+            # real cause before the caller reads it as a missing parent directory.
+            _raise_if_path_too_long(exc, full_path.parent, limit=_WINDOWS_MAX_DIRECTORY_PATH_CHARS)
+            raise
         encoded = content.encode("utf-8")
         flags = os.O_WRONLY | os.O_CREAT
         if overwrite:
@@ -1516,6 +1588,7 @@ class FileSystemAgentFileStore(AgentFileStore):
         try:
             fd = os.open(full_path, flags, 0o644)
         except OSError as exc:
+            _raise_if_path_too_long(exc, full_path, limit=_WINDOWS_MAX_PATH_CHARS)
             # Windows reports PermissionError when opening a directory for
             # writing; POSIX exclusive creation can report FileExistsError.
             if isinstance(exc, (FileExistsError, PermissionError)) and full_path.is_dir():
@@ -1945,8 +2018,8 @@ class FileAccessProvider(ContextProvider):
     When ``disable_write_tools`` is set, only the read-only tools (``file_access_read``,
     ``file_access_read_lines``, ``file_access_ls``, ``file_access_grep``) are advertised.
 
-    Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
-    session-scoped memory that may be isolated per session,
+    Unlike :class:`~agent_framework.FileMemoryProvider`, which provides memory
+    isolated per session by default,
     :class:`FileAccessProvider` operates by default on a shared, persistent
     store whose contents are visible across sessions and agents. Pass
     ``session_scoped=True`` (with an optional explicit ``scope``) to confine

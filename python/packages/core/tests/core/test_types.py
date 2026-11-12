@@ -4705,6 +4705,232 @@ def test_parse_result_nested_pydantic_model():
     assert "18.0" in parsed[0].text or "18" in parsed[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
+def test_parse_result_pydantic_model_uses_json_mode():
+    """Enum and datetime fields are serialized the way Pydantic writes them to JSON."""
+    from enum import Enum
+
+    class Status(Enum):
+        OPEN = "open"
+
+    class Ticket(BaseModel):
+        status: Status
+        created: datetime
+
+    parsed = FunctionTool.parse_result(Ticket(status=Status.OPEN, created=datetime(2024, 1, 1, 12)))
+
+    assert json.loads(parsed[0].text) == {"status": "open", "created": "2024-01-01T12:00:00"}  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+
+class _UnknownValue:
+    """A value Pydantic JSON mode doesn't know how to encode."""
+
+    def __str__(self) -> str:
+        return "unknown-1"
+
+
+@fixture(params=["model_dump", "to_jsonable_python"])
+def pydantic_json_dump(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run a test with model_dump(fallback=str) and with the path for Pydantic versions without it."""
+    from agent_framework import _tools
+
+    if request.param == "model_dump" and not _tools._MODEL_DUMP_HAS_FALLBACK:
+        pytest.skip("model_dump has no fallback parameter on this Pydantic version")
+    monkeypatch.setattr(_tools, "_MODEL_DUMP_HAS_FALLBACK", request.param == "model_dump")
+
+
+def _parse_result_json(result: Any) -> Any:
+    text = FunctionTool.parse_result(result)[0].text
+    assert text is not None
+    return json.loads(text)
+
+
+@mark.usefixtures("pydantic_json_dump")
+def test_parse_result_pydantic_model_with_arbitrary_type():
+    """Only the value Pydantic cannot serialize to JSON becomes str; the rest stays in JSON mode."""
+    from pydantic import field_serializer
+
+    class Result(BaseModel):
+        model_config = {"arbitrary_types_allowed": True}
+
+        handle: _UnknownValue
+        created: datetime
+        token: str
+        api_key: str = Field(exclude=True)
+
+        @field_serializer("token", when_used="json")
+        def _redact(self, value: str) -> str:
+            return "***"
+
+    result = Result(handle=_UnknownValue(), created=datetime(2024, 1, 1, 12), token="secret", api_key="key")
+
+    assert _parse_result_json(result) == {"handle": "unknown-1", "created": "2024-01-01T12:00:00", "token": "***"}
+
+
+@mark.usefixtures("pydantic_json_dump")
+def test_parse_result_pydantic_model_serializer_output_is_kept():
+    """A wrapping model serializer keeps its structure when a field needs the str fallback."""
+    from pydantic import model_serializer
+
+    class Result(BaseModel):
+        model_config = {"arbitrary_types_allowed": True}
+
+        count: int
+        handle: _UnknownValue
+
+        @model_serializer(mode="wrap")
+        def _wrap(self, handler: Any) -> dict[str, Any]:
+            return {"payload": handler(self)}
+
+    assert _parse_result_json(Result(count=1, handle=_UnknownValue())) == {
+        "payload": {"count": 1, "handle": "unknown-1"}
+    }
+
+
+@mark.usefixtures("pydantic_json_dump")
+def test_parse_result_nested_pydantic_computed_field_uses_original_values():
+    """A nested computed field reads the original value, not its str() fallback."""
+    from pydantic import computed_field
+
+    class Inner(BaseModel):
+        model_config = {"arbitrary_types_allowed": True}
+
+        handle: _UnknownValue
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def handle_type(self) -> str:
+            return type(self.handle).__name__
+
+    class Outer(BaseModel):
+        inner: Inner
+
+    assert _parse_result_json(Outer(inner=Inner(handle=_UnknownValue()))) == {
+        "inner": {"handle": "unknown-1", "handle_type": "_UnknownValue"}
+    }
+
+
+@mark.usefixtures("pydantic_json_dump")
+def test_parse_result_pydantic_bytes_field_serializer_gets_original_bytes():
+    """A bytes field serializer receives the original bytes when a sibling needs the str fallback."""
+    from pydantic import field_serializer
+
+    class Result(BaseModel):
+        model_config = {"arbitrary_types_allowed": True}
+
+        raw: bytes
+        handle: _UnknownValue
+
+        @field_serializer("raw")
+        def _hex(self, value: bytes) -> str:
+            return value.hex()
+
+    assert _parse_result_json(Result(raw=b"\x01\xff", handle=_UnknownValue())) == {
+        "raw": "01ff",
+        "handle": "unknown-1",
+    }
+
+
+@mark.usefixtures("pydantic_json_dump")
+def test_parse_result_pydantic_excluded_cyclic_field_is_not_visited():
+    """Excluded fields, including one holding a reference cycle, stay out of the tool result."""
+
+    class Result(BaseModel):
+        model_config = {"arbitrary_types_allowed": True}
+
+        handle: _UnknownValue
+        cache: Any = Field(default=None, exclude=True)
+        api_key: str = Field(exclude=True)
+
+    result = Result(handle=_UnknownValue(), api_key="key")
+    result.cache = result
+
+    assert _parse_result_json(result) == {"handle": "unknown-1"}
+
+
+@mark.usefixtures("pydantic_json_dump")
+def test_parse_result_nested_pydantic_dataclass_keeps_exclusions():
+    """A nested Pydantic dataclass keeps its exclusions; only the unknown value becomes str."""
+    from pydantic.dataclasses import dataclass as pydantic_dataclass
+
+    @pydantic_dataclass(config={"arbitrary_types_allowed": True})
+    class Inner:
+        handle: _UnknownValue
+        api_key: str = Field(default="key", exclude=True)
+
+    class Outer(BaseModel):
+        model_config = {"arbitrary_types_allowed": True}
+
+        inner: Inner
+
+    assert _parse_result_json(Outer(inner=Inner(handle=_UnknownValue()))) == {"inner": {"handle": "unknown-1"}}
+
+
+@mark.usefixtures("pydantic_json_dump")
+def test_parse_result_pydantic_declared_field_types_are_kept():
+    """A subclass in a field declared as its base keeps its subclass-only fields out."""
+
+    class Public(BaseModel):
+        model_config = {"arbitrary_types_allowed": True}
+
+        handle: _UnknownValue
+
+    class Secret(Public):
+        api_key: str
+
+    class Envelope(BaseModel):
+        item: Public
+        items: list[Public]
+        by_name: dict[str, Public]
+
+    secret = Secret(handle=_UnknownValue(), api_key="key")
+    expected_item = {"handle": "unknown-1"}
+
+    assert _parse_result_json(Envelope(item=secret, items=[secret], by_name={"a": secret})) == {
+        "item": expected_item,
+        "items": [expected_item],
+        "by_name": {"a": expected_item},
+    }
+
+
+@mark.usefixtures("pydantic_json_dump")
+def test_parse_result_pydantic_model_with_non_utf8_bytes_is_replaced():
+    """A model with bytes that aren't valid UTF-8 is replaced by a placeholder, so nothing in it leaks."""
+    from pydantic import field_serializer
+
+    class Inner(BaseModel):
+        data: bytes
+        token: str
+        api_key: str = Field(exclude=True)
+
+        @field_serializer("token", when_used="json")
+        def _redact(self, value: str) -> str:
+            return "***"
+
+    class Outer(BaseModel):
+        inner: Inner
+
+    inner = Inner(data=b"\xff\xfe", token="secret", api_key="key")
+    placeholder = "[Outer could not be serialized as JSON]"
+
+    assert FunctionTool.parse_result(Outer(inner=inner))[0].text == placeholder
+    assert _parse_result_json([Outer(inner=inner), {"ok": 1}]) == [placeholder, {"ok": 1}]
+
+
+@mark.usefixtures("pydantic_json_dump")
+def test_parse_result_pydantic_model_with_reference_cycle_is_replaced():
+    """A model with a reference cycle in a serialized field is replaced by a placeholder."""
+
+    class Node(BaseModel):
+        name: str
+        next: Any = None
+        api_key: str = Field(default="key", exclude=True)
+
+    node = Node(name="a")
+    node.next = node
+
+    assert FunctionTool.parse_result(node)[0].text == "[Node could not be serialized as JSON]"
+
+
 # region FunctionTool.parse_result with MCP TextContent-like objects
 
 
@@ -7902,3 +8128,72 @@ def test_data_uri_readers_agree_on_the_base64_marker():
     payload_marker = f"data:image/png,x;base64,{png_b64}"
     with pytest.raises(ValueError, match="Data URI must use base64 encoding."):
         detect_media_type_from_base64(data_uri=payload_marker)
+
+
+def test_agent_response_value_validates_by_alias_only() -> None:
+    """Structured output is validated with aliases only, matching the schema sent to providers."""
+    from pydantic import VERSION, ConfigDict
+
+    if tuple(int(part) for part in VERSION.split(".")[:2]) < (2, 11):
+        pytest.skip("validate_by_alias/validate_by_name require pydantic 2.11")
+
+    class Aliased(BaseModel):
+        model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
+        item_count: int = Field(alias="itemCount")
+
+    response = AgentResponse(
+        messages=[Message(role="assistant", contents=['{"itemCount": 3}'])],
+        response_format=Aliased,
+    )
+
+    assert response.value is not None
+    assert response.value.item_count == 3
+
+
+def test_agent_response_value_accepts_field_names_when_model_allows_it() -> None:
+    """A model configured to validate by field name keeps accepting name-keyed output."""
+    from pydantic import ConfigDict
+
+    class Named(BaseModel):
+        model_config = ConfigDict(validate_by_name=True, validate_by_alias=True)
+        item_count: int = Field(alias="itemCount")
+
+    for text in ('{"item_count": 3}', '{"itemCount": 3}'):
+        response = AgentResponse(
+            messages=[Message(role="assistant", contents=[text])],
+            response_format=Named,
+        )
+        assert response.value is not None
+        assert response.value.item_count == 3
+
+
+def test_agent_response_value_raises_original_error_for_invalid_output() -> None:
+    class Strict(BaseModel):
+        count: int
+
+    response = AgentResponse(
+        messages=[Message(role="assistant", contents=['{"count": "x"}'])],
+        response_format=Strict,
+    )
+    with pytest.raises(ValidationError):
+        _ = response.value
+
+
+def test_agent_response_value_keeps_provider_value_for_defaulted_aliased_field() -> None:
+    """A defaulted aliased field must not silently fall back to its default for alias-keyed output."""
+    from pydantic import VERSION, ConfigDict
+
+    if tuple(int(part) for part in VERSION.split(".")[:2]) < (2, 11):
+        pytest.skip("validate_by_alias/validate_by_name require pydantic 2.11")
+
+    class Defaulted(BaseModel):
+        model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
+        item_count: int = Field(default=0, alias="itemCount")
+
+    response = AgentResponse(
+        messages=[Message(role="assistant", contents=['{"itemCount": 3}'])],
+        response_format=Defaulted,
+    )
+
+    assert response.value is not None
+    assert response.value.item_count == 3
