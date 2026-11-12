@@ -10,6 +10,7 @@ from typing import Any, Literal, TypedDict, cast
 import yaml
 from agent_framework import (
     Agent,
+    Content,
     SupportsChatGetResponse,
 )
 from agent_framework import (
@@ -764,6 +765,18 @@ class AgentFactory:
                         approval_mode = "always_require"
                     elif registered_tool.approval_mode == "never_require":
                         approval_mode = "never_require"
+                result_parser = registered_tool.result_parser if registered_tool else None
+                if registered_tool is not None and callable(result_parser):
+                    registered_result_parser = result_parser
+
+                    def preserve_parser_exception_count(result: Any) -> str | list[Content]:
+                        try:
+                            return registered_result_parser(result)
+                        except Exception:
+                            registered_tool.invocation_exception_count += 1
+                            raise
+
+                    result_parser = preserve_parser_exception_count
                 return AFFunctionTool(
                     name=tool_resource.name,  # type: ignore
                     description=tool_resource.description,  # type: ignore
@@ -772,7 +785,7 @@ class AgentFactory:
                     approval_mode=approval_mode,
                     kind=registered_tool.kind if registered_tool else None,
                     additional_properties=registered_tool.additional_properties if registered_tool else None,
-                    result_parser=registered_tool.result_parser if registered_tool else None,
+                    result_parser=result_parser,
                 )
             case WebSearchTool():
                 result: dict[str, Any] = {"type": "web_search_preview"}

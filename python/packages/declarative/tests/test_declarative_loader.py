@@ -1599,7 +1599,7 @@ tools:
         assert wrapped_tool.approval_mode == "always_require"
         assert wrapped_tool.kind == registered_tool.kind
         assert wrapped_tool.additional_properties == registered_tool.additional_properties
-        assert wrapped_tool.result_parser is registered_tool.result_parser
+        assert wrapped_tool.result_parser is not None
         assert wrapped_tool.max_invocations is None
         assert wrapped_tool.max_invocation_exceptions is None
 
@@ -1674,6 +1674,44 @@ tools:
 
         assert registered_tool.invocation_exception_count == 1
         assert wrapped_tool.max_invocation_exceptions is None
+
+    async def test_parse_registered_function_tool_keeps_parser_exception_limit(self) -> None:
+        """Parser failures consume the original registered tool's exception limit."""
+        from agent_framework import FunctionTool as AFFunctionTool
+        from agent_framework.exceptions import ToolException
+
+        from agent_framework_declarative import AgentFactory
+
+        executions: list[str] = []
+        parser_calls: list[str] = []
+
+        def execute() -> str:
+            executions.append("executed")
+            return "done"
+
+        def fail_parser(result: Any) -> str:
+            parser_calls.append(result)
+            raise ValueError("parser failed")
+
+        registered_tool = AFFunctionTool(
+            name="registered_action",
+            func=execute,
+            max_invocation_exceptions=1,
+            result_parser=fail_parser,
+        )
+        wrapped_tool = AgentFactory(bindings={"registered_action": registered_tool})._parse_tool(
+            FunctionTool(name="declarative_action", bindings=[Binding(name="registered_action")])
+        )
+
+        assert isinstance(wrapped_tool, AFFunctionTool)
+        with pytest.raises(ValueError, match="parser failed"):
+            await wrapped_tool.invoke()
+        with pytest.raises(ToolException, match="maximum exception limit"):
+            await wrapped_tool.invoke()
+
+        assert executions == ["executed"]
+        assert parser_calls == ["done"]
+        assert registered_tool.invocation_exception_count == 1
 
     def test_parse_file_search_tool_with_all_options(self):
         """Test parsing FileSearchTool with ranker and filters."""
