@@ -9,7 +9,6 @@ import inspect
 import json
 import os
 import pickle
-import sys
 from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Iterator, Mapping, Sequence
 from datetime import datetime, timezone
 from importlib import import_module
@@ -54,6 +53,7 @@ from agent_framework.exceptions import (
     ChatClientInvalidRequestException,
     SettingNotFoundError,
 )
+from agent_framework.security import SecureAgentConfig
 from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
 from openai.types.responses import (
     ResponseComputerToolCall,
@@ -2770,17 +2770,24 @@ def test_prepare_messages_uses_structured_local_shell_result() -> None:
     ]
 
 
-def test_prepared_local_shell_tool_survives_make_tools() -> None:
-    """Regression: the prepared shell tool must be a subscriptable dict.
-
-    The OpenAI SDK's ``_make_tools`` helper (used by the structured-output /
-    ``responses.parse``/``responses.stream`` path) indexes each tool with
-    ``tool["type"]``. A pydantic model is not subscriptable and previously
-    raised ``TypeError: 'FunctionShellTool' object is not subscriptable``.
-    """
-    from openai.resources.responses.responses import _make_tools
-
-    client = OpenAIChatClient(model="test-model", api_key="test-key")
+async def test_prepared_local_shell_tool_survives_structured_output_request() -> None:
+    """Keep local shell tools usable through the SDK's public structured-output API."""
+    handler = MagicMock(
+        return_value=_OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_shell",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "completed",
+                "output": [],
+                "parallel_tool_calls": False,
+                "tool_choice": "auto",
+                "tools": [],
+            },
+        )
+    )
 
     def local_exec(command: str) -> str:
         return command
@@ -2789,11 +2796,24 @@ def test_prepared_local_shell_tool_survives_make_tools() -> None:
         func=local_exec,
         approval_mode="never_require",
     )
-    response_tools = client._prepare_tools_for_openai([local_shell_tool])
+    async with AsyncOpenAI(
+        api_key="test-key",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handler)),
+    ) as sdk_client:
+        client = OpenAIChatClient(model="test-model", async_client=sdk_client)
+        response_tools = client._prepare_tools_for_openai([local_shell_tool])
+        assert response_tools is not None
+        assert isinstance(response_tools[0], dict)
 
-    # Must not raise TypeError (the bug); shell tool flows through unchanged.
-    made = cast("list[dict[str, Any]]", _make_tools(response_tools))  # type: ignore[arg-type]
-    assert {"type": "shell", "environment": {"type": "local"}} in made
+        await sdk_client.responses.parse(
+            model="test-model",
+            input="Run the shell tool.",
+            tools=response_tools,
+            text_format=OutputStruct,
+        )
+
+    payload = json.loads(handler.call_args.args[0].content)
+    assert payload["tools"] == [{"type": "shell", "environment": {"type": "local"}}]
 
 
 def test_get_shell_tool_reuses_function_tool_instance() -> None:
@@ -2912,6 +2932,303 @@ def test_malformed_local_environment_shell_call_is_not_executable(
     contents = client._shell_item_to_contents(item, "run_shell")
 
     assert all(content.type != "function_call" for content in contents)
+
+
+@pytest.mark.parametrize("max_output_length", [None, 4096])
+@pytest.mark.parametrize("round_trip", [False, True])
+@pytest.mark.parametrize("environment", [{"type": "local"}, None])
+@pytest.mark.parametrize("service_storage", [False, True])
+def test_empty_local_shell_call_replays_with_empty_output(
+    max_output_length: int | None,
+    round_trip: bool,
+    environment: dict[str, str] | None,
+    service_storage: bool,
+) -> None:
+    """Zero local commands must replay with a matching empty result, not an orphan call."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = ResponseFunctionShellToolCall.model_validate({
+        "type": "shell_call",
+        "id": "sh_empty",
+        "call_id": "call_empty",
+        "status": "completed",
+        "action": {"commands": [], "max_output_length": max_output_length},
+        "environment": environment,
+    })
+
+    contents = client._shell_item_to_contents(item, "run_shell")
+
+    assert all(content.type != "function_call" for content in contents)
+    message = Message("assistant", contents)
+    if round_trip:
+        restored_result = Message.from_json(Message("assistant", [contents[1]]).to_json()).contents[0]
+        message = Message("assistant", [contents[0], restored_result])
+    replay = client._prepare_messages_for_openai(
+        [message, Message("user", ["Continue"])],
+        request_uses_service_side_storage=service_storage,
+    )
+
+    shell_calls = [entry for entry in replay if entry["type"] == "shell_call"]
+    assert len(shell_calls) == (0 if service_storage else 1)
+    if not service_storage:
+        assert shell_calls[0]["call_id"] == "call_empty"
+        assert shell_calls[0]["action"]["commands"] == []
+    shell_outputs = [entry for entry in replay if entry["type"] == "shell_call_output"]
+    expected_output: dict[str, Any] = {"type": "shell_call_output", "call_id": "call_empty", "output": []}
+    if max_output_length is not None:
+        expected_output["max_output_length"] = max_output_length
+    assert shell_outputs == [expected_output]
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_empty_local_shell_call_parsing_emits_pair_without_execution(streaming: bool) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    executed_commands: list[str] = []
+
+    def local_exec(command: str) -> str:
+        executed_commands.append(command)
+        return command
+
+    local_tool = OpenAIChatClient.get_shell_tool(func=local_exec)
+    item = ResponseFunctionShellToolCall.model_validate({
+        "type": "shell_call",
+        "id": "sh_empty",
+        "call_id": "call_empty",
+        "status": "completed",
+        "action": {"commands": []},
+        "environment": {"type": "local"},
+    })
+    if streaming:
+        event = ResponseOutputItemDoneEvent(
+            type="response.output_item.done", item=item, output_index=0, sequence_number=1
+        )
+        update = client._parse_chunk_from_openai(event, options={"tools": [local_tool]}, function_call_ids={})
+        finalized = ChatResponse.from_updates([update])
+        assert [content.type for content in finalized.messages[0].contents] == ["shell_tool_call", "shell_tool_result"]
+        contents = update.contents
+    else:
+        response = MagicMock(
+            output=[item],
+            output_parsed=None,
+            metadata={},
+            usage=None,
+            id="resp_empty",
+            model="test-model",
+            created_at=1000000000,
+            status="completed",
+            incomplete=None,
+        )
+        parsed = client._parse_response_from_openai(response, options={"tools": [local_tool]})
+        contents = parsed.messages[0].contents
+
+    assert [content.type for content in contents] == ["shell_tool_call", "shell_tool_result"]
+    assert [content.call_id for content in contents] == ["call_empty", "call_empty"]
+    assert contents[1].outputs == []
+    assert executed_commands == []
+
+
+@pytest.mark.parametrize(
+    ("environment", "tool_name", "item_id", "call_id", "commands"),
+    [
+        ({"type": "container_reference"}, "run_shell", "sh_empty", "call_empty", []),
+        ({"type": "local"}, None, "sh_empty", "call_empty", []),
+        (None, None, "sh_empty", "call_empty", []),
+        ({"type": "local"}, "run_shell", None, "call_empty", []),
+        ({"type": "local"}, "run_shell", "sh_empty", None, []),
+        ({"type": "local"}, "run_shell", "sh_empty", "call_empty", None),
+        ({"type": "local"}, "run_shell", "sh_empty", "call_empty", [1]),
+    ],
+)
+def test_empty_shell_result_is_not_synthesized_for_hosted_unconfigured_or_malformed_calls(
+    environment: dict[str, str] | None,
+    tool_name: str | None,
+    item_id: str | None,
+    call_id: str | None,
+    commands: Any,
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = SimpleNamespace(
+        type="shell_call",
+        id=item_id,
+        call_id=call_id,
+        environment=environment,
+        action=SimpleNamespace(commands=commands),
+        status="completed",
+    )
+
+    contents = client._shell_item_to_contents(item, tool_name)
+
+    assert [content.type for content in contents] == ["shell_tool_call"]
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("continuation", ["stateless", "response", "conversation"])
+async def test_empty_local_shell_output_survives_mixed_tool_continuation(streaming: bool, continuation: str) -> None:
+    """The next request submits local results once without replaying stored shell items."""
+    requests: list[dict[str, Any]] = []
+    executed: list[str] = []
+
+    def local_exec(command: str) -> str:
+        executed.append("shell")
+        return command
+
+    @tool(approval_mode="never_require")
+    def ordinary_tool() -> str:
+        """Return the ordinary tool result."""
+        executed.append("ordinary")
+        return "ordinary result"
+
+    shell_call = {
+        "type": "shell_call",
+        "id": "sh_empty",
+        "call_id": "call_empty",
+        "status": "completed",
+        "environment": {"type": "local"},
+        "action": {"commands": []},
+    }
+    hosted_call = {
+        "type": "shell_call",
+        "id": "sh_hosted",
+        "call_id": "call_hosted",
+        "status": "completed",
+        "environment": {"type": "container_reference", "container_id": "cntr_fixture"},
+        "action": {"commands": ["pwd"]},
+    }
+    hosted_output = {
+        "type": "shell_call_output",
+        "id": "sh_hosted_output",
+        "call_id": "call_hosted",
+        "status": "completed",
+        "output": [{"stdout": "/workspace", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
+    }
+
+    def respond(request: Any) -> Any:
+        requests.append(json.loads(request.content))
+        first = len(requests) == 1
+        output: list[dict[str, Any]] = (
+            [
+                hosted_call,
+                hosted_output,
+                shell_call,
+                {
+                    "type": "function_call",
+                    "id": "fc_ordinary",
+                    "call_id": "call_ordinary",
+                    "name": "ordinary_tool",
+                    "arguments": "{}",
+                    "status": "completed",
+                },
+            ]
+            if first
+            else [
+                {
+                    "type": "message",
+                    "id": "msg_done",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "done", "annotations": [], "logprobs": []}],
+                }
+            ]
+        )
+        response: dict[str, Any] = {
+            "id": "resp_first" if first else "resp_final",
+            "object": "response",
+            "created_at": 1000000000,
+            "status": "completed",
+            "model": "test-model",
+            "output": output,
+            "usage": None,
+            "metadata": {},
+            "parallel_tool_calls": True,
+            "tools": [],
+            "tool_choice": "auto",
+            "error": None,
+            "incomplete_details": None,
+            "conversation": {"id": "conv_fixture"} if continuation == "conversation" else None,
+        }
+        if not streaming:
+            return _OPENAI_HTTPX.Response(200, json=response)
+        events: list[dict[str, Any]] = [
+            {
+                "type": "response.created",
+                "response": {**response, "status": "in_progress", "output": []},
+            }
+        ]
+        for index, item in enumerate(output):
+            events.append({"type": "response.output_item.added", "output_index": index, "item": item})
+            if item["type"] == "function_call":
+                events.append({
+                    "type": "response.function_call_arguments.delta",
+                    "output_index": index,
+                    "item_id": item["id"],
+                    "delta": "{}",
+                })
+            elif item["type"] == "message":
+                events.append({
+                    "type": "response.output_text.delta",
+                    "output_index": index,
+                    "content_index": 0,
+                    "item_id": item["id"],
+                    "delta": "done",
+                    "logprobs": [],
+                })
+            events.append({"type": "response.output_item.done", "output_index": index, "item": item})
+        events.append({"type": "response.completed", "response": response})
+        body = "".join(
+            f"data: {json.dumps({**event, 'sequence_number': number})}\n\n" for number, event in enumerate(events)
+        )
+        return _OPENAI_HTTPX.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    async with AsyncOpenAI(
+        api_key="test-key", http_client=_OPENAI_HTTPX.AsyncClient(transport=_OPENAI_HTTPX.MockTransport(respond))
+    ) as api:
+        client = OpenAIChatClient(model="test-model", async_client=api)
+        options: OpenAIChatOptions[None] = {
+            "store": continuation != "stateless",
+            "tools": [OpenAIChatClient.get_shell_tool(func=local_exec), ordinary_tool],
+        }
+        messages = [Message("user", ["Use the tools."])]
+        if streaming:
+            stream = client.get_response(messages, options=options, stream=True)
+            updates = [update async for update in stream]
+            result = await stream.get_final_response()
+            assert (
+                sum(
+                    content.type == "shell_tool_result" and content.call_id == "call_empty"
+                    for update in updates
+                    for content in update.contents
+                )
+                == 1
+            )
+        else:
+            result = await client.get_response(messages, options=options)
+
+    assert result.text == "done"
+    assert (
+        sum(
+            content.type == "shell_tool_result" and content.call_id == "call_empty"
+            for message in result.messages
+            for content in message.contents
+        )
+        == 1
+    )
+    assert executed == ["ordinary"]
+    assert len(requests) == 2
+    next_input = requests[1]["input"]
+    assert [item for item in next_input if item["type"] == "shell_call_output" and item["call_id"] == "call_empty"] == [
+        {"type": "shell_call_output", "call_id": "call_empty", "output": []}
+    ]
+    assert (
+        sum(item["type"] == "function_call_output" and item["call_id"] == "call_ordinary" for item in next_input) == 1
+    )
+    if continuation != "stateless":
+        assert all(item["type"] not in {"shell_call", "function_call"} for item in next_input)
+        assert all(item.get("call_id") != "call_hosted" for item in next_input)
+        key, value = (
+            ("conversation", "conv_fixture")
+            if continuation == "conversation"
+            else ("previous_response_id", "resp_first")
+        )
+        assert requests[1][key] == value
 
 
 @pytest.mark.asyncio
@@ -10266,8 +10583,7 @@ def test_streaming_error_exception_round_trip_preserves_state(round_trip: Callab
     cause = exc_info.value.__cause__
     assert isinstance(cause, RuntimeError)
     cause.__dict__["trace_id"] = "trace-123"
-    if sys.version_info >= (3, 11):
-        cause.add_note("provider stream failed")
+    cause.add_note("provider stream failed")
 
     error = exc_info.value if wrapped else cause
     restored = round_trip(error)
@@ -10281,8 +10597,7 @@ def test_streaming_error_exception_round_trip_preserves_state(round_trip: Callab
     assert getattr(restored_cause, "param", None) == error_event.param
     assert getattr(restored_cause, "event", None) == error_event
     assert restored_cause.__dict__["trace_id"] == "trace-123"
-    if sys.version_info >= (3, 11):
-        assert restored_cause.__notes__ == ["provider stream failed"]
+    assert restored_cause.__notes__ == ["provider stream failed"]
 
 
 async def test_resumed_stream_error_clears_continuation_token() -> None:
@@ -10678,6 +10993,35 @@ async def test_streaming_resume_with_tools_runs_the_tool_once() -> None:
     assert create.await_args is not None
     assert create.await_args.kwargs.get("previous_response_id") == "resp_bg"
     assert final.text == "Email sent."
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_fides_rejects_background_resume_without_authoritative_state(stream: bool) -> None:
+    """A background-response token is service continuation authority, not a fresh request."""
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def blocked_tool(value: str) -> str:
+        executions.append(value)
+        return "unexpected"
+
+    retrieve = AsyncMock()
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    agent = Agent(client=client, tools=[blocked_tool], context_providers=[SecureAgentConfig()])
+    session = agent.create_session()
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_bg"}}
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        pytest.raises(RuntimeError, match="authoritative FIDES context label"),
+    ):
+        if stream:
+            await agent.run("Resume", session=session, stream=True, options=options).get_final_response()
+        else:
+            await agent.run("Resume", session=session, options=options)
+
+    assert retrieve.await_count == 0
+    assert executions == []
 
 
 @pytest.mark.parametrize("stream", [False, True])

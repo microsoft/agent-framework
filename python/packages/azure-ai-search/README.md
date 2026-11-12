@@ -14,8 +14,7 @@ All three classes are available from `agent_framework.azure` or
 
 ## Installation
 
-Supports Python 3.11–3.15. Python 3.10 installation remains permitted,
-but compatibility is not guaranteed.
+Supports Python 3.11–3.15.
 
 ```bash
 pip install agent-framework-azure-ai-search --pre

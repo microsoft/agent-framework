@@ -4,13 +4,17 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using Moq;
 using Moq.Protected;
@@ -18,75 +22,372 @@ using Moq.Protected;
 namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests;
 
 /// <summary>
-/// Functional session-lifetime tests using an in-memory HTTP transport and inert tool results.
+/// Functional session-lifetime tests using in-memory and loopback HTTP transports and inert tool results.
 /// </summary>
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Reliability", "CA2025:Do not pass disposable objects into unawaited tasks",
-    Justification = "Provider callbacks return completed tasks; each invocation and handler disposal is awaited before disposing caller-owned clients.")]
 public sealed class DefaultMcpToolHandlerLifetimeTests
 {
     [Theory]
-    [InlineData("ping")]
-    [InlineData(DefaultMcpToolHandler.ListToolsToolName)]
-    public async Task Provider_SequentialInvocations_CreateAndDisposeSeparateSessionsAsync(string toolName)
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Factory_InvalidTransportSettings_RejectBeforeInitializationAsync(bool allowAutoRedirect, bool useCookies)
     {
         // Arrange
-        ProtocolStub stub = new();
-        using HttpClient client = new(stub.CreateMessageHandler());
-        int providerCalls = 0;
-        DefaultMcpToolHandler handler = new((_, _) =>
-        {
-            providerCalls++;
-            return Task.FromResult<HttpClient?>(client);
-        });
+        using ProtocolStub stub = new();
+        await using LoopbackMcpServer server = new(stub);
+        ServiceCollection services = new();
+        services.AddHttpClient("workflow-mcp")
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                AllowAutoRedirect = allowAutoRedirect,
+                UseCookies = useCookies,
+                CheckCertificateRevocationList = true
+            });
+        using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        DefaultMcpToolHandler handler = new(
+            [new Uri(server.Endpoint).Authority], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>(), "workflow-mcp");
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
 
         // Act
-        await InvokeAsync(handler, toolName, timeout.Token);
-        Assert.Equal(1, stub.Terminations);
-        await InvokeAsync(handler, toolName, timeout.Token);
-        await handler.DisposeAsync();
+        Exception? error = await Record.ExceptionAsync(() => handler.InvokeToolAsync(
+            server.Endpoint, null, "ping", null, null, null, timeout.Token));
 
         // Assert
-        Assert.Equal(2, providerCalls);
+        Assert.IsType<InvalidOperationException>(error);
+        Assert.Equal(0, stub.Initializations);
+        Assert.Equal(0, server.RequestCount);
+    }
+
+    [Theory]
+    [InlineData(307)]
+    [InlineData(308)]
+    public async Task Factory_RedirectResponse_DoesNotContactOtherDestinationAsync(int statusCode)
+    {
+        // Arrange
+        using ProtocolStub destinationStub = new();
+        await using LoopbackMcpServer destination = new(destinationStub);
+        using ProtocolStub originStub = new()
+        {
+            RedirectEndpoint = new Uri(destination.Endpoint),
+            RedirectStatusCode = (HttpStatusCode)statusCode
+        };
+        await using LoopbackMcpServer origin = new(originStub);
+        ServiceCollection services = new();
+        services.AddHttpClient("workflow-mcp")
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = false,
+                CheckCertificateRevocationList = true
+            });
+        using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        DefaultMcpToolHandler handler = new(
+            [new Uri(origin.Endpoint).Authority], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>(), "workflow-mcp");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        Exception? error = await Record.ExceptionAsync(() => handler.InvokeToolAsync(
+            origin.Endpoint, null, "ping", null, null, null, timeout.Token));
+
+        // Assert
+        Assert.NotNull(error);
+        Assert.True(origin.RequestCount > 0);
+        Assert.Equal(0, destination.RequestCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Factory_UnsupportedPipeline_RejectsBeforeSendingAsync(bool incomplete)
+    {
+        // Arrange
+        using HttpMessageHandler pipeline = incomplete
+            ? new Mock<DelegatingHandler> { CallBase = true }.Object
+            : new Mock<HttpMessageHandler> { CallBase = true }.Object;
+        Mock<IHttpMessageHandlerFactory> factory = new();
+        factory.Setup(f => f.CreateHandler("workflow-mcp")).Returns(pipeline);
+        DefaultMcpToolHandler handler = new(["mcp.example"], factory.Object, "workflow-mcp");
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(() => handler.InvokeToolAsync(
+            "https://mcp.example/api", null, "ping", null, null, null));
+
+        // Assert
+        factory.Verify(f => f.CreateHandler("workflow-mcp"), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("2025-11-25")]
+    public async Task Factory_LoopbackInvocations_ReuseHandlerAndDisposeSeparateSessionsBeforeReturningAsync(string? protocolVersion)
+    {
+        // Arrange
+        using ProtocolStub stub = new();
+        await using LoopbackMcpServer server = new(stub);
+        int primaryHandlersCreated = 0;
+        ServiceCollection services = new();
+        services.AddHttpClient("workflow-mcp")
+            .ConfigurePrimaryHttpMessageHandler(() =>
+            {
+                Interlocked.Increment(ref primaryHandlersCreated);
+                return new HttpClientHandler
+                {
+                    UseCookies = false,
+                    AllowAutoRedirect = false,
+                    CheckCertificateRevocationList = true
+                };
+            });
+        using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        DefaultMcpToolHandler handler = new([new Uri(server.Endpoint).Authority], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>(), "workflow-mcp")
+        {
+            ProtocolVersion = protocolVersion
+        };
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(30));
+
+        // Act
+        McpServerToolResultContent first = await handler.InvokeToolAsync(
+            server.Endpoint, null, "session", null, null, null, timeout.Token);
+
+        // Assert
+        Assert.NotNull(first.Outputs);
+        string firstSession = Assert.IsType<TextContent>(Assert.Single(first.Outputs)).Text;
+        Assert.Equal(1, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+        Assert.Equal(firstSession, Assert.Single(server.TerminatedSessions));
+
+        // Act
+        McpServerToolResultContent second = await handler.InvokeToolAsync(
+            server.Endpoint, null, "session", null, null, null, timeout.Token);
+
+        // Assert
+        Assert.NotNull(second.Outputs);
+        string secondSession = Assert.IsType<TextContent>(Assert.Single(second.Outputs)).Text;
+        Assert.NotEqual(firstSession, secondSession);
         Assert.Equal(2, stub.Initializations);
         Assert.Equal(2, stub.Terminations);
-        stub.Handlers[0].Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
+        Assert.Equal(new[] { firstSession, secondSession }, server.TerminatedSessions);
+        Assert.Equal(1, primaryHandlersCreated);
     }
 
     [Fact]
-    public async Task ProviderReturningNull_DisposesFallbackTransportPerInvocationAsync()
+    public async Task LoopbackServer_RequestFailureDuringShutdown_IsNotSuppressedAsync()
     {
         // Arrange
-        ProtocolStub stub = new();
-        int providerCalls = 0;
-        await using DefaultMcpToolHandler handler = new((_, _) =>
-        {
-            providerCalls++;
-            return Task.FromResult<HttpClient?>(null);
-        }, stub.CreateMessageHandler);
+        InvalidOperationException failure = new("request processing failed");
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        using SemaphoreSlim started = new(0);
+        TaskCompletionSource<bool> shutdown = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        ProtocolStub stub = new()
+        {
+            BeforeOperationAsync = async token =>
+            {
+                using CancellationTokenRegistration registration = token.Register(() => shutdown.SetResult(true));
+                started.Release();
+                await shutdown.Task;
+                throw failure;
+            }
+        };
 
         // Act
-        await InvokeAsync(handler, "ping", timeout.Token);
-        await InvokeAsync(handler, "ping", timeout.Token);
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await using LoopbackMcpServer server = new(stub);
+            using TcpClient client = new();
+            await client.ConnectAsync(IPAddress.Loopback, new Uri(server.Endpoint).Port);
+            using NetworkStream stream = client.GetStream();
+            const string Body = """{"jsonrpc":"2.0","id":1,"method":"tools/list"}""";
+            byte[] request = Encoding.ASCII.GetBytes(
+                $"POST /mcp HTTP/1.1\r\nHost: localhost\r\nContent-Length: {Body.Length}\r\n\r\n{Body}");
+#if NET
+            await stream.WriteAsync(request, timeout.Token);
+#else
+            await stream.WriteAsync(request, 0, request.Length, timeout.Token);
+#endif
+            await started.WaitAsync(timeout.Token);
+        });
 
         // Assert
-        Assert.Equal(2, providerCalls);
-        Assert.Equal(2, stub.Initializations);
-        Assert.Equal(2, stub.Terminations);
-        Assert.Equal(2, stub.Handlers.Count);
-        foreach (Mock<HttpMessageHandler> transport in stub.Handlers)
+        Assert.Same(failure, error);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Factory_CyclicPipeline_RejectsBeforeSendingAsync(bool multipleHandlers)
+    {
+        // Arrange
+        using HttpMessageHandler primary = Mock.Of<HttpMessageHandler>();
+        using DelegatingHandler first = new Mock<DelegatingHandler> { CallBase = true }.Object;
+        using DelegatingHandler second = new Mock<DelegatingHandler> { CallBase = true }.Object;
+        first.InnerHandler = multipleHandlers ? second : first;
+        second.InnerHandler = first;
+        Mock<IHttpMessageHandlerFactory> factory = new();
+        factory.Setup(f => f.CreateHandler("workflow-mcp")).Returns(first);
+        DefaultMcpToolHandler handler = new(["mcp.example"], factory.Object, "workflow-mcp");
+
+        // Act
+        Task<Exception?> invocation = Task.Run(async () => await Record.ExceptionAsync(() => handler.InvokeToolAsync(
+            "https://mcp.example/api", null, "ping", null, null, null, TestContext.Current.CancellationToken)));
+        try
         {
-            transport.Protected().Verify("Dispose", Times.AtLeastOnce(), ItExpr.Is<bool>(disposing => disposing));
+            // Assert
+            Task completed = await Task.WhenAny(invocation, Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+            Assert.True(ReferenceEquals(invocation, completed), "Cyclic pipeline validation did not complete.");
+            InvalidOperationException exception = Assert.IsType<InvalidOperationException>(await invocation);
+            Assert.Contains("cycle", exception.Message, StringComparison.Ordinal);
+            factory.Verify(f => f.CreateHandler("workflow-mcp"), Times.Once);
+        }
+        finally
+        {
+            // Break the cycle before disposing the handlers.
+            first.InnerHandler = primary;
+            second.InnerHandler = primary;
+            await invocation;
         }
     }
 
-    [Fact]
-    public async Task NoProvider_ReusesSessionUntilHandlerDisposalAsync()
+    [Theory]
+    [InlineData(null, 2)]
+    [InlineData("2025-11-25", 0)]
+    public async Task ProtocolSelection_PreservesPerInvocationInitializationAsync(string? protocolVersion, int expectedDiscoveries)
     {
         // Arrange
-        ProtocolStub stub = new();
-        DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler);
+        using ProtocolStub stub = new();
+        DefaultMcpToolHandler handler = CreateHandler(stub, protocolVersion);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        McpServerToolResultContent first = await InvokeAsync(handler, "session", timeout.Token);
+        McpServerToolResultContent second = await InvokeAsync(handler, "session", timeout.Token);
+
+        // Assert
+        Assert.NotNull(first.Outputs);
+        Assert.NotNull(second.Outputs);
+        Assert.NotEqual(
+            Assert.IsType<TextContent>(Assert.Single(first.Outputs)).Text,
+            Assert.IsType<TextContent>(Assert.Single(second.Outputs)).Text);
+        Assert.Equal(expectedDiscoveries, stub.DiscoverRequests);
+        Assert.Equal(2, stub.Initializations);
+        Assert.Equal(2, stub.Terminations);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExplicitNewProtocol_DiscoversWithoutLegacyFallbackAsync(bool supportsDiscovery)
+    {
+        // Arrange
+        using ProtocolStub stub = new() { SupportsDiscovery = supportsDiscovery };
+        DefaultMcpToolHandler handler = CreateHandler(stub, "2026-07-28");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        if (supportsDiscovery)
+        {
+            McpServerToolResultContent result = await InvokeAsync(handler, "ping", timeout.Token);
+            Assert.NotNull(result.Outputs);
+            Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<McpException>(() => InvokeAsync(handler, "ping", timeout.Token));
+        }
+
+        // Assert
+        Assert.Equal(1, stub.DiscoverRequests);
+        Assert.Equal(0, stub.Initializations);
+        Assert.Equal(0, stub.Terminations);
+        Assert.Single(stub.Handlers).Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
+    }
+
+    [Fact]
+    public async Task ExplicitLegacyProtocol_RejectsVersionMismatchAndDisposesResourcesAsync()
+    {
+        // Arrange
+        using ProtocolStub stub = new()
+        {
+            InitializationProtocolVersion = "2025-06-18",
+            OnOperation = _ => Assert.Fail("A tool must not run after a protocol version mismatch.")
+        };
+        DefaultMcpToolHandler handler = CreateHandler(stub, "2025-11-25");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        McpException exception = await Assert.ThrowsAsync<McpException>(() => InvokeAsync(handler, "ping", timeout.Token));
+
+        // Assert
+        Assert.Contains("protocol version mismatch", exception.Message);
+        Assert.Equal(0, stub.DiscoverRequests);
+        Assert.Equal(1, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+        Assert.Single(stub.Handlers).Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RequestOnlyInvocation_DoesNotOpenStandaloneStreamAsync(bool useEventStream)
+    {
+        // Arrange
+        using ProtocolStub stub = new() { UseEventStreamResult = useEventStream };
+        DefaultMcpToolHandler handler = CreateHandler(stub);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        McpServerToolResultContent result = await InvokeAsync(handler, "ping", timeout.Token);
+
+        // Assert
+        Assert.NotNull(result.Outputs);
+        Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
+        Assert.Equal(0, stub.StandaloneGetRequests);
+        Assert.Equal(1, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+    }
+
+    [Fact]
+    public async Task SequentialInvocations_UseSeparateSessionsAsync()
+    {
+        // Arrange
+        using ProtocolStub stub = new();
+        DefaultMcpToolHandler handler = CreateHandler(stub);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        McpServerToolResultContent first = await InvokeAsync(handler, "session", timeout.Token);
+        McpServerToolResultContent second = await InvokeAsync(handler, "session", timeout.Token);
+
+        // Assert
+        Assert.NotNull(first.Outputs);
+        Assert.NotNull(second.Outputs);
+        Assert.NotEqual(
+            Assert.IsType<TextContent>(Assert.Single(first.Outputs)).Text,
+            Assert.IsType<TextContent>(Assert.Single(second.Outputs)).Text);
+        Assert.Equal(2, stub.Initializations);
+        Assert.Equal(2, stub.Terminations);
+    }
+
+    [Theory]
+    [InlineData("ftp://mcp.example/api")]
+    [InlineData("ws://mcp.example/api")]
+    public async Task UnsupportedScheme_DoesNotAcquireHttpClientAsync(string serverUrl)
+    {
+        // Arrange
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
+        DefaultMcpToolHandler handler = new(["mcp.example"], factory.Object, "workflow-mcp");
+
+        // Act
+        await Assert.ThrowsAsync<ArgumentException>(() => handler.InvokeToolAsync(
+            serverUrl, null, "ping", null, null, null));
+
+        // Assert
+        factory.Verify(f => f.CreateHandler(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DiscoveryAndToolCalls_DisposeSessionsWithoutDisposingFactoryHandlersAsync()
+    {
+        // Arrange
+        using ProtocolStub stub = new();
+        DefaultMcpToolHandler handler = CreateHandler(stub);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
 
         // Act
@@ -94,22 +395,21 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         await InvokeAsync(handler, DefaultMcpToolHandler.ListToolsToolName, timeout.Token);
 
         // Assert
-        Assert.Equal(1, stub.Initializations);
-        Assert.Equal(0, stub.Terminations);
-        Mock<HttpMessageHandler> transport = Assert.Single(stub.Handlers);
-        transport.Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
-
-        await handler.DisposeAsync();
-        Assert.Equal(1, stub.Terminations);
-        transport.Protected().Verify("Dispose", Times.AtLeastOnce(), ItExpr.Is<bool>(disposing => disposing));
+        Assert.Equal(2, stub.Initializations);
+        Assert.Equal(2, stub.Terminations);
+        Assert.Equal(2, stub.Handlers.Count);
+        foreach (Mock<DelegatingHandler> transport in stub.Handlers)
+        {
+            transport.Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
+        }
     }
 
     [Fact]
-    public async Task NoProvider_DifferentConnectionNames_UseSeparateCachedSessionsAsync()
+    public async Task DifferentConnectionNames_DoNotRetainSessionsAsync()
     {
         // Arrange
-        ProtocolStub stub = new();
-        DefaultMcpToolHandler handler = new(null, stub.CreateMessageHandler);
+        using ProtocolStub stub = new();
+        DefaultMcpToolHandler handler = CreateHandler(stub);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
 
         // Act
@@ -120,42 +420,173 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         }
 
         // Assert
-        Assert.Equal(2, stub.Initializations);
-        Assert.Single(stub.Handlers);
-        Assert.Equal(0, stub.Terminations);
-        await handler.DisposeAsync();
-        Assert.Equal(2, stub.Terminations);
+        Assert.Equal(3, stub.Initializations);
+        Assert.Equal(3, stub.Handlers.Count);
+        Assert.Equal(3, stub.Terminations);
     }
 
     [Fact]
-    public async Task Provider_Failure_DoesNotPreventHandlerDisposalAsync()
+    public async Task DifferentOrigins_KeepRequestConfigurationAsync()
     {
         // Arrange
-        int providerCalls = 0;
-        DefaultMcpToolHandler handler = new((_, _) =>
-        {
-            providerCalls++;
-            throw new InvalidOperationException("Provider unavailable.");
-        });
+        using ProtocolStub stub = new();
+        DefaultMcpToolHandler handler = CreateHandler(stub, allowedHosts: ["first.example", "second.example"]);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
 
         // Act
-        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => InvokeAsync(handler, "ping", timeout.Token));
-        await handler.DisposeAsync();
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => InvokeAsync(handler, "ping", timeout.Token));
+        foreach (string name in new[] { "first", "second" })
+        {
+            Uri endpoint = new($"https://{name}.example/mcp");
+            string headerValue = $"Bearer {name}";
+            stub.OnOperation = request =>
+            {
+                Assert.Equal(endpoint, request.RequestUri);
+                Assert.Equal(headerValue, Assert.Single(request.Headers.GetValues("Authorization")));
+            };
+            await handler.InvokeToolAsync(
+                endpoint.AbsoluteUri, name, "ping", null,
+                new Dictionary<string, string> { ["Authorization"] = headerValue }, name, timeout.Token);
+        }
 
         // Assert
-        Assert.Equal("Provider unavailable.", exception.Message);
-        Assert.Equal(1, providerCalls);
+        Assert.Equal(2, stub.Initializations);
+        Assert.Equal(2, stub.Terminations);
+        Assert.Equal(2, stub.Handlers.Count);
+    }
+
+    [Theory]
+    [InlineData("session")]
+    [InlineData(DefaultMcpToolHandler.ListToolsToolName)]
+    public async Task Factory_SequentialInvocations_ReusePooledHandlersAndConfigurationAsync(string toolName)
+    {
+        // Arrange
+        const string ClientName = "workflow-mcp";
+        using ProtocolStub stub = new();
+        ServiceCollection services = new();
+        services.AddHttpClient(ClientName, client => client.DefaultRequestHeaders.Add("X-Client-Configuration", "client-only"))
+            .ConfigurePrimaryHttpMessageHandler(stub.CreateMessageHandler);
+        using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        IHttpMessageHandlerFactory applicationFactory = serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>();
+        stub.OnOperation = request => Assert.False(request.Headers.Contains("X-Client-Configuration"));
+        Mock<IHttpMessageHandlerFactory> factory = new();
+        Mock<IDisposable> factoryOwner = factory.As<IDisposable>();
+        factory.Setup(f => f.CreateHandler(ClientName)).Returns(() => applicationFactory.CreateHandler(ClientName));
+        DefaultMcpToolHandler handler = new(["mcp.example"], factory.Object, ClientName);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        McpServerToolResultContent first = await InvokeAsync(handler, toolName, timeout.Token);
+        McpServerToolResultContent second = await InvokeAsync(handler, toolName, timeout.Token);
+
+        // Assert
+        if (toolName == "session")
+        {
+            Assert.NotNull(first.Outputs);
+            Assert.NotNull(second.Outputs);
+            Assert.NotEqual(
+                Assert.IsType<TextContent>(Assert.Single(first.Outputs)).Text,
+                Assert.IsType<TextContent>(Assert.Single(second.Outputs)).Text);
+        }
+
+        Assert.Equal(2, stub.Initializations);
+        Assert.Equal(2, stub.Terminations);
+        factory.Verify(f => f.CreateHandler(ClientName), Times.Exactly(2));
+        factoryOwner.Verify(f => f.Dispose(), Times.Never);
+        Assert.Single(stub.Handlers).Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
+        using HttpClient subsequentClient = new(applicationFactory.CreateHandler(ClientName), disposeHandler: false);
+        using HttpResponseMessage response = await subsequentClient.GetAsync(new Uri("https://mcp.example/api"), timeout.Token);
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task InvocationFailure_PreservesFactoryHandlersAndAllowsNextInvocationAsync(bool failInitialization, bool failOperation)
+    {
+        // Arrange
+        using ProtocolStub stub = new() { FailInitialization = failInitialization, FailOperation = failOperation };
+        Mock<IHttpMessageHandlerFactory> factory = new();
+        factory.Setup(f => f.CreateHandler("workflow-mcp")).Returns(stub.CreateMessageHandler);
+        using SemaphoreSlim started = new(0);
+        bool cancel = !failInitialization && !failOperation;
+        if (cancel)
+        {
+            stub.BeforeOperationAsync = async token =>
+            {
+                started.Release();
+                await Task.Delay(Timeout.Infinite, token);
+            };
+        }
+
+        DefaultMcpToolHandler handler = new(["mcp.example"], factory.Object, "workflow-mcp");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+        using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+
+        // Act
+        Task<McpServerToolResultContent> invocation = InvokeAsync(handler, "ping", cancellation.Token);
+        if (cancel)
+        {
+            await started.WaitAsync(timeout.Token);
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => invocation);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<HttpRequestException>(() => invocation);
+        }
+
+        Assert.Single(stub.Handlers).Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
+        stub.BeforeOperationAsync = null;
+        stub.FailInitialization = false;
+        stub.FailOperation = false;
+        McpServerToolResultContent result = await InvokeAsync(handler, "ping", timeout.Token);
+
+        // Assert
+        Assert.NotNull(result.Outputs);
+        Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
+        Assert.Equal(2, stub.Handlers.Count);
+        Assert.Equal(failInitialization ? 1 : 2, stub.Initializations);
+        Assert.Equal(failInitialization ? 1 : 2, stub.Terminations);
+        stub.Handlers[1].Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
     }
 
     [Fact]
-    public async Task Provider_ConcurrentInvocations_DoNotCoalesceOrSerializeSessionsAsync()
+    public async Task FactoryFailure_DoesNotPreventNextInvocationAsync()
     {
         // Arrange
-        ProtocolStub stub = new();
-        using HttpClient client = new(stub.CreateMessageHandler());
+        using ProtocolStub stub = new();
+        Mock<IHttpMessageHandlerFactory> factory = new();
+        factory.SetupSequence(f => f.CreateHandler("workflow-mcp"))
+            .Throws(new InvalidOperationException("Factory unavailable."))
+            .Returns(stub.CreateMessageHandler);
+        DefaultMcpToolHandler handler = new(["mcp.example"], factory.Object, "workflow-mcp");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => InvokeAsync(handler, "ping", timeout.Token));
+        McpServerToolResultContent result = await InvokeAsync(handler, "ping", timeout.Token);
+
+        // Assert
+        Assert.Equal("Factory unavailable.", error.Message);
+        Assert.NotNull(result.Outputs);
+        Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
+        Assert.Equal(1, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConcurrentInvocations_DoNotCoalesceOrSerializeSessionsAsync(bool reuseHandlers)
+    {
+        // Arrange
+        using ProtocolStub stub = new();
+        using ServiceProvider? serviceProvider = reuseHandlers
+            ? new ServiceCollection().AddHttpClient("workflow-mcp")
+                .ConfigurePrimaryHttpMessageHandler(stub.CreateMessageHandler).Services.BuildServiceProvider()
+            : null;
         using SemaphoreSlim started = new(0);
         using SemaphoreSlim finish = new(0);
         stub.BeforeOperationAsync = async token =>
@@ -163,100 +594,49 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             started.Release();
             await finish.WaitAsync(token);
         };
-        int providerCalls = 0;
-        await using DefaultMcpToolHandler handler = new((_, _) =>
-        {
-            Interlocked.Increment(ref providerCalls);
-            return Task.FromResult<HttpClient?>(client);
-        });
+        DefaultMcpToolHandler handler = serviceProvider is not null
+            ? new(["mcp.example"], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>(), "workflow-mcp")
+            : CreateHandler(stub);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
 
         // Act
-        Task<McpServerToolResultContent> first = InvokeAsync(handler, "ping", timeout.Token);
-        Task<McpServerToolResultContent> second = InvokeAsync(handler, "ping", timeout.Token);
+        Task<McpServerToolResultContent> first = InvokeAsync(handler, "session", timeout.Token);
+        Task<McpServerToolResultContent> second = InvokeAsync(handler, "session", timeout.Token);
         await started.WaitAsync(timeout.Token);
         await started.WaitAsync(timeout.Token);
-        finish.Release(2);
-        await Task.WhenAll(first, second);
+        finish.Release();
+        Task<McpServerToolResultContent> completed = await Task.WhenAny(first, second);
+        await completed;
+        Assert.False((completed == first ? second : first).IsCompleted);
+        Assert.Equal(1, stub.Terminations);
+        if (reuseHandlers)
+        {
+            Assert.Single(stub.Handlers).Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
+        }
+
+        finish.Release();
+        McpServerToolResultContent[] results = await Task.WhenAll(first, second);
 
         // Assert
-        Assert.Equal(2, providerCalls);
         Assert.Equal(2, stub.Initializations);
         Assert.Equal(2, stub.Terminations);
-    }
-
-    [Fact]
-    public async Task Provider_OperationFailure_DisposesSessionAndPreservesCallerClientAsync()
-    {
-        // Arrange
-        ProtocolStub stub = new() { FailOperation = true };
-        using HttpClient client = new(stub.CreateMessageHandler());
-        await using DefaultMcpToolHandler handler = new((_, _) => Task.FromResult<HttpClient?>(client));
-        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
-
-        // Act
-        await Assert.ThrowsAsync<HttpRequestException>(() => InvokeAsync(handler, "ping", timeout.Token));
-
-        // Assert
-        Assert.Equal(1, stub.Initializations);
-        Assert.Equal(1, stub.Terminations);
-        stub.Handlers[0].Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
+        IList<AIContent>? firstOutputs = results[0].Outputs;
+        IList<AIContent>? secondOutputs = results[1].Outputs;
+        Assert.NotNull(firstOutputs);
+        Assert.NotNull(secondOutputs);
+        Assert.NotEqual(
+            Assert.IsType<TextContent>(Assert.Single(firstOutputs)).Text,
+            Assert.IsType<TextContent>(Assert.Single(secondOutputs)).Text);
+        Assert.Equal(reuseHandlers ? 1 : 2, stub.Handlers.Count);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Provider_InitializationFailure_RespectsTransportOwnershipAsync(bool provideClient)
+    public async Task ActiveInvocation_RetainsResourcesUntilCompletionAsync(bool pauseInitialization)
     {
         // Arrange
-        ProtocolStub stub = new() { FailInitialization = true };
-        using HttpClient? client = provideClient ? new(stub.CreateMessageHandler()) : null;
-        await using DefaultMcpToolHandler handler = new(
-            (_, _) => Task.FromResult(client), stub.CreateMessageHandler);
-        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
-
-        // Act
-        await Assert.ThrowsAsync<HttpRequestException>(() => InvokeAsync(handler, "ping", timeout.Token));
-
-        // Assert
-        Mock<HttpMessageHandler> transport = Assert.Single(stub.Handlers);
-        transport.Protected().Verify("Dispose", provideClient ? Times.Never() : Times.AtLeastOnce(), ItExpr.Is<bool>(disposing => disposing));
-    }
-
-    [Fact]
-    public async Task Provider_Cancellation_DisposesSessionAsync()
-    {
-        // Arrange
-        ProtocolStub stub = new();
-        using HttpClient client = new(stub.CreateMessageHandler());
-        using SemaphoreSlim started = new(0);
-        stub.BeforeOperationAsync = async token =>
-        {
-            started.Release();
-            await Task.Delay(Timeout.Infinite, token);
-        };
-        await using DefaultMcpToolHandler handler = new((_, _) => Task.FromResult<HttpClient?>(client));
-        using CancellationTokenSource cancellation = new(TimeSpan.FromSeconds(10));
-
-        // Act
-        Task<McpServerToolResultContent> invocation = InvokeAsync(handler, "ping", cancellation.Token);
-        await started.WaitAsync(cancellation.Token);
-        cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => invocation);
-
-        // Assert
-        Assert.Equal(1, stub.Terminations);
-        stub.Handlers[0].Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task DisposeAsync_WaitsForProviderInvocationCleanupAsync(bool pauseProvider)
-    {
-        // Arrange
-        ProtocolStub stub = new();
-        using HttpClient client = new(stub.CreateMessageHandler());
+        using ProtocolStub stub = new();
         using SemaphoreSlim started = new(0);
         using SemaphoreSlim finish = new(0);
         async Task PauseAsync(CancellationToken token)
@@ -265,248 +645,67 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             await finish.WaitAsync(token);
         }
 
-        if (!pauseProvider)
+        if (pauseInitialization)
+        {
+            stub.BeforeInitializationAsync = PauseAsync;
+        }
+        else
         {
             stub.BeforeOperationAsync = PauseAsync;
         }
 
-        int providerCalls = 0;
-        DefaultMcpToolHandler handler = new(async (_, token) =>
-        {
-            providerCalls++;
-            if (pauseProvider)
-            {
-                await PauseAsync(token);
-            }
-
-            return client;
-        });
+        DefaultMcpToolHandler handler = CreateHandler(stub);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
 
         // Act
         Task<McpServerToolResultContent> invocation = InvokeAsync(handler, "ping", timeout.Token);
         await started.WaitAsync(timeout.Token);
-        Task disposal = handler.DisposeAsync().AsTask();
-        Assert.False(disposal.IsCompleted);
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => InvokeAsync(handler, "ping", timeout.Token));
+        Mock<DelegatingHandler> transport = Assert.Single(stub.Handlers);
+        transport.Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
         finish.Release();
         await invocation;
-        await disposal;
 
         // Assert
-        Assert.Equal(1, providerCalls);
+        Assert.Equal(1, stub.Initializations);
         Assert.Equal(1, stub.Terminations);
-        stub.Handlers[0].Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
-    }
-
-    [Fact]
-    public async Task Provider_InvalidDiscoveryArguments_DoesNotCallProviderAsync()
-    {
-        // Arrange
-        int providerCalls = 0;
-        await using DefaultMcpToolHandler handler = new((_, _) =>
-        {
-            providerCalls++;
-            return Task.FromResult<HttpClient?>(null);
-        });
-
-        // Act
-        await Assert.ThrowsAsync<ArgumentException>(() => handler.InvokeToolAsync(
-            "https://mcp.example/api", null, DefaultMcpToolHandler.ListToolsToolName,
-            new Dictionary<string, object?> { ["unused"] = true }, null, null));
-
-        // Assert
-        Assert.Equal(0, providerCalls);
+        transport.Protected().Verify("Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Provider_ReentrantDisposal_ThrowsWithoutStartingShutdownAsync(bool fromChildTask)
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    public async Task FactoryHandlerCleanup_IsNotPerformedByInvocationAsync(bool failInitialization, bool failOperation)
     {
         // Arrange
-        ProtocolStub stub = new();
-        using HttpClient client = new(stub.CreateMessageHandler());
-        DefaultMcpToolHandler? handler = null;
-        int rejectedDisposals = 0;
-        handler = new(async (_, _) =>
+        using ProtocolStub stub = new()
         {
-            async Task DisposeAsync() => await handler!.DisposeAsync();
-            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => fromChildTask ? Task.Run(DisposeAsync) : DisposeAsync());
-            Assert.Contains("active provider-backed invocation", error.Message);
-            rejectedDisposals++;
-            return client;
-        });
-        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
-
-        // Act
-        await InvokeAsync(handler, "ping", timeout.Token);
-        await InvokeAsync(handler, "ping", timeout.Token);
-        await handler.DisposeAsync();
-
-        // Assert
-        Assert.Equal(2, rejectedDisposals);
-        Assert.Equal(2, stub.Terminations);
-    }
-
-    [Fact]
-    public async Task Provider_CompletedInheritedContext_CanDisposeHandlerAsync()
-    {
-        // Arrange
-        ProtocolStub stub = new();
-        using HttpClient client = new(stub.CreateMessageHandler());
-        using SemaphoreSlim finished = new(0);
-        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
-        Task? inheritedDisposal = null;
-        DefaultMcpToolHandler? handler = null;
-        handler = new((_, token) =>
-        {
-            inheritedDisposal = Task.Run(async () =>
-            {
-                await finished.WaitAsync(token);
-                await handler!.DisposeAsync();
-            }, token);
-            return Task.FromResult<HttpClient?>(client);
-        });
-
-        // Act
-        await InvokeAsync(handler, "ping", timeout.Token);
-        finished.Release();
-        await Assert.IsAssignableFrom<Task>(inheritedDisposal);
-
-        // Assert
-        Assert.Equal(1, stub.Terminations);
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => InvokeAsync(handler, "ping", timeout.Token));
-    }
-
-    [Fact]
-    public async Task Provider_NestedInvocation_RestoresOuterDisposalGuardAsync()
-    {
-        // Arrange
-        ProtocolStub stub = new();
-        using HttpClient client = new(stub.CreateMessageHandler());
-        bool nested = false;
-        DefaultMcpToolHandler? handler = null;
-        handler = new(async (_, token) =>
-        {
-            if (!nested)
-            {
-                nested = true;
-                await InvokeAsync(handler!, "ping", token);
-                await Assert.ThrowsAsync<InvalidOperationException>(() => handler!.DisposeAsync().AsTask());
-            }
-
-            return client;
-        });
-        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
-
-        // Act
-        await InvokeAsync(handler, "ping", timeout.Token);
-        await handler.DisposeAsync();
-
-        // Assert
-        Assert.True(nested);
-        Assert.Equal(2, stub.Terminations);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Provider_TransportCleanupFailure_PreservesInvocationOutcomeAsync(bool failOperation)
-    {
-        // Arrange
-        ProtocolStub stub = new() { FailOperation = failOperation, FailTransportDisposal = true };
-        await using DefaultMcpToolHandler handler = new(
-            (_, _) => Task.FromResult<HttpClient?>(null), stub.CreateMessageHandler);
+            FailInitialization = failInitialization,
+            FailOperation = failOperation
+        };
+        DefaultMcpToolHandler handler = CreateHandler(stub);
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
         using CleanupTraceListener listener = new();
         Trace.Listeners.Add(listener);
         try
         {
             // Act
-            if (failOperation)
+            if (failInitialization || failOperation)
             {
                 await Assert.ThrowsAsync<HttpRequestException>(() => InvokeAsync(handler, "ping", timeout.Token));
             }
             else
             {
                 McpServerToolResultContent result = await InvokeAsync(handler, "ping", timeout.Token);
-                Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs!)).Text);
+                Assert.NotNull(result.Outputs);
+                Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
             }
 
             // Assert
-            Assert.Equal(1, stub.Terminations);
-            Assert.Contains("Failed to dispose MCP transport", listener.Output);
-            Assert.Contains("transport cleanup failed", listener.Output);
+            Assert.Equal(failInitialization ? 0 : 1, stub.Terminations);
+            Assert.DoesNotContain("Failed to dispose MCP ", listener.Output);
             Assert.Single(stub.Handlers).Protected().Verify(
-                "Dispose", Times.AtLeastOnce(), ItExpr.Is<bool>(disposing => disposing));
-        }
-        finally
-        {
-            Trace.Listeners.Remove(listener);
-        }
-    }
-
-    [Fact]
-    public async Task Provider_CompletedNestedContext_StillGuardsActiveOuterInvocationAsync()
-    {
-        // Arrange
-        ProtocolStub stub = new();
-        using HttpClient client = new(stub.CreateMessageHandler());
-        using SemaphoreSlim nestedFinished = new(0);
-        Task? inheritedDisposal = null;
-        int providerCalls = 0;
-        DefaultMcpToolHandler? handler = null;
-        handler = new(async (_, token) =>
-        {
-            if (++providerCalls == 1)
-            {
-                await InvokeAsync(handler!, "ping", token);
-                nestedFinished.Release();
-                await Assert.IsAssignableFrom<Task>(inheritedDisposal);
-            }
-            else
-            {
-                inheritedDisposal = Task.Run(async () =>
-                {
-                    await nestedFinished.WaitAsync(token);
-                    await Assert.ThrowsAsync<InvalidOperationException>(() => handler!.DisposeAsync().AsTask());
-                }, token);
-            }
-
-            return client;
-        });
-        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
-
-        // Act
-        await InvokeAsync(handler, "ping", timeout.Token);
-        await handler.DisposeAsync();
-
-        // Assert
-        Assert.Equal(2, providerCalls);
-        Assert.Equal(2, stub.Terminations);
-    }
-
-    [Fact]
-    public async Task Provider_InitializationAndCleanupFailure_PreservesInitializationErrorAsync()
-    {
-        // Arrange
-        ProtocolStub stub = new() { FailInitialization = true, FailTransportDisposal = true };
-        await using DefaultMcpToolHandler handler = new(
-            (_, _) => Task.FromResult<HttpClient?>(null), stub.CreateMessageHandler);
-        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
-        using CleanupTraceListener listener = new();
-        Trace.Listeners.Add(listener);
-        try
-        {
-            // Act
-            await Assert.ThrowsAsync<HttpRequestException>(() => InvokeAsync(handler, "ping", timeout.Token));
-
-            // Assert
-            Assert.Contains("Failed to dispose MCP transport", listener.Output);
-            Assert.Single(stub.Handlers).Protected().Verify(
-                "Dispose", Times.AtLeastOnce(), ItExpr.Is<bool>(disposing => disposing));
+                "Dispose", Times.Never(), ItExpr.Is<bool>(disposing => disposing));
         }
         finally
         {
@@ -556,43 +755,128 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         }
     }
 
+    [Theory]
+    [InlineData("mcp.example", "https://mcp.example/api")]
+    [InlineData("MCP.EXAMPLE.", "https://mcp.example/api")]
+    [InlineData("mcp.example", " https://MCP.EXAMPLE./api ")]
+    [InlineData("mcp.example:8443", "https://mcp.example:8443/api")]
+    [InlineData("mcp.example:80", "http://mcp.example/api")]
+    [InlineData("mcp.example", "http://mcp.example:443/api")]
+    [InlineData("127.0.0.1:8080", "http://127.0.0.1:8080/api")]
+    [InlineData("[::1]:8080", "http://[::1]:8080/api")]
+    [InlineData("xn--bcher-kva.example", "https://b\u00fccher.example/api")]
+    [InlineData("b\u00fccher.example", "https://xn--bcher-kva.example/api")]
+    public async Task AllowedDestination_PreservesToolInvocationAsync(string allowedHost, string serverUrl)
+    {
+        // Arrange
+        using ProtocolStub stub = new();
+        DefaultMcpToolHandler handler = CreateHandler(stub, allowedHosts: [allowedHost]);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        McpServerToolResultContent result = await handler.InvokeToolAsync(
+            serverUrl, null, "ping", null, null, null, timeout.Token);
+
+        // Assert
+        Assert.NotNull(result.Outputs);
+        Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
+        Assert.Equal(1, stub.Initializations);
+        Assert.Equal(1, stub.Terminations);
+    }
+
+    [Fact]
+    public async Task AllowedHosts_AreCopiedAtConstructionAsync()
+    {
+        // Arrange
+        using ProtocolStub stub = new();
+        List<string> allowedHosts = ["mcp.example"];
+        DefaultMcpToolHandler handler = CreateHandler(stub, allowedHosts: allowedHosts);
+        allowedHosts.Clear();
+        allowedHosts.Add("other.example");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        McpServerToolResultContent result = await InvokeAsync(handler, "ping", timeout.Token);
+        await Assert.ThrowsAsync<HttpRequestException>(() => handler.InvokeToolAsync(
+            "https://other.example/api", null, "ping", null, null, null, timeout.Token));
+
+        // Assert
+        Assert.NotNull(result.Outputs);
+        Assert.Equal("ok", Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
+        Assert.Single(stub.Handlers);
+    }
+
+    private static DefaultMcpToolHandler CreateHandler(
+        ProtocolStub stub, string? protocolVersion = null, IEnumerable<string>? allowedHosts = null)
+    {
+        Mock<IHttpMessageHandlerFactory> factory = new();
+        factory.Setup(f => f.CreateHandler("workflow-mcp")).Returns(stub.CreateMessageHandler);
+        return new(allowedHosts ?? ["mcp.example"], factory.Object, "workflow-mcp") { ProtocolVersion = protocolVersion };
+    }
+
     private static Task<McpServerToolResultContent> InvokeAsync(
         DefaultMcpToolHandler handler, string toolName, CancellationToken cancellationToken) =>
         handler.InvokeToolAsync("https://mcp.example/api", null, toolName, null, null, null, cancellationToken);
 
-    private sealed class ProtocolStub
+    private sealed class ProtocolStub : IDisposable
     {
         private int _initializations;
         private int _terminations;
+        private int _standaloneGetRequests;
+        private int _discoverRequests;
 
         public int Initializations => this._initializations;
         public int Terminations => this._terminations;
-        public List<Mock<HttpMessageHandler>> Handlers { get; } = [];
+        public int StandaloneGetRequests => this._standaloneGetRequests;
+        public int DiscoverRequests => this._discoverRequests;
+        public List<Mock<DelegatingHandler>> Handlers { get; } = [];
+        public Func<CancellationToken, Task>? BeforeInitializationAsync { get; set; }
         public Func<CancellationToken, Task>? BeforeOperationAsync { get; set; }
+        public Action<HttpRequestMessage>? OnOperation { get; set; }
         public bool FailInitialization { get; set; }
         public bool FailOperation { get; set; }
-        public bool FailTransportDisposal { get; set; }
+        public bool UseEventStreamResult { get; set; }
+        public bool SupportsDiscovery { get; set; }
+        public string? InitializationProtocolVersion { get; set; }
+        public Uri? RedirectEndpoint { get; set; }
+        public HttpStatusCode RedirectStatusCode { get; set; }
 
-        public HttpMessageHandler CreateMessageHandler()
+        public DelegatingHandler CreateMessageHandler()
         {
-            Mock<HttpMessageHandler> handler = new() { CallBase = true };
+            Mock<DelegatingHandler> handler = new() { CallBase = true };
+            handler.Object.InnerHandler = new HttpClientHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = false,
+                CheckCertificateRevocationList = true
+            };
             handler.Protected()
                 .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
                 .Returns<HttpRequestMessage, CancellationToken>(this.SendAsync);
-            if (this.FailTransportDisposal)
-            {
-                handler.Protected().Setup("Dispose", ItExpr.Is<bool>(disposing => disposing))
-                    .Throws(new InvalidOperationException("transport cleanup failed"));
-            }
-
             this.Handlers.Add(handler);
             return handler.Object;
         }
 
-        private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public void Dispose()
         {
+            foreach (Mock<DelegatingHandler> handler in this.Handlers)
+            {
+                handler.Object.Dispose();
+            }
+        }
+
+        public async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (this.RedirectEndpoint is { } redirectEndpoint)
+            {
+                HttpResponseMessage redirectResponse = EmptyResponse(this.RedirectStatusCode, request);
+                redirectResponse.Headers.Location = redirectEndpoint;
+                return redirectResponse;
+            }
+
             if (request.Method == HttpMethod.Get)
             {
+                Interlocked.Increment(ref this._standaloneGetRequests);
                 return EmptyResponse(HttpStatusCode.MethodNotAllowed, request);
             }
 
@@ -602,10 +886,11 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                 return EmptyResponse(HttpStatusCode.OK, request);
             }
 
+            Assert.NotNull(request.Content);
 #if NET
-            using JsonDocument document = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+            using JsonDocument document = JsonDocument.Parse(await request.Content.ReadAsStringAsync(cancellationToken));
 #else
-            using JsonDocument document = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
+            using JsonDocument document = JsonDocument.Parse(await request.Content.ReadAsStringAsync());
 #endif
             JsonElement message = document.RootElement;
             if (!message.TryGetProperty("id", out JsonElement id))
@@ -616,12 +901,15 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             string? method = message.GetProperty("method").GetString();
             if (method == "server/discover")
             {
+                Interlocked.Increment(ref this._discoverRequests);
+                const string DiscoverResult = """{"supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}""";
+                string discoverResponse = this.SupportsDiscovery
+                    ? $$$"""{"jsonrpc":"2.0","id":{{{id.GetRawText()}}},"result":{{{DiscoverResult}}}}"""
+                    : $$$"""{"jsonrpc":"2.0","id":{{{id.GetRawText()}}},"error":{"code":-32601,"message":"Method not found"}}""";
                 return new(HttpStatusCode.OK)
                 {
                     RequestMessage = request,
-                    Content = new StringContent(
-                        $$$"""{"jsonrpc":"2.0","id":{{{id.GetRawText()}}},"error":{"code":-32601,"message":"Method not found"}}""",
-                        Encoding.UTF8, "application/json")
+                    Content = new StringContent(discoverResponse, Encoding.UTF8, "application/json")
                 };
             }
 
@@ -629,17 +917,25 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
             string? sessionId = null;
             if (method == "initialize")
             {
+                if (this.BeforeInitializationAsync is not null)
+                {
+                    await this.BeforeInitializationAsync(cancellationToken);
+                }
+
                 if (this.FailInitialization)
                 {
                     return EmptyResponse(HttpStatusCode.BadRequest, request);
                 }
 
                 sessionId = Interlocked.Increment(ref this._initializations).ToString(CultureInfo.InvariantCulture);
-                string protocolVersion = message.GetProperty("params").GetProperty("protocolVersion").GetRawText();
+                string protocolVersion = this.InitializationProtocolVersion is null
+                    ? message.GetProperty("params").GetProperty("protocolVersion").GetRawText()
+                    : JsonSerializer.Serialize(this.InitializationProtocolVersion);
                 result = $$$"""{"protocolVersion":{{{protocolVersion}}},"capabilities":{"tools":{}},"serverInfo":{"name":"stub","version":"1.0"}}""";
             }
             else
             {
+                this.OnOperation?.Invoke(request);
                 if (this.BeforeOperationAsync is not null)
                 {
                     await this.BeforeOperationAsync(cancellationToken);
@@ -653,17 +949,21 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                 result = method switch
                 {
                     "tools/list" => """{"tools":[]}""",
+                    "tools/call" when message.GetProperty("params").GetProperty("name").GetString() == "session" =>
+                        $$$"""{"content":[{"type":"text","text":"{{{Assert.Single(request.Headers.GetValues("Mcp-Session-Id"))}}}"}]}""",
                     "tools/call" => """{"content":[{"type":"text","text":"ok"}]}""",
                     _ => throw new InvalidOperationException($"Unexpected MCP method: {method}")
                 };
             }
 
+            string responseBody = $$$"""{"jsonrpc":"2.0","id":{{{id.GetRawText()}}},"result":{{{result}}}}""";
+            bool useEventStream = this.UseEventStreamResult && string.Equals(method, "tools/call", StringComparison.Ordinal);
             HttpResponseMessage response = new(HttpStatusCode.OK)
             {
                 RequestMessage = request,
                 Content = new StringContent(
-                    $$$"""{"jsonrpc":"2.0","id":{{{id.GetRawText()}}},"result":{{{result}}}}""",
-                    Encoding.UTF8, "application/json")
+                    useEventStream ? $"event: message\ndata: {responseBody}\n\n" : responseBody,
+                    Encoding.UTF8, useEventStream ? "text/event-stream" : "application/json")
             };
             if (sessionId is not null)
             {
@@ -679,6 +979,180 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                 RequestMessage = request,
                 Content = new ByteArrayContent([])
             };
+    }
+
+    private sealed class LoopbackMcpServer : IAsyncDisposable
+    {
+        private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+        private readonly CancellationTokenSource _shutdown = new(TimeSpan.FromSeconds(30));
+        private readonly Task _requestsTask;
+        private int _requestCount;
+
+        public LoopbackMcpServer(ProtocolStub stub)
+        {
+            this._listener.Start();
+            this.Endpoint = $"http://127.0.0.1:{((IPEndPoint)this._listener.LocalEndpoint).Port}/mcp";
+            this._requestsTask = this.ProcessRequestsAsync(stub);
+        }
+
+        public string Endpoint { get; }
+        public int RequestCount => this._requestCount;
+
+        public List<string> TerminatedSessions { get; } = [];
+
+        public async ValueTask DisposeAsync()
+        {
+            this._shutdown.Cancel();
+            this._listener.Stop();
+            try
+            {
+                await this._requestsTask;
+            }
+            finally
+            {
+#if NET
+                this._listener.Dispose();
+#endif
+                this._shutdown.Dispose();
+            }
+        }
+
+        private async Task ProcessRequestsAsync(ProtocolStub stub)
+        {
+            CancellationToken cancellationToken = this._shutdown.Token;
+            using CancellationTokenRegistration stopListener = cancellationToken.Register(this._listener.Stop);
+            try
+            {
+                while (true)
+                {
+                    TcpClient acceptedClient;
+                    try
+                    {
+                        acceptedClient = await this._listener.AcceptTcpClientAsync();
+                    }
+                    catch (InvalidOperationException exception) when (cancellationToken.IsCancellationRequested)
+                    {
+                        // Shutdown can stop the listener before the next accept begins.
+                        Trace.WriteLine($"Loopback MCP server stopped: {exception.Message}");
+                        return;
+                    }
+
+                    using TcpClient client = acceptedClient;
+                    using CancellationTokenRegistration closeClient = cancellationToken.Register(client.Close);
+                    using NetworkStream stream = client.GetStream();
+                    string requestLine = await ReadLineAsync(stream, cancellationToken);
+                    Interlocked.Increment(ref this._requestCount);
+                    using HttpRequestMessage request = new(new HttpMethod(requestLine.Split(' ')[0]), this.Endpoint);
+                    Dictionary<string, string> headers = new(StringComparer.OrdinalIgnoreCase);
+                    string header;
+                    while ((header = await ReadLineAsync(stream, cancellationToken)).Length > 0)
+                    {
+                        int separator = header.IndexOf(':');
+                        headers.Add(header.Substring(0, separator), header.Substring(separator + 1).Trim());
+                    }
+
+                    using MemoryStream body = new();
+                    if (headers.TryGetValue("Transfer-Encoding", out string? transferEncoding) &&
+                        string.Equals(transferEncoding, "chunked", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int size;
+                        while ((size = int.Parse(await ReadLineAsync(stream, cancellationToken), NumberStyles.HexNumber, CultureInfo.InvariantCulture)) > 0)
+                        {
+                            byte[] chunk = await ReadBytesAsync(stream, size, cancellationToken);
+                            body.Write(chunk, 0, chunk.Length);
+                            Assert.Empty(await ReadLineAsync(stream, cancellationToken));
+                        }
+
+                        Assert.Empty(await ReadLineAsync(stream, cancellationToken));
+                    }
+                    else if (headers.TryGetValue("Content-Length", out string? length))
+                    {
+                        byte[] bytes = await ReadBytesAsync(stream, int.Parse(length, CultureInfo.InvariantCulture), cancellationToken);
+                        body.Write(bytes, 0, bytes.Length);
+                    }
+
+                    request.Content = new ByteArrayContent(body.ToArray());
+                    foreach (KeyValuePair<string, string> pair in headers)
+                    {
+                        if (!request.Headers.TryAddWithoutValidation(pair.Key, pair.Value))
+                        {
+                            request.Content.Headers.TryAddWithoutValidation(pair.Key, pair.Value);
+                        }
+                    }
+
+                    if (request.Method == HttpMethod.Delete)
+                    {
+                        this.TerminatedSessions.Add(Assert.Single(request.Headers.GetValues("Mcp-Session-Id")));
+                    }
+
+                    using HttpResponseMessage response = await stub.SendAsync(request, cancellationToken);
+                    byte[] content = await response.Content.ReadAsByteArrayAsync();
+                    StringBuilder responseHeaders = new($"HTTP/1.1 {(int)response.StatusCode} {response.ReasonPhrase}\r\n");
+                    foreach (KeyValuePair<string, IEnumerable<string>> pair in response.Headers)
+                    {
+                        responseHeaders.Append($"{pair.Key}: {string.Join(", ", pair.Value)}\r\n");
+                    }
+
+                    responseHeaders.Append($"Content-Type: {response.Content.Headers.ContentType}\r\nContent-Length: {content.Length}\r\nConnection: close\r\n\r\n");
+                    byte[] headerBytes = Encoding.ASCII.GetBytes(responseHeaders.ToString());
+#if NET
+                    await stream.WriteAsync(headerBytes, cancellationToken);
+                    await stream.WriteAsync(content, cancellationToken);
+#else
+                    await stream.WriteAsync(headerBytes, 0, headerBytes.Length, cancellationToken);
+                    await stream.WriteAsync(content, 0, content.Length, cancellationToken);
+#endif
+                }
+            }
+            catch (Exception exception) when (cancellationToken.IsCancellationRequested &&
+                exception is SocketException or ObjectDisposedException or IOException or OperationCanceledException)
+            {
+                Trace.WriteLine($"Loopback MCP server stopped: {exception.Message}");
+            }
+        }
+
+        private static async Task<string> ReadLineAsync(NetworkStream stream, CancellationToken cancellationToken)
+        {
+            StringBuilder line = new();
+            byte[] buffer = new byte[1];
+#if NET
+            while (await stream.ReadAsync(buffer, cancellationToken) > 0)
+#else
+            while (await stream.ReadAsync(buffer, 0, 1, cancellationToken) > 0)
+#endif
+            {
+                if (buffer[0] == '\n')
+                {
+                    return line.ToString().TrimEnd('\r');
+                }
+
+                line.Append((char)buffer[0]);
+            }
+
+            throw new EndOfStreamException("The HTTP request ended before its headers were complete.");
+        }
+
+        private static async Task<byte[]> ReadBytesAsync(NetworkStream stream, int count, CancellationToken cancellationToken)
+        {
+            byte[] buffer = new byte[count];
+            int offset = 0;
+            while (offset < count)
+            {
+#if NET
+                int read = await stream.ReadAsync(buffer.AsMemory(offset, count - offset), cancellationToken);
+#else
+                int read = await stream.ReadAsync(buffer, offset, count - offset, cancellationToken);
+#endif
+                if (read == 0)
+                {
+                    throw new EndOfStreamException("The HTTP request ended before its body was complete.");
+                }
+
+                offset += read;
+            }
+
+            return buffer;
+        }
     }
 
     private sealed class CleanupTraceListener : TraceListener

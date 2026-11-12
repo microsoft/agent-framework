@@ -11,7 +11,7 @@ from collections.abc import AsyncGenerator, Callable, Collection, Mapping, Seque
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from inspect import signature
-from typing import Any, ClassVar, Generic, Protocol, TypeAlias, cast
+from typing import Any, ClassVar, Generic, Protocol, Self, TypeAlias, cast
 from uuid import UUID
 
 import oracledb
@@ -29,7 +29,7 @@ from agent_framework import (
 from agent_framework._vector_filters import FilterExpression
 from agent_framework._vectors import EmbeddingClient, SearchType, Vector
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
-from typing_extensions import Self, TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeVar
 
 KeyT = TypeVar("KeyT", default=Any)
 ModelT = TypeVar("ModelT", default=Any)
@@ -373,8 +373,6 @@ def _create_client(
     env_file_encoding: str | None,
 ) -> _Client:
     if client is not None:
-        if any(value is not None for value in (dsn, user, password, pool_parameters, env_file_path, env_file_encoding)):
-            raise ValueError("client cannot be combined with dsn, user, password, pool_parameters, or .env settings.")
         return _Client(client=client)
     supplied_pool_parameters = dict(pool_parameters or {})
     overrides: dict[str, Any] = {
@@ -576,7 +574,8 @@ class OracleCollection(
                 driver but not yet declared by ``OracleSettings``. Named ``dsn``, ``user``, and ``password`` arguments
                 take precedence, followed by this mapping, the selected .env file, process environment, and connector
                 pool defaults.
-            client: Borrowed async connection or pool in place of connection settings.
+            client: Borrowed async connection or pool. Takes precedence over connection,
+                pool, and .env settings and remains caller-owned.
             env_file_path: Optional selected .env file; no implicit discovery.
             env_file_encoding: Encoding of the selected .env file.
         """
@@ -992,7 +991,8 @@ class OracleStore(BaseVectorStore):
                 driver but not yet declared by ``OracleSettings``. Named ``dsn``, ``user``, and ``password`` arguments
                 take precedence, followed by this mapping, the selected .env file, process environment, and connector
                 pool defaults.
-            client: Borrowed async connection or pool in place of connection settings.
+            client: Borrowed async connection or pool. Takes precedence over connection,
+                pool, and .env settings and remains caller-owned.
             embedding_generator: Default local embedding client for child collections.
             env_file_path: Optional selected .env file; no implicit discovery.
             env_file_encoding: Encoding of the selected .env file.

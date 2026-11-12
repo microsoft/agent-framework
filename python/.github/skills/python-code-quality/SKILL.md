@@ -114,7 +114,7 @@ Following the "too many type checkers" approach, type checkers are split by targ
 ## Ruff Configuration
 
 - Line length: 120
-- Target: Python 3.10+
+- Target: Python 3.11+
 - Auto-fix enabled
 - Rules: ASYNC, B, CPY, D, E, ERA, F, FIX, I, INP, ISC, Q, RET, RSE, RUF, SIM, T20, TD, W, T100, S
 - Scripts directory is excluded from checks
@@ -125,7 +125,7 @@ Following the "too many type checkers" approach, type checkers are split by targ
   excludes tests, samples, .venv, packages/devui/frontend.
 - **Tests**: relaxed `basic` profile (`pyrightconfig.tests.json`) — private import/usage and
   not-required TypedDict access allowed; runs as the `pyright` checker in `test-typing`.
-- **Samples**: relaxed `basic` profile (`pyrightconfig.samples.json`, with a py310 variant) —
+- **Samples**: relaxed `basic` profile (`pyrightconfig.samples.json`) —
   runs as the `pyright` checker in `test-typing -S`.
 
 ## Parallel Execution

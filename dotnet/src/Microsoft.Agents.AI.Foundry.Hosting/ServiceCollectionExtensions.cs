@@ -3,7 +3,6 @@
 using System;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -14,8 +13,6 @@ using Azure.Identity;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,7 +21,6 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -33,113 +29,41 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Extension methods for registering agent-framework agents as Foundry Hosted Agents
 /// using the Azure AI Responses Server SDK.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public static class FoundryHostingExtensions
+public static class ServiceCollectionExtensions
 {
-    private const string ResponsesServerSettingsSectionName = "ResponsesServer";
+    internal const string ResponsesServerSettingsSectionName = "ResponsesServer";
 
     /// <summary>
-    /// Registers the Azure AI Responses Server SDK and <see cref="AgentFrameworkResponseHandler"/>
-    /// on a host application builder.
-    /// </summary>
-    /// <remarks>
-    /// Use this overload for applications that can access their host builder. In a Foundry hosted
-    /// environment it binds the response-storage and resilient-task-storage identity and endpoint
-    /// from the same <c>ResponsesServer</c> configuration section, as required by AgentServer.
-    /// <code>
-    /// builder.Services.AddKeyedSingleton&lt;AIAgent&gt;("my-agent", myAgent);
-    /// builder.AddFoundryResponses();
-    /// </code>
-    /// </remarks>
-    /// <param name="host">The host application builder.</param>
-    /// <param name="configure">Optional callback to configure <see cref="FoundryResponsesOptions"/>.</param>
-    /// <returns>The host application builder for chaining.</returns>
-    public static IHostApplicationBuilder AddFoundryResponses(
-        this IHostApplicationBuilder host,
-        Action<FoundryResponsesOptions>? configure = null)
-    {
-        _ = Throw.IfNull(host);
-        FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(host, configure);
-        bool serverAdded = AddResponsesServerOnce(
-            host.Services,
-            host,
-            configuredOptions,
-            configure is not null);
-        host.Services.AddHealthChecks();
-        ConfigureFoundryListenPort(host.Services);
-        ConfigureFoundryResponsesOptions(
-            host.Services,
-            configuredOptions,
-            includeServerOptions: serverAdded,
-            applyOptions: serverAdded || configure is not null);
-        host.Services.TryAddSingleton<AgentSessionStore>(_ => CreateDefaultAgentSessionStore());
-        RegisterResponseHandler(host.Services);
-        MarkFeatureUsed();
-        return host;
-    }
-
-    /// <summary>
-    /// Registers the Azure AI Responses Server SDK and a specific <see cref="AIAgent"/> on a host
-    /// application builder.
-    /// </summary>
-    /// <remarks>
-    /// <code>
-    /// builder.AddFoundryResponses(myAgent);
-    /// </code>
-    /// </remarks>
-    /// <param name="host">The host application builder.</param>
-    /// <param name="agent">The agent instance to register.</param>
-    /// <param name="agentSessionStore">The agent session store to use, or <see langword="null"/> for the default.</param>
-    /// <param name="configure">Optional callback to configure <see cref="FoundryResponsesOptions"/>.</param>
-    /// <returns>The host application builder for chaining.</returns>
-    public static IHostApplicationBuilder AddFoundryResponses(
-        this IHostApplicationBuilder host,
-        AIAgent agent,
-        AgentSessionStore? agentSessionStore = null,
-        Action<FoundryResponsesOptions>? configure = null)
-    {
-        _ = Throw.IfNull(host);
-        _ = Throw.IfNull(agent);
-
-        FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(host, configure);
-        bool serverAdded = AddResponsesServerOnce(
-            host.Services,
-            host,
-            configuredOptions,
-            configure is not null);
-        host.Services.AddHealthChecks();
-        ConfigureFoundryListenPort(host.Services);
-        ConfigureFoundryResponsesOptions(
-            host.Services,
-            configuredOptions,
-            includeServerOptions: serverAdded,
-            applyOptions: serverAdded || configure is not null);
-        agentSessionStore ??= CreateDefaultAgentSessionStore();
-
-        if (!string.IsNullOrWhiteSpace(agent.Name))
-        {
-            host.Services.TryAddKeyedSingleton(agent.Name, agent);
-            host.Services.TryAddKeyedSingleton(agent.Name, agentSessionStore);
-        }
-
-        host.Services.TryAddSingleton(agent);
-        host.Services.TryAddSingleton(agentSessionStore);
-
-        RegisterResponseHandler(host.Services);
-        MarkFeatureUsed();
-        return host;
-    }
-
-    /// <summary>
-    /// Registers the Azure AI Responses Server SDK and <see cref="AgentFrameworkResponseHandler"/>
+    /// Registers the Azure AI Responses Server SDK and the Agent Framework response handler
     /// as the <see cref="ResponseHandler"/>. Agents are resolved from keyed DI services
     /// using the <c>agent.name</c> or <c>metadata["entity_id"]</c> from incoming requests.
     /// </summary>
     /// <remarks>
     /// <para>
     /// This overload is for local or non-hosted scenarios. Foundry hosted applications must call
-    /// <see cref="AddFoundryResponses(IHostApplicationBuilder, Action{FoundryResponsesOptions}?)"/>
+    /// <see cref="HostApplicationBuilderExtensions.AddFoundryResponses(IHostApplicationBuilder, FoundryResponsesServerOptions)"/>
     /// so AgentServer can bind response and task storage from the host configuration.
+    /// </para>
+    /// <para>
+    /// A non-hosted production platform owns caller authentication. It must remove any
+    /// client-supplied <c>x-agent-user-id</c> header before injecting a verified identity.
+    /// This package treats <c>ResponseContext.PlatformContext.UserIdKey</c> as trusted platform
+    /// context; it does not authenticate that value. Directly exposing the endpoint while accepting
+    /// a caller-provided identity for session isolation is unsupported.
+    /// </para>
+    /// <para>
+    /// Keyed agent registrations may use any DI lifetime. Each response run resolves its agent and
+    /// session store from a DI scope that is disposed when the run's event stream ends, so scoped and
+    /// transient agents are created per run, including background runs that outlive the HTTP request.
+    /// </para>
+    /// <para>
+    /// For each response run the handler uses the <see cref="AgentSessionStore"/> registered under the agent's
+    /// name, for example with <c>AddFoundryAgentSessionStore(store, "my-agent")</c>. Otherwise it uses the store
+    /// registered for all agents, with <c>AddFoundryAgentSessionStore(store)</c> or a non-keyed
+    /// <see cref="AgentSessionStore"/> registration, and otherwise the default store, which uses the AgentServer
+    /// SDK's local state-store fallback. A request answered by the default agent uses that agent's store. Each
+    /// store keeps its own sessions, so changing which store an agent uses means sessions saved in the previous
+    /// store are no longer found.
     /// </para>
     /// <para>
     /// Example:
@@ -153,28 +77,28 @@ public static class FoundryHostingExtensions
     /// </para>
     /// </remarks>
     /// <param name="services">The service collection.</param>
-    /// <param name="configure">
-    /// Optional callback to configure <see cref="FoundryResponsesOptions"/>, for example to allow the
+    /// <param name="options">
+    /// Optional <see cref="FoundryResponsesServerOptions"/>, for example to allow the
     /// agent's own service to store the responses it produces, or to opt in to durable long-running
-    /// (resilient) background responses via <see cref="FoundryResponsesOptions.ResilientBackground"/>.
+    /// (resilient) background responses via <see cref="ResponsesServerOptions.ResilientBackground"/>.
     /// </param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, Action<FoundryResponsesOptions>? configure = null)
+    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, FoundryResponsesServerOptions? options = null)
     {
         _ = Throw.IfNull(services);
-        FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(configure);
+        FoundryResponsesServerOptions configuredOptions = CopyFoundryResponsesServerOptions(options);
         bool serverAdded = AddResponsesServerOnce(
             services,
             host: null,
             configuredOptions,
-            configure is not null);
+            options is not null);
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
-        ConfigureFoundryResponsesOptions(
+        ConfigureFoundryResponsesServerOptions(
             services,
             configuredOptions,
             includeServerOptions: serverAdded,
-            applyOptions: serverAdded || configure is not null);
+            applyOptions: serverAdded || options is not null);
         services.TryAddSingleton<AgentSessionStore>(_ => CreateDefaultAgentSessionStore());
         RegisterResponseHandler(services);
         MarkFeatureUsed();
@@ -192,6 +116,23 @@ public static class FoundryHostingExtensions
     /// registered as both a keyed service and the default <see cref="AIAgent"/>.
     /// </para>
     /// <para>
+    /// A non-hosted production platform owns caller authentication. It must remove any
+    /// client-supplied <c>x-agent-user-id</c> header before injecting a verified identity.
+    /// This package treats <c>ResponseContext.PlatformContext.UserIdKey</c> as trusted platform
+    /// context; it does not authenticate that value. Directly exposing the endpoint while accepting
+    /// a caller-provided identity for session isolation is unsupported.
+    /// </para>
+    /// <para>
+    /// A store passed in <c>agentSessionStore</c> is registered only under the agent's name. Every request this
+    /// agent answers uses it, including requests without a matching agent name, and other agents do not use it.
+    /// When the agent has no name, the store has no key to be registered under and is used for all agents
+    /// instead. When no store is passed, the agent uses the store registered for all agents, with
+    /// <see cref="AddFoundryAgentSessionStore(IServiceCollection, AgentSessionStore, string?)"/> or a non-keyed
+    /// <see cref="AgentSessionStore"/> registration, and otherwise the default store. Each store keeps its own
+    /// sessions, so changing which store an agent uses means sessions saved in the previous store are no
+    /// longer found.
+    /// </para>
+    /// <para>
     /// Example:
     /// <code>
     /// builder.Services.AddFoundryResponses(myAgent);
@@ -203,124 +144,431 @@ public static class FoundryHostingExtensions
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
-    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, <see cref="FoundryAgentSessionStore"/> uses the AgentServer SDK's local state-store fallback.</param>
-    /// <param name="configure">
-    /// Optional callback to configure <see cref="FoundryResponsesOptions"/>, for example to allow the
+    /// <param name="agentSessionStore">
+    /// The session store for this agent, used only by this agent. If null, the agent uses the store registered
+    /// for all agents, or the default store, which uses the AgentServer SDK's local state-store fallback.
+    /// </param>
+    /// <param name="options">
+    /// Optional <see cref="FoundryResponsesServerOptions"/>, for example to allow the
     /// agent's own service to store the responses it produces, or to opt in to durable long-running
-    /// (resilient) background responses via <see cref="FoundryResponsesOptions.ResilientBackground"/>.
+    /// (resilient) background responses via <see cref="ResponsesServerOptions.ResilientBackground"/>.
     /// </param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryResponses(
         this IServiceCollection services,
         AIAgent agent,
         AgentSessionStore? agentSessionStore = null,
-        Action<FoundryResponsesOptions>? configure = null)
+        FoundryResponsesServerOptions? options = null)
     {
         _ = Throw.IfNull(services);
         _ = Throw.IfNull(agent);
 
-        FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(configure);
+        FoundryResponsesServerOptions configuredOptions = CopyFoundryResponsesServerOptions(options);
         bool serverAdded = AddResponsesServerOnce(
             services,
             host: null,
             configuredOptions,
-            configure is not null);
+            options is not null);
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
-        ConfigureFoundryResponsesOptions(
+        ConfigureFoundryResponsesServerOptions(
             services,
             configuredOptions,
             includeServerOptions: serverAdded,
-            applyOptions: serverAdded || configure is not null);
-        agentSessionStore ??= CreateDefaultAgentSessionStore();
-
-        if (!string.IsNullOrWhiteSpace(agent.Name))
-        {
-            services.TryAddKeyedSingleton(agent.Name, agent);
-            services.TryAddKeyedSingleton(agent.Name, agentSessionStore);
-        }
-
-        // Also register as the default (non-keyed) agent so requests
-        // without an agent name can resolve it (e.g., local dev tooling).
-        services.TryAddSingleton(agent);
-        services.TryAddSingleton(agentSessionStore);
-
+            applyOptions: serverAdded || options is not null);
+        RegisterAgentInstance(services, agent, agentSessionStore);
         RegisterResponseHandler(services);
         MarkFeatureUsed();
         return services;
     }
 
     /// <summary>
-    /// Applies the caller's <see cref="FoundryResponsesOptions"/> and registers the readiness checks
+    /// Registers the Azure AI Responses Server SDK and an <see cref="AIAgent"/> created by a factory
+    /// with the specified DI lifetime, as the handler for all incoming requests.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Use this overload when the agent depends on services that are not singletons, for example a
+    /// database context, or when it should not live for the whole process. The agent is registered only
+    /// under <paramref name="agentName"/>. When no default agent is registered yet, requests without a
+    /// matching agent name are also routed to this agent. An existing registration under
+    /// <paramref name="agentName"/> is kept, the same as for <c>AddFoundryResponses(agent)</c>.
+    /// </para>
+    /// <para>
+    /// Every response run (streaming, non-streaming, background, or a run resumed after a restart) gets
+    /// its own DI scope, created when the run starts and disposed when its event stream ends. That is
+    /// later than the end of the HTTP request for a background run. The lifetime applies to the agent:
+    /// <list type="bullet">
+    /// <item><description><see cref="ServiceLifetime.Singleton"/>: one instance for the process, disposed at shutdown.</description></item>
+    /// <item><description><see cref="ServiceLifetime.Scoped"/>: one instance per response run, disposed when the run ends.</description></item>
+    /// <item><description><see cref="ServiceLifetime.Transient"/>: a new instance on every lookup, disposed when the run ends.</description></item>
+    /// </list>
+    /// This scope is not the ASP.NET Core request scope, so scoped services that middleware fills in for an
+    /// HTTP request are new, empty instances here. Do not derive the caller's identity from such services in
+    /// the factory; the per-request user identity is supplied by the platform and applied by the response
+    /// handler when it loads and saves sessions.
+    /// </para>
+    /// <para>
+    /// The session store is registered separately with
+    /// <see cref="AddFoundryAgentSessionStore(IServiceCollection, Func{IServiceProvider, AgentSessionStore}, ServiceLifetime, string?)"/>,
+    /// with its own lifetime, because the response handler uses the store directly rather than through the
+    /// agent. Without such a registration for <paramref name="agentName"/>, the agent uses the store registered
+    /// for all agents, or the default store. Conversation state is not kept on
+    /// the agent object: each turn loads the saved session from the store's backing storage. Sessions are
+    /// stored in the same location <c>AddFoundryResponses(agent)</c> uses for an agent with that name
+    /// registered in the same order, whatever the lifetime, so switching between the two overloads or
+    /// between lifetimes keeps existing sessions readable.
+    /// </para>
+    /// <para>
+    /// This overload is for local or non-hosted scenarios. Foundry hosted applications must use
+    /// the <see cref="IHostApplicationBuilder"/> overload.
+    /// </para>
+    /// <para>
+    /// Example:
+    /// <code>
+    /// builder.Services.AddFoundryResponses(
+    ///     "my-agent",
+    ///     sp => new MyAgent(sp.GetRequiredService&lt;MyDbContext&gt;()),
+    ///     ServiceLifetime.Scoped);
+    /// </code>
+    /// </para>
+    /// </remarks>
+    /// <param name="services">The service collection.</param>
+    /// <param name="agentName">The name the agent is registered under and the name requests use to select it.</param>
+    /// <param name="agentFactory">Creates the agent from the service provider of the current DI scope.</param>
+    /// <param name="lifetime">The DI lifetime of the agent. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
+    /// <param name="options">
+    /// Optional <see cref="FoundryResponsesServerOptions"/>, for example to allow the
+    /// agent's own service to store the responses it produces, or to opt in to durable long-running
+    /// (resilient) background responses via <see cref="ResponsesServerOptions.ResilientBackground"/>.
+    /// </param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddFoundryResponses(
+        this IServiceCollection services,
+        string agentName,
+        Func<IServiceProvider, AIAgent> agentFactory,
+        ServiceLifetime lifetime = ServiceLifetime.Singleton,
+        FoundryResponsesServerOptions? options = null)
+    {
+        _ = Throw.IfNull(services);
+        RegisterAgentFactory(services, agentName, agentFactory, lifetime);
+        return services.AddFoundryResponses(options);
+    }
+
+    /// <summary>
+    /// Registers the <see cref="AgentSessionStore"/> that Foundry Responses hosting uses for one agent, or for
+    /// every agent that has no store of its own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// For each response run the response handler uses the store registered under the agent's name, then the
+    /// store registered for all agents, then the default store, which uses the AgentServer SDK's local
+    /// state-store fallback. This applies to agents registered with any <c>AddFoundryResponses</c> overload or
+    /// directly in DI, and a request answered by the default agent uses that agent's store. The store receives
+    /// the agent on every call and partitions sessions by agent and by user, so one store can serve several
+    /// agents. Each store keeps its own sessions, so changing which store an agent uses means sessions saved in
+    /// the previous store are no longer found.
+    /// </para>
+    /// <para>
+    /// The DI container never disposes <paramref name="agentSessionStore"/>, because the caller created it.
+    /// Calling this method again for the same <paramref name="agentName"/>, or again for all agents, replaces
+    /// the earlier store, including one passed to <c>AddFoundryResponses(agent, agentSessionStore)</c> or
+    /// registered directly as a keyed or non-keyed <see cref="AgentSessionStore"/>, in whatever order the
+    /// methods are called.
+    /// </para>
+    /// <para>
+    /// Example:
+    /// <code>
+    /// builder.Services.AddFoundryAgentSessionStore(mySessionStore);
+    /// </code>
+    /// </para>
+    /// </remarks>
+    /// <param name="services">The service collection.</param>
+    /// <param name="agentSessionStore">The session store to use.</param>
+    /// <param name="agentName">
+    /// The name of the agent the store is for, or <see langword="null"/> to use it for every agent that has no
+    /// store of its own.
+    /// </param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddFoundryAgentSessionStore(
+        this IServiceCollection services,
+        AgentSessionStore agentSessionStore,
+        string? agentName = null)
+    {
+        _ = Throw.IfNull(services);
+        _ = Throw.IfNull(agentSessionStore);
+        ValidateSessionStoreAgentName(agentName);
+
+        RemoveAgentSessionStoreRegistrations(services, agentName);
+        services.Add(agentName is null
+            ? ServiceDescriptor.Singleton(agentSessionStore)
+            : ServiceDescriptor.KeyedSingleton(agentName, agentSessionStore));
+        return services;
+    }
+
+    /// <summary>
+    /// Registers a factory for the <see cref="AgentSessionStore"/> that Foundry Responses hosting uses for one
+    /// agent, or for every agent that has no store of its own, with the specified DI lifetime.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// For each response run the response handler looks the store up once, from the DI scope of that run,
+    /// using the store registered under the agent's name, then the store registered for all agents, then the
+    /// default store. This applies to agents registered with any <c>AddFoundryResponses</c> overload or
+    /// directly in DI. The store's lifetime is independent of the agent's lifetime:
+    /// <list type="bullet">
+    /// <item><description><see cref="ServiceLifetime.Singleton"/>: one instance for the process, disposed at shutdown.</description></item>
+    /// <item><description><see cref="ServiceLifetime.Scoped"/>: one instance per response run, disposed when the run ends.</description></item>
+    /// <item><description><see cref="ServiceLifetime.Transient"/>: a new instance on every lookup, disposed when the run ends.</description></item>
+    /// </list>
+    /// The DI container disposes what the factory returns according to that lifetime, even when the factory
+    /// returns an object it did not create. To share an object you dispose yourself, use
+    /// <see cref="AddFoundryAgentSessionStore(IServiceCollection, AgentSessionStore, string?)"/>.
+    /// </para>
+    /// <para>
+    /// Calling this method again for the same <paramref name="agentName"/>, or again for all agents, replaces
+    /// the earlier store, including one passed to <c>AddFoundryResponses(agent, agentSessionStore)</c> or
+    /// registered directly as a keyed or non-keyed <see cref="AgentSessionStore"/>, in whatever order the
+    /// methods are called. Each store keeps its own sessions, so changing which store an agent uses means
+    /// sessions saved in the previous store are no longer found.
+    /// </para>
+    /// <para>
+    /// Example:
+    /// <code>
+    /// builder.Services.AddFoundryAgentSessionStore(
+    ///     sp => new MySessionStore(sp.GetRequiredService&lt;MyDbContext&gt;()),
+    ///     ServiceLifetime.Scoped);
+    /// </code>
+    /// </para>
+    /// </remarks>
+    /// <param name="services">The service collection.</param>
+    /// <param name="agentSessionStoreFactory">Creates the session store from the service provider of the current DI scope.</param>
+    /// <param name="lifetime">The DI lifetime of the session store. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
+    /// <param name="agentName">
+    /// The name of the agent the store is for, or <see langword="null"/> to use it for every agent that has no
+    /// store of its own.
+    /// </param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddFoundryAgentSessionStore(
+        this IServiceCollection services,
+        Func<IServiceProvider, AgentSessionStore> agentSessionStoreFactory,
+        ServiceLifetime lifetime = ServiceLifetime.Singleton,
+        string? agentName = null)
+    {
+        _ = Throw.IfNull(services);
+        _ = Throw.IfNull(agentSessionStoreFactory);
+        ValidateLifetime(lifetime);
+        ValidateSessionStoreAgentName(agentName);
+
+        string target = agentName is null ? "all agents" : $"agent '{agentName}'";
+        AgentSessionStore CreateStore(IServiceProvider serviceProvider) =>
+            agentSessionStoreFactory(serviceProvider)
+                ?? throw new InvalidOperationException($"The agent session store factory registered for {target} returned null.");
+
+        RemoveAgentSessionStoreRegistrations(services, agentName);
+        services.Add(agentName is null
+            ? new ServiceDescriptor(typeof(AgentSessionStore), CreateStore, lifetime)
+            : new ServiceDescriptor(typeof(AgentSessionStore), agentName, (serviceProvider, _) => CreateStore(serviceProvider), lifetime));
+        return services;
+    }
+
+    /// <summary>
+    /// Registers an agent factory under <paramref name="agentName"/> before the shared Responses registration runs.
+    /// </summary>
+    /// <remarks>
+    /// Only a keyed registration is added, so each created agent has exactly one registration that owns its
+    /// disposal. When no default agent exists yet, a <see cref="FoundryDefaultAgentName"/> tells the response
+    /// handler to route requests without a matching agent name to this agent. An existing keyed registration
+    /// wins, the same as for <c>AddFoundryResponses(agent)</c>; this agent is then not recorded as the default,
+    /// so the existing registration keeps its routing and storage location.
+    /// </remarks>
+    internal static void RegisterAgentFactory(
+        IServiceCollection services,
+        string agentName,
+        Func<IServiceProvider, AIAgent> agentFactory,
+        ServiceLifetime lifetime)
+    {
+        _ = Throw.IfNullOrWhitespace(agentName);
+        _ = Throw.IfNull(agentFactory);
+        ValidateLifetime(lifetime);
+
+        if (services.Any(descriptor =>
+            descriptor.ServiceType == typeof(AIAgent)
+            && descriptor.IsKeyedService
+            && Equals(descriptor.ServiceKey, agentName)))
+        {
+            return;
+        }
+
+        services.Add(new ServiceDescriptor(
+            typeof(AIAgent),
+            agentName,
+            (serviceProvider, _) => agentFactory(serviceProvider)
+                ?? throw new InvalidOperationException($"The agent factory registered for '{agentName}' returned null."),
+            lifetime));
+
+        if (!HasDefaultAgentRegistration(services))
+        {
+            services.AddSingleton(new FoundryDefaultAgentName(agentName));
+        }
+    }
+
+    /// <summary>
+    /// Registers an agent passed to <c>AddFoundryResponses(agent, agentSessionStore)</c>, and its session store.
+    /// </summary>
+    /// <remarks>
+    /// The store is registered only under the agent's name, so other agents do not use it. An agent without a
+    /// name has no key to register its store under, so its store is registered for all agents. The default
+    /// store is registered for all agents unless another store already is.
+    /// </remarks>
+    internal static void RegisterAgentInstance(IServiceCollection services, AIAgent agent, AgentSessionStore? agentSessionStore)
+    {
+        if (!string.IsNullOrWhiteSpace(agent.Name))
+        {
+            services.TryAddKeyedSingleton(agent.Name, agent);
+            if (agentSessionStore is not null)
+            {
+                services.TryAddKeyedSingleton(agent.Name, agentSessionStore);
+            }
+        }
+        else if (agentSessionStore is not null)
+        {
+            services.TryAddSingleton(agentSessionStore);
+        }
+
+        // Also register as the default (non-keyed) agent so requests
+        // without an agent name can resolve it (e.g., local dev tooling).
+        TryAddDefaultAgent(services, agent);
+        services.TryAddSingleton<AgentSessionStore>(_ => CreateDefaultAgentSessionStore());
+    }
+
+    /// <summary>
+    /// Registers <paramref name="agent"/> as the default (non-keyed) agent unless a default already exists,
+    /// including a factory registration that receives requests without an agent name.
+    /// </summary>
+    internal static void TryAddDefaultAgent(IServiceCollection services, AIAgent agent)
+    {
+        if (!HasDefaultAgentRegistration(services))
+        {
+            services.AddSingleton(agent);
+        }
+    }
+
+    /// <summary>
+    /// Whether a registration already receives requests without an agent name: a non-keyed
+    /// <see cref="AIAgent"/> or a factory agent recorded as the default.
+    /// </summary>
+    private static bool HasDefaultAgentRegistration(IServiceCollection services) =>
+        services.Any(descriptor =>
+            (descriptor.ServiceType == typeof(AIAgent) && !descriptor.IsKeyedService)
+            || descriptor.ServiceType == typeof(FoundryDefaultAgentName));
+
+    private static void ValidateLifetime(ServiceLifetime lifetime)
+    {
+        if (lifetime is not (ServiceLifetime.Singleton or ServiceLifetime.Scoped or ServiceLifetime.Transient))
+        {
+            Throw.ArgumentOutOfRangeException(nameof(lifetime), lifetime, "Unsupported service lifetime.");
+        }
+    }
+
+    private static void ValidateSessionStoreAgentName(string? agentName)
+    {
+        if (agentName is not null)
+        {
+            _ = Throw.IfNullOrWhitespace(agentName);
+        }
+    }
+
+    /// <summary>
+    /// Removes the session store registrations for <paramref name="agentName"/>, or the non-keyed ones when it
+    /// is <see langword="null"/>, so the store registered next replaces them.
+    /// </summary>
+    private static void RemoveAgentSessionStoreRegistrations(IServiceCollection services, string? agentName)
+    {
+        for (int i = services.Count - 1; i >= 0; i--)
+        {
+            ServiceDescriptor descriptor = services[i];
+            if (descriptor.ServiceType == typeof(AgentSessionStore)
+                && Equals(descriptor.ServiceKey, agentName))
+            {
+                services.RemoveAt(i);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Applies the caller's <see cref="FoundryResponsesServerOptions"/> and registers the readiness checks
     /// that report a misconfigured agent: one having its own service store the responses it produces,
     /// and a workflow agent writing its checkpoints somewhere hosting does not manage.
     /// </summary>
     /// <remarks>
-    /// The checks are registered on the same <c>/readiness</c> pipeline that <see cref="MapFoundryResponses"/>
+    /// The checks are registered on the same <c>/readiness</c> pipeline that
+    /// <see cref="EndpointRouteBuilderExtensions.MapFoundryResponses"/>
     /// maps, so such a container never takes traffic.
     /// <c>AddCheck</c> does not dedupe by name, so a repeated registration is guarded here.
-    /// Resilience flags on <see cref="FoundryResponsesOptions"/> are forwarded to
+    /// Resilience flags on <see cref="FoundryResponsesServerOptions"/> are forwarded to
     /// <see cref="ResponsesServerOptions"/> so the AgentServer SDK enables recovery for the same host.
     /// </remarks>
-    private static FoundryResponsesOptions CreateFoundryResponsesOptions(Action<FoundryResponsesOptions>? configure)
+    internal static FoundryResponsesServerOptions CopyFoundryResponsesServerOptions(FoundryResponsesServerOptions? source)
     {
-        FoundryResponsesOptions options = new();
-        configure?.Invoke(options);
-        return options;
-    }
-
-    private static FoundryResponsesOptions CreateFoundryResponsesOptions(
-        IHostApplicationBuilder host,
-        Action<FoundryResponsesOptions>? configure)
-    {
-        FoundryResponsesOptions options = new();
-        IConfigurationSection section =
-            host.Configuration.GetSection(ResponsesServerSettingsSectionName);
-        if (bool.TryParse(section[nameof(FoundryResponsesOptions.ResilientBackground)], out bool resilientBackground))
+        if (source is null)
         {
-            options.ResilientBackground = resilientBackground;
+            return new();
         }
 
-        if (bool.TryParse(section[nameof(FoundryResponsesOptions.SteerableConversations)], out bool steerableConversations))
+        return new FoundryResponsesServerOptions
         {
-            options.SteerableConversations = steerableConversations;
-        }
-
-        configure?.Invoke(options);
-        return options;
+            InferenceStoredOutputAllowed = source.InferenceStoredOutputAllowed,
+            OAuthConsentInterruptedToolResult = source.OAuthConsentInterruptedToolResult,
+            ExcludeReasoningEncryptedContent = source.ExcludeReasoningEncryptedContent,
+            DefaultModel = source.DefaultModel,
+            DefaultFetchHistoryCount = source.DefaultFetchHistoryCount,
+            ResilientBackground = source.ResilientBackground,
+            SteerableConversations = source.SteerableConversations,
+            ResponseAcceptor = source.ResponseAcceptor,
+        };
     }
 
-    private static void RegisterResponseHandler(IServiceCollection services)
+    internal static void RegisterResponseHandler(IServiceCollection services)
     {
         services.TryAddSingleton<ResponseHandler>(serviceProvider =>
             new AgentFrameworkResponseHandler(
                 serviceProvider,
                 serviceProvider.GetRequiredService<ILogger<AgentFrameworkResponseHandler>>(),
-                serviceProvider.GetRequiredService<IOptions<FoundryResponsesOptions>>(),
+                serviceProvider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value,
                 serviceProvider.GetService<FoundryToolboxService>()));
     }
 
-    private static void ConfigureFoundryResponsesOptions(
+    internal static void ConfigureFoundryResponsesServerOptions(
         IServiceCollection services,
-        FoundryResponsesOptions configuredOptions,
+        FoundryResponsesServerOptions configuredOptions,
         bool includeServerOptions,
         bool applyOptions)
     {
         if (applyOptions)
         {
-            services.Configure<FoundryResponsesOptions>(options =>
+            services.Configure<FoundryResponsesServerOptions>(options =>
             {
-                options.AllowStoredOutputEnabled = configuredOptions.AllowStoredOutputEnabled;
-                options.IncludeReasoningEncryptedContent = configuredOptions.IncludeReasoningEncryptedContent;
+                options.InferenceStoredOutputAllowed = configuredOptions.InferenceStoredOutputAllowed;
+                options.OAuthConsentInterruptedToolResult = configuredOptions.OAuthConsentInterruptedToolResult;
+                options.ExcludeReasoningEncryptedContent = configuredOptions.ExcludeReasoningEncryptedContent;
                 if (includeServerOptions)
                 {
+                    options.DefaultModel = configuredOptions.DefaultModel;
+                    options.DefaultFetchHistoryCount = configuredOptions.DefaultFetchHistoryCount;
                     options.ResilientBackground = configuredOptions.ResilientBackground;
                     options.SteerableConversations = configuredOptions.SteerableConversations;
+                    options.ResponseAcceptor = configuredOptions.ResponseAcceptor;
                 }
             });
         }
 
-        AddReadinessCheckOnce(services, "foundry-stored-output", sp => ActivatorUtilities.CreateInstance<HostedStoredOutputHealthCheck>(sp));
+        AddReadinessCheckOnce(
+            services,
+            "foundry-stored-output",
+            sp => ActivatorUtilities.CreateInstance<HostedStoredOutputHealthCheck>(
+                sp,
+                sp.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value));
         AddReadinessCheckOnce(services, "foundry-workflow-checkpointing", sp => ActivatorUtilities.CreateInstance<HostedWorkflowCheckpointingHealthCheck>(sp));
     }
 
@@ -348,8 +596,8 @@ public static class FoundryHostingExtensions
         });
 
     /// <summary>
-    /// Registers the Foundry Toolbox service, which eagerly connects to the Foundry Toolboxes
-    /// MCP proxy at startup and provides MCP tools to <see cref="AgentFrameworkResponseHandler"/>.
+    /// Registers the Foundry Toolbox service, which opens the configured Foundry toolboxes through the
+    /// Toolboxes MCP proxy for each response and provides their MCP tools to the registered response handler.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -358,13 +606,25 @@ public static class FoundryHostingExtensions
     /// <c>{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{toolboxName}/mcp?api-version=v1</c>
     /// </para>
     /// <para>
-    /// When <c>FOUNDRY_PROJECT_ENDPOINT</c> is absent, startup succeeds without error and
-    /// no tools are loaded (the container remains healthy per spec §2).
+    /// The endpoint can also come from a configured override or the
+    /// <c>AZURE_AI_PROJECT_ENDPOINT</c> local-development fallback. If no endpoint is resolved,
+    /// startup completes with toolbox support disabled.
+    /// A toolbox name that would not resolve to a single path segment of the proxy URL fails startup.
+    /// </para>
+    /// <para>
+    /// Startup opens no connection. Each response opens its own MCP session per toolbox under its platform
+    /// call id, discovers the tools available to its caller, and ends every session when it completes. A
+    /// toolbox that needs the caller's OAuth consent stops the turn with an <c>oauth_consent_request</c>; a
+    /// toolbox that cannot be opened is skipped for that response.
+    /// </para>
+    /// <para>
+    /// This method does not register a toolbox health check. Toolbox connectivity is evaluated
+    /// when each response opens its connections, not by readiness probes.
     /// </para>
     /// <para>
     /// Example:
     /// <code>
-    /// builder.Services.AddFoundryToolboxes(credential, "my-toolbox", "another-toolbox");
+    /// builder.Services.AddFoundryToolboxService(credential, "my-toolbox", "another-toolbox");
     /// </code>
     /// </para>
     /// </remarks>
@@ -372,28 +632,32 @@ public static class FoundryHostingExtensions
     /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
     /// <param name="toolboxNames">Names of the Foundry toolboxes to connect to.</param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryToolboxes(
+    public static IServiceCollection AddFoundryToolboxService(
         this IServiceCollection services,
         TokenCredential credential,
         params string[] toolboxNames)
-        => services.AddFoundryToolboxes(credential, configureOptions: null, toolboxNames);
+        => services.AddFoundryToolboxService(credential, options: null, toolboxNames);
 
     /// <summary>
-    /// Registers the Foundry Toolbox service with additional options configuration.
+    /// Registers the Foundry Toolbox service with optional behavior configuration.
     /// </summary>
+    /// <remarks>
+    /// Toolbox startup and per-response connection behavior follow
+    /// <see cref="AddFoundryToolboxService(IServiceCollection, TokenCredential, string[])"/>.
+    /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
-    /// <param name="configureOptions">
-    /// Callback to configure <see cref="FoundryToolboxOptions"/>, such as
-    /// <see cref="FoundryToolboxOptions.StrictMode"/> or
-    /// <see cref="FoundryToolboxOptions.AllowedOAuthConsentOrigins"/>.
+    /// <param name="options">
+    /// Optional <see cref="FoundryToolboxServiceOptions"/>, such as
+    /// <see cref="FoundryToolboxServiceOptions.TokenScope"/>, or
+    /// <see cref="FoundryToolboxServiceOptions.AllowedOAuthConsentOrigins"/>.
     /// </param>
-    /// <param name="toolboxNames">Names of the Foundry toolboxes to pre-register at startup.</param>
+    /// <param name="toolboxNames">Names of the Foundry toolboxes to open for each response.</param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryToolboxes(
+    public static IServiceCollection AddFoundryToolboxService(
         this IServiceCollection services,
         TokenCredential credential,
-        Action<FoundryToolboxOptions>? configureOptions,
+        FoundryToolboxServiceOptions? options,
         params string[] toolboxNames)
     {
         _ = Throw.IfNull(services);
@@ -403,105 +667,50 @@ public static class FoundryHostingExtensions
         {
             throw new InvalidOperationException(
                 $"{nameof(FoundryToolboxService)} is already registered. " +
-                $"Call {nameof(AddFoundryToolboxes)} only once per service collection.");
+                $"Call {nameof(AddFoundryToolboxService)} only once per service collection.");
         }
 
-        services.Configure<FoundryToolboxOptions>(opt =>
-        {
-            foreach (var name in toolboxNames)
-            {
-                if (!string.IsNullOrWhiteSpace(name))
-                {
-                    opt.ToolboxNames.Add(name);
-                }
-            }
-
-            configureOptions?.Invoke(opt);
-        });
-
+        FoundryToolboxServiceOptions configuredOptions = CopyFoundryToolboxServiceOptions(options, toolboxNames);
         // Register FoundryToolboxService as a singleton, injecting the caller-provided credential
         // directly rather than resolving TokenCredential from DI.
         services.AddSingleton(sp => new FoundryToolboxService(
-            sp.GetRequiredService<IOptions<FoundryToolboxOptions>>(),
+            configuredOptions,
             credential: credential,
             sp.GetService<ILogger<FoundryToolboxService>>()));
         services.AddHostedService(sp => sp.GetRequiredService<FoundryToolboxService>());
 
-        // Register the toolbox health check on the same /readiness pipeline that
-        // MapFoundryResponses maps. This gates the Foundry hosted runtime's readiness
-        // probe (per container-image-spec.md §3.1) on the outcome of the pre-registered
-        // toolbox connections opened in FoundryToolboxService.StartAsync.
-        // AddCheck<T>(name, ...) does NOT dedupe by name, so guard against a host that
-        // already registered a health check with this name.
-        const string HealthCheckName = "foundry-toolbox";
-        services.AddHealthChecks();
-        services.Configure<HealthCheckServiceOptions>(opts =>
-        {
-            foreach (var existing in opts.Registrations)
-            {
-                if (string.Equals(existing.Name, HealthCheckName, StringComparison.Ordinal))
-                {
-                    return;
-                }
-            }
-
-            opts.Registrations.Add(new HealthCheckRegistration(
-                name: HealthCheckName,
-                factory: sp => ActivatorUtilities.CreateInstance<FoundryToolboxHealthCheck>(sp),
-                failureStatus: HealthStatus.Unhealthy,
-                tags: ["foundry", "toolbox", "readiness"]));
-        });
-
+        MarkFeatureUsed(FeatureIndex.FoundryToolbox);
         return services;
     }
 
-    /// <summary>
-    /// Maps the Responses API routes for the agent-framework handler to the endpoint routing pipeline.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Also maps the Foundry-required <c>GET /readiness</c> health probe to
-    /// <see cref="HealthCheckEndpointRouteBuilderExtensions.MapHealthChecks(IEndpointRouteBuilder, string)"/>
-    /// when no <c>/readiness</c> route is already registered. This makes the package
-    /// spec-compliant in the Foundry hosted runtime (which probes <c>/readiness</c>
-    /// before accepting any invocation per <c>container-image-spec.md</c> §2; without
-    /// it every request fails with HTTP 424 <c>session_not_ready</c>) regardless of the
-    /// host spine the developer chose:
-    /// </para>
-    /// <list type="bullet">
-    ///   <item><description><b>Tier 1/2</b> (<c>AgentHost.CreateBuilder</c>) — the Core SDK
-    ///         already maps <c>/readiness</c>. The duplicate-route guard below skips
-    ///         re-mapping it.</description></item>
-    ///   <item><description><b>Tier 3</b> (<c>WebApplication.CreateBuilder</c> +
-    ///         <c>AddFoundryResponses</c> + <c>MapFoundryResponses</c>) — the Core SDK
-    ///         does NOT map it. This call covers the gap automatically.</description></item>
-    /// </list>
-    /// <para>
-    /// Developers can still opt out by registering their own <c>/readiness</c> route
-    /// before calling <c>MapFoundryResponses</c>; the existing route is detected and
-    /// preserved.
-    /// </para>
-    /// </remarks>
-    /// <param name="endpoints">The endpoint route builder.</param>
-    /// <param name="prefix">Optional route prefix (e.g., "/openai/v1"). Default: empty (routes at /responses).</param>
-    /// <returns>The endpoint route builder for chaining.</returns>
-    public static IEndpointRouteBuilder MapFoundryResponses(this IEndpointRouteBuilder endpoints, string prefix = "")
+    private static FoundryToolboxServiceOptions CopyFoundryToolboxServiceOptions(
+        FoundryToolboxServiceOptions? source,
+        string[] toolboxNames)
     {
-        _ = Throw.IfNull(endpoints);
-        RouteGroupBuilder responsesEndpoints = endpoints.MapGroup(string.Empty);
-        responsesEndpoints.AddEndpointFilter(new HostedProtocolCompatibilityFilter(
-            endpoints.ServiceProvider.GetRequiredService<IConfiguration>(),
-            endpoints.ServiceProvider.GetRequiredService<ILogger<HostedProtocolCompatibilityFilter>>()));
-        responsesEndpoints.MapResponsesServer(prefix);
-        MapReadinessIfMissing(endpoints);
-        MarkFeatureUsed();
-        return endpoints;
+        var copy = new FoundryToolboxServiceOptions();
+        if (source is not null)
+        {
+            copy.TokenScope = source.TokenScope;
+            copy.AllowedOAuthConsentOrigins = source.AllowedOAuthConsentOrigins is null
+                ? null
+                : new HashSet<Uri>(source.AllowedOAuthConsentOrigins);
+        }
+
+        foreach (string name in toolboxNames)
+        {
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                copy.ToolboxNames.Add(name);
+            }
+        }
+
+        return copy;
     }
 
-    private static void MarkFeatureUsed()
+    internal static void MarkFeatureUsed(FeatureIndex feature = FeatureIndex.FoundryHosting)
     {
 #pragma warning disable MAAI001
-        FeatureUsage.MarkUsed((int)FeatureIndex.FoundryHosting);
+        FeatureUsage.MarkUsed((int)feature);
 #pragma warning restore MAAI001
     }
 
@@ -532,10 +741,10 @@ public static class FoundryHostingExtensions
     /// a host that registers several agents naturally does, so the second and later calls are
     /// skipped here.
     /// </remarks>
-    private static bool AddResponsesServerOnce(
+    internal static bool AddResponsesServerOnce(
         IServiceCollection services,
         IHostApplicationBuilder? host,
-        FoundryResponsesOptions configuredOptions,
+        FoundryResponsesServerOptions configuredOptions,
         bool hasConfigureCallback)
     {
         FoundryResponsesServerMarker? marker = services
@@ -555,9 +764,11 @@ public static class FoundryHostingExtensions
             return false;
         }
 
+        bool resilientBackground = configuredOptions.ResilientBackground;
+        bool steerableConversations = configuredOptions.SteerableConversations;
         services.AddSingleton(new FoundryResponsesServerMarker(
-            configuredOptions.ResilientBackground,
-            configuredOptions.SteerableConversations));
+            resilientBackground,
+            steerableConversations));
         if (host is not null)
         {
 #pragma warning disable SCME0002
@@ -565,8 +776,14 @@ public static class FoundryHostingExtensions
                 ResponsesServerSettingsSectionName,
                 settings =>
                 {
-                    settings.ResilientBackground = configuredOptions.ResilientBackground;
-                    settings.SteerableConversations = configuredOptions.SteerableConversations;
+                    if (hasConfigureCallback)
+                    {
+                        settings.DefaultModel = configuredOptions.DefaultModel;
+                        settings.DefaultFetchHistoryCount = configuredOptions.DefaultFetchHistoryCount;
+                        settings.ResilientBackground = configuredOptions.ResilientBackground;
+                        settings.SteerableConversations = configuredOptions.SteerableConversations;
+                        settings.ResponseAcceptor = configuredOptions.ResponseAcceptor;
+                    }
                 });
 #pragma warning restore SCME0002
         }
@@ -574,12 +791,18 @@ public static class FoundryHostingExtensions
         {
             services.AddResponsesServer(options =>
             {
-                options.ResilientBackground = configuredOptions.ResilientBackground;
-                options.SteerableConversations = configuredOptions.SteerableConversations;
+                if (hasConfigureCallback)
+                {
+                    options.DefaultModel = configuredOptions.DefaultModel;
+                    options.DefaultFetchHistoryCount = configuredOptions.DefaultFetchHistoryCount;
+                    options.ResilientBackground = configuredOptions.ResilientBackground;
+                    options.SteerableConversations = configuredOptions.SteerableConversations;
+                    options.ResponseAcceptor = configuredOptions.ResponseAcceptor;
+                }
             });
         }
 
-        if (configuredOptions.SteerableConversations)
+        if (steerableConversations)
         {
             services.SetResilientTasksEnabled();
         }
@@ -595,7 +818,7 @@ public static class FoundryHostingExtensions
     /// durable state store, which survives replacement and is readable by every instance. Anywhere
     /// else it uses the SDK's local state-store fallback under <c>~/.agentserver/state_stores</c>.
     /// </remarks>
-    private static FoundryAgentSessionStore CreateDefaultAgentSessionStore() =>
+    internal static FoundryAgentSessionStore CreateDefaultAgentSessionStore() =>
         new(credential: CreateStateStoreCredential());
 
     /// <summary>
@@ -662,7 +885,7 @@ public static class FoundryHostingExtensions
     /// server. Registration is idempotent across repeated <c>AddFoundryResponses</c> calls.
     /// </para>
     /// </remarks>
-    private static void ConfigureFoundryListenPort(IServiceCollection services)
+    internal static void ConfigureFoundryListenPort(IServiceCollection services)
     {
         if (services.Any(static d => d.ServiceType == typeof(FoundryListenPortMarker)))
         {
@@ -710,33 +933,6 @@ public static class FoundryHostingExtensions
         }
 
         return port;
-    }
-
-    /// <summary>
-    /// Maps <c>GET /readiness</c> to the AspNetCore HealthChecks pipeline only when no
-    /// route already serves that path. The duplicate guard scans
-    /// <see cref="EndpointDataSource"/> entries by route pattern, which catches both the
-    /// SDK-mapped <c>MapHealthChecks("/readiness")</c> path used by
-    /// <c>AgentHostBuilder</c> and any user-registered <c>app.MapGet("/readiness", ...)</c>
-    /// route. Idempotent across multiple <c>MapFoundryResponses</c> invocations.
-    /// </summary>
-    private static void MapReadinessIfMissing(IEndpointRouteBuilder endpoints)
-    {
-        const string ReadinessPath = "/readiness";
-
-        foreach (var dataSource in endpoints.DataSources)
-        {
-            foreach (var endpoint in dataSource.Endpoints)
-            {
-                if (endpoint is RouteEndpoint route &&
-                    string.Equals(route.RoutePattern.RawText, ReadinessPath, StringComparison.OrdinalIgnoreCase))
-                {
-                    return;
-                }
-            }
-        }
-
-        endpoints.MapHealthChecks(ReadinessPath);
     }
 
     /// <summary>

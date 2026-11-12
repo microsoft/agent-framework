@@ -49,6 +49,117 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
         Assert.Contains("3", combined);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ExecuteCode_HostErrorsRespectDetailedPolicyAsync(bool includeDetailedErrors, bool isAsync)
+    {
+        // Arrange
+        SkipIfNoPython();
+        const string Detail = "synthetic backend diagnostic";
+        const string InnerDetail = "synthetic inner diagnostic";
+        static string Fail() => throw new InvalidOperationException(Detail, new ArgumentException(InnerDetail));
+        static async Task<string> FailAsync()
+        {
+            await Task.Yield();
+            throw new InvalidOperationException(Detail, new ArgumentException(InnerDetail));
+        }
+
+        var tool = isAsync
+            ? AIFunctionFactory.Create(FailAsync, name: "failing_tool")
+            : AIFunctionFactory.Create(Fail, name: "failing_tool");
+        var function = new LocalExecuteCodeFunction(s_python!, new LocalCodeActProviderOptions
+        {
+            Tools = [tool],
+            IncludeDetailedErrors = includeDetailedErrors,
+        });
+        var args = new AIFunctionArguments
+        {
+            ["code"] = """
+                try:
+                    await failing_tool()
+                except Exception as exc:
+                    print(str(exc))
+                try:
+                    await call_tool('failing_tool')
+                except Exception as exc:
+                    print(str(exc))
+                """,
+        };
+
+        // Act
+        var result = await function.InvokeAsync(args, CancellationToken.None);
+
+        // Assert
+        var text = GetResultText(result);
+        Assert.Contains(includeDetailedErrors ? Detail : "Host tool execution failed.", text, StringComparison.Ordinal);
+        Assert.Equal(includeDetailedErrors, text.Contains(Detail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, text.Contains(InnerDetail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, text.Contains("   at ", StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, text.Contains(isAsync ? nameof(FailAsync) : nameof(Fail), StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteCode_UncaughtHostErrorsPreserveFailureAsync(bool includeDetailedErrors)
+    {
+        // Arrange
+        SkipIfNoPython();
+        const string Detail = "synthetic backend diagnostic";
+        const string InnerDetail = "synthetic inner diagnostic";
+        var tool = AIFunctionFactory.Create(
+            (Func<string>)(() => throw new InvalidOperationException(Detail, new ArgumentException(InnerDetail))), name: "failing_tool");
+        var function = new LocalExecuteCodeFunction(s_python!, new LocalCodeActProviderOptions
+        {
+            Tools = [tool],
+            IncludeDetailedErrors = includeDetailedErrors,
+        });
+
+        // Act
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await function.InvokeAsync(new AIFunctionArguments { ["code"] = "await failing_tool()" }));
+
+        // Assert
+        Assert.Contains(includeDetailedErrors ? Detail : "Host tool execution failed.", error.Message, StringComparison.Ordinal);
+        Assert.Equal(includeDetailedErrors, error.Message.Contains(Detail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, error.Message.Contains(InnerDetail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, error.Message.Contains("   at ", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Provider_HostErrorPolicyIsCapturedAtConstructionAsync(bool includeDetailedErrors)
+    {
+        // Arrange
+        SkipIfNoPython();
+        const string Detail = "synthetic backend diagnostic";
+        var tool = AIFunctionFactory.Create(
+            (Func<string>)(() => throw new InvalidOperationException(Detail)), name: "failing_tool");
+        var options = new LocalCodeActProviderOptions
+        {
+            Tools = [tool],
+            IncludeDetailedErrors = includeDetailedErrors,
+        };
+        using var provider = new LocalCodeActProvider(s_python!, options);
+        options.IncludeDetailedErrors = !includeDetailedErrors;
+        var context = await provider.InvokingAsync(
+            new AIContextProvider.InvokingContext(new Moq.Mock<AIAgent>().Object, session: null, new AIContext()));
+        var function = Assert.IsAssignableFrom<AIFunction>(Assert.Single(context.Tools!));
+
+        // Act
+        var result = await function.InvokeAsync(new AIFunctionArguments
+        {
+            ["code"] = "try:\n    await failing_tool()\nexcept Exception as exc:\n    print(str(exc))",
+        });
+
+        // Assert
+        Assert.Equal(includeDetailedErrors, GetResultText(result).Contains(Detail, StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task ExecuteCode_AllowsAstValidatedFormattingAsync()
     {
@@ -883,8 +994,10 @@ except Exception as exc:
         Assert.DoesNotContain("NO_ERROR", combined);
     }
 
-    [Fact]
-    public async Task ExecuteCode_ToolThrowingExceptionPropagatesToGeneratedCodeAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteCode_ToolThrowingExceptionPropagatesToGeneratedCodeAsync(bool includeDetailedErrors)
     {
         SkipIfNoPython();
 
@@ -896,6 +1009,7 @@ except Exception as exc:
         var options = new LocalCodeActProviderOptions
         {
             Tools = new[] { faultyTool },
+            IncludeDetailedErrors = includeDetailedErrors,
         };
         var function = new LocalExecuteCodeFunction(s_python!, options);
 
@@ -912,8 +1026,9 @@ except Exception as exc:
         var result = await function.InvokeAsync(args, CancellationToken.None);
         var combined = GetResultText(result);
         Assert.Contains("GOT_ERROR", combined);
-        Assert.Contains("InvalidOperationException", combined);
-        Assert.Contains("intentional: boom", combined);
+        Assert.Contains(includeDetailedErrors ? "intentional: boom" : "Host tool execution failed.", combined);
+        Assert.Equal(includeDetailedErrors, combined.Contains("InvalidOperationException", StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, combined.Contains("intentional: boom", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -971,7 +1086,9 @@ except Exception as exc:
     private static string? FindPython()
     {
         var configured = Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON");
-        if (!string.IsNullOrWhiteSpace(configured) && IsUsablePython(configured))
+        if (!string.IsNullOrWhiteSpace(configured)
+            && Path.IsPathFullyQualified(configured)
+            && IsUsablePython(configured))
         {
             return configured;
         }
@@ -985,7 +1102,7 @@ except Exception as exc:
             var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
             foreach (var dir in path.Split(Path.PathSeparator))
             {
-                if (string.IsNullOrWhiteSpace(dir))
+                if (string.IsNullOrWhiteSpace(dir) || !Path.IsPathFullyQualified(dir))
                 {
                     continue;
                 }

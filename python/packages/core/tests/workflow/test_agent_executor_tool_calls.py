@@ -4,10 +4,9 @@
 
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal, overload
+from typing import Any, Literal, Never, overload
 
 import pytest
-from typing_extensions import Never
 
 from agent_framework import (
     Agent,

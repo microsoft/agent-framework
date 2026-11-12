@@ -388,12 +388,11 @@ class MessageMapper:
                                     }
 
                         # Other output items (message, etc.) - track for later
-                        elif item_type == "message":
-                            if isinstance(item, ResponseOutputMessage):
-                                if item.id not in message_order:
-                                    message_order.append(item.id)
-                                if item.content:
-                                    complete_messages[item.id] = item
+                        elif item_type == "message" and isinstance(item, ResponseOutputMessage):
+                            if item.id not in message_order:
+                                message_order.append(item.id)
+                            if item.content:
+                                complete_messages[item.id] = item
 
                 # Handle function call arguments delta - accumulate arguments
                 elif event_type == "response.function_call_arguments.delta":

@@ -189,6 +189,24 @@ def test_order_names_and_directions_validated(collection):
         collection._prepare_order_by({"tags": True})
 
 
+async def test_key_retrieval_rejects_skip(definition_factory) -> None:
+    """skip with key lookup is rejected, not silently ignored (offline guard check).
+
+    MongoDB, Qdrant and Oracle raise for skip+keys; PostgreSQL silently built
+    the unshifted key query instead, so the same portable call behaved
+    differently across connectors.
+    """
+    collection = PostgresCollection(
+        dict,
+        definition=definition_factory(key_type="str"),
+        # connect_timeout keeps a pre-fix run (which reaches the connection
+        # layer instead of raising) failing fast rather than hanging
+        connection_string="host=unused connect_timeout=1",
+    )
+    with pytest.raises(ValueError, match="cannot be combined with skip"):
+        await collection.get(["key-1"], skip=1)
+
+
 @pytest.mark.parametrize("key_type,value", [("int", True), ("int", "1"), ("UUID", 1), ("str", 1)])
 async def test_keys_are_strict(definition_factory, record_factory, key_type, value):
     collection = PostgresCollection(
@@ -205,7 +223,7 @@ async def test_keys_are_strict(definition_factory, record_factory, key_type, val
     [
         {},
         {"connection_string": ""},
-        {"connection_string": "x", "client": MagicMock(spec=AsyncConnection)},
+        {"connection_string": "x", "client": object()},
         {"client": object()},
     ],
 )

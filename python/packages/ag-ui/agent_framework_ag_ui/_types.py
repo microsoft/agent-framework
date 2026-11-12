@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Annotated, Any, Generic
+from typing import Annotated, Any, Generic, TypedDict
 
 from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import ChatOptions
@@ -15,11 +15,6 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
-
 
 AGUIChatOptionsT = TypeVar("AGUIChatOptionsT", bound=TypedDict, default="AGUIChatOptions", covariant=True)  # type: ignore[valid-type]
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)

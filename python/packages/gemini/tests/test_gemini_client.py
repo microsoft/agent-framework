@@ -7,7 +7,7 @@ import datetime
 import json
 import logging
 import os
-from typing import Any, cast
+from typing import Any, NotRequired, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,7 +22,7 @@ from agent_framework.exceptions import (
 from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from agent_framework_gemini import (
     GeminiChatClient,
@@ -211,6 +211,7 @@ def _make_response(
     response.candidates = [candidate]
     response.finish_reason = finish_reason
     response.model_version = model_version
+    response.prompt_feedback = None
 
     if prompt_tokens is not None or output_tokens is not None:
         usage = MagicMock()
@@ -2636,8 +2637,8 @@ def test_get_web_search_tool_returns_google_search_tool() -> None:
 def test_get_web_search_tool_with_params() -> None:
     """Parameters are forwarded to types.GoogleSearch."""
     time_range = types.Interval(
-        start_time=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
-        end_time=datetime.datetime(2024, 12, 31, tzinfo=datetime.timezone.utc),
+        start_time=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
+        end_time=datetime.datetime(2024, 12, 31, tzinfo=datetime.UTC),
     )
     tool = GeminiChatClient.get_web_search_tool(
         search_types=types.SearchTypes(web_search=types.WebSearch()),
@@ -2963,6 +2964,54 @@ async def test_empty_candidates_in_stream_does_not_raise(candidates: list | None
     assert updates[0].finish_reason is None
 
 
+@pytest.mark.parametrize("stream", [False, True])
+async def test_blocked_prompt_reports_content_filter(stream: bool) -> None:
+    """A prompt blocked by Gemini (no candidates, prompt_feedback.block_reason set) reports content_filter."""
+    client, mock = _make_gemini_client()
+    blocked = types.GenerateContentResponse.model_validate({
+        "promptFeedback": {"blockReason": "SAFETY"},
+        "usageMetadata": {"promptTokenCount": 8, "totalTokenCount": 8},
+        "modelVersion": "gemini-2.5-flash",
+    })
+    mock.aio.models.generate_content = AsyncMock(return_value=blocked)
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([blocked]))
+    messages = [Message(role="user", contents=[Content.from_text("Hi")])]
+
+    if stream:
+        response = await client.get_response(messages=messages, stream=True).get_final_response()
+    else:
+        response = await client.get_response(messages=messages)
+
+    assert response.text == ""
+    assert response.finish_reason == "content_filter"
+    assert response.usage_details is not None
+    assert response.usage_details["input_token_count"] == 8
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_blocked_continuation_hop_reports_content_filter(stream: bool) -> None:
+    """A blocked automatic-continuation hop after an earlier hop returned text still reports content_filter."""
+    client, mock = _make_gemini_client()
+    partial = {"candidates": [{"content": {"role": "model", "parts": [{"text": "partial answer"}]}}]}
+    blocked = {"promptFeedback": {"blockReason": "SAFETY"}}
+    # generate_content merges the hops: the earlier candidate stays, with its finish_reason cleared.
+    mock.aio.models.generate_content = AsyncMock(
+        return_value=types.GenerateContentResponse.model_validate({**partial, **blocked})
+    )
+    mock.aio.models.generate_content_stream = AsyncMock(
+        return_value=_async_iter([types.GenerateContentResponse.model_validate(hop) for hop in (partial, blocked)])
+    )
+    messages = [Message(role="user", contents=[Content.from_text("Hi")])]
+
+    if stream:
+        response = await client.get_response(messages=messages, stream=True).get_final_response()
+    else:
+        response = await client.get_response(messages=messages)
+
+    assert response.text == "partial answer"
+    assert response.finish_reason == "content_filter"
+
+
 # service_url
 
 
@@ -2997,6 +3046,66 @@ def test_injected_sdk_routing_is_shared_with_embeddings() -> None:
     assert chat._genai_client is embeddings._genai_client is sdk
     assert chat._vertexai is embeddings._vertexai is True
     assert chat.service_url() == embeddings.service_url() == "https://custom.example.test"
+
+
+@pytest.mark.parametrize("client_type", [RawGeminiChatClient, GeminiChatClient])
+@pytest.mark.parametrize("env_var", ["GOOGLE_GENAI_USE_ENTERPRISE", "GOOGLE_GENAI_USE_VERTEXAI"])
+def test_injected_sdk_client_ignores_invalid_connection_settings(
+    client_type: type[RawGeminiChatClient],
+    env_var: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An injected SDK client is used as-is, so connection settings it does not need are never parsed."""
+    monkeypatch.setenv(env_var, "not-a-bool")
+    monkeypatch.setenv("GOOGLE_MODEL", "env-model")
+    sdk = MagicMock()
+    sdk._api_client.vertexai = False
+    sdk._api_client._http_options.base_url = "https://generativelanguage.googleapis.com/"
+
+    client = client_type(client=sdk)
+
+    assert client._genai_client is sdk
+    assert client._vertexai is False
+    assert client.service_url() == "https://generativelanguage.googleapis.com"
+    assert client.model == "env-model"
+
+
+@pytest.mark.parametrize("client_type", [RawGeminiChatClient, GeminiChatClient])
+@pytest.mark.parametrize("mode_arg", ["enterprise", "vertexai"])
+def test_injected_sdk_client_without_mode_uses_explicit_mode(
+    client_type: type[RawGeminiChatClient],
+    mode_arg: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit mode stays the fallback when the injected SDK client does not expose its mode."""
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "not-a-bool")
+    sdk = MagicMock()
+    sdk._api_client.vertexai = None
+    sdk._api_client._http_options.base_url = None
+
+    client = client_type(client=sdk, model="gemini-2.5-flash", **cast(dict[str, Any], {mode_arg: True}))
+
+    assert client._genai_client is sdk
+    assert client._vertexai is True
+    assert client.service_url() == "https://aiplatform.googleapis.com"
+
+
+@pytest.mark.parametrize("mode_arg", ["enterprise", "vertexai"])
+def test_injected_sdk_client_rejects_non_bool_explicit_mode(mode_arg: str) -> None:
+    """Explicit mode arguments are type-checked for an injected client, like for an owned one."""
+    sdk = MagicMock()
+    sdk._api_client.vertexai = None
+
+    with pytest.raises(ValueError, match=f"genai_use_{mode_arg}"):
+        RawGeminiChatClient(client=sdk, model="gemini-2.5-flash", **cast(dict[str, Any], {mode_arg: "false"}))
+
+
+def test_owned_client_still_validates_connection_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without an injected SDK client, invalid connection settings still fail construction."""
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "not-a-bool")
+
+    with pytest.raises(ValueError, match="GOOGLE_GENAI_USE_ENTERPRISE"):
+        GeminiChatClient(api_key="test-key", model="gemini-2.5-flash")
 
 
 # integration tests
@@ -3173,3 +3282,34 @@ async def test_streaming_closes_sdk_stream_when_consumer_stops_early() -> None:
             break
 
     assert closed
+
+
+@pytest.mark.parametrize("bad_count", [0, "0", 2, "2", -1])
+def test_candidate_count_other_than_one_is_rejected(bad_count: Any) -> None:
+    """``candidate_count`` other than 1 (or absent) is rejected up front.
+
+    Both the streaming and non-streaming parsers read ``candidates[0]`` only, so any
+    other count would be billed while all but the first candidate are silently dropped.
+    Zero is rejected along with counts above one (follow-up to the review on #9929).
+    """
+    client, _ = _make_gemini_client()
+
+    with pytest.raises(ChatClientInvalidRequestException, match="candidate_count"):
+        client._prepare_config({"candidate_count": bad_count}, None)
+
+
+@pytest.mark.parametrize("good_count", [1, "1"])
+def test_candidate_count_one_passes_through_normalized(good_count: Any) -> None:
+    """A single candidate is accepted and normalized to an int for the config."""
+    client, _ = _make_gemini_client()
+
+    config = client._prepare_config({"candidate_count": good_count}, None)
+    assert config.candidate_count == 1
+
+
+def test_candidate_count_absent_leaves_config_unset() -> None:
+    """Without the option the config keeps Gemini's single-candidate default."""
+    client, _ = _make_gemini_client()
+
+    config = client._prepare_config({}, None)
+    assert config.candidate_count is None

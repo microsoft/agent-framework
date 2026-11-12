@@ -105,7 +105,11 @@ class LocalShellTool:
         shell: Optional shell argv override. String values are tokenised.
             When omitted, the platform default is used (``pwsh`` or
             ``powershell`` on Windows, ``bash`` or ``sh`` on Unix). May also
-            be overridden via the ``AGENT_FRAMEWORK_SHELL`` env var.
+            be overridden via the ``AGENT_FRAMEWORK_SHELL`` env var. On
+            Windows, a bare executable name (the default or an override) is
+            looked up only in the fully qualified entries of ``PATH``; the
+            current directory is never searched. Pass an absolute path to
+            select a specific executable.
         workdir: Working directory for commands. Defaults to the current
             working directory. In persistent mode, each command is
             re-anchored to this directory when ``confine_workdir=True`` —

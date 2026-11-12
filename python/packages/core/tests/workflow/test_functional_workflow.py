@@ -631,7 +631,7 @@ class TestStreaming:
         assert follow_up.get_outputs() == [7]
 
     async def test_nested_processing_span_parents_under_workflow_run(self, span_exporter: Any) -> None:
-        """Spans opened during ``_execute`` must parent under the unattached ``workflow.run`` span."""
+        """Spans opened during ``_execute`` must parent under the unattached ``invoke_workflow`` span."""
         from agent_framework.observability import OtelAttr, create_processing_span
 
         @step
@@ -648,7 +648,7 @@ class TestStreaming:
         assert result.get_outputs() == [6]
 
         spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
-        run_spans = [s for s in spans if s.name == OtelAttr.WORKFLOW_RUN_SPAN]
+        run_spans = [s for s in spans if s.name == f"invoke_workflow {pipeline.name}"]
         process_spans = [s for s in spans if s.name == f"{OtelAttr.EXECUTOR_PROCESS_SPAN} traced_add"]
         assert len(run_spans) == 1
         assert len(process_spans) == 1
@@ -2561,6 +2561,71 @@ class TestAsAgent:
         response = await stream.get_final_response()
         assert len(response.messages) >= 1
 
+    @pytest.mark.parametrize("consume", ["none", "first", "all"])
+    async def test_as_agent_stream_close_releases_workflow(self, consume: str):
+        @built_workflow
+        async def wf(x: int) -> str:
+            return f"result: {x}"
+
+        agent = wf.as_agent()
+        stream = agent.run(1, stream=True)
+        if consume == "first":
+            assert (await anext(stream)).text == "result: 1"
+        elif consume == "all":
+            assert (await stream.get_final_response()).text == "result: 1"
+
+        await stream.close()
+        assert (await agent.run(2)).text == "result: 2"
+
+        # Closing an old stream again must not release a newer run's guard.
+        next_stream = agent.run(3, stream=True)
+        try:
+            await stream.close()
+            with pytest.raises(RuntimeError, match="already running"):
+                await agent.run(4)
+            assert (await next_stream.get_final_response()).text == "result: 3"
+        finally:
+            await next_stream.close()
+
+    @pytest.mark.parametrize("cancel", [False, True])
+    async def test_as_agent_stream_failure_releases_workflow(self, cancel: bool):
+        started = asyncio.Event()
+        stopped = asyncio.Event()
+
+        @built_workflow
+        async def wf(x: int) -> str:
+            if x == 1:
+                try:
+                    started.set()
+                    if cancel:
+                        await asyncio.Event().wait()
+                    raise ValueError("workflow failure")
+                finally:
+                    stopped.set()
+            return f"result: {x}"
+
+        agent = wf.as_agent()
+        stream = agent.run(1, stream=True)
+        pull = asyncio.create_task(anext(stream))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            if cancel:
+                pull.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await pull
+            else:
+                with pytest.raises(ValueError, match="workflow failure"):
+                    await pull
+            assert stopped.is_set()
+            await stream.close()
+            assert (await agent.run(2)).text == "result: 2"
+        finally:
+            if not pull.done():
+                pull.cancel()
+                with suppress(asyncio.CancelledError):
+                    await pull
+            await stream.close()
+
     async def test_as_agent_has_id_and_description(self):
         @built_workflow(description="A test workflow")
         async def wf(x: int) -> int:
@@ -3314,7 +3379,6 @@ class TestHITLInStepWithCaching:
         assert resumed.get_outputs() == [[5, "done"]]
         assert late_calls == 1
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_detached_task_cannot_mutate_state_after_swallowed_interruption(self):
         background_started = asyncio.Event()
         release_background = asyncio.Event()
@@ -3339,7 +3403,6 @@ class TestHITLInStepWithCaching:
         assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
         assert wf._last_state == {}  # pyright: ignore[reportPrivateUsage]
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_preheld_mutable_state_cannot_change_after_pause(self):
         background_started = asyncio.Event()
         release_background = asyncio.Event()
@@ -3394,7 +3457,6 @@ class TestHITLInStepWithCaching:
         assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
         assert resumed.get_outputs() == ["5:True"]
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_nested_mutable_state_isolated_with_non_deepcopyable_leaf(self):
         import threading
 
@@ -3433,7 +3495,6 @@ class TestHITLInStepWithCaching:
         resumed = await wf.run(responses={"r": 1})
         assert resumed.get_outputs() == [([], True)]
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_mutable_dict_key_isolated_with_non_deepcopyable_value(self):
         import threading
 
@@ -3552,7 +3613,6 @@ class TestHITLInStepWithCaching:
         assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
         assert resumed.get_outputs() == [True]
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_mutable_container_subclass_isolated_with_non_deepcopyable_leaf(self):
         import threading
 
@@ -3594,7 +3654,6 @@ class TestHITLInStepWithCaching:
         resumed = await wf.run(responses={"r": 1})
         assert resumed.get_outputs() == [([], True)]
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_custom_object_state_isolated_with_non_deepcopyable_leaf(self):
         import threading
 
@@ -3833,7 +3892,6 @@ class TestHITLInStepWithCaching:
         assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
         assert paused.get_outputs() == []
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_swallowed_pause_still_surfaces_unhandled_sibling_failure(self):
         @step(replay_key=lambda: "ask")
         async def ask(ctx: RunContext) -> int:
@@ -3923,7 +3981,6 @@ class TestHITLInStepWithCaching:
         assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
         assert resumed.get_outputs() == [[5]]
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_user_cancellation_after_swallowed_pause_is_not_reclassified(self):
         @step(replay_key=lambda: "ask")
         async def ask(ctx: RunContext) -> int:
@@ -3937,7 +3994,6 @@ class TestHITLInStepWithCaching:
         with pytest.raises(asyncio.CancelledError):
             await wf.run(1)
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     @pytest.mark.parametrize("mode", ["raise", "cancel"])
     async def test_empty_root_cancellation_after_swallowed_pause_is_not_reclassified(self, mode: str):
         @built_workflow
@@ -3954,7 +4010,6 @@ class TestHITLInStepWithCaching:
         with pytest.raises(asyncio.CancelledError):
             await wf.run(1)
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_helper_empty_cancellation_after_swallowed_pause_is_not_reclassified(self):
         @built_workflow
         async def wf(_: int, ctx: RunContext) -> None:
@@ -4149,7 +4204,6 @@ class TestHITLInStepWithCaching:
         assert paused.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
         assert background_finished.is_set()
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_later_task_cancel_after_swallowed_pause_is_not_suppressed(self):
         second_started = asyncio.Event()
         first_swallowed = asyncio.Event()
@@ -4186,7 +4240,6 @@ class TestHITLInStepWithCaching:
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(run_task, timeout=5)
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_later_empty_cancellation_after_swallowed_pause_is_not_suppressed(self):
         second_started = asyncio.Event()
         first_swallowed = asyncio.Event()
@@ -4378,7 +4431,6 @@ class TestHITLInStepWithCaching:
         assert paused.get_outputs() == []
         assert resumed.get_outputs() == [[5]]
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_step_cannot_cache_swallowed_interruption(self):
         calls = 0
 
@@ -4452,7 +4504,6 @@ class TestHITLInStepWithCaching:
         assert paused.get_outputs() == []
         assert after_calls == 0
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="CancelledError pause is Python >= 3.11")
     async def test_state_after_swallowed_interruption_is_not_committed(self):
         @built_workflow
         async def wf(_: int, ctx: RunContext) -> str:
@@ -4469,7 +4520,6 @@ class TestHITLInStepWithCaching:
         resumed = await wf.run(responses={"r": 1})
         assert resumed.get_outputs() == ["after"]
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="TaskGroup is Python >= 3.11")
     async def test_task_group_hitl_interrupt_is_handled(self):
         storage = InMemoryCheckpointStorage()
         sibling_started = asyncio.Event()
@@ -4521,7 +4571,6 @@ class TestHITLInStepWithCaching:
         assert resumed.get_outputs() == [[5, "answer #1"]]
         assert sibling_calls == 1
 
-    @pytest.mark.skipif(not hasattr(asyncio, "TaskGroup"), reason="TaskGroup is Python >= 3.11")
     async def test_task_group_real_failure_excludes_internal_interrupt(self):
         started = 0
         all_started = asyncio.Event()

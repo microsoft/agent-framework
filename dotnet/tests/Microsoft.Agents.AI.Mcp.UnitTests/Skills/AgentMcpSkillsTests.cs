@@ -1,0 +1,2034 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
+using Moq;
+
+namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
+
+/// <summary>
+/// Tests listing MCP skills and accessing their content.
+/// </summary>
+public sealed partial class AgentMcpSkillsTests
+{
+    private const string SkillUri = "skill://unit-converter/SKILL.md";
+    private const string SkillContent = "---\nname: unit-converter\ndescription: Convert units.\n---\nInstructions.";
+
+    [Fact]
+    public void Constructor_CreatesLoggerOnce()
+    {
+        // Arrange
+        var client = CreateSkillsClient();
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(factory => factory.CreateLogger(It.IsAny<string>())).Returns(Mock.Of<ILogger>());
+
+        // Act
+        using var source = new AgentMcpSkillsSource(client.Object, loggerFactory: loggerFactory.Object);
+
+        // Assert
+        loggerFactory.Verify(factory => factory.CreateLogger(typeof(AgentMcpSkillsSource).FullName!), Times.Once());
+        loggerFactory.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ListRequest_ProjectsFrontmatterAndIncludesRequestMetadataAsync()
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry["frontmatter"]!["license"] = "MIT";
+        entry["frontmatter"]!["future-field"] = new JsonObject { ["nested"] = 42 };
+        List<JsonNode?> requests = [];
+        await using var server = CreateServer((request, _) =>
+        {
+            requests.Add(request.Params?.DeepClone());
+            return ValueTask.FromResult<JsonNode?>(ListResult(entry));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(skills));
+        Assert.Equal("unit-converter", skill.Frontmatter.Name);
+        Assert.Equal("Convert units.", skill.Frontmatter.Description);
+        Assert.Equal("MIT", skill.Frontmatter.License);
+        Assert.Null(skill.Frontmatter.Metadata);
+        var request = Assert.Single(requests)!;
+        Assert.Null(request["cursor"]);
+        Assert.Equal(client.NegotiatedProtocolVersion, request["_meta"]![MetaKeys.ProtocolVersion]!.GetValue<string>());
+        Assert.NotNull(request["_meta"]![MetaKeys.ClientCapabilities]);
+        Assert.NotNull(request["_meta"]![MetaKeys.ClientInfo]);
+    }
+
+    [Theory]
+    [InlineData("skill://FIRST/%73cope/unit-converter/SKILL.md", true)]
+    [InlineData("skill://first/%73cope/unit-converter/SKILL.md", true)]
+    [InlineData("skill://first/scope/unit-converter/SKILL.md", false)]
+    public async Task GetSkillsAsync_FilterDecorator_FiltersBySkillUriAsync(string includedUri, bool matches)
+    {
+        // Arrange
+        List<string> reads = [];
+        await using var server = CreateServer(
+            (_, _) => ValueTask.FromResult<JsonNode?>(ListResult(
+                Entry("skill://FIRST/%73cope/unit-converter/"),
+                Entry("skill://first/%73cope/unit-converter/"))),
+            (uri, _) =>
+            {
+                reads.Add(uri);
+                return ValueTask.FromResult(Text(uri, SkillContent));
+            });
+        await using var client = await server.CreateClientAsync();
+        using var source = new FilteringAgentSkillsSource(
+            new AgentMcpSkillsSource(client),
+            (skill, _) => skill is AgentMcpSkill mcpSkill &&
+                mcpSkill.Uri.Host == "first" && mcpSkill.Uri.OriginalString == includedUri);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        if (matches)
+        {
+            var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(skills));
+            Assert.Equal(includedUri, skill.Uri.OriginalString);
+            Assert.Equal("skill", skill.Uri.Scheme);
+            Assert.Equal("first", skill.Uri.Host);
+        }
+        else
+        {
+            Assert.Empty(skills);
+        }
+
+        Assert.Empty(reads);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ResourceReads_PreserveOriginalUriAsync()
+    {
+        // Arrange
+        const string RootUri = "skill://FIRST/%73cope/unit-converter/";
+        const string InstructionsUri = RootUri + "SKILL.md";
+        const string ResourceUri = RootUri + "references/checklist.md";
+        List<string> reads = [];
+        await using var server = CreateServer(
+            (_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry(RootUri))),
+            (uri, _) =>
+            {
+                reads.Add(uri);
+                return ValueTask.FromResult(Text(uri, uri == InstructionsUri ? SkillContent : "Checklist."));
+            });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())));
+
+        // Act
+        string content = await skill.GetContentAsync();
+        var resource = await skill.GetResourceAsync("references/checklist.md");
+
+        // Assert
+        Assert.Equal(InstructionsUri, skill.Uri.OriginalString);
+        Assert.Equal(SkillContent, content);
+        Assert.NotNull(resource);
+        Assert.Equal("Checklist.", await resource.ReadAsync());
+        Assert.Equal([InstructionsUri, ResourceUri], reads);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("opaque cursor:+/=\u00e9")]
+    public async Task GetSkillsAsync_PaginatedList_FollowsOpaqueCursorsAndEmptyPagesAsync(string firstCursor)
+    {
+        // Arrange
+        List<JsonNode?> requests = [];
+        List<string> reads = [];
+        await using var server = CreateServer((request, _) =>
+        {
+            requests.Add(request.Params?.DeepClone());
+            JsonObject result = requests.Count switch
+            {
+                1 => ListResult(Entry("skill://first/unit-converter/")),
+                2 => ListResult(),
+                _ => ListResult(Entry("skill://second/unit-converter/")),
+            };
+            if (requests.Count < 3)
+            {
+                result["nextCursor"] = requests.Count == 1 ? firstCursor : "last-page";
+            }
+
+            return ValueTask.FromResult<JsonNode?>(result);
+        }, (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Checklist."));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Equal(3, requests.Count);
+        Assert.Null(requests[0]!["cursor"]);
+        Assert.Equal(firstCursor, requests[1]!["cursor"]!.GetValue<string>());
+        Assert.Equal("last-page", requests[2]!["cursor"]!.GetValue<string>());
+        foreach (JsonNode? request in requests)
+        {
+            Assert.Equal(client.NegotiatedProtocolVersion, request!["_meta"]![MetaKeys.ProtocolVersion]!.GetValue<string>());
+            Assert.NotNull(request["_meta"]![MetaKeys.ClientCapabilities]);
+            Assert.NotNull(request["_meta"]![MetaKeys.ClientInfo]);
+        }
+
+        Assert.Equal(2, skills.Count);
+        Assert.Empty(reads);
+        Assert.NotNull(await skills[0].GetResourceAsync("references/checklist.md"));
+        Assert.NotNull(await skills[1].GetResourceAsync("references/checklist.md"));
+        Assert.Equal(
+            ["skill://first/unit-converter/references/checklist.md", "skill://second/unit-converter/references/checklist.md"],
+            reads);
+    }
+
+    [Theory]
+    [InlineData(null, 10, false)]
+    [InlineData(null, 10, true)]
+    [InlineData(2, 2, false)]
+    [InlineData(2, 2, true)]
+    [InlineData(11, 11, false)]
+    [InlineData(11, 11, true)]
+    public async Task GetSkillsAsync_PageLimit_IncludesEmptyPagesAndDoesNotSendExtraRequestAsync(int? limit, int expectedPages, bool exceedsLimit)
+    {
+        // Arrange
+        int calls = 0;
+        await using var server = CreateServer((_, _) =>
+        {
+            JsonObject result = ListResult();
+            calls++;
+            if (exceedsLimit || calls < expectedPages)
+            {
+                result["nextCursor"] = $"page-{calls}";
+            }
+
+            return ValueTask.FromResult<JsonNode?>(result);
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client, new() { MaxPageCount = limit });
+
+        // Act & Assert
+        if (exceedsLimit)
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+            Assert.Contains($"page count ({expectedPages})", exception.Message);
+        }
+        else
+        {
+            Assert.Empty(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        }
+
+        Assert.Equal(expectedPages, calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_RepeatedCursor_ThrowsAsync(bool cycle)
+    {
+        // Arrange
+        int calls = 0;
+        await using var server = CreateServer((_, _) =>
+        {
+            calls++;
+            JsonObject result = ListResult(Entry());
+            result["nextCursor"] = cycle && calls == 2 ? "b" : "a";
+            return ValueTask.FromResult<JsonNode?>(result);
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Assert
+        Assert.Contains("repeated pagination cursor", exception.Message);
+        Assert.Equal(cycle ? 3 : 2, calls);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_CursorsDifferingOnlyByCase_AreDistinctAsync()
+    {
+        // Arrange
+        int calls = 0;
+        await using var server = CreateServer((_, _) =>
+        {
+            JsonObject result = ListResult();
+            calls++;
+            result["nextCursor"] = calls switch { 1 => "A", 2 => "a", _ => null };
+            return ValueTask.FromResult<JsonNode?>(result);
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+        Assert.Equal(3, calls);
+    }
+
+    [Theory]
+    [InlineData("{}", typeof(JsonException))]
+    [InlineData("""{"resultType":"unknown","skills":[]}""", typeof(InvalidOperationException))]
+    [InlineData("""{"resultType":"complete","skills":[null]}""", typeof(InvalidOperationException))]
+    [InlineData("""{"resultType":"complete","skills":[],"nextCursor":42}""", typeof(JsonException))]
+    public async Task GetSkillsAsync_InvalidLaterPage_ThrowsInsteadOfReturningPartialCatalogAsync(string invalidPage, Type exceptionType)
+    {
+        // Arrange
+        int calls = 0;
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) =>
+        {
+            if (++calls > 1)
+            {
+                return ValueTask.FromResult(JsonNode.Parse(invalidPage));
+            }
+
+            JsonObject result = ListResult(Entry());
+            result["nextCursor"] = "next";
+            return ValueTask.FromResult<JsonNode?>(result);
+        }, (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Must not be read."));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        await Assert.ThrowsAsync(exceptionType, () => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        Assert.Equal(2, calls);
+        Assert.Empty(reads);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_LaterPageError_PropagatesWithoutReadingResourcesAsync()
+    {
+        // Arrange
+        int calls = 0;
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) =>
+        {
+            if (++calls > 1)
+            {
+                throw new McpProtocolException("Cannot list next page.", McpErrorCode.InternalError);
+            }
+
+            JsonObject result = ListResult(Entry());
+            result["nextCursor"] = "next";
+            return ValueTask.FromResult<JsonNode?>(result);
+        }, (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Must not be read."));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<McpProtocolException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        Assert.Equal(2, calls);
+        Assert.Empty(reads);
+    }
+
+    [Theory]
+    [InlineData(null, 99, false)]
+    [InlineData(null, 100, false)]
+    [InlineData(null, 101, true)]
+    [InlineData(2, 2, false)]
+    [InlineData(2, 3, true)]
+    [InlineData(101, 101, false)]
+    public async Task GetSkillsAsync_SkillLimit_CountsEntriesAcrossPagesIncludingDuplicatesAsync(int? limit, int count, bool exceedsLimit)
+    {
+        // Arrange
+        int calls = 0;
+        await using var server = CreateServer((_, _) =>
+        {
+            calls++;
+            JsonObject result = ListResult();
+            var entries = Assert.IsType<JsonArray>(result["skills"]);
+            for (int i = 0; i < (calls == 1 ? 1 : count - 1); i++)
+            {
+                entries.Add(Entry());
+            }
+
+            if (calls == 1)
+            {
+                result["nextCursor"] = "next";
+            }
+
+            return ValueTask.FromResult<JsonNode?>(result);
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client, new() { MaxSkillCount = limit });
+
+        // Act & Assert
+        if (exceedsLimit)
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+            Assert.Contains($"skill count ({limit ?? 100})", exception.Message);
+        }
+        else
+        {
+            Assert.Equal(count, (await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())).Count);
+        }
+
+        Assert.Equal(2, calls);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task GetSkillsAsync_LargeUnknownFields_AreAcceptedAcrossPagesAsync(int pageCount)
+    {
+        // Arrange
+        string padding = new('x', 10 * 1024 * 1024 / pageCount);
+        var client = CreateSkillsClient();
+        var responses = client.SetupSequence(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()));
+        for (int page = 0; page < pageCount; page++)
+        {
+            JsonObject result = ListResult(Entry());
+            result["unknown"] = padding;
+            if (page < pageCount - 1)
+            {
+                result["nextCursor"] = $"page-{page + 1}";
+            }
+
+            responses.ReturnsAsync(new JsonRpcResponse { Id = new RequestId(page + 1), Result = result });
+        }
+
+        using var source = new AgentMcpSkillsSource(client.Object);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.Equal(pageCount, skills.Count);
+        client.Verify(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(pageCount));
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_SkillLimit_RejectsExcessEntriesBeforeTypedDeserializationAsync()
+    {
+        // Arrange
+        var client = CreateSkillsClient();
+        client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = ListResult(Entry(), new JsonObject()) });
+        using var source = new AgentMcpSkillsSource(client.Object, options: new() { MaxSkillCount = 1 });
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+
+        // Assert
+        Assert.Contains("skill count (1)", exception.Message);
+    }
+
+    [Theory]
+    [InlineData(null, 0)]
+    [InlineData(null, 1)]
+    [InlineData(1, 0)]
+    [InlineData(1, 1)]
+    [InlineData(3, 0)]
+    [InlineData(3, 1)]
+    [InlineData(513, 0)]
+    [InlineData(513, 1)]
+    public async Task GetSkillsAsync_ResourceCountLimit_IncludesInstructionsAsync(int? configuredLimit, int excessResources)
+    {
+        // Arrange
+        int limit = configuredLimit ?? AgentMcpSkill.DefaultMaxResourceCount;
+        JsonObject entry = Entry();
+        var resources = new JsonArray(Resource(SkillUri));
+        entry["resources"] = resources;
+        while (resources.Count < limit + excessResources)
+        {
+            resources.Add(Resource($"skill://unit-converter/file-{resources.Count}.txt"));
+        }
+
+        var client = CreateSkillsClient();
+        client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = ListResult(entry) });
+        using var source = new AgentMcpSkillsSource(client.Object, new() { ResourceMaxCount = configuredLimit });
+
+        // Act & Assert
+        if (excessResources == 0)
+        {
+            Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        }
+        else
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+            Assert.Contains($"lists {limit + 1} resources, exceeding the maximum of {limit}", exception.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    [InlineData(513)]
+    public async Task GetSkillsAsync_DynamicResourceCountLimit_UsesConfiguredLimitAsync(int limit)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry["resources"] = "dynamic";
+        int reads = 0;
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)), (uri, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult(Text(uri, uri == SkillUri ? SkillContent : "x"));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client, new() { ResourceMaxCount = limit });
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        await skill.GetContentAsync();
+        for (int i = 1; i < limit; i++)
+        {
+            Assert.NotNull(await skill.GetResourceAsync($"references/file-{i}.md"));
+        }
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetResourceAsync("references/one-too-many.md"));
+        string instructions = await skill.GetContentAsync();
+
+        // Assert
+        Assert.Contains($"limit of {limit} entries", exception.Message);
+        Assert.Equal(SkillContent, instructions);
+        Assert.Equal(limit + 1, reads);
+    }
+
+    [Theory]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.MaxPageCount), 0)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.MaxPageCount), -1)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.MaxSkillCount), 0)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.MaxSkillCount), -1)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.ResourceMaxCount), 0)]
+    [InlineData(nameof(AgentMcpSkillsSourceOptions.ResourceMaxCount), -1)]
+    public void Constructor_InvalidDiscoveryLimit_Throws(string option, int limit)
+    {
+        // Arrange
+        var client = CreateSkillsClient();
+        var options = new AgentMcpSkillsSourceOptions
+        {
+            MaxPageCount = option == nameof(AgentMcpSkillsSourceOptions.MaxPageCount) ? limit : null,
+            MaxSkillCount = option == nameof(AgentMcpSkillsSourceOptions.MaxSkillCount) ? limit : null,
+            ResourceMaxCount = option == nameof(AgentMcpSkillsSourceOptions.ResourceMaxCount) ? limit : null,
+        };
+
+        // Act
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(() => new AgentMcpSkillsSource(client.Object, options));
+
+        // Assert
+        Assert.Equal(option, exception.ParamName);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_Refresh_KeepsPreviouslyReturnedManifestAsync()
+    {
+        // Arrange
+        int calls = 0;
+        List<string> reads = [];
+        JsonObject updatedEntry = Entry();
+        updatedEntry["resources"]![1]!["uri"] = "skill://unit-converter/references/updated.md";
+        await using var server = CreateServer((_, _) =>
+            ValueTask.FromResult<JsonNode?>(ListResult(++calls == 1 ? Entry() : updatedEntry)),
+            (uri, _) =>
+            {
+                reads.Add(uri);
+                return ValueTask.FromResult(Text(uri, "Checklist."));
+            });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var first = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        var updated = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        var originalResource = await first.GetResourceAsync("references/checklist.md");
+        var unavailableUpdatedResource = await first.GetResourceAsync("references/updated.md");
+        var updatedResource = await updated.GetResourceAsync("references/updated.md");
+        var unavailableOriginalResource = await updated.GetResourceAsync("references/checklist.md");
+
+        // Assert
+        Assert.NotNull(originalResource);
+        Assert.Null(unavailableUpdatedResource);
+        Assert.NotNull(updatedResource);
+        Assert.Null(unavailableOriginalResource);
+        Assert.Equal(2, calls);
+        Assert.Equal(["skill://unit-converter/references/checklist.md", "skill://unit-converter/references/updated.md"], reads);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("""{"skills":[]}""")]
+    [InlineData("""{"resultType":null,"skills":[]}""")]
+    [InlineData("""{"resultType":"complete"}""")]
+    [InlineData("""{"resultType":"complete","skills":null}""")]
+    public async Task GetSkillsAsync_InvalidListResult_ThrowsAsync(string result)
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => ValueTask.FromResult(JsonNode.Parse(result)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_MissingResult_ThrowsAsync()
+    {
+        // Arrange
+        var client = CreateSkillsClient();
+        client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = null });
+        using var source = new AgentMcpSkillsSource(client.Object);
+
+        // Act
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+
+        // Assert
+        Assert.Equal("The server returned no skills/list result.", exception.Message);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("unknown")]
+    [InlineData("Complete")]
+    public async Task GetSkillsAsync_InvalidResultType_ReportsActualValueAsync(string resultType)
+    {
+        // Arrange
+        JsonObject listResult = ListResult();
+        listResult["resultType"] = resultType;
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(listResult));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        Assert.Equal(
+            $"A skills/list result must have resultType 'complete'. Received resultType '{resultType}'.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_InvalidInputRequiredResult_PropagatesSdkErrorAsync()
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) =>
+            ValueTask.FromResult(JsonNode.Parse("""{"resultType":"input_required"}""")));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<McpException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_SingleListRequest_DoesNotReadResourcesAsync(bool empty)
+    {
+        // Arrange
+        int calls = 0;
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) =>
+        {
+            calls++;
+            return ValueTask.FromResult<JsonNode?>(empty ? ListResult() : ListResult(Entry()));
+        }, (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Must not be read."));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Equal(empty ? 0 : 1, skills.Count);
+        Assert.Equal(1, calls);
+        Assert.Empty(reads);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ListError_DoesNotReadResourcesAsync()
+    {
+        // Arrange
+        int calls = 0;
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) =>
+        {
+            calls++;
+            throw new McpProtocolException("Cannot list skills.", McpErrorCode.InternalError);
+        }, (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Resource must not be read."));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<McpProtocolException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        Assert.Equal(1, calls);
+        Assert.Empty(reads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_ListCancellation_PropagatesAsync(bool laterPage)
+    {
+        // Arrange
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int calls = 0;
+        await using var server = CreateServer(async (_, token) =>
+        {
+            if (++calls == 1 && laterPage)
+            {
+                JsonObject result = ListResult(Entry());
+                result["nextCursor"] = "next";
+                return result;
+            }
+
+            started.SetResult();
+            await release.Task.WaitAsync(token);
+            return ListResult(Entry());
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        using var cts = new CancellationTokenSource();
+
+        // Act
+        Task<IList<AgentSkill>> operation = source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), cts.Token);
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await cts.CancelAsync();
+
+            // Assert
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(laterPage ? 2 : 1, calls);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_AlreadyCancelled_SendsNoRequestAsync(bool declaresSkills)
+    {
+        // Arrange
+        int calls = 0;
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) =>
+        {
+            calls++;
+            return ValueTask.FromResult<JsonNode?>(ListResult());
+        }, (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Must not be read."));
+        });
+        await using var client = await server.CreateClientAsync();
+        if (!declaresSkills)
+        {
+            client.ServerCapabilities.Extensions = null;
+        }
+
+        using var source = new AgentMcpSkillsSource(client);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), cts.Token));
+        Assert.Equal(0, calls);
+        Assert.Empty(reads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_NoDeclaration_ReturnsEmptyWithoutRequestsAsync(bool smallResourceLimit)
+    {
+        // Arrange
+        int calls = 0;
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) =>
+        {
+            calls++;
+            return ValueTask.FromResult<JsonNode?>(ListResult(Entry()));
+        }, (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri,
+                """{"skills":[{"name":"older-skill","description":"Older server.","type":"skill-md","url":"skill://older-skill/SKILL.md"}]}"""));
+        });
+        await using var client = await server.CreateClientAsync();
+        client.ServerCapabilities.Extensions = null;
+        using var source = new AgentMcpSkillsSource(client, smallResourceLimit
+            ? new() { MaxResourceSizeBytes = 1 }
+            : null);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+        Assert.Empty(reads);
+        Assert.Equal(0, calls);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("null")]
+    public async Task GetSkillsAsync_DeclaredButMissingList_DoesNotReadResourcesAsync(string declaration)
+    {
+        // Arrange
+        List<string> reads = [];
+        await using var server = new InMemoryMcpServer(builder => builder.WithReadResourceHandler((request, _) =>
+        {
+            reads.Add(request.Params!.Uri);
+            return ValueTask.FromResult(Text(request.Params.Uri, "{}"));
+        }));
+        await using var client = await server.CreateClientAsync();
+        client.ServerCapabilities.Extensions = new Dictionary<string, object>
+        {
+            ["io.modelcontextprotocol/skills"] = JsonSerializer.Deserialize<JsonElement>(declaration),
+        };
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<McpProtocolException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        Assert.Equal(McpErrorCode.MethodNotFound, exception.ErrorCode);
+        Assert.Empty(reads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_EmptyOrDynamicList_DoesNotReadResourcesAsync(bool dynamic)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry["resources"] = "dynamic";
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(dynamic ? ListResult(entry) : ListResult()),
+            (uri, _) =>
+            {
+                reads.Add(uri);
+                return ValueTask.FromResult(Text(uri, "{}"));
+            });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        if (dynamic)
+        {
+            Assert.IsType<AgentMcpSkill>(Assert.Single(skills));
+        }
+        else
+        {
+            Assert.Empty(skills);
+        }
+
+        Assert.Empty(reads);
+    }
+
+    [Theory]
+    [InlineData("uri", "null", typeof(JsonException))]
+    [InlineData("uri", "\"skill://other/SKILL.md\"", typeof(InvalidOperationException))]
+    [InlineData("uri", "\"relative/SKILL.md\"", typeof(InvalidOperationException))]
+    [InlineData("frontmatter", "null", typeof(JsonException))]
+    [InlineData("frontmatter", "[]", typeof(JsonException))]
+    [InlineData("frontmatter", "\"metadata\"", typeof(JsonException))]
+    [InlineData("frontmatter", "{}", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"unit-converter"}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"description":"Convert units."}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":null,"description":"Convert units."}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":42,"description":"Convert units."}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"INVALID","description":"Description."}""", typeof(InvalidOperationException))]
+    [InlineData("frontmatter", """{"name":"unit-converter","description":null}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"unit-converter","description":false}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"unit-converter","description":"Convert units.","compatibility":42}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"unit-converter","description":"Convert units.","compatibility":true}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"unit-converter","description":"Convert units.","compatibility":{}}""", typeof(JsonException))]
+    [InlineData("frontmatter", """{"name":"unit-converter","description":"Convert units.","compatibility":[]}""", typeof(JsonException))]
+    [InlineData("resources", "null", typeof(JsonException))]
+    [InlineData("resources", "false", typeof(JsonException))]
+    [InlineData("resources", "\"other\"", typeof(JsonException))]
+    [InlineData("resources", "\"Dynamic\"", typeof(JsonException))]
+    [InlineData("resources", "{}", typeof(JsonException))]
+    [InlineData("resources", "[null]", typeof(InvalidOperationException))]
+    [InlineData("resources", "[42]", typeof(JsonException))]
+    [InlineData("resources", "[[]]", typeof(JsonException))]
+    [InlineData("resources", "[{}]", typeof(JsonException))]
+    [InlineData("resources", """[{"uri":null}]""", typeof(JsonException))]
+    [InlineData("resources", """[{"uri":42}]""", typeof(JsonException))]
+    [InlineData("resources", """[{"uri":true}]""", typeof(JsonException))]
+    public async Task GetSkillsAsync_InvalidEntry_ThrowsAsync(string field, string value, Type exceptionType)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry[field] = JsonNode.Parse(value);
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        await Assert.ThrowsAsync(exceptionType, () => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+    }
+
+    [Theory]
+    [InlineData("name", 0, "Skill name is required.")]
+    [InlineData("name", 65, "Skill name must be 64 characters or fewer.")]
+    [InlineData("description", 0, "Skill description is required.")]
+    [InlineData("description", 1025, "Skill description must be 1024 characters or fewer.")]
+    [InlineData("compatibility", 501, "Skill compatibility must be 500 characters or fewer.")]
+    public async Task GetSkillsAsync_InvalidFrontmatter_ReportsValidationReasonAsync(string field, int length, string reason)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry["frontmatter"]![field] = new string('a', length);
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Assert
+        Assert.Equal($"Skill '{SkillUri}' has invalid frontmatter: {reason}", exception.Message);
+    }
+
+    [Theory]
+    [InlineData("uri")]
+    [InlineData("frontmatter")]
+    [InlineData("resources")]
+    public async Task GetSkillsAsync_MissingEntryField_ThrowsAsync(string field)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry.Remove(field);
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+    }
+
+    [Theory]
+    [InlineData("uri", "\"skill://other/checklist.md\"", typeof(InvalidOperationException))]
+    [InlineData("uri", "\"skill://unit-converter/../escape.md\"", typeof(InvalidOperationException))]
+    [InlineData("uri", "\"skill://unit-converter/%252e%252e/escape.md\"", typeof(InvalidOperationException))]
+    [InlineData("uri", "\"skill://unit-converter/\"", typeof(InvalidOperationException))]
+    [InlineData("uri", "null", typeof(JsonException))]
+    public async Task GetSkillsAsync_InvalidManifestEntry_ThrowsAsync(string field, string value, Type exceptionType)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry["resources"]![1]![field] = JsonNode.Parse(value);
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        await Assert.ThrowsAsync(exceptionType, () => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+    }
+
+    [Theory]
+    [InlineData(0, "uri")]
+    [InlineData(1, "uri")]
+    [InlineData(0, "digest")]
+    [InlineData(1, "digest")]
+    [InlineData(0, "size")]
+    [InlineData(1, "size")]
+    public async Task GetSkillsAsync_MissingResourceField_ThrowsAsync(int resourceIndex, string field)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        Assert.IsType<JsonObject>(entry["resources"]![resourceIndex]).Remove(field);
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        JsonException exception = await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        Assert.Contains(field, exception.Message);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("sha256:abc")]
+    [InlineData("sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [InlineData("SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [InlineData("sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+    [InlineData("sha256:gaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [InlineData("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")]
+    public async Task GetSkillsAsync_InvalidDigest_ThrowsBeforeReadingAsync(string digest)
+    {
+        foreach (int resourceIndex in new[] { 0, 1 })
+        {
+            // Arrange
+            JsonObject entry = Entry();
+            entry["resources"]![resourceIndex]!["digest"] = digest;
+            List<string> reads = [];
+            await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)), (uri, _) =>
+            {
+                reads.Add(uri);
+                return ValueTask.FromResult(Text(uri, "Must not be read."));
+            });
+            await using var client = await server.CreateClientAsync();
+            using var source = new AgentMcpSkillsSource(client);
+
+            // Act
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+            // Assert
+            Assert.Contains("digest", exception.Message);
+            Assert.Contains(entry["resources"]![resourceIndex]!["uri"]!.GetValue<string>(), exception.Message);
+            Assert.Empty(reads);
+        }
+    }
+
+    [Theory]
+    [InlineData(0, -1L)]
+    [InlineData(1, -1L)]
+    [InlineData(0, long.MinValue)]
+    [InlineData(1, long.MinValue)]
+    public async Task GetSkillsAsync_NegativeSize_ThrowsAsync(int resourceIndex, long size)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry["resources"]![resourceIndex]!["size"] = size;
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Assert
+        Assert.Contains("nonnegative size", exception.Message);
+        Assert.Contains(entry["resources"]![resourceIndex]!["uri"]!.GetValue<string>(), exception.Message);
+    }
+
+    [Theory]
+    [InlineData(0, 16_777_217L)]
+    [InlineData(1, 16_777_217L)]
+    [InlineData(0, long.MaxValue)]
+    [InlineData(1, long.MaxValue)]
+    public async Task GetSkillsAsync_OversizedResource_ThrowsWithoutReadingAsync(int resourceIndex, long size)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry["resources"]![resourceIndex]!["size"] = size;
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)), (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, SkillContent));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Assert
+        Assert.Contains("maximum allowed size (16777216 bytes)", exception.Message);
+        Assert.Contains(entry["resources"]![resourceIndex]!["uri"]!.GetValue<string>(), exception.Message);
+        Assert.Empty(reads);
+    }
+
+    [Theory]
+    [InlineData(null, 0)]
+    [InlineData(null, 1)]
+    [InlineData(200L, 0)]
+    [InlineData(200L, 1)]
+    [InlineData(2_097_152L, 0)]
+    [InlineData(2_097_152L, 1)]
+    public async Task GetSkillsAsync_ResourceLimit_AppliesToCombinedSizeAsync(long? configuredLimit, int excessBytes)
+    {
+        // Arrange
+        long limit = configuredLimit ?? 16_777_216L;
+        JsonObject entry = Entry();
+
+        // Split the limit between SKILL.md and the checklist; the icon (4 bytes) and empty.txt (0 bytes) stay unchanged.
+        entry["resources"]![0]!["size"] = limit / 2;
+        entry["resources"]![1]!["size"] = limit - (limit / 2) - 4 + excessBytes;
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client, new() { MaxResourceSizeBytes = configuredLimit });
+
+        // Act & Assert
+        if (excessBytes == 0)
+        {
+            Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        }
+        else
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+            Assert.Contains($"maximum combined size ({limit} bytes)", exception.Message);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_ConfiguredResourceLimit_IsAppliedToReadsAsync(bool instructions)
+    {
+        // Arrange
+        // The limit covers the listed sizes: SKILL.md, the checklist (10 bytes), and the icon (4 bytes).
+        long limit = Encoding.UTF8.GetByteCount(SkillContent) + 14;
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())),
+            (uri, _) => ValueTask.FromResult(Text(uri, new string('x', (int)limit + 1))));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client, new() { MaxResourceSizeBytes = limit });
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            if (instructions)
+            {
+                await skill.GetContentAsync();
+            }
+            else
+            {
+                await skill.GetResourceAsync("references/checklist.md");
+            }
+        });
+
+        // Assert
+        Assert.Contains($"maximum allowed size ({limit} bytes)", exception.Message);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_RaisedResourceLimit_AllowsLargerReadsAsync()
+    {
+        // Arrange
+        string content = new('x', 1_048_577);
+        JsonObject entry = Entry();
+        entry["resources"]![1] = Resource("skill://unit-converter/references/checklist.md", content);
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)),
+            (uri, _) => ValueTask.FromResult(Text(uri, content)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client, new() { MaxResourceSizeBytes = 2_097_152 });
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act
+        var resource = await skill.GetResourceAsync("references/checklist.md");
+
+        // Assert
+        Assert.NotNull(resource);
+        Assert.Equal(content, await resource.ReadAsync());
+    }
+
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    [InlineData(long.MinValue)]
+    public void Constructor_InvalidResourceLimit_Throws(long limit)
+    {
+        // Arrange
+        var client = CreateSkillsClient();
+        var options = new AgentMcpSkillsSourceOptions
+        {
+            MaxResourceSizeBytes = limit,
+        };
+
+        // Act
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(() => new AgentMcpSkillsSource(client.Object, options));
+
+        // Assert
+        Assert.Equal(nameof(options.MaxResourceSizeBytes), exception.ParamName);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_LargeManifest_IsNotSubjectToResourceSizeLimitAsync()
+    {
+        // Arrange
+        JsonObject result = ListResult(Entry());
+        result["padding"] = new string('x', 1_048_577);
+        var client = CreateSkillsClient();
+        client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JsonRpcResponse { Id = new RequestId(1), Result = result });
+        using var source = new AgentMcpSkillsSource(client.Object);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.Single(skills);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_Refresh_KeepsPreviouslyReturnedDigestsAndSizesAsync()
+    {
+        // Arrange
+        const string UpdatedInstructions = SkillContent + "\nUpdated instructions.";
+        const string ResourceUri = "skill://unit-converter/references/checklist.md";
+        JsonObject updatedEntry = Entry(content: UpdatedInstructions);
+        updatedEntry["resources"]![1] = Resource(ResourceUri, "Updated checklist.");
+        int calls = 0;
+        await using var server = CreateServer((_, _) =>
+            ValueTask.FromResult<JsonNode?>(ListResult(++calls == 1 ? Entry() : updatedEntry)),
+            (uri, _) => ValueTask.FromResult(Text(uri, uri == SkillUri ? UpdatedInstructions : "Updated checklist.")));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var first = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        var updated = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await first.GetContentAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await first.GetResourceAsync("references/checklist.md"));
+        Assert.Equal(UpdatedInstructions, await updated.GetContentAsync());
+        var resource = Assert.IsType<AgentMcpSkillResource>(await updated.GetResourceAsync("references/checklist.md"));
+        Assert.Equal("Updated checklist.", await resource.ReadAsync());
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ResourceMetadata_ReturnsReadableSkillAsync()
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)), (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, uri == SkillUri ? SkillContent : "Checklist."));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        string instructions = await skill.GetContentAsync();
+        var supportingResource = await skill.GetResourceAsync("references/checklist.md");
+
+        // Assert
+        Assert.Equal(SkillContent, instructions);
+        Assert.NotNull(supportingResource);
+        Assert.Equal("Checklist.", await supportingResource.ReadAsync());
+        Assert.Equal([SkillUri, "skill://unit-converter/references/checklist.md"], reads);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_UnknownFieldsAndCaseVariants_AreIgnoredAsync()
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry["Uri"] = null;
+        entry["Frontmatter"] = false;
+        entry["Resources"] = 42;
+        entry["future-field"] = new JsonArray(1, 2);
+        entry["frontmatter"]!["Name"] = null;
+        entry["frontmatter"]!["Description"] = false;
+        entry["resources"]![1]!["Uri"] = null;
+        entry["resources"]![1]!["Digest"] = 42;
+        entry["resources"]![1]!["Size"] = "ignored";
+        JsonObject listResult = ListResult(entry);
+        listResult["ttlMs"] = 300000;
+        listResult["cacheScope"] = "public";
+        listResult["NextCursor"] = "ignored-case-variant";
+        listResult["future-field"] = true;
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(listResult));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Assert
+        Assert.Equal("unit-converter", skill.Frontmatter.Name);
+        Assert.Equal("Convert units.", skill.Frontmatter.Description);
+    }
+
+    [Theory]
+    [InlineData("null", typeof(JsonException))]
+    [InlineData("42", typeof(JsonException))]
+    [InlineData("\"skill://other/SKILL.md\"", typeof(InvalidOperationException))]
+    [InlineData("\"skill://unit-converter/../SKILL.md\"", typeof(InvalidOperationException))]
+    public async Task GetSkillsAsync_InvalidInstructionUri_ThrowsBeforeSkippingAsync(string value, Type exceptionType)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry["resources"]![0]!["uri"] = JsonNode.Parse(value);
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)), (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Must not be read."));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        await Assert.ThrowsAsync(exceptionType, () => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        Assert.Empty(reads);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_DuplicateManifestUri_ThrowsWithoutReadingAsync()
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        var resources = Assert.IsType<JsonArray>(entry["resources"]);
+        resources.Add(Resource("skill://unit-converter/references/checklist.md"));
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)), (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Checklist."));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Assert
+        Assert.Contains("duplicate resource URI", exception.Message);
+        Assert.Empty(reads);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task GetSkillsAsync_InstructionsManifestEntry_IsRequiredAsync(bool includeInstructions, bool includeSupportingResources)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        var resources = Assert.IsType<JsonArray>(entry["resources"]);
+        resources.RemoveAt(0);
+
+        if (!includeSupportingResources)
+        {
+            resources.Clear();
+        }
+
+        if (includeInstructions)
+        {
+            resources.Insert(0, Resource(SkillUri));
+        }
+
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)), (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, SkillContent));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        if (!includeInstructions)
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+            Assert.Contains("must include SKILL.md", exception.Message);
+            Assert.Empty(reads);
+            return;
+        }
+
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        var instructionResource = await skill.GetResourceAsync("SKILL.md");
+
+        // Assert
+        Assert.Null(instructionResource);
+        Assert.Empty(reads);
+        Assert.Equal(SkillContent, await skill.GetContentAsync());
+        Assert.Equal(SkillUri, Assert.Single(reads));
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_NullEntry_ThrowsAsync()
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult((JsonNode?)null)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_DuplicateUri_ReturnsAllEntriesWithoutWarningsAsync(bool conflicting)
+    {
+        // Arrange
+        JsonObject duplicate = Entry();
+
+        if (conflicting)
+        {
+            duplicate["frontmatter"]!["description"] = "Changed description.";
+            duplicate["resources"]![1]!["uri"] = "skill://unit-converter/references/changed.md";
+        }
+
+        JsonObject another = (JsonObject)duplicate.DeepClone();
+
+        if (conflicting)
+        {
+            another["frontmatter"]!["description"] = "Another description.";
+        }
+
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry(), duplicate, another)));
+        await using var client = await server.CreateClientAsync();
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        using var source = new AgentMcpSkillsSource(client, loggerFactory: loggerFactory.Object);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Equal(3, skills.Count);
+        var skill = Assert.IsType<AgentMcpSkill>(skills[0]);
+        Assert.Equal("Convert units.", skill.Frontmatter.Description);
+        Assert.Null(await skill.GetResourceAsync("references/changed.md"));
+        var secondSkill = Assert.IsType<AgentMcpSkill>(skills[1]);
+        Assert.Equal(conflicting ? "Changed description." : "Convert units.", secondSkill.Frontmatter.Description);
+        var thirdSkill = Assert.IsType<AgentMcpSkill>(skills[2]);
+        Assert.Equal(conflicting ? "Another description." : "Convert units.", thirdSkill.Frontmatter.Description);
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never());
+    }
+
+    [Theory]
+    [InlineData("skill://unit-converter/")]
+    [InlineData("skill://acme/unit-converter/")]
+    [InlineData("github://owner/repo/skills/unit-converter/")]
+    [InlineData("custom:skills/unit-converter/")]
+    [InlineData("custom:unit-converter/")]
+    public async Task GetContentAsync_LazyAndOriginBound_PreservesSchemeAsync(string root)
+    {
+        // Arrange
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry(root))),
+            (uri, _) =>
+            {
+                reads.Add(uri);
+                return ValueTask.FromResult(Text(uri, SkillContent));
+            });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+
+        // Act
+        var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())));
+        Assert.Empty(reads);
+        string content = await skill.GetContentAsync();
+        string cached = await skill.GetContentAsync();
+
+        // Assert
+        Assert.Equal(SkillContent, content);
+        Assert.Equal(content, cached);
+        Assert.Equal(root + "SKILL.md", Assert.Single(reads));
+        Assert.Null(skill.Frontmatter.License);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetContentAsync_BlobSkillMd_ThrowsAsync(bool invalidUtf8)
+    {
+        // Arrange
+        byte[] bytes = invalidUtf8 ? [0xff] : Encoding.UTF8.GetBytes(SkillContent);
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())), (uri, _) =>
+            ValueTask.FromResult(new ReadResourceResult
+            {
+                Contents = [BlobResourceContents.FromBytes(bytes, uri, "text/markdown")],
+            }));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+        Assert.Equal($"The MCP server returned no text content for SKILL.md resource '{SkillUri}'.", exception.Message);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetContentAsync_EmptySkillMd_ThrowsAsync(bool noContents)
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())),
+            (uri, _) => ValueTask.FromResult(noContents ? new ReadResourceResult { Contents = [] } : Text(uri, "")));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task GetContentAsync_MultipleContentBlocks_ThrowsAsync(bool firstText, bool secondText)
+    {
+        // Arrange
+        byte[] bytes = Encoding.UTF8.GetBytes(SkillContent);
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())), (uri, _) =>
+            ValueTask.FromResult(new ReadResourceResult
+            {
+                Contents =
+                [
+                    firstText
+                        ? new TextResourceContents { Uri = uri, Text = SkillContent }
+                        : BlobResourceContents.FromBytes(bytes, uri),
+                    secondText
+                        ? new TextResourceContents { Uri = uri, Text = SkillContent }
+                        : BlobResourceContents.FromBytes(bytes, uri),
+                ],
+            }));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+
+        // Assert
+        Assert.Contains("exactly one text or binary content block", exception.Message);
+        Assert.Contains(SkillUri, exception.Message);
+    }
+
+    [Fact]
+    public async Task GetContentAsync_SameUriOnDifferentServers_ReadsFromEachOriginAsync()
+    {
+        // Arrange
+        await using var firstServer = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry(content: SkillContent + "\nFirst server."))),
+            (uri, _) => ValueTask.FromResult(Text(uri, SkillContent + "\nFirst server.")));
+        await using var secondServer = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry(content: SkillContent + "\nSecond server."))),
+            (uri, _) => ValueTask.FromResult(Text(uri, SkillContent + "\nSecond server.")));
+        await using var firstClient = await firstServer.CreateClientAsync();
+        await using var secondClient = await secondServer.CreateClientAsync();
+        using var firstSource = new AgentMcpSkillsSource(firstClient);
+        using var secondSource = new AgentMcpSkillsSource(secondClient);
+        var firstSkill = Assert.Single(await firstSource.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        var secondSkill = Assert.Single(await secondSource.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act & Assert
+        Assert.Equal(SkillContent + "\nFirst server.", await firstSkill.GetContentAsync());
+        Assert.Equal(SkillContent + "\nSecond server.", await secondSkill.GetContentAsync());
+    }
+
+    [Theory]
+    [InlineData("name")]
+    [InlineData("description")]
+    public async Task GetContentAsync_FetchedFrontmatterDiffersFromListing_ThrowsAsync(string field)
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry["frontmatter"]![field] = field == "name" ? "other-skill" : "Changed description.";
+        if (field == "name")
+        {
+            entry["uri"] = "skill://other-skill/SKILL.md";
+        }
+
+        entry["resources"] = new JsonArray(Resource(entry["uri"]!.GetValue<string>(), SkillContent));
+
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)),
+            (uri, _) => ValueTask.FromResult(Text(uri, SkillContent)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+        Assert.Contains($"JSON pointer '/{field}'", exception.Message);
+        Assert.Contains(entry["uri"]!.GetValue<string>(), exception.Message);
+    }
+
+    [Theory]
+    [InlineData("|", "Convert units.\n")]
+    [InlineData(">", "Convert units.\n")]
+    [InlineData("|-", "Convert units.")]
+    [InlineData(">-", "Convert units.")]
+    [InlineData("|+", "Convert units.\n\n")]
+    [InlineData(">+", "Convert units.\n\n")]
+    [InlineData("|2-", "Convert units.")]
+    [InlineData(">2-", "Convert units.")]
+    [InlineData("|2+", "Convert units.\n\n")]
+    [InlineData(">2+", "Convert units.\n\n")]
+    public async Task GetContentAsync_BlockScalarMatchesListing_ReturnsAndCachesContentAsync(string indicator, string description)
+    {
+        // Arrange
+        string content = $"---\nname: unit-converter\ndescription: {indicator}\n  Convert units.\n\n---\nInstructions.";
+        JsonObject entry = Entry(content: content);
+        entry["frontmatter"]!["description"] = description;
+        int reads = 0;
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)), (uri, _) =>
+        {
+            reads++;
+            return ValueTask.FromResult(Text(uri, content));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act
+        string loaded = await skill.GetContentAsync();
+        string cached = await skill.GetContentAsync();
+
+        // Assert
+        Assert.Equal(content, loaded);
+        Assert.Equal(content, cached);
+        Assert.Equal(description, skill.Frontmatter.Description);
+        Assert.Equal(1, reads);
+    }
+
+    [Theory]
+    [InlineData("|", "Convert units.")]
+    [InlineData(">", "Convert units.")]
+    [InlineData("|-", "Convert units.\n")]
+    [InlineData(">-", "Convert units.\n")]
+    [InlineData("|+", "Convert units.\n")]
+    [InlineData(">+", "Convert units.\n")]
+    public async Task GetContentAsync_BlockScalarTrailingNewlinesDifferFromListing_ThrowsAsync(string indicator, string description)
+    {
+        // Arrange
+        string content = $"---\nname: unit-converter\ndescription: {indicator}\n  Convert units.\n\n---\nInstructions.";
+        JsonObject entry = Entry(content: content);
+        entry["frontmatter"]!["description"] = description;
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)),
+            (uri, _) => ValueTask.FromResult(Text(uri, content)));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+        Assert.Contains("JSON pointer '/description'", exception.Message);
+    }
+
+    [Fact]
+    public async Task GetContentAsync_InvalidFrontmatter_LogsParserDiagnosticAsync()
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry(content: "No frontmatter."))),
+            (uri, _) => ValueTask.FromResult(Text(uri, "No frontmatter.")));
+        await using var client = await server.CreateClientAsync();
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        using var source = new AgentMcpSkillsSource(client, loggerFactory: loggerFactory.Object);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetContentAsync());
+        logger.Verify(
+            l => l.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) => state.ToString()!.Contains(SkillUri)),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once());
+    }
+
+    [Theory]
+    [InlineData("references/checklist.md", false)]
+    [InlineData("references\\checklist.md", false)]
+    [InlineData("assets/icon.bin", true)]
+    [InlineData("empty.txt", false)]
+    public async Task GetResourceAsync_ManifestFile_ReturnsTextOrBinaryAsync(string name, bool binary)
+    {
+        // Arrange
+        List<string> reads = [];
+        string uri = "skill://unit-converter/" + name.Replace('\\', '/');
+        byte[] bytes = [1, 2, 3, 4];
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())), (requested, _) =>
+        {
+            reads.Add(requested);
+            return ValueTask.FromResult(binary
+                ? new ReadResourceResult { Contents = [BlobResourceContents.FromBytes(bytes, requested, "application/octet-stream")] }
+                : Text(requested, name == "empty.txt" ? "" : "Checklist."));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act
+        var resource = await skill.GetResourceAsync(name);
+        var content = await Assert.IsType<AgentMcpSkillResource>(resource).ReadAsync();
+
+        // Assert
+        Assert.Equal(uri, Assert.Single(reads));
+        if (binary)
+        {
+            var data = Assert.IsType<DataContent>(content);
+            Assert.Equal(bytes, data.Data.ToArray());
+            Assert.Equal("application/octet-stream", data.MediaType);
+        }
+        else
+        {
+            Assert.Equal(name == "empty.txt" ? null : "Checklist.", content);
+        }
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task GetResourceAsync_MultipleContentBlocks_ThrowsAsync(bool firstText, bool secondText)
+    {
+        // Arrange
+        byte[] bytes = Encoding.UTF8.GetBytes("Checklist.");
+        JsonObject entry = Entry();
+        entry["resources"]![1] = Resource("skill://unit-converter/references/checklist.md", bytes);
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)), (uri, _) =>
+            ValueTask.FromResult(new ReadResourceResult
+            {
+                Contents =
+                [
+                    firstText
+                        ? new TextResourceContents { Uri = uri, Text = "Checklist." }
+                        : BlobResourceContents.FromBytes(bytes, uri),
+                    secondText
+                        ? new TextResourceContents { Uri = "skill://other/checklist.md", Text = "Checklist." }
+                        : BlobResourceContents.FromBytes(bytes, "skill://other/checklist.md"),
+                ],
+            }));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.IsType<AgentMcpSkill>(Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create())));
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => await skill.GetResourceAsync("references/checklist.md"));
+
+        // Assert
+        Assert.Contains("exactly one text or binary content block", exception.Message);
+        Assert.Contains("skill://unit-converter/references/checklist.md", exception.Message);
+    }
+
+    [Theory]
+    [InlineData(null, typeof(ArgumentNullException))]
+    [InlineData("", typeof(ArgumentException))]
+    [InlineData(" ", typeof(ArgumentException))]
+    [InlineData("\t\r\n", typeof(ArgumentException))]
+    public async Task GetResourceAsync_NullOrWhitespaceName_ThrowsWithoutReadingAsync(string? name, Type exceptionType)
+    {
+        // Arrange
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())), (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Must not be read."));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act
+        var exception = await Assert.ThrowsAsync(exceptionType, async () => await skill.GetResourceAsync(name!));
+
+        // Assert
+        Assert.Equal("name", Assert.IsAssignableFrom<ArgumentException>(exception).ParamName);
+        Assert.Empty(reads);
+    }
+
+    [Theory]
+    [InlineData("../escape.md")]
+    [InlineData("%252e%252e/escape.md")]
+    [InlineData("/etc/passwd")]
+    [InlineData("https://example.com/escape.md")]
+    [InlineData("references/guide.md?value=%00")]
+    [InlineData("not-listed.md")]
+    public async Task GetResourceAsync_UnsafeOrUnlistedName_DoesNotReadOrLogAsync(string name)
+    {
+        // Arrange
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())), (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, "Must not be read."));
+        });
+        await using var client = await server.CreateClientAsync();
+        var logger = new Mock<ILogger>();
+        logger.Setup(l => l.IsEnabled(It.IsAny<LogLevel>())).Returns(true);
+        var loggerFactory = new Mock<ILoggerFactory>();
+        loggerFactory.Setup(f => f.CreateLogger(It.IsAny<string>())).Returns(logger.Object);
+        using var source = new AgentMcpSkillsSource(client, loggerFactory: loggerFactory.Object);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        logger.Invocations.Clear();
+
+        // Act
+        var resource = await skill.GetResourceAsync(name);
+
+        // Assert
+        Assert.Null(resource);
+        Assert.Empty(reads);
+        logger.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(McpErrorCode.ResourceNotFound)]
+    [InlineData(McpErrorCode.InternalError)]
+    public async Task GetResourceAsync_ReadFailure_HandlesExpectedErrorAsync(McpErrorCode errorCode)
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())),
+            (_, _) => throw new McpProtocolException("Resource unavailable.", errorCode));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act & Assert
+        if (errorCode == McpErrorCode.ResourceNotFound)
+        {
+            Assert.Null(await skill.GetResourceAsync("references/checklist.md"));
+        }
+        else
+        {
+            var exception = await Assert.ThrowsAsync<McpProtocolException>(async () => await skill.GetResourceAsync("references/checklist.md"));
+            Assert.Equal(errorCode, exception.ErrorCode);
+        }
+    }
+
+    [Fact]
+    public async Task GetResourceAsync_Cancelled_PropagatesAsync()
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())),
+            (uri, _) => ValueTask.FromResult(Text(uri, "Checklist.")));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await skill.GetResourceAsync("references/checklist.md", cts.Token));
+    }
+
+    [Fact]
+    public async Task GetContentAsync_TextBlock_DoesNotRequireUriMatchAsync()
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())), (uri, _) =>
+            ValueTask.FromResult(new ReadResourceResult
+            {
+                Contents = [new TextResourceContents { Uri = "skill://other/SKILL.md", Text = SkillContent }],
+            }));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act
+        string content = await skill.GetContentAsync();
+
+        // Assert
+        Assert.Equal(SkillContent, content);
+    }
+
+    [Fact]
+    public async Task GetResourceAsync_TextBlock_DoesNotRequireUriMatchAsync()
+    {
+        // Arrange
+        JsonObject entry = Entry();
+        entry["resources"]![1] = Resource("skill://unit-converter/references/checklist.md", "Checklist.");
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(entry)), (uri, _) =>
+            ValueTask.FromResult(new ReadResourceResult
+            {
+                Contents = [new TextResourceContents { Uri = "skill://other/checklist.md", Text = "Checklist." }],
+            }));
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        var skill = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+
+        // Act
+        var resource = Assert.IsType<AgentMcpSkillResource>(await skill.GetResourceAsync("references/checklist.md"));
+        var content = await resource.ReadAsync();
+
+        // Assert
+        Assert.Equal("Checklist.", content);
+    }
+
+    [Fact]
+    public async Task ReadAsync_EmptyResourceContent_ReturnsNullAsync()
+    {
+        // Arrange
+        var resource = new AgentMcpSkillResource("empty.txt", new TextResourceContents { Uri = "skill://unit-converter/empty.txt", Text = "" });
+
+        // Act
+        var content = await resource.ReadAsync();
+
+        // Assert
+        Assert.Null(content);
+    }
+
+    [Fact]
+    public async Task UseMcpSkills_ServerWithSkillsExtension_ExposesWorkingSkillToolsAsync()
+    {
+        // Arrange
+        await using var server = CreateServer((_, _) => ValueTask.FromResult<JsonNode?>(ListResult(Entry())),
+            (uri, _) => ValueTask.FromResult(Text(uri, uri == SkillUri ? SkillContent : "Checklist.")));
+        await using var client = await server.CreateClientAsync();
+        using var provider = new AgentSkillsProviderBuilder().UseMcpSkills(client).Build();
+        var context = new AIContextProvider.InvokingContext(TestAgentSkillsSourceContextFactory.Create().Agent, session: null, new AIContext());
+        using var services = new ServiceCollection().BuildServiceProvider();
+
+        // Act
+        var result = await provider.InvokingAsync(context, CancellationToken.None);
+        var loadTool = Assert.IsType<AIFunction>(Assert.Single(result.Tools!, tool => tool.Name == "load_skill"), exactMatch: false);
+        var resourceTool = Assert.IsType<AIFunction>(Assert.Single(result.Tools!, tool => tool.Name == "read_skill_resource"), exactMatch: false);
+        var loaded = await loadTool.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?> { ["skillName"] = "unit-converter" }));
+        var resource = await resourceTool.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?>
+        {
+            ["skillName"] = "unit-converter",
+            ["resourceName"] = "references/checklist.md",
+        })
+        { Services = services });
+
+        // Assert
+        Assert.Contains("unit-converter", result.Instructions);
+        Assert.Equal(SkillContent, loaded!.ToString());
+        Assert.Equal("Checklist.", resource!.ToString());
+    }
+
+    /// <summary>
+    /// Creates a server-listed skill with its name, description, and resources, including <c>SKILL.md</c>.
+    /// </summary>
+    private static JsonObject Entry(string root = "skill://unit-converter/", string content = SkillContent) => new()
+    {
+        ["uri"] = root + "SKILL.md",
+        ["frontmatter"] = new JsonObject
+        {
+            ["name"] = "unit-converter",
+            ["description"] = "Convert units.",
+        },
+        ["resources"] = new JsonArray(
+            Resource(root + "SKILL.md", content),
+            Resource(root + "references/checklist.md"),
+            Resource(root + "assets/icon.bin"),
+            Resource(root + "empty.txt")),
+    };
+
+    /// <summary>
+    /// Creates a resource entry with the expected size and content hash for the URI's default test content.
+    /// </summary>
+    private static JsonObject Resource(string uri) => uri.EndsWith("/assets/icon.bin", StringComparison.Ordinal)
+        ? Resource(uri, new byte[] { 1, 2, 3, 4 })
+        : Resource(uri, uri.EndsWith("/SKILL.md", StringComparison.Ordinal) ? SkillContent
+            : uri.EndsWith("/empty.txt", StringComparison.Ordinal) ? "" : "Checklist.");
+
+    /// <summary>
+    /// Creates a resource entry with the supplied text's expected size and content hash.
+    /// </summary>
+    private static JsonObject Resource(string uri, string text) => Resource(uri, Encoding.UTF8.GetBytes(text));
+
+    /// <summary>
+    /// Creates a resource entry with the supplied bytes' expected size and content hash.
+    /// </summary>
+    [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase", Justification = "Resource digests require lowercase hexadecimal characters.")]
+    private static JsonObject Resource(string uri, byte[] bytes) => new()
+    {
+        ["uri"] = uri,
+        ["digest"] = "sha256:" + Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+        ["size"] = bytes.Length,
+    };
+
+    /// <summary>
+    /// Creates a skills/list response containing the supplied entries.
+    /// </summary>
+    private static JsonObject ListResult(params JsonNode?[] entries) => new()
+    {
+        ["resultType"] = "complete",
+        ["skills"] = new JsonArray(entries),
+    };
+
+    /// <summary>
+    /// Creates a text response that can be reused from the cache.
+    /// </summary>
+    private static ReadResourceResult Text(string uri, string text) => new()
+    {
+        Contents = [new TextResourceContents { Uri = uri, Text = text }],
+        TimeToLive = TimeSpan.FromMinutes(1),
+    };
+
+    /// <summary>
+    /// Creates an in-memory server with test handlers, defaulting resource scopes to public.
+    /// </summary>
+#pragma warning disable MCPEXP002 // Custom extension methods require raw server request handlers.
+    private static InMemoryMcpServer CreateServer(
+        Func<JsonRpcRequest, CancellationToken, ValueTask<JsonNode?>> listHandler,
+        Func<string, CancellationToken, ValueTask<ReadResourceResult>>? readHandler = null,
+        Func<JsonRpcRequest, CancellationToken, ValueTask<JsonNode?>>? getHandler = null) =>
+        new(builder => builder.WithReadResourceHandler(async (request, token) =>
+        {
+            ReadResourceResult result = readHandler is not null
+                ? await readHandler(request.Params!.Uri, token)
+                : throw new McpProtocolException("Resource unavailable.", McpErrorCode.ResourceNotFound);
+            result.CacheScope ??= CacheScope.Public;
+            return result;
+        }),
+            options =>
+            {
+                options.Capabilities = new ServerCapabilities
+                {
+                    Resources = new(),
+                    Extensions = new Dictionary<string, object>
+                    {
+                        ["io.modelcontextprotocol/skills"] = JsonSerializer.Deserialize<JsonElement>("{}"),
+                    },
+                };
+                options.RequestHandlers = [new() { Method = "skills/list", Handler = listHandler }];
+                if (getHandler is not null)
+                {
+                    options.RequestHandlers.Add(new() { Method = "skills/get", Handler = getHandler });
+                }
+            });
+#pragma warning restore MCPEXP002
+}

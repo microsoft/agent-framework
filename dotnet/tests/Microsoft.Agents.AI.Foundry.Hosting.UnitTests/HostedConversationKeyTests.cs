@@ -10,6 +10,7 @@ public class HostedConversationKeyTests
 {
     // 18-char partition + 32-char entropy = 50-char body (current format).
     private const string PartitionA = "aaaaaaaaaaaaaaaa00";
+    private static readonly string s_conversationA = "conv_" + PartitionA + new string('0', 32);
     private static readonly string s_responseA = "caresp_" + PartitionA + new string('1', 32);
     private static readonly string s_responseA2 = "caresp_" + PartitionA + new string('2', 32);
 
@@ -46,4 +47,26 @@ public class HostedConversationKeyTests
         Assert.Equal(PartitionA, HostedConversationKey.Resolve(null, null, s_responseA));
         Assert.Null(HostedConversationKey.Resolve(null, null, null));
     }
+
+    [Fact]
+    public void Resolve_ExplicitConversationAndImplicitChain_RemainDistinct()
+    {
+        // Arrange
+        string? conversationKey = HostedConversationKey.Resolve(
+            s_conversationA,
+            previousResponseId: null,
+            responseId: s_responseA);
+
+        // Act
+        string? forkKey = HostedConversationKey.Resolve(
+            conversationId: null,
+            s_responseA2,
+            responseId: null);
+
+        // Assert
+        Assert.Equal(s_conversationA, conversationKey);
+        Assert.Equal(PartitionA, forkKey);
+        Assert.NotEqual(conversationKey, forkKey);
+    }
+
 }

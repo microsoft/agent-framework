@@ -138,6 +138,32 @@ class DevServer:
             return None
         return self._LOOPBACK_HOSTS
 
+    @staticmethod
+    def _hostname_from_host_header(host_header: str) -> str:
+        """Return the host name part of a Host header, lowercased and without any port.
+
+        IPv6 literals keep their brackets, so "[::1]:8080" and "[::1]" both yield "[::1]".
+        Splitting on the first colon instead would turn both into "[", which no allowlist
+        member matches.
+        """
+        host = host_header.strip().lower()
+        if host.startswith("["):
+            # IPv6 literal, optionally followed by ":port". Anything other than an
+            # empty suffix or a numeric port after the closing bracket is a malformed
+            # Host value (e.g. "[::1]evil.example"), so return it unchanged so it fails
+            # the allowlist check instead of being silently accepted as the bracketed host.
+            end = host.find("]")
+            if end == -1:
+                return host
+            suffix = host[end + 1 :]
+            if suffix == "" or (suffix.startswith(":") and suffix[1:].isdigit()):
+                return host[: end + 1]
+            return host
+        if host.count(":") == 1:
+            # "example.com:8080". A bare IPv6 literal holds more than one colon and has no port.
+            return host.rsplit(":", 1)[0]
+        return host
+
     @classmethod
     def _resolve_auth_token(cls, host: str, auth_enabled: bool, auth_token: str | None) -> str | None:
         """Resolve the active Bearer token. Returns None when auth is disabled."""
@@ -473,7 +499,7 @@ class DevServer:
             @app.middleware("http")
             async def host_header_middleware(request: Request, call_next: Callable[[Request], Awaitable[Any]]) -> Any:
                 host_header = request.headers.get("host", "")
-                hostname = host_header.split(":", 1)[0].lower()
+                hostname = self._hostname_from_host_header(host_header)
                 if hostname and hostname not in expected_hosts:
                     return JSONResponse(
                         status_code=400,
@@ -832,7 +858,6 @@ class DevServer:
                             media_type="text/event-stream",
                             headers={
                                 "Cache-Control": "no-cache",
-                                "Connection": "keep-alive",
                             },
                         )
                     return await openai_executor.execute_sync(request)
@@ -872,7 +897,6 @@ class DevServer:
                         media_type="text/event-stream",
                         headers={
                             "Cache-Control": "no-cache",
-                            "Connection": "keep-alive",
                             "X-Response-ID": response_id,  # Include ID for debugging/tracking
                         },
                     )
@@ -899,7 +923,7 @@ class DevServer:
                     # Wait briefly for cancellation to propagate
                     try:  # ruff:ignore[suppressible-exception]
                         await asyncio.wait_for(task, timeout=0.5)
-                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                    except (asyncio.CancelledError, TimeoutError):
                         pass
                     return {"status": "cancelled", "response_id": response_id}
                 logger.warning(f"[CANCELLATION] Task already completed for {response_id}")
@@ -1404,7 +1428,7 @@ class DevServer:
                 # Note: We should NOT use asyncio.shield here as it prevents cancellation
                 try:
                     await asyncio.wait_for(task, timeout=1.0)
-                except (asyncio.CancelledError, asyncio.TimeoutError):
+                except (asyncio.CancelledError, TimeoutError):
                     logger.debug(f"[CANCELLATION] Task cancelled successfully for {response_id}")
                 except Exception as e:
                     logger.warning(f"[CANCELLATION] Error during task cancellation for {response_id}: {e}")
