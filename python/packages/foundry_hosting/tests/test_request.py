@@ -119,7 +119,7 @@ async def test_explicit_message_migration_helper_converts_only_current_turn() ->
         result = await response_input_messages(request)
 
     assert result is converted
-    converter.assert_awaited_once_with(items, approval_storage=None)
+    converter.assert_awaited_once_with(items)
 
 
 async def test_hook_rejects_reserved_fields_and_non_mapping_result() -> None:

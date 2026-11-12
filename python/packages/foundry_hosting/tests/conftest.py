@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -13,12 +13,78 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 if TYPE_CHECKING:
+    from agent_framework import Agent, AgentSession, Content, Message
+
     from agent_framework_foundry_hosting import (
         InvocationsHostServer,
         InvocationsWorkflowHostServer,
         ResponsesHostServer,
         ResponsesWorkflowHostServer,
     )
+
+
+@pytest.fixture
+def approval_session() -> Callable[[Content], AgentSession]:
+    from agent_framework import AgentSession
+    from agent_framework._tools import _store_pending_approval_requests
+
+    def create(request: Content) -> AgentSession:
+        session = AgentSession()
+        _store_pending_approval_requests(session, [request])
+        return session
+
+    return create
+
+
+@pytest.fixture
+def native_approval_agent(request: pytest.FixtureRequest) -> tuple[Agent, list[str], list[list[Message]]]:
+    from agent_framework import (
+        Agent,
+        BaseChatClient,
+        ChatOptions,
+        ChatResponse,
+        ChatResponseUpdate,
+        Content,
+        FunctionInvocationLayer,
+        ResponseStream,
+        tool,
+    )
+
+    executions: list[str] = []
+    calls: list[list[Message]] = []
+    paths: tuple[str, ...] = getattr(request, "param", ("/safe",))
+
+    @tool(approval_mode="always_require")
+    def delete_file(path: str) -> str:
+        """Record a protected operation without accessing the filesystem."""
+        executions.append(path)
+        return "deleted"
+
+    class ApprovalClient(FunctionInvocationLayer[ChatOptions], BaseChatClient[ChatOptions]):
+        def _inner_get_response(
+            self, *, messages: Sequence[Message], stream: bool, options: Mapping[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            calls.append(list(messages))
+            contents = (
+                [
+                    Content.from_function_call(
+                        f"provider-call-{index}" if index else "provider-call",
+                        "delete_file",
+                        arguments={"path": path},
+                        id=f"native-call-{index}" if index else "native-call",
+                    )
+                    for index, path in enumerate(paths)
+                ]
+                if len(calls) == 1
+                else [Content.from_text("done")]
+            )
+
+            async def updates() -> AsyncIterator[ChatResponseUpdate]:
+                yield ChatResponseUpdate(role="assistant", contents=contents)
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+    return Agent[ChatOptions](client=ApprovalClient(), tools=[delete_file]), executions, calls
 
 
 @pytest.fixture(autouse=True)

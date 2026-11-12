@@ -458,7 +458,7 @@ async def test_approval_wire_ids_bind_only_to_exact_pending_checkpoint() -> None
 async def test_store_false_has_no_durable_native_state_and_cannot_pause() -> None:
     with (
         patch("agent_framework_foundry_hosting._workflow_state.FoundryStateStore.get_or_create") as bindings,
-        patch("agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create") as checkpoints,
+        patch("agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create") as checkpoints,
     ):
         response = await _post(_server(), '{"text":"one"}', store=False)
         assert response["status"] == "completed", response

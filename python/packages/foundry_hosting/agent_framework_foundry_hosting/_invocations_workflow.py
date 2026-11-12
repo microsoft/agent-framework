@@ -42,8 +42,15 @@ from ._invocations_shared import (
     invocation_request_scope,
 )
 from ._scope import FoundryRequestScope
-from ._shared import WorkflowResolver, WorkflowSource, WorkflowTurn, validate_sse_keep_alive_interval, workflow_agents
-from ._state_store import CheckpointStoreProvider, ContextScopedStoreProvider
+from ._shared import (
+    CheckpointStoreProvider,
+    ContextScopedStoreProvider,
+    WorkflowResolver,
+    WorkflowSource,
+    WorkflowTurn,
+    validate_sse_keep_alive_interval,
+    workflow_agents,
+)
 from ._workflow_state import HostedWorkflowRun
 
 logger = logging.getLogger(__name__)
@@ -73,6 +80,9 @@ class InvocationsWorkflowHostServer(InvocationAgentServerHost):
                 executors, agents, clients, providers, and mutable tools inside the factory. Keep workflow
                 and executor IDs stable for checkpoint restoration. The host enters and closes context-managed
                 agents; applications own other resource cleanup. Known shared execution resources are rejected.
+                Construct tool objects inside the factory. A module-level `@tool` creates a shared wrapper,
+                which the ownership guard rejects even for a pure function. A function defined elsewhere can
+                be wrapped with `tool(function)` inside the factory; applications still own any captured state.
 
         Keyword Args:
             parse_input: Sync or async parser returning typed `WorkflowTurn` input or a complete pending

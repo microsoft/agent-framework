@@ -50,6 +50,7 @@ from ._responses_shared import (
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
     _hosted_internal_metadata,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _native_approval_id,  # pyright: ignore[reportPrivateUsage]
     _normalize_allowed_oauth_consent_origins,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _request_without_reserved_metadata,  # pyright: ignore[reportPrivateUsage]
@@ -57,6 +58,8 @@ from ._responses_shared import (
 )
 from ._scope import FoundryRequestScope
 from ._shared import (
+    CheckpointStoreProvider,
+    ContextScopedStoreProvider,
     OptionsHook,
     ResponsesRequest,
     WorkflowResolver,
@@ -70,7 +73,6 @@ from ._shared import (
     validate_workflow_source,
     workflow_agents,
 )
-from ._state_store import CheckpointStoreProvider, ContextScopedStoreProvider
 from ._workflow_state import HostedWorkflowRun, WorkflowConflictError
 
 logger = logging.getLogger(__name__)
@@ -225,36 +227,12 @@ async def _load_replies(request: ResponsesRequest, run: HostedWorkflowRun) -> di
     return dict(validated.responses or {})
 
 
-class _CheckpointApprovals:
-    """Collect wire aliases in the same per-response pair as the pending checkpoint."""
-
-    def __init__(self, checkpoint: WorkflowCheckpoint | None, aliases: dict[str, str]) -> None:
-        self.pending = checkpoint.pending_request_info_events if checkpoint is not None else {}
-        self.aliases = aliases
-
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
-        matches = [
-            request_id
-            for request_id, event in self.pending.items()
-            if isinstance(event.data, Content) and event.data.to_dict() == request.to_dict()
-        ]
-        if len(matches) != 1 or matches[0] in self.aliases.values():
-            raise _WorkflowRequestError("Approval output must match one unique request in the exact pause checkpoint.")
-        self.aliases[approval_request_id] = matches[0]
-
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        request_id = self.aliases.get(approval_request_id)
-        event = self.pending.get(request_id) if request_id is not None else None
-        if event is None or not isinstance(event.data, Content):
-            raise _WorkflowRequestError("The approval is unavailable in this pending checkpoint.")
-        return event.data
-
-
 async def _project(
     event: WorkflowEvent[Any],
     stream: ResponseEventStream,
     tracker: _OutputItemTracker,
-    approvals: _CheckpointApprovals,
+    checkpoint: WorkflowCheckpoint | None,
+    aliases: dict[str, str],
 ) -> list[ResponseStreamEvent]:
     updates: list[AgentResponseUpdate] = []
     complete_message = False
@@ -265,14 +243,14 @@ async def _project(
         elif isinstance(event.data, Content) and event.data.type in ("function_call", "computer_tool_call"):
             content = Content.from_dict(event.data.to_dict())
             content.call_id = wire_id
-            approvals.aliases[wire_id] = event.request_id
+            aliases[wire_id] = event.request_id
         else:
             content = Content.from_function_call(
                 wire_id,
                 "request_info",
                 arguments={"request_id": wire_id, "request": _wire_value(event.data)},
             )
-            approvals.aliases[wire_id] = event.request_id
+            aliases[wire_id] = event.request_id
             if isinstance(event.data, Content) and event.data.type == "oauth_consent_request":
                 updates.append(AgentResponseUpdate(contents=[event.data]))
         updates.append(AgentResponseUpdate(contents=[content]))
@@ -317,14 +295,41 @@ async def _project(
             return events
     events: list[ResponseStreamEvent] = []
     for update in updates:
-        events.extend([
+        projected = [
             item
             async for item in tracker.handle_update(
                 update,
-                approval_storage=approvals,
                 complete_message=complete_message,
             )
-        ])
+        ]
+        for item_event in projected:
+            raw_item = item_event.get("item")
+            if item_event.get("type") != "response.output_item.added" or not isinstance(raw_item, Mapping):
+                continue
+            item = cast(Mapping[str, Any], raw_item)
+            if item.get("type") != "mcp_approval_request":
+                continue
+            native_id = _native_approval_id(item)
+            approval_content = next(
+                content
+                for content in update.contents
+                if content.type == "function_approval_request" and content.id == native_id
+            )
+            pending = checkpoint.pending_request_info_events if checkpoint is not None else {}
+            matches = [
+                request_id
+                for request_id, request in pending.items()
+                if isinstance(request.data, Content)
+                and request.data.type == "function_approval_request"
+                and request.data.to_dict() == approval_content.to_dict()
+            ]
+            wire_id = item.get("id")
+            if not isinstance(wire_id, str) or len(matches) != 1 or matches[0] in aliases.values():
+                raise _WorkflowRequestError(
+                    "Approval output must match one unique request in the exact pause checkpoint."
+                )
+            aliases[wire_id] = matches[0]
+        events.extend(projected)
     return events
 
 
@@ -354,6 +359,9 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
                 Build fresh workflows, executors, agents, clients, providers, and mutable tools inside the
                 factory. Keep workflow and executor IDs stable for checkpoint restoration. The host closes
                 context-managed agents returned by the factory; applications own other resource cleanup.
+                Construct tool objects inside the factory. A module-level `@tool` creates a shared wrapper,
+                which the ownership guard rejects even for a pure function. A function defined elsewhere can
+                be wrapped with `tool(function)` inside the factory; applications still own any captured state.
 
         Keyword Args:
             parse_input: Sync or async parser of this turn's `ResponsesRequest`. Return a typed
@@ -585,10 +593,9 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
                 draft.emit_created()
                 draft.emit_in_progress()
                 next_tracker = _OutputItemTracker(draft, self._allowed_origins)
-                approval_projection = _CheckpointApprovals(checkpoint, next_aliases)
                 events: list[ResponseStreamEvent] = []
                 for event in buffered:
-                    events.extend(await _project(event, draft, next_tracker, approval_projection))
+                    events.extend(await _project(event, draft, next_tracker, checkpoint, next_aliases))
                 events.extend(next_tracker.close())
                 _hosted_internal_metadata(draft)[_HOSTED_PROVIDER_USAGE_KEY] = next_tracker.usage_details
                 await run.stage(_snapshot(draft), approvals=next_aliases, checkpoint_id=checkpoint_id)

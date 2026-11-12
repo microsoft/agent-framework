@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
+    Awaitable,
     Generator,
     Mapping,
     Sequence,
@@ -68,6 +70,7 @@ from ._responses_shared import (
     _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
     _items_to_messages,  # pyright: ignore[reportPrivateUsage]
     _log_response_failure,  # pyright: ignore[reportPrivateUsage]
+    _native_approval_id,  # pyright: ignore[reportPrivateUsage]
     _normalize_allowed_oauth_consent_origins,  # pyright: ignore[reportPrivateUsage]
     _output_items_to_messages,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
@@ -79,9 +82,11 @@ from ._responses_shared import (
 )
 from ._scope import FoundryRequestScope
 from ._shared import (
+    AgentSessionStoreProvider,
     AgentSource,
     OptionsHook,
     ResponsesRequest,
+    StoreProvider,
     UnsupportedOptions,
     _build_response_server_options,  # pyright: ignore[reportPrivateUsage]
     is_agent,
@@ -92,12 +97,6 @@ from ._shared import (
     validate_default_transport_options,
     validate_request_options,
     validate_unsupported_options,
-)
-from ._state_store import (
-    AgentSessionStoreProvider,
-    FunctionApprovalStore,
-    FunctionApprovalStoreProvider,
-    StoreProvider,
 )
 
 logger = logging.getLogger(__name__)
@@ -226,7 +225,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         prefix: str = "",
         response_store: ResponseProviderProtocol | None = None,
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
-        function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
         allowed_oauth_consent_origins: Sequence[str] | None = None,
         history_source: Literal["host_managed", "agent_managed", "inference_service"] = "host_managed",
         background_source: Literal["host_managed", "inference_service"] = "host_managed",
@@ -255,9 +253,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             prefix: The URL prefix for the server.
             response_store: Optional response store for caller-facing persistence and history.
             agent_session_store_provider: Optional provider for MAF agent session storage.
-                If not provided, a default `AgentSessionStoreProvider` will be used.
-            function_approval_store_provider: Optional provider for function approval storage.
-                If not provided, a default `FunctionApprovalStoreProvider` will be used.
+                Stores the complete native session, including pending approvals, before an
+                approval request is published. If omitted, uses `AgentSessionStoreProvider`.
             allowed_oauth_consent_origins: Optional exact HTTPS origins allowed for OAuth consent links.
                 When omitted, hosting retains its existing safe-HTTPS validation without restricting the
                 destination origin. When provided, every link must match an entry; an empty sequence rejects
@@ -402,11 +399,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # Storage providers
         self._session_storage_provider = (
             AgentSessionStoreProvider() if agent_session_store_provider is None else agent_session_store_provider
-        )
-        self._function_approval_storage_provider = (
-            FunctionApprovalStoreProvider()
-            if function_approval_store_provider is None
-            else function_approval_store_provider
         )
 
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
@@ -723,7 +715,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self,
         context: ResponseContext,
         *,
-        approval_storage: FunctionApprovalStore | None,
+        session: AgentSession | Awaitable[AgentSession] | None = None,
         configuration: _AgentConfiguration | None = None,
     ) -> list[Message]:
         """Load the request's input and prior history concurrently, assembled for the run.
@@ -745,13 +737,34 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         async def _load_input() -> list[Message]:
             input_items = await context.get_input_items()
-            return await _items_to_messages(input_items, approval_storage=approval_storage)
+            resolved_session = await session if inspect.isawaitable(session) else session
+            wire_ids: list[str] = []
+            for input_item in input_items:
+                if input_item["type"] == "mcp_approval_response":
+                    wire_ids.append(input_item["approval_request_id"])
+                elif input_item["type"] == "mcp_approval_request":
+                    wire_ids.append(input_item["id"])
+            approval_ids: dict[str, str] = {}
+            if wire_ids:
+                # The SDK context has no public exact-item lookup. Use its already selected provider,
+                # not capped model history or a second approval store, preserving the platform scope.
+                provider = context._provider  # pyright: ignore[reportPrivateUsage]
+                if provider is None or resolved_session is None:
+                    raise _PublicResponseFailure(ValueError("Approval continuation requires a stored native session."))
+                stored_items = await provider.get_items(wire_ids, context=context.platform_context)
+                for wire_id, item in zip(wire_ids, stored_items, strict=True):
+                    if item is None or item["type"] != "mcp_approval_request" or item["id"] != wire_id:
+                        raise _PublicResponseFailure(ValueError(f"No native pending approval matches {wire_id!r}."))
+                    approval_ids[wire_id] = _native_approval_id(
+                        cast(Mapping[str, Any], item), session_id=resolved_session.session_id
+                    )
+            return await _items_to_messages(input_items, session=resolved_session, approval_ids=approval_ids)
 
         async def _load_history() -> list[Message]:
             if not uses_agent_server_history:
                 return []
             history = await context.get_history()
-            return await _output_items_to_messages(history, approval_storage=approval_storage)
+            return await _output_items_to_messages(history)
 
         input_task = asyncio.ensure_future(_load_input())
         history_task = asyncio.ensure_future(_load_history())
@@ -853,11 +866,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         )
 
             request_context = get_request_context()
-            approval_storage = (
-                self._function_approval_storage_provider.get_store(config=self.config, platform_context=request_context)
-                if stored
-                else None
-            )
             previous_response_id = request.get("previous_response_id")
             session_load_id = (
                 context.response_id
@@ -875,17 +883,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 else None
             )
 
-            # Load the caller's input items and prior conversation history concurrently with the
-            # session load below. These are independent storage round-trips with no data dependency
-            # between them, so overlapping them removes serial latency from the request critical path.
+            session_ready: asyncio.Future[AgentSession] = asyncio.get_running_loop().create_future()
             request_messages_task = asyncio.ensure_future(
-                self._load_request_messages(
-                    context,
-                    approval_storage=approval_storage,
-                    configuration=configuration,
-                )
+                self._load_request_messages(context, session=session_ready, configuration=configuration)
             )
-
             session = (
                 await session_storage.get(session_load_id)
                 if session_storage is not None and session_load_id is not None
@@ -903,6 +904,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         )
                     )
                 session = agent.create_session()
+            session_ready.set_result(session)
             provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
             if context.conversation_id is not None:
                 if context.is_recovery and provider_background:
@@ -1055,6 +1057,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             inner_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] | None = None
             updates: _SignalledIterator[AgentResponseUpdate] | None = None
+
+            async def publish_update(
+                update: AgentResponseUpdate, *, complete_message: bool = False
+            ) -> AsyncGenerator[ResponseStreamEvent]:
+                if any(content.type == "function_approval_request" for content in update.contents):
+                    if not stored or session_storage is None:
+                        raise ValueError("Approval and user-input continuation requires store=true.")
+                    await _set_agent_session(session_storage, context.response_id, session)
+                    if context.conversation_id is not None:
+                        await _set_agent_session(session_storage, context.conversation_id, session)
+                async for event in tracker.handle_update(
+                    update, complete_message=complete_message, approval_session_id=session.session_id
+                ):
+                    yield event
+
             if provider_background:
                 if session_storage is None or not isinstance(agent, RawAgent):
                     raise RuntimeError("Provider background requires a stored MAF agent session.")
@@ -1078,9 +1095,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         for update in _agent_response_updates(response, context.response_id):
                             if context.shutdown.is_set() or cancellation_signal.is_set():
                                 break
-                            async for event in tracker.handle_update(
-                                update, approval_storage=approval_storage, complete_message=True
-                            ):
+                            async for event in publish_update(update, complete_message=True):
                                 yield event
                         if context.shutdown.is_set() or cancellation_signal.is_set():
                             continue
@@ -1102,7 +1117,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             for content in update.contents
                         ):
                             raise ValueError("Approval and user-input continuation requires store=true.")
-                        async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                        async for event in publish_update(update):
                             yield event
             if inner_stream is not None and isinstance(updates, _SignalledIterator) and not updates.signalled:
                 final = await inner_stream.get_final_response()
