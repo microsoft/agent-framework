@@ -50,7 +50,7 @@ from agent_framework._compaction import (
     extend_compaction_messages,
 )
 from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature, ExperimentalWarning
-from agent_framework._types import APPROVAL_REJECTION_RESULT_KEY, SKILL_CONTEXT_NAME_KEY
+from agent_framework._types import _APPROVAL_REJECTION_RESULT_KEY, SKILL_CONTEXT_NAME_KEY
 
 
 def _assistant_function_call(call_id: str) -> Message:
@@ -1299,7 +1299,7 @@ async def test_agent_triggered_compaction_ignores_rejected_approval_result() -> 
     rejection_result = Content.from_function_result(
         call_id="compact-1",
         result="Error: Tool call invocation was rejected by user.",
-        additional_properties={APPROVAL_REJECTION_RESULT_KEY: True},
+        additional_properties={_APPROVAL_REJECTION_RESULT_KEY: True},
     )
     messages = [
         _assistant_named_function_call("compact-1", strategy.tool.name),
@@ -1338,7 +1338,7 @@ def test_completed_function_calls_correlates_reused_call_id_by_occurrence() -> N
                     id="occ-rejected",
                     call_id="shared",
                     result="Error: Tool call invocation was rejected by user.",
-                    additional_properties={APPROVAL_REJECTION_RESULT_KEY: True},
+                    additional_properties={_APPROVAL_REJECTION_RESULT_KEY: True},
                 ),
                 Content.from_function_result(
                     id="occ-approved",
@@ -1654,7 +1654,7 @@ async def test_unload_skills_compaction_preserves_reused_id_group_with_unresolve
         ({SKILL_CONTEXT_NAME_KEY: ""}, None),
         ({SKILL_CONTEXT_NAME_KEY: 123}, None),
         ({SKILL_CONTEXT_NAME_KEY: "pdf"}, "Load failed."),
-        ({SKILL_CONTEXT_NAME_KEY: "pdf", APPROVAL_REJECTION_RESULT_KEY: True}, None),
+        ({SKILL_CONTEXT_NAME_KEY: "pdf", _APPROVAL_REJECTION_RESULT_KEY: True}, None),
     ],
 )
 async def test_unload_skills_preserves_groups_without_successful_provenance(

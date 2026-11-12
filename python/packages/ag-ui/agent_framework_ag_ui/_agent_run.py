@@ -61,7 +61,10 @@ from agent_framework._tools import (
     _try_execute_function_call_groups,  # type: ignore
     normalize_function_invocation_configuration,
 )
-from agent_framework._types import APPROVAL_REJECTION_RESULT_KEY, ResponseStream
+from agent_framework._types import (  # pyright: ignore[reportPrivateUsage]
+    _APPROVAL_REJECTION_RESULT_KEY,
+    ResponseStream,
+)
 from agent_framework.exceptions import AgentInvalidResponseException
 from agent_framework.observability import (
     _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
@@ -2101,7 +2104,7 @@ async def _resolve_approval_responses(
         for content in resolved_contents
         if content.type == "function_result"
         and content.id in authenticated_rejection_occurrence_ids
-        and content.additional_properties.get(APPROVAL_REJECTION_RESULT_KEY) is True
+        and content.additional_properties.get(_APPROVAL_REJECTION_RESULT_KEY) is True
     }
 
     # Post-process: Convert user messages with function_result content to proper tool messages.
