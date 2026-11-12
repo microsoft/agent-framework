@@ -12,49 +12,29 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public sealed class FoundryHostingAgentTests
 {
     [Fact]
-    public void ResolveSessionStorageIdentity_KeyedAliasOfDefaultAgent_UsesDefaultIdentity()
+    public void ResolveSessionStorageIdentity_NamedAgent_UsesItsName()
     {
-        // Arrange
+        // Arrange: the identity releases through 1.28.0 gave the default agent, so its sessions are still found.
         var agent = new TestAgent("billing");
 
         // Act
-        string identity = FoundryHostingAgent.ResolveSessionStorageIdentity(
-            agent,
-            registrationKey: "billing",
-            defaultAgent: agent);
+        string identity = FoundryHostingAgent.ResolveSessionStorageIdentity(agent);
 
         // Assert
         Assert.Equal("name:billing", identity);
     }
 
-    [Fact]
-    public void ResolveSessionStorageIdentity_IndependentKeyedAgent_UsesRegistrationKey()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ResolveSessionStorageIdentity_UnnamedAgent_UsesDefaultIdentity(string? name)
     {
         // Arrange
-        var agent = new TestAgent("shared-name");
-        var defaultAgent = new TestAgent("shared-name");
+        var agent = new TestAgent(name);
 
         // Act
-        string identity = FoundryHostingAgent.ResolveSessionStorageIdentity(
-            agent,
-            registrationKey: "billing",
-            defaultAgent);
-
-        // Assert
-        Assert.Equal("key:billing", identity);
-    }
-
-    [Fact]
-    public void ResolveSessionStorageIdentity_UnnamedDefaultAgent_UsesDefaultIdentity()
-    {
-        // Arrange
-        var agent = new TestAgent();
-
-        // Act
-        string identity = FoundryHostingAgent.ResolveSessionStorageIdentity(
-            agent,
-            registrationKey: null,
-            defaultAgent: agent);
+        string identity = FoundryHostingAgent.ResolveSessionStorageIdentity(agent);
 
         // Assert
         Assert.Equal("default", identity);

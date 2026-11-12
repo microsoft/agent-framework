@@ -232,9 +232,9 @@ public class OAuthConsentPolicyHandlerTests
     {
         var services = new ServiceCollection();
         services.AddSingleton(sessionStore ?? new TestAgentSessionStore());
-        services.AddSingleton(agent);
         var handler = new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
+            new FoundryHostedAgentSource(agent),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
             new FoundryResponsesServerOptions(),
             toolboxService);

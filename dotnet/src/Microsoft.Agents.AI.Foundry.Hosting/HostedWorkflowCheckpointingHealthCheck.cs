@@ -14,7 +14,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>
-/// Reports, on the <c>GET /readiness</c> probe, a registered workflow agent that was built with a
+/// Reports, on the <c>GET /readiness</c> probe, a hosted workflow agent that was built with a
 /// checkpoint manager of its own, so a container whose workflow state would be written somewhere
 /// hosting cannot manage is caught before it takes any traffic.
 /// </summary>
@@ -35,12 +35,15 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 internal sealed class HostedWorkflowCheckpointingHealthCheck : IHealthCheck
 {
     private readonly IServiceProvider _serviceProvider;
+    private readonly FoundryHostedAgentSource _agentSource;
 
-    public HostedWorkflowCheckpointingHealthCheck(IServiceProvider serviceProvider)
+    public HostedWorkflowCheckpointingHealthCheck(IServiceProvider serviceProvider, FoundryHostedAgentSource agentSource)
     {
         _ = Throw.IfNull(serviceProvider);
+        _ = Throw.IfNull(agentSource);
 
         this._serviceProvider = serviceProvider;
+        this._agentSource = agentSource;
     }
 
     /// <summary>
@@ -64,26 +67,26 @@ internal sealed class HostedWorkflowCheckpointingHealthCheck : IHealthCheck
         List<string> incompatibleAgents = [];
         var checkedAgents = 0;
 
-        // Agents may be registered as scoped or transient, so they are resolved from a scope that is
-        // disposed once the check is done, the same way the response handler resolves them per run.
+        // A scoped or transient agent is created from a scope that is disposed once the check is done, the
+        // same way the response handler gets it per run.
         AsyncServiceScope serviceScope = this._serviceProvider.CreateAsyncScope();
         await using (serviceScope.ConfigureAwait(false))
         {
-            foreach (var agent in ServiceCollectionExtensions.ResolveRegisteredAgents(serviceScope.ServiceProvider))
+            FoundryHostedAgentSource.Lease agentLease = this._agentSource.Acquire(serviceScope.ServiceProvider);
+            await using (agentLease.ConfigureAwait(false))
             {
-                if (agent.GetService<WorkflowAgentMetadata>() is not { } metadata)
+                AIAgent agent = agentLease.Agent;
+                if (agent.GetService<WorkflowAgentMetadata>() is { } metadata)
                 {
-                    continue;
-                }
+                    checkedAgents++;
+                    AIAgent redirected = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(
+                        agent,
+                        this._serviceProvider.GetService<ILoggerFactory>());
 
-                checkedAgents++;
-                AIAgent redirected = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(
-                    agent,
-                    this._serviceProvider.GetService<ILoggerFactory>());
-
-                if (metadata.UsesOwnCheckpointStorage || ReferenceEquals(redirected, agent))
-                {
-                    incompatibleAgents.Add(agent.Name ?? agent.Id);
+                    if (metadata.UsesOwnCheckpointStorage || ReferenceEquals(redirected, agent))
+                    {
+                        incompatibleAgents.Add(agent.Name ?? agent.Id);
+                    }
                 }
             }
         }

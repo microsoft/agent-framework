@@ -226,9 +226,8 @@ public class HostedUserIdTests
     {
         var services = new ServiceCollection();
         services.AddSingleton(sessionStore ?? new TestAgentSessionStore());
-        services.AddSingleton(agent);
         var sp = services.BuildServiceProvider();
-        return new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        return new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(agent), NullLogger<AgentFrameworkResponseHandler>.Instance);
     }
 
     private static (CreateResponse Request, Mock<ResponseContext> Context) BuildFreshRequest(

@@ -29,7 +29,7 @@ public class ServiceCollectionExtensionsTests
         services.AddLogging();
 
         // Act
-        services.AddFoundryResponses();
+        services.AddFoundryResponses(Mock.Of<AIAgent>());
 
         // Assert
         AssertFeatureUsed(53);
@@ -87,7 +87,7 @@ public class ServiceCollectionExtensionsTests
         var services = new ServiceCollection();
         services.AddLogging();
 
-        services.AddFoundryResponses();
+        services.AddFoundryResponses(Mock.Of<AIAgent>());
 
         var descriptor = services.FirstOrDefault(
             d => d.ServiceType == typeof(ResponseHandler));
@@ -107,7 +107,7 @@ public class ServiceCollectionExtensionsTests
         services.AddLogging();
 
         // Act
-        services.AddFoundryResponses();
+        services.AddFoundryResponses(Mock.Of<AIAgent>());
         using var provider = services.BuildServiceProvider();
 
         // Assert: the AgentServer SDK behind this adapter chooses the hosted or local backend.
@@ -115,37 +115,34 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddFoundryResponses_CalledTwice_RegistersOnce()
+    public void AddFoundryResponses_CalledTwice_ThrowsAndKeepsTheFirstRegistration()
     {
+        // Arrange: a container serves exactly one agent.
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddFoundryResponses(Mock.Of<AIAgent>());
+        int registrations = services.Count;
 
-        services.AddFoundryResponses();
-        services.AddFoundryResponses();
+        // Act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => services.AddFoundryResponses(Mock.Of<AIAgent>()));
 
-        var count = services.Count(d => d.ServiceType == typeof(ResponseHandler));
-        Assert.Equal(1, count);
+        // Assert
+        Assert.Contains("exactly one agent", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(registrations, services.Count);
+        Assert.Single(services, d => d.ServiceType == typeof(ResponseHandler));
     }
 
     [Fact]
-    public void AddFoundryResponses_SecondCall_PreservesNonServerOptions()
+    public void AddFoundryResponses_FactoryAfterInstance_Throws()
     {
         // Arrange
         var services = new ServiceCollection();
-        services.AddLogging();
+        services.AddFoundryResponses(Mock.Of<AIAgent>());
 
-        // Act
-        services.AddFoundryResponses();
-        services.AddFoundryResponses(new FoundryResponsesServerOptions
-        {
-            InferenceStoredOutputAllowed = true,
-        });
-        using ServiceProvider provider = services.BuildServiceProvider();
-
-        // Assert
-        Assert.True(
-            provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>()
-                .Value.InferenceStoredOutputAllowed);
+        // Act and assert
+        Assert.Throws<InvalidOperationException>(
+            () => services.AddFoundryResponses(_ => Mock.Of<AIAgent>(), ServiceLifetime.Scoped));
     }
 
     [Fact]
@@ -166,7 +163,7 @@ public class ServiceCollectionExtensionsTests
         };
 
         // Act
-        services.AddFoundryResponses(suppliedOptions);
+        services.AddFoundryResponses(Mock.Of<AIAgent>(), options: suppliedOptions);
         using ServiceProvider provider = services.BuildServiceProvider();
         FoundryResponsesServerOptions registeredOptions =
             provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value;
@@ -189,60 +186,77 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddFoundryResponses_SecondCallEnablesServerFeature_Throws()
+    public void AddFoundryResponses_Factory_AppliesOptions()
     {
         // Arrange
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses();
 
         // Act
-        var exception = Assert.Throws<InvalidOperationException>(
-            () => services.AddFoundryResponses(new FoundryResponsesServerOptions
-            {
-                SteerableConversations = true,
-            }));
+        services.AddFoundryResponses(
+            _ => Mock.Of<AIAgent>(),
+            ServiceLifetime.Scoped,
+            new FoundryResponsesServerOptions { InferenceStoredOutputAllowed = true });
+        using ServiceProvider provider = services.BuildServiceProvider();
 
         // Assert
-        Assert.Contains(
-            "first AddFoundryResponses",
-            exception.Message,
-            StringComparison.Ordinal);
+        Assert.True(provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value.InferenceStoredOutputAllowed);
     }
 
     [Fact]
     public void AddFoundryResponses_NullServices_ThrowsArgumentNullException()
     {
         Assert.Throws<ArgumentNullException>(
-            () => ServiceCollectionExtensions.AddFoundryResponses(null!));
+            () => ServiceCollectionExtensions.AddFoundryResponses(null!, Mock.Of<AIAgent>()));
+        Assert.Throws<ArgumentNullException>(
+            () => ServiceCollectionExtensions.AddFoundryResponses(null!, _ => Mock.Of<AIAgent>()));
     }
 
     [Fact]
-    public void AddFoundryResponses_WithAgent_RegistersAgentAndHandler()
+    public void AddFoundryResponses_WithAgent_RegistersTheHandlerButNotTheAgent()
     {
+        // Arrange
         var services = new ServiceCollection();
         services.AddLogging();
-        var mockAgent = new Mock<AIAgent>();
+        var agent = Mock.Of<AIAgent>();
 
-        services.AddFoundryResponses(mockAgent.Object);
+        // Act
+        services.AddFoundryResponses(agent);
 
-        var handlerDescriptor = services.FirstOrDefault(
-            d => d.ServiceType == typeof(ResponseHandler));
-        Assert.NotNull(handlerDescriptor);
-
-        var agentDescriptor = services.FirstOrDefault(
-            d => d.ServiceType == typeof(AIAgent));
-        Assert.NotNull(agentDescriptor);
+        // Assert: hosting serves the agent without putting it in DI.
+        Assert.Contains(services, d => d.ServiceType == typeof(ResponseHandler));
+        Assert.DoesNotContain(services, d => d.ServiceType == typeof(AIAgent));
+        using ServiceProvider provider = services.BuildServiceProvider();
+        Assert.Null(provider.GetService<AIAgent>());
+        Assert.Empty(provider.GetKeyedServices<AIAgent>(KeyedService.AnyKey));
     }
 
     [Fact]
     public void AddFoundryResponses_WithNullAgent_ThrowsArgumentNullException()
     {
         var services = new ServiceCollection();
-        // Cast to bind the agent overload: the parameterless overload also accepts a single null
-        // options object, so the cast keeps this test targeting the agent path.
+        // Cast to bind the agent overload: a null literal also converts to the factory overload's delegate.
         Assert.Throws<ArgumentNullException>(
             () => services.AddFoundryResponses((AIAgent)null!));
+        Assert.Empty(services);
+    }
+
+    [Fact]
+    public void AddFoundryResponses_WithNullFactory_ThrowsArgumentNullException()
+    {
+        var services = new ServiceCollection();
+        Assert.Throws<ArgumentNullException>(
+            () => services.AddFoundryResponses((Func<IServiceProvider, AIAgent>)null!));
+        Assert.Empty(services);
+    }
+
+    [Fact]
+    public void AddFoundryResponses_UnsupportedLifetime_ThrowsArgumentOutOfRangeException()
+    {
+        var services = new ServiceCollection();
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => services.AddFoundryResponses(_ => Mock.Of<AIAgent>(), (ServiceLifetime)42));
+        Assert.Empty(services);
     }
 
     [Fact]

@@ -14,13 +14,13 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 #pragma warning disable SYSLIB1006 // Preserve the legacy EventId 0 for every migrated log message.
 
 /// <summary>
-/// Reports, on the <c>GET /readiness</c> probe, a registered agent configured to have its own service
+/// Reports, on the <c>GET /readiness</c> probe, a hosted agent configured to have its own service
 /// store the responses it produces, so a container that would record the conversation twice is caught
 /// before it takes any traffic.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Each agent is run for real, with its chat client replaced for that run by
+/// The agent the container serves is run for real, with its chat client replaced for that run by
 /// <see cref="StoredOutputProbeChatClient"/>, which answers without calling anything. The run therefore
 /// builds the very request the agent would have sent, and the probe reads the store setting off it.
 /// Nothing hosting adds per request is applied here, so what the probe sees is how the container
@@ -36,18 +36,22 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
 {
     private readonly IServiceProvider _serviceProvider;
+    private readonly FoundryHostedAgentSource _agentSource;
     private readonly FoundryResponsesServerOptions _options;
     private readonly ILogger<HostedStoredOutputHealthCheck>? _logger;
 
     public HostedStoredOutputHealthCheck(
         IServiceProvider serviceProvider,
+        FoundryHostedAgentSource agentSource,
         FoundryResponsesServerOptions hostingOptions,
         ILogger<HostedStoredOutputHealthCheck>? logger = null)
     {
         _ = Throw.IfNull(serviceProvider);
+        _ = Throw.IfNull(agentSource);
         _ = Throw.IfNull(hostingOptions);
 
         this._serviceProvider = serviceProvider;
+        this._agentSource = agentSource;
         this._options = hostingOptions;
         this._logger = logger;
     }
@@ -65,24 +69,25 @@ internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
         List<string> storingAgents = [];
         var checkedAgents = 0;
 
-        // Agents may be registered as scoped or transient, so they are resolved from a scope that is
-        // disposed once the check is done, the same way the response handler resolves them per run.
+        // A scoped or transient agent is created from a scope that is disposed once the check is done, the
+        // same way the response handler gets it per run.
         AsyncServiceScope serviceScope = this._serviceProvider.CreateAsyncScope();
         await using (serviceScope.ConfigureAwait(false))
         {
-            foreach (var agent in ServiceCollectionExtensions.ResolveRegisteredAgents(serviceScope.ServiceProvider))
+            FoundryHostedAgentSource.Lease agentLease = this._agentSource.Acquire(serviceScope.ServiceProvider);
+            await using (agentLease.ConfigureAwait(false))
             {
-                if (agent.GetService<ChatClientAgent>() is not { } chatClientAgent)
-                {
-                    // Hosting only reaches the store setting through ChatClientAgent's chat options, so any
-                    // other agent runs untouched and there is nothing to report.
-                    continue;
-                }
+                AIAgent agent = agentLease.Agent;
 
-                checkedAgents++;
-                if (await this.StoresItsOwnResponsesAsync(agent, cancellationToken).ConfigureAwait(false))
+                // Hosting only reaches the store setting through ChatClientAgent's chat options, so any
+                // other agent runs untouched and there is nothing to report.
+                if (agent.GetService<ChatClientAgent>() is not null)
                 {
-                    storingAgents.Add(agent.Name ?? agent.Id);
+                    checkedAgents++;
+                    if (await this.StoresItsOwnResponsesAsync(agent, cancellationToken).ConfigureAwait(false))
+                    {
+                        storingAgents.Add(agent.Name ?? agent.Id);
+                    }
                 }
             }
         }
@@ -111,7 +116,7 @@ internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
     /// probe. Overriding the setting here, the way the request handler does per turn, would only show
     /// the override back.
     /// <para>
-    /// A stand-in is built rather than running the registered agent because that agent's chat history
+    /// A stand-in is built rather than running the hosted agent because that agent's chat history
     /// provider and context providers would run with it. Those are the parts most likely to reach
     /// outside the container, a memory or search provider for instance, and to write state: a readiness
     /// probe would then make external calls and add its own empty turn to real conversations, on every

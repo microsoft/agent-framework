@@ -46,10 +46,9 @@ public class AgentFrameworkResponseHandlerTelemetryTests
         var agent = new TelemetryTestAgent();
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(agent), NullLogger<AgentFrameworkResponseHandler>.Instance);
         var (request, context) = BuildRequest();
 
         // Act — enumerate all events so the span completes before asserting
@@ -62,7 +61,7 @@ public class AgentFrameworkResponseHandlerTelemetryTests
     }
 
     [Fact]
-    public async Task CreateAsync_KeyedAgent_EmitsInvokeAgentSpanAsync()
+    public async Task CreateAsync_FactoryAgent_EmitsInvokeAgentSpanAsync()
     {
         // Arrange
         var activities = new ConcurrentActivityList();
@@ -71,14 +70,13 @@ public class AgentFrameworkResponseHandlerTelemetryTests
             .AddInMemoryExporter(activities)
             .Build();
 
-        var agent = new TelemetryTestAgent();
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddKeyedSingleton<AIAgent>("keyed-agent", agent);
         var sp = services.BuildServiceProvider();
+        var agentSource = new FoundryHostedAgentSource(_ => new TelemetryTestAgent(), ServiceLifetime.Scoped, sp);
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-        var (request, context) = BuildRequest(agentKey: "keyed-agent");
+        var handler = new AgentFrameworkResponseHandler(sp, agentSource, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var (request, context) = BuildRequest();
 
         // Act
         await foreach (var _ in handler.CreateAsync(request, context, CancellationToken.None)) { }
@@ -115,10 +113,9 @@ public class AgentFrameworkResponseHandlerTelemetryTests
 
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton(preWrapped);
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(preWrapped), NullLogger<AgentFrameworkResponseHandler>.Instance);
 
         // Act
         var (request, context) = BuildRequest();
@@ -146,10 +143,9 @@ public class AgentFrameworkResponseHandlerTelemetryTests
         var agent = new TelemetryTestAgent();
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(agent), NullLogger<AgentFrameworkResponseHandler>.Instance);
         var (request, context) = BuildRequest();
 
         // Act
@@ -161,11 +157,9 @@ public class AgentFrameworkResponseHandlerTelemetryTests
         Assert.Contains(TelemetryTestAgent.AgentName, mySpan.DisplayName, StringComparison.Ordinal);
     }
 
-    private static (CreateResponse request, ResponseContext context) BuildRequest(string? agentKey = null)
+    private static (CreateResponse request, ResponseContext context) BuildRequest()
     {
-        var request = agentKey is null
-            ? new CreateResponse { Model = "test" }
-            : new CreateResponse { Model = "test", AgentReference = new AgentReference(agentKey) };
+        var request = new CreateResponse { Model = "test" };
 
         request.Input = BinaryData.FromObjectAsJson(new[]
         {

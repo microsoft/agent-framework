@@ -131,9 +131,9 @@ public class AgentFrameworkResponseHandlerWorkflowTests
     }
 
     [Fact]
-    public async Task WorkflowAgent_RegisteredWithKey_ResolvesCorrectlyAsync()
+    public async Task WorkflowAgent_CreatedByFactory_RunsAsync()
     {
-        // Arrange: workflow agent registered with a keyed service name
+        // Arrange: a workflow agent created by a factory for each response run
         var agent = new StreamingTextAgent("inner", "Keyed workflow response");
         var workflow = AgentWorkflowBuilder.BuildSequential("keyed-wf", agent);
         var workflowAgent = workflow.AsAIAgent(
@@ -143,12 +143,12 @@ public class AgentFrameworkResponseHandlerWorkflowTests
 
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddKeyedSingleton("my-workflow", workflowAgent);
         var sp = services.BuildServiceProvider();
+        var agentSource = new FoundryHostedAgentSource(_ => workflowAgent, ServiceLifetime.Scoped, sp);
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-        var request = new CreateResponse { Model = "test", AgentReference = new AgentReference("my-workflow") };
-        request.Input = CreateUserInput("Test keyed workflow");
+        var handler = new AgentFrameworkResponseHandler(sp, agentSource, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var request = new CreateResponse { Model = "test" };
+        request.Input = CreateUserInput("Test factory workflow");
         var mockContext = CreateMockContext();
 
         // Act
@@ -201,12 +201,12 @@ public class AgentFrameworkResponseHandlerWorkflowTests
     {
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton(agent);
         services.AddSingleton<ILogger<AgentFrameworkResponseHandler>>(NullLogger<AgentFrameworkResponseHandler>.Instance);
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(
             sp,
+            new FoundryHostedAgentSource(agent),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
             new FoundryResponsesServerOptions
             {

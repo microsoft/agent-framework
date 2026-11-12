@@ -404,9 +404,9 @@ public sealed class FoundryToolboxRequestLifetimeTests
     {
         var services = new ServiceCollection();
         services.AddSingleton(sessionStore ?? new TestAgentSessionStore());
-        services.AddSingleton(agent);
         return new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
+            new FoundryHostedAgentSource(agent),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
             options ?? new FoundryResponsesServerOptions(),
             service);

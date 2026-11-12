@@ -121,14 +121,23 @@ public class HostedWorkflowCheckpointingHealthCheckTests
     }
 
     [Fact]
-    public async Task CheckHealthAsync_ScopedWorkflowAgent_IsResolvedFromAScopeAsync()
+    public async Task CheckHealthAsync_ScopedWorkflowAgentFactory_IsCreatedFromAScopeAsync()
     {
-        // Arrange: a scoped agent cannot be resolved from the root container when scopes are validated.
+        // Arrange: the factory resolves a scoped dependency, which fails from the root container when scopes
+        // are validated.
         var environment = InProcessExecution.OffThread.WithCheckpointing(CheckpointManager.CreateInMemory());
         var services = new ServiceCollection();
-        services.AddKeyedScoped("workflow", (_, _) => BuildWorkflowAgent(environment));
-        var check = new HostedWorkflowCheckpointingHealthCheck(
-            services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true }))
+        services.AddScoped(_ => new ScopedDependency());
+        var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+        var agentSource = new FoundryHostedAgentSource(
+            sp =>
+            {
+                _ = sp.GetRequiredService<ScopedDependency>();
+                return BuildWorkflowAgent(environment);
+            },
+            ServiceLifetime.Scoped,
+            provider);
+        var check = new HostedWorkflowCheckpointingHealthCheck(provider, agentSource)
         {
             IsHosted = true,
         };
@@ -142,15 +151,12 @@ public class HostedWorkflowCheckpointingHealthCheckTests
     }
 
     private static HostedWorkflowCheckpointingHealthCheck BuildCheckFor(AIAgent agent)
-    {
-        var services = new ServiceCollection();
-        services.AddSingleton(agent);
-
-        return new HostedWorkflowCheckpointingHealthCheck(services.BuildServiceProvider())
+        => new(new ServiceCollection().BuildServiceProvider(), new FoundryHostedAgentSource(agent))
         {
             IsHosted = true,
         };
-    }
+
+    private sealed class ScopedDependency;
 
     private static AIAgent BuildWorkflowAgent(InProcessExecutionEnvironment? executionEnvironment)
     {

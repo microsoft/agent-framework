@@ -99,9 +99,9 @@ public sealed class FoundryToolboxResponseScopeTests
         var agent = new ChatClientAgent(chatClient.Object);
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
         var handler = new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
+            new FoundryHostedAgentSource(agent),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
             new FoundryResponsesServerOptions(),
             toolboxService);

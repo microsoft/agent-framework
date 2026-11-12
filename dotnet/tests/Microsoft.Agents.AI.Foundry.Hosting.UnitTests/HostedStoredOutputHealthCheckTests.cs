@@ -196,23 +196,31 @@ public class HostedStoredOutputHealthCheckTests
     }
 
     [Fact]
-    public async Task CheckHealthAsync_ScopedAgentRegistration_IsResolvedFromAScopeAsync()
+    public async Task CheckHealthAsync_ScopedAgentFactory_IsCreatedFromAScopeAsync()
     {
-        // Arrange: a scoped agent cannot be resolved from the root container when scopes are validated.
+        // Arrange: the factory resolves a scoped dependency, which fails from the root container when scopes
+        // are validated.
         var services = new ServiceCollection();
-        services.AddKeyedScoped<AIAgent>("scoped-agent", (_, _) => new ChatClientAgent(
-            NewSilentChatClient(),
-            new ChatClientAgentOptions
+        services.AddScoped(_ => new ScopedDependency());
+        var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+        var agentSource = new FoundryHostedAgentSource(
+            sp =>
             {
-                Name = "scoped-agent",
-                ChatOptions = new ChatOptions
-                {
-                    RawRepresentationFactory = _ => new CreateResponseOptions { StoredOutputEnabled = true },
-                },
-            }));
-        var check = new HostedStoredOutputHealthCheck(
-            services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true }),
-            new FoundryResponsesServerOptions());
+                _ = sp.GetRequiredService<ScopedDependency>();
+                return new ChatClientAgent(
+                    NewSilentChatClient(),
+                    new ChatClientAgentOptions
+                    {
+                        Name = "scoped-agent",
+                        ChatOptions = new ChatOptions
+                        {
+                            RawRepresentationFactory = _ => new CreateResponseOptions { StoredOutputEnabled = true },
+                        },
+                    });
+            },
+            ServiceLifetime.Scoped,
+            provider);
+        var check = new HostedStoredOutputHealthCheck(provider, agentSource, new FoundryResponsesServerOptions());
 
         // Act
         var result = await check.CheckHealthAsync(NewContext(), CancellationToken.None);
@@ -223,13 +231,12 @@ public class HostedStoredOutputHealthCheckTests
     }
 
     private static HostedStoredOutputHealthCheck BuildCheckFor(AIAgent agent, FoundryResponsesServerOptions? hostingOptions = null)
-    {
-        var services = new ServiceCollection();
-        services.AddSingleton(agent);
-        return new HostedStoredOutputHealthCheck(
-            services.BuildServiceProvider(),
+        => new(
+            new ServiceCollection().BuildServiceProvider(),
+            new FoundryHostedAgentSource(agent),
             hostingOptions ?? new FoundryResponsesServerOptions());
-    }
+
+    private sealed class ScopedDependency;
 
     private static HealthCheckContext NewContext() => new()
     {

@@ -19,7 +19,7 @@ internal sealed class FoundryHostingAgent : DelegatingAIAgent
 
     /// <summary>
     /// The prefix of the identity that releases through 1.28.0 gave the sessions of an agent resolved from a
-    /// keyed registration that was not also the default agent.
+    /// keyed registration that was not also the default agent. Nothing is saved under it any more.
     /// </summary>
     private const string LegacyKeyIdentityPrefix = "key:";
 
@@ -63,30 +63,20 @@ internal sealed class FoundryHostingAgent : DelegatingAIAgent
     }
 
     /// <summary>
-    /// Resolves the stable identity used to partition session storage for the resolved agent.
+    /// Resolves the stable identity used to partition session storage for the agent a container serves.
     /// </summary>
     /// <remarks>
-    /// A keyed registration normally uses <c>key:{registrationKey}</c>. When keyed resolution
-    /// returns the same agent instance as the default registration, reference equality treats both
-    /// registrations as aliases and uses the default identity. This ensures named and unnamed
-    /// requests for the same agent share session state. The default identity uses
-    /// <c>name:{agent.Name}</c> when the agent has a name, or <c>default</c> otherwise.
+    /// The identity is <c>name:{agent.Name}</c> when the agent has a name, or <c>default</c> otherwise. It is
+    /// the identity releases through 1.28.0 gave the default agent, so sessions saved by such a container are
+    /// still found. Sessions those releases saved under a keyed registration are found through
+    /// <see cref="GetLegacySessionStorageIdentity(string)"/>. The name must stay the same across requests,
+    /// including for an agent created per response run, because a different name is a different identity.
     /// </remarks>
-    /// <param name="agent">The agent resolved for the current request.</param>
-    /// <param name="registrationKey">The keyed registration requested by the caller, if any.</param>
-    /// <param name="defaultAgent">The agent registered as the default, if any.</param>
+    /// <param name="agent">The agent the container serves.</param>
     /// <returns>The stable session storage identity.</returns>
-    internal static string ResolveSessionStorageIdentity(
-        AIAgent agent,
-        string? registrationKey,
-        AIAgent? defaultAgent)
+    internal static string ResolveSessionStorageIdentity(AIAgent agent)
     {
         _ = Throw.IfNull(agent);
-
-        if (registrationKey is not null && !ReferenceEquals(agent, defaultAgent))
-        {
-            return LegacyKeyIdentityPrefix + registrationKey;
-        }
 
         return !string.IsNullOrWhiteSpace(agent.Name)
             ? NameIdentityPrefix + agent.Name

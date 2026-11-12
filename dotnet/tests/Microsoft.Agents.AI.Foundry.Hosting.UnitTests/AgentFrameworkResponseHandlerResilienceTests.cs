@@ -221,6 +221,7 @@ public class AgentFrameworkResponseHandlerResilienceTests
         var constructor = typeof(AgentFrameworkResponseHandler).GetConstructor(
             [
                 typeof(IServiceProvider),
+                typeof(FoundryHostedAgentSource),
                 typeof(ILogger<AgentFrameworkResponseHandler>),
                 typeof(FoundryResponsesServerOptions),
                 typeof(FoundryToolboxService),
@@ -260,12 +261,12 @@ public class AgentFrameworkResponseHandlerResilienceTests
     {
         var services = new ServiceCollection();
         services.AddSingleton(store);
-        services.AddSingleton(agent);
         var sp = services.BuildServiceProvider();
 
         var options = new FoundryResponsesServerOptions { ResilientBackground = resilient };
         return new AgentFrameworkResponseHandler(
             sp,
+            new FoundryHostedAgentSource(agent),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
             options);
     }

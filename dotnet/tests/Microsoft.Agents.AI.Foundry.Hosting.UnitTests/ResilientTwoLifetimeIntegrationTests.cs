@@ -155,7 +155,6 @@ public sealed class ResilientTwoLifetimeIntegrationTests
                 Directory.CreateDirectory(checkpointRoot)))
             {
                 WebApplication firstHost = await StartServerAsync(
-                    "countdown-workflow",
                     () => BuildCountdownWorkflowAgent(coordinator, checkpointStore),
                     factoryLifetime,
                     new FoundryAgentSessionStore(storeName: sessionStoreName),
@@ -198,7 +197,6 @@ public sealed class ResilientTwoLifetimeIntegrationTests
             using var recoveryCheckpointStore = new FileSystemJsonCheckpointStore(
                 Directory.CreateDirectory(checkpointRoot));
             await using WebApplication secondHost = await StartServerAsync(
-                "countdown-workflow",
                 () => BuildCountdownWorkflowAgent(coordinator, recoveryCheckpointStore),
                 factoryLifetime,
                 new FoundryAgentSessionStore(storeName: sessionStoreName));
@@ -240,7 +238,7 @@ public sealed class ResilientTwoLifetimeIntegrationTests
         AIAgent agent,
         AgentSessionStore sessionStore,
         CountdownRecoveryCoordinator? recoveryCoordinator = null) =>
-        StartServerAsync(agent.Name!, () => agent, factoryLifetime: null, sessionStore, recoveryCoordinator);
+        StartServerAsync(() => agent, factoryLifetime: null, sessionStore, recoveryCoordinator);
 
     /// <summary>
     /// Starts a host that registers the agent instance with <c>AddFoundryResponses(agent)</c> when
@@ -248,7 +246,6 @@ public sealed class ResilientTwoLifetimeIntegrationTests
     /// that lifetime otherwise.
     /// </summary>
     private static async Task<WebApplication> StartServerAsync(
-        string agentName,
         Func<AIAgent> createAgent,
         ServiceLifetime? factoryLifetime,
         AgentSessionStore sessionStore,
@@ -259,7 +256,7 @@ public sealed class ResilientTwoLifetimeIntegrationTests
         var options = new FoundryResponsesServerOptions { ResilientBackground = true };
         if (factoryLifetime is { } lifetime)
         {
-            builder.Services.AddFoundryResponses(agentName, _ => createAgent(), lifetime, options);
+            builder.Services.AddFoundryResponses(_ => createAgent(), lifetime, options);
             builder.Services.AddFoundryAgentSessionStore(sessionStore);
         }
         else
