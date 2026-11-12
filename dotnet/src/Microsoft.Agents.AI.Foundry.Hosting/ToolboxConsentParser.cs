@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -26,8 +27,12 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <see cref="FoundryToolboxService"/> can surface the caller's consent requirement as an
 /// <c>oauth_consent_request</c> for the response that opened the toolbox.
 /// </para>
+/// <para>
+/// The payload is deserialized into <see cref="ToolsListFailure"/>. A payload that does not have that shape is
+/// treated as unreadable rather than partially interpreted.
+/// </para>
 /// </remarks>
-internal static class ToolboxConsentParser
+internal static partial class ToolboxConsentParser
 {
     private const string ConsentRequiredCode = "CONSENT_REQUIRED";
 
@@ -55,57 +60,24 @@ internal static class ToolboxConsentParser
         consents = [];
 
         // Fast pre-check: avoid JSON work unless the marker code is present.
-        if (!ContainsConsentRequiredCode(exceptionMessage))
+        if (!ContainsConsentRequiredCode(exceptionMessage)
+            || ParseToolSourceFailures(exceptionMessage!) is not { Count: > 0 } failures)
         {
             return false;
         }
 
-        var result = new List<McpConsentInfo>();
-        try
+        var result = new List<McpConsentInfo>(failures.Count);
+        foreach (var failure in failures)
         {
-            using var document = ParseErrorsPayload(exceptionMessage!, out var errors);
-            if (document is null)
+            if (failure?.Error is not { } error
+                || !string.Equals(error.Code, ConsentRequiredCode, StringComparison.Ordinal)
+                || string.IsNullOrEmpty(error.Message))
             {
+                // A non-consent error means enumeration stays broken even after consent.
                 return false;
             }
 
-            foreach (var error in errors.EnumerateArray())
-            {
-                if (!error.TryGetProperty("error", out var errorBody)
-                    || !errorBody.TryGetProperty("code", out var code)
-                    || code.ValueKind != JsonValueKind.String
-                    || !string.Equals(code.GetString(), ConsentRequiredCode, StringComparison.Ordinal))
-                {
-                    // A non-consent error means enumeration stays broken even after consent.
-                    return false;
-                }
-
-                string? consentUrl = errorBody.TryGetProperty("message", out var message)
-                    && message.ValueKind == JsonValueKind.String
-                        ? message.GetString()
-                        : null;
-
-                if (string.IsNullOrEmpty(consentUrl))
-                {
-                    return false;
-                }
-
-                string toolName = error.TryGetProperty("name", out var name)
-                    && name.ValueKind == JsonValueKind.String
-                        ? name.GetString() ?? toolboxName
-                        : toolboxName;
-
-                result.Add(new McpConsentInfo(toolboxName, toolName, consentUrl!));
-            }
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-
-        if (result.Count == 0)
-        {
-            return false;
+            result.Add(new McpConsentInfo(toolboxName, failure.Name ?? toolboxName, error.Message));
         }
 
         consents = result;
@@ -142,34 +114,11 @@ internal static class ToolboxConsentParser
             }
 
             consentRequired = true;
-            try
-            {
-                using var document = ParseErrorsPayload(message, out var errors);
-                if (document is null)
-                {
-                    continue;
-                }
 
-                foreach (var error in errors.EnumerateArray())
-                {
-                    string? name = error.ValueKind == JsonValueKind.Object
-                        && error.TryGetProperty("name", out var nameElement)
-                        && nameElement.ValueKind == JsonValueKind.String
-                            ? nameElement.GetString()
-                            : null;
-                    string? code = error.ValueKind == JsonValueKind.Object
-                        && error.TryGetProperty("error", out var errorBody)
-                        && errorBody.ValueKind == JsonValueKind.Object
-                        && errorBody.TryGetProperty("code", out var codeElement)
-                        && codeElement.ValueKind == JsonValueKind.String
-                            ? codeElement.GetString()
-                            : null;
-                    sources.Add($"{ToLoggableIdentifier(name)} ({ToLoggableIdentifier(code)})");
-                }
-            }
-            catch (JsonException)
+            // A payload that cannot be read adds nothing; the failure is still described without it.
+            foreach (var failure in ParseToolSourceFailures(message) ?? [])
             {
-                // The payload cannot be read; the failure is still described without it.
+                sources.Add($"{ToLoggableIdentifier(failure?.Name)} ({ToLoggableIdentifier(failure?.Error?.Code)})");
             }
         }
 
@@ -186,32 +135,29 @@ internal static class ToolboxConsentParser
         message?.IndexOf(ConsentRequiredCode, StringComparison.Ordinal) >= 0;
 
     /// <summary>
-    /// Parses the JSON payload that follows the text of a <c>tools/list</c> failure message, and returns its
-    /// <c>errors</c> array.
+    /// Reads the failing tool sources from the JSON payload that follows the text of a <c>tools/list</c> failure
+    /// message.
     /// </summary>
-    /// <returns>The parsed document, which owns <paramref name="errors"/>, or <see langword="null"/> when the
-    /// message has no payload with an <c>errors</c> array.</returns>
-    /// <exception cref="JsonException">The payload is not valid JSON.</exception>
-    private static JsonDocument? ParseErrorsPayload(string message, out JsonElement errors)
+    /// <returns>
+    /// The <c>errors</c> entries, or <see langword="null"/> when the message has no payload, the payload is not
+    /// valid JSON, or it does not have the shape of <see cref="ToolsListFailure"/>.
+    /// </returns>
+    private static List<ToolSourceFailure?>? ParseToolSourceFailures(string message)
     {
-        errors = default;
         int jsonStart = message.IndexOf('{');
         if (jsonStart < 0)
         {
             return null;
         }
 
-        var document = JsonDocument.Parse(message.AsSpan(jsonStart).ToString());
-        if (document.RootElement.ValueKind != JsonValueKind.Object
-            || !document.RootElement.TryGetProperty("errors", out errors)
-            || errors.ValueKind != JsonValueKind.Array)
+        try
         {
-            document.Dispose();
-            errors = default;
+            return JsonSerializer.Deserialize(message.AsSpan(jsonStart), ToolboxConsentJsonContext.Default.ToolsListFailure)?.Errors;
+        }
+        catch (JsonException)
+        {
             return null;
         }
-
-        return document;
     }
 
     /// <summary>Reads the messages of an exception and the exceptions it wraps, up to a limit.</summary>
@@ -263,4 +209,22 @@ internal static class ToolboxConsentParser
 
         return value;
     }
+
+    /// <summary>The JSON payload of an aggregate <c>tools/list</c> failure.</summary>
+    /// <param name="Errors">One entry per failing tool source.</param>
+    private sealed record ToolsListFailure(List<ToolSourceFailure?>? Errors);
+
+    /// <summary>One failing tool source of an aggregate <c>tools/list</c> failure.</summary>
+    /// <param name="Name">The name of the tool source.</param>
+    /// <param name="Error">Why the tool source failed.</param>
+    private sealed record ToolSourceFailure(string? Name, ToolSourceError? Error);
+
+    /// <summary>The error a tool source reported.</summary>
+    /// <param name="Code">The error code, for example <c>CONSENT_REQUIRED</c>.</param>
+    /// <param name="Message">The error message; for <c>CONSENT_REQUIRED</c>, the caller's consent link.</param>
+    private sealed record ToolSourceError(string? Code, string? Message);
+
+    [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+    [JsonSerializable(typeof(ToolsListFailure))]
+    private sealed partial class ToolboxConsentJsonContext : JsonSerializerContext;
 }

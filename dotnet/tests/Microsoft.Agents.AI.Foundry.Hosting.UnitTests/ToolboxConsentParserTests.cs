@@ -153,6 +153,24 @@ public class ToolboxConsentParserTests
     }
 
     [Theory]
+    [InlineData("{\"errors\":[\"CONSENT_REQUIRED\"]}")]
+    [InlineData("{\"errors\":[null,{\"name\":\"send_email\",\"error\":{\"code\":\"CONSENT_REQUIRED\",\"message\":\"https://consent/a\"}}]}")]
+    [InlineData("{\"errors\":[{\"name\":\"send_email\",\"error\":\"CONSENT_REQUIRED\"}]}")]
+    [InlineData("{\"errors\":[{\"name\":\"send_email\",\"error\":{\"code\":\"CONSENT_REQUIRED\",\"message\":5}}]}")]
+    public void TryParseConsentRequired_PayloadDoesNotMatchFailureShape_ReturnsFalse(string payload)
+    {
+        // Arrange: the payload names CONSENT_REQUIRED but does not have the proxy's failure shape.
+        string message = "tools/list failed " + payload;
+
+        // Act
+        var parsed = ToolboxConsentParser.TryParseConsentRequired("toolbox", message, out var consents);
+
+        // Assert
+        Assert.False(parsed);
+        Assert.Empty(consents);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     public void TryParseConsentRequired_NullOrEmptyMessage_ReturnsFalse(string? message)
@@ -195,6 +213,22 @@ public class ToolboxConsentParserTests
         // Assert
         Assert.True(described);
         Assert.Equal("unknown (CONSENT_REQUIRED), search (unknown)", description);
+    }
+
+    [Theory]
+    [InlineData("{\"errors\":[null,{\"name\":\"send_email\",\"error\":{\"code\":\"CONSENT_REQUIRED\",\"message\":\"https://consent.example/a\"}}]}")]
+    [InlineData("{\"errors\":[{\"name\":\"send_email\",\"error\":\"CONSENT_REQUIRED https://consent.example/a\"}]}")]
+    public void TryDescribeConsentFailure_PayloadDoesNotMatchFailureShape_OmitsConsentLink(string payload)
+    {
+        // Arrange
+        var exception = new InvalidOperationException("tools/list failed " + payload);
+
+        // Act
+        var described = ToolboxConsentParser.TryDescribeConsentFailure(exception, out var description);
+
+        // Assert
+        Assert.True(described);
+        Assert.DoesNotContain("consent.example", description, StringComparison.Ordinal);
     }
 
     [Fact]
