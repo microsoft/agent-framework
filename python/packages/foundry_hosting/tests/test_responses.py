@@ -5553,7 +5553,11 @@ class TestStreaming:
             ),
         ],
     )
-    async def test_usage_honors_merge_mode(self, merge_modes: tuple[str, str], expected: dict[str, int]) -> None:
+    async def test_usage_honors_merge_mode(
+        self,
+        merge_modes: tuple[Literal["append", "replace"], Literal["append", "replace"]],
+        expected: dict[str, int],
+    ) -> None:
         agent = _make_agent(
             stream_updates=[
                 AgentResponseUpdate(contents=[Content.from_text("Hello")], role="assistant"),
