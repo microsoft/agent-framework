@@ -551,11 +551,23 @@ def test_local_shell_tool_handles_mode_and_environment_variants(monkeypatch: pyt
         clean_env=True,
     )
 
-    assert inherited._env is not None
-    assert inherited._env["INHERITED"] == "yes"
-    assert inherited._env["EXTRA"] == "1"
-    assert clean._env["ONLY"] == "2"
-    assert "INHERITED" not in clean._env
+    inherited_env = inherited._launch_env()
+    clean_env = clean._launch_env()
+    assert inherited_env["INHERITED"] == "yes"
+    assert inherited_env["EXTRA"] == "1"
+    assert clean_env["ONLY"] == "2"
+    assert "INHERITED" not in clean_env
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell syntax")
+async def test_environment_changes_after_construction_are_inherited(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AF_LATE_VALUE", raising=False)
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
+    monkeypatch.setenv("AF_LATE_VALUE", "late")
+
+    result = await tool.run('echo "$AF_LATE_VALUE"')
+
+    assert result.stdout.strip() == "late"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX PATH search")

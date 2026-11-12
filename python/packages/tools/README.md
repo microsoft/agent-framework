@@ -133,7 +133,10 @@ are not stopped solely because either output allowance is exceeded.
   `/usr/bin/zsh` or `C:\Program Files\PowerShell\7\pwsh.exe`. On Windows the
   path must also include the file extension. Short names (`zsh`) and relative
   paths (`bin/zsh`, `.\pwsh.exe`) are rejected, because they could pick up a
-  file in the current directory.
+  file in the current directory. On Windows, wrap a path that contains spaces
+  in double quotes when passing it as a string, for example
+  `"C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo`, or pass `shell=` as a
+  list.
 - **Default shell lookup**: the Windows default (`pwsh.exe`, then
   `powershell.exe`) is looked up only in the fully qualified entries of
   `PATH`. The current directory and relative `PATH` entries are never

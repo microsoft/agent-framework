@@ -142,6 +142,24 @@ def test_resolve_shell_windows_keeps_full_paths(fake_windows_host: _FakeWindowsH
     assert resolve_shell(shell, interactive=True) == shell
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (r"C:\Tools\pwsh.exe -NoLogo", [r"C:\Tools\pwsh.exe", "-NoLogo"]),
+        (rf'"{_POWERSHELL_7}\pwsh.exe" -NoLogo', [rf"{_POWERSHELL_7}\pwsh.exe", "-NoLogo"]),
+    ],
+)
+def test_resolve_shell_windows_keeps_backslashes_in_string_overrides(
+    fake_windows_host: _FakeWindowsHost, monkeypatch: pytest.MonkeyPatch, value: str, expected: list[str]
+) -> None:
+    fake_windows_host(_TRUSTED_BIN, set())
+    monkeypatch.delenv("AGENT_FRAMEWORK_SHELL", raising=False)
+
+    assert resolve_shell(value, interactive=True) == expected
+    monkeypatch.setenv("AGENT_FRAMEWORK_SHELL", value)
+    assert resolve_shell(None, interactive=True) == expected
+
+
 def test_find_executable_searches_only_fully_qualified_path_entries(fake_windows_host: _FakeWindowsHost) -> None:
     fake_windows_host(
         rf".;;bin;C:;C:Tools;\rooted;{_TRUSTED_BIN}",

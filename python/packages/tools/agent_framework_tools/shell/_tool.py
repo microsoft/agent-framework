@@ -206,8 +206,11 @@ class LocalShellTool:
         self._approval_mode: Literal["always_require", "never_require"] = approval_mode
         self._on_command = on_command
 
-        merged_env = dict(env or {}) if clean_env else {**os.environ, **dict(env or {})}
-        self._env = restrict_executable_search(merged_env)
+        self._env_overrides = dict(env or {})
+        self._clean_env = clean_env
+        # Check PATH now so a bad configuration fails here; the environment used to start a shell is
+        # rebuilt at launch so later changes to os.environ are still inherited.
+        self._launch_env()
 
         self._interactive_argv = resolve_shell(self._shell_override, interactive=True)
         self._stateless_argv = resolve_shell(self._shell_override, interactive=False)
@@ -222,6 +225,11 @@ class LocalShellTool:
 
     # ------------------------------------------------------------------ lifecycle
 
+    def _launch_env(self) -> dict[str, str]:
+        """Build the environment for a new shell process, with ``PATH`` restricted to full directory paths."""
+        base = {} if self._clean_env else dict(os.environ)
+        return restrict_executable_search({**base, **self._env_overrides})
+
     async def start(self) -> None:
         """Eagerly spawn the persistent session (no-op in stateless mode)."""
         if self._mode != "persistent":
@@ -231,7 +239,7 @@ class LocalShellTool:
                 self._session = ShellSession(
                     self._interactive_argv,
                     workdir=self._workdir,
-                    env=self._env,
+                    env=self._launch_env(),
                     max_stdout_bytes=self._max_stdout_bytes,
                     max_stderr_bytes=self._max_stderr_bytes,
                 )
@@ -297,7 +305,7 @@ class LocalShellTool:
             self._stateless_argv,
             command,
             workdir=self._workdir,
-            env=self._env,
+            env=self._launch_env(),
             timeout=effective_timeout,
             max_stdout_bytes=self._max_stdout_bytes,
             max_stderr_bytes=self._max_stderr_bytes,

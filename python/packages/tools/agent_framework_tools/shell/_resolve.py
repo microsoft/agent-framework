@@ -7,6 +7,7 @@ from __future__ import annotations
 import ntpath
 import os
 import posixpath
+import shlex
 import sys
 from collections.abc import Mapping, Sequence
 
@@ -23,6 +24,20 @@ def _is_fully_qualified(path: str) -> bool:
         # A UNC or device root such as \\server\share is complete without a trailing separator.
         return True
     return bool(drive) and rest[:1] in ("\\", "/")
+
+
+def _split_shell_string(value: str) -> list[str]:
+    """Split a shell override string into argv.
+
+    On Windows, path separators are kept as written and a path that contains spaces must be wrapped in
+    double quotes, which are then removed. Elsewhere POSIX shell rules apply.
+    """
+    if sys.platform == "win32":
+        return [
+            part[1:-1] if len(part) >= 2 and part[0] == part[-1] == '"' else part
+            for part in shlex.split(value, posix=False)
+        ]
+    return shlex.split(value)
 
 
 def find_executable(name: str) -> str | None:
@@ -137,8 +152,9 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
 
     Priority:
 
-    1. Explicit ``shell`` argument (string is split via shlex rules; sequence
-       is used verbatim).
+    1. Explicit ``shell`` argument (a string is split into arguments; on
+       Windows a path with spaces must be in double quotes; a sequence is
+       used verbatim).
     2. ``AGENT_FRAMEWORK_SHELL`` environment variable.
     3. Platform default.
 
@@ -163,9 +179,7 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
     """
     if shell is not None:
         if isinstance(shell, str):
-            import shlex
-
-            parts = shlex.split(shell)
+            parts = _split_shell_string(shell)
             if not parts:
                 raise ShellExecutionError("shell override must not be empty")
         else:
@@ -177,9 +191,7 @@ def resolve_shell(shell: str | Sequence[str] | None, *, interactive: bool) -> li
 
     env_override = os.environ.get(_ENV_OVERRIDE)
     if env_override:
-        import shlex
-
-        parts = shlex.split(env_override)
+        parts = _split_shell_string(env_override)
         if parts:
             parts = _qualify_shell(parts, source=_ENV_OVERRIDE)
             return parts if interactive else _ensure_command_flag(parts)
