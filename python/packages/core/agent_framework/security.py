@@ -50,7 +50,6 @@ from ._middleware import (
 )
 from ._serialization import SerializationMixin
 from ._sessions import (
-    _FIDES_PREPARE_HISTORY_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     _SERVICE_HISTORY_VERIFIED_SOURCES_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentSession,
     ContextProvider,
@@ -4637,8 +4636,6 @@ class SecureAgentConfig(ContextProvider):
         context.metadata[_RESTORED_CONTEXT_LABEL_METADATA_KEY] = _STATE_CONTEXT_LABEL in state
         scope = _SecurityScope(state, scope_id=session.session_id)
         history_source_ids = self._history_source_ids(agent)
-        if history_source_ids and bool(getattr(agent, "require_per_service_call_history_persistence", False)):
-            context.metadata[_FIDES_PREPARE_HISTORY_CONTEXT_KEY] = True
         configured_labeler = self._message_labeler
         provider_source_ids: set[str] = set()
         if configured_labeler is not None:

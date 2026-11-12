@@ -74,7 +74,6 @@ _WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY = "workflow.defer_computer_functio
 _SERVICE_CONTINUATION_CONTEXT_KEY = "_agent_framework_service_continuation"
 _INITIAL_SERVICE_CONTINUATION_CONTEXT_KEY = "_agent_framework_initial_service_continuation"
 _LOADED_HISTORY_MESSAGES_CONTEXT_KEY = "_agent_framework_loaded_history_messages"
-_FIDES_PREPARE_HISTORY_CONTEXT_KEY = "_agent_framework_fides_prepare_history"
 _SERVICE_HISTORY_VERIFIED_SOURCES_CONTEXT_KEY = "_agent_framework_service_history_verified_sources"
 _SERVICE_HISTORY_COVERAGE_STATE_KEY = "_agent_framework_service_history_coverage"
 
@@ -1818,7 +1817,7 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
                 untouched, persisting each service call without driving the function loop with a
                 local sentinel. When False, the middleware loads providers and uses a local
                 sentinel conversation id so the function loop runs without service-side storage.
-            prepared_context: Optional first-call history snapshot already loaded for security preparation.
+            prepared_context: Optional history snapshot already prepared for the first service call.
             service_continuation_option_names: Client-declared options that identify service continuation.
         """
         self._agent = agent

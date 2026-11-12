@@ -39,7 +39,6 @@ from ._middleware import (
 )
 from ._serialization import SerializationMixin
 from ._sessions import (
-    _FIDES_PREPARE_HISTORY_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentSession,
     ContextProvider,
     HistoryProvider,
@@ -1802,7 +1801,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # scoping, but it is framework-private metadata and must not reach the client.
         co.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
-        # Build the first model input from the exact history snapshot FIDES prepared, when present.
+        # Build the first model input from the exact prepared history snapshot, when present.
         prepared_history_context = session_context.metadata.get(_PREPARED_PER_SERVICE_CALL_HISTORY_CONTEXT_KEY)
         session_messages: list[Message] = (
             prepared_history_context.get_messages(include_input=True)
@@ -1938,17 +1937,16 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         )
         _set_service_continuation(session_context, service_continuation)
 
-        # When per-service-call persistence is enabled, the per-service-call middleware owns
-        # HistoryProvider loading (it loads locally when the service does not store history, or
-        # relies on the service when it does), so skip them on the once-per-run before_run path.
+        # Per-service-call persistence owns later reloads and every write. The first local
+        # snapshot is prepared here; service-owned history is not loaded from local providers.
         per_service_call_history_required = self.require_per_service_call_history_persistence and bool(
             self._get_history_providers()
         )
 
-        # Run before_run providers (forward order, skip HistoryProvider when per-service-call
-        # persistence owns loading).
+        # Run providers in declared order. Service-owned history remains remote; local
+        # per-service-call history is loaded here and reused by the first service call.
         for provider in self.context_providers:
-            if per_service_call_history_required and isinstance(provider, HistoryProvider):
+            if per_service_call_history_required and service_stores_history and isinstance(provider, HistoryProvider):
                 continue
             if isinstance(provider, HistoryProvider) and not provider.load_messages:
                 continue
@@ -1961,22 +1959,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 state=provider_session.state.setdefault(provider.source_id, {}),
             )
 
-        prepare_history_for_security = (
-            per_service_call_history_required
-            and not service_stores_history
-            and session_context.metadata.get(_FIDES_PREPARE_HISTORY_CONTEXT_KEY) is True
-        )
-        if prepare_history_for_security:
+        if per_service_call_history_required and not service_stores_history:
             if provider_session is None:
-                raise RuntimeError("Provider session must be available when FIDES prepares local history.")
-            for provider in self.context_providers:
-                if isinstance(provider, HistoryProvider) and provider.load_messages:
-                    await provider.before_run(
-                        agent=self,
-                        session=provider_session,
-                        context=session_context,
-                        state=provider_session.state.setdefault(provider.source_id, {}),
-                    )
+                raise RuntimeError("Provider session must be available when local history is prepared.")
             prepared_context = SessionContext(
                 session_id=provider_session.session_id,
                 service_session_id=provider_session.service_session_id,

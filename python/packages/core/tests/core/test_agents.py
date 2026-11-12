@@ -5534,6 +5534,7 @@ async def test_psc_persists_provider_finalized_outbound_messages(stream: bool) -
 
     assert await _psc_run(agent, "caller-original", session, stream=stream) == "done"
 
+    assert provider.get_calls == 1
     stored_text = [message.text for batch in provider.saved_batches for message in batch]
     assert "provider-finalized" in stored_text
     assert "caller-original" not in stored_text
