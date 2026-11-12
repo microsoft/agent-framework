@@ -299,6 +299,35 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
         assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_chat_client_observability_accepts_model_in_client_kwargs(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data, stream: bool
+):
+    """Test that model in client_kwargs overrides the default model without TypeError."""
+    client = mock_chat_client()
+
+    messages = [Message(role="user", contents=["Test message"])]
+    span_exporter.clear()
+    if stream:
+        resp_stream = client.get_response(
+            messages=messages, stream=True, client_kwargs={"model": "override-model"}
+        )
+        async for _ in resp_stream:
+            pass
+        response = await resp_stream.get_final_response()
+    else:
+        response = await client.get_response(
+            messages=messages, client_kwargs={"model": "override-model"}
+        )
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes is not None  # ensure attributes dict exists for type checkers
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "override-model"
+
+
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_chat_client_observability_accepts_model_option(
     mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
