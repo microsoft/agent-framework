@@ -18,7 +18,7 @@ namespace Microsoft.Extensions.AI;
 
 /// <summary>Identifies the precision represented by provider-reported probabilities.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal enum DecisionPrecision
+public enum DecisionPrecision
 {
     /// <summary>The provider reports values without a declared decimal rounding.</summary>
     HighPrecision,
@@ -32,7 +32,7 @@ internal enum DecisionPrecision
 
 /// <summary>Represents one named probability observation.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionProbability
+public sealed class DecisionProbability
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionProbability"/> class.</summary>
     /// <param name="id">The exact opaque candidate or level ID.</param>
@@ -57,7 +57,7 @@ internal sealed class DecisionProbability
 [JsonDerivedType(typeof(BinaryDecisionAnswer), "binary")]
 [JsonDerivedType(typeof(ChoiceDecisionAnswer), "choice")]
 [JsonDerivedType(typeof(ScoreDecisionAnswer), "score")]
-internal abstract class DecisionAnswer
+public abstract class DecisionAnswer
 {
     internal const double DistributionTolerance = 1e-6;
 
@@ -236,7 +236,7 @@ internal abstract class DecisionAnswer
 
 /// <summary>Represents the probability that a binary proposition is true.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class BinaryDecisionAnswer : DecisionAnswer
+public sealed class BinaryDecisionAnswer : DecisionAnswer
 {
     /// <summary>Initializes a new instance of the <see cref="BinaryDecisionAnswer"/> class.</summary>
     [JsonConstructor]
@@ -258,7 +258,7 @@ internal sealed class BinaryDecisionAnswer : DecisionAnswer
 
 /// <summary>Represents a selected candidate and its complete probability distribution.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class ChoiceDecisionAnswer : DecisionAnswer
+public sealed class ChoiceDecisionAnswer : DecisionAnswer
 {
     /// <summary>Initializes a new instance of the <see cref="ChoiceDecisionAnswer"/> class.</summary>
     [JsonConstructor]
@@ -301,7 +301,7 @@ internal sealed class ChoiceDecisionAnswer : DecisionAnswer
 /// A reported score is checked against normalized latent values within the declared clipped rounding intervals; observed probabilities and the derived expectation are never repaired.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class ScoreDecisionAnswer : DecisionAnswer
+public sealed class ScoreDecisionAnswer : DecisionAnswer
 {
     /// <summary>Initializes a new instance of the <see cref="ScoreDecisionAnswer"/> class.</summary>
     [JsonConstructor]
@@ -358,7 +358,7 @@ internal sealed class ScoreDecisionAnswer : DecisionAnswer
 
 /// <summary>Represents a protocol-invalid provider result.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionProtocolException : Exception
+public sealed class DecisionProtocolException : Exception
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionProtocolException"/> class.</summary>
     public DecisionProtocolException()

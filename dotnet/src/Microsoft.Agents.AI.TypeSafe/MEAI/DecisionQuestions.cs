@@ -18,7 +18,7 @@ namespace Microsoft.Extensions.AI;
 
 /// <summary>Identifies the semantic kind of a decision question or answer.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal enum DecisionKind
+public enum DecisionKind
 {
     /// <summary>A two-outcome proposition.</summary>
     Binary,
@@ -36,7 +36,7 @@ internal enum DecisionKind
 [JsonDerivedType(typeof(BinaryDecisionQuestion), "binary")]
 [JsonDerivedType(typeof(ChoiceDecisionQuestion), "choice")]
 [JsonDerivedType(typeof(ScoreDecisionQuestion), "score")]
-internal abstract class DecisionQuestion
+public abstract class DecisionQuestion
 {
     private protected DecisionQuestion(string id, DecisionKind kind, string? instructions)
     {
@@ -57,7 +57,7 @@ internal abstract class DecisionQuestion
 
 /// <summary>Describes a binary decision question.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class BinaryDecisionQuestion : DecisionQuestion
+public sealed class BinaryDecisionQuestion : DecisionQuestion
 {
     /// <summary>Initializes a new instance of the <see cref="BinaryDecisionQuestion"/> class.</summary>
     /// <param name="id">The opaque, caller-owned question ID.</param>
@@ -103,7 +103,7 @@ internal sealed class BinaryDecisionQuestion : DecisionQuestion
 
 /// <summary>Describes one caller-defined choice candidate.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionCandidate
+public sealed class DecisionCandidate
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionCandidate"/> class.</summary>
     /// <param name="id">The exact opaque candidate ID to round-trip in results.</param>
@@ -124,7 +124,7 @@ internal sealed class DecisionCandidate
 
 /// <summary>Describes a choice decision question.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class ChoiceDecisionQuestion : DecisionQuestion
+public sealed class ChoiceDecisionQuestion : DecisionQuestion
 {
     /// <summary>Initializes a new instance of the <see cref="ChoiceDecisionQuestion"/> class.</summary>
     /// <param name="id">The opaque, caller-owned question ID.</param>
@@ -162,7 +162,7 @@ internal sealed class ChoiceDecisionQuestion : DecisionQuestion
 
 /// <summary>Describes one level in an ordered score rubric.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionScoreLevel
+public sealed class DecisionScoreLevel
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionScoreLevel"/> class.</summary>
     /// <param name="id">The exact opaque, caller-owned level ID.</param>
@@ -183,7 +183,7 @@ internal sealed class DecisionScoreLevel
 
 /// <summary>Describes a score decision question.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class ScoreDecisionQuestion : DecisionQuestion
+public sealed class ScoreDecisionQuestion : DecisionQuestion
 {
     /// <summary>Initializes a new instance of the <see cref="ScoreDecisionQuestion"/> class.</summary>
     /// <param name="id">The opaque, caller-owned question ID.</param>
@@ -221,7 +221,7 @@ internal sealed class ScoreDecisionQuestion : DecisionQuestion
 
 /// <summary>Represents a state and a nonempty, ordered batch of questions.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionRequest
+public sealed class DecisionRequest
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionRequest"/> class and snapshots its state and questions.</summary>
     /// <param name="state">The explicit JSON state evaluated by every question.</param>

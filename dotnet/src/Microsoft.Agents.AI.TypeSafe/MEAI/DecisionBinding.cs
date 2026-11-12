@@ -19,7 +19,7 @@ namespace Microsoft.Extensions.AI;
 /// <summary>Provides an explicit mapping from a choice candidate ID to an enum value.</summary>
 /// <typeparam name="TEnum">The application-owned enum type.</typeparam>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionEnumDefinition<TEnum>
+public sealed class DecisionEnumDefinition<TEnum>
     where TEnum : struct, Enum
 {
     private readonly ReadOnlyDictionary<string, TEnum> _values;
@@ -87,7 +87,7 @@ internal sealed class DecisionEnumDefinition<TEnum>
 /// <summary>Describes one enum mapping entry.</summary>
 /// <typeparam name="TEnum">The application-owned enum type.</typeparam>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionEnumValue<TEnum>
+public sealed class DecisionEnumValue<TEnum>
     where TEnum : struct, Enum
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionEnumValue{TEnum}"/> class.</summary>
@@ -110,7 +110,7 @@ internal sealed class DecisionEnumValue<TEnum>
 
 /// <summary>Provides typed access to a complete decision response.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionAnswerSet
+public sealed class DecisionAnswerSet
 {
     internal DecisionAnswerSet(DecisionResponse response)
     {
@@ -152,7 +152,7 @@ internal sealed class DecisionAnswerSet
 /// <summary>Maps one complete response to an application-owned result without inference or reflection.</summary>
 /// <typeparam name="TResult">The application-owned result type.</typeparam>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionResultBinding<TResult>
+public sealed class DecisionResultBinding<TResult>
 {
     private readonly Func<DecisionAnswerSet, TResult> _map;
 
@@ -175,7 +175,7 @@ internal sealed class DecisionResultBinding<TResult>
 
 /// <summary>Provides response binding extensions.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal static class DecisionBindingExtensions
+public static class DecisionBindingExtensions
 {
     /// <summary>Maps a complete response locally using the supplied explicit binding.</summary>
     /// <typeparam name="TResult">The application-owned result type.</typeparam>

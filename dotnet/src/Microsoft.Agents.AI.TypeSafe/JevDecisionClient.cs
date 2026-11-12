@@ -1,39 +1,61 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.TypeSafe;
 
 /// <summary>
-/// Answers provider-neutral decision requests with Jev, through <c>POST /v1/systemone</c> of the TypeSafe API.
+/// Provides an <see cref="IDecisionClient"/> for Jev, the TypeSafe System One model, which answers typed Binary,
+/// Choice, and Score questions about a state with probabilities.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Binary, Choice, and Score questions become Noul, Choice, and Score questions (see <see cref="JevDecisionMapping"/>).
-/// A request is checked with the TypeSafe rules before it is sent, and the result is checked against the request before
-/// it is converted, as the chat client and the tool already do. The response keeps the <see cref="JevResult"/> as its
-/// raw representation, each answer keeps its <see cref="JevResponse"/>, and Choice and Score answers carry Jev's
-/// confidence as the <c>confidence</c> additional property.
+/// Binary, Choice, and Score questions become Jev Noul, Choice, and Score questions. A request is checked with the
+/// TypeSafe rules before it is sent, such as at most 255 Choice alternatives and 2 to 10 Score levels, and the result is
+/// checked against the request before it is converted. Jev reports probabilities rounded to two decimal places, which
+/// each answer declares as <see cref="DecisionPrecision.TwoDecimalPlaces"/>.
 /// </para>
 /// <para>
-/// <see cref="IDecisionClient"/> is a proposed Microsoft.Extensions.AI API that this package compiles from an internal
-/// copy, so this client is internal; <see cref="JevChatClient"/> is built on it. Once the API ships, this client can
-/// become public.
+/// The response keeps the <see cref="JevResult"/> as its <see cref="DecisionResponse.RawRepresentation"/>, each answer
+/// keeps its <see cref="JevResponse"/>, and Choice and Score answers carry Jev's confidence in the <c>confidence</c>
+/// entry of <see cref="DecisionAnswer.AdditionalProperties"/>.
+/// </para>
+/// <para>
+/// <see cref="IDecisionClient"/> is the decision API proposed for Microsoft.Extensions.AI. This package carries a copy
+/// of it until it ships, so this client and the API are experimental.
 /// </para>
 /// </remarks>
-internal sealed class JevDecisionClient : IDecisionClient
+[Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
+public sealed class JevDecisionClient : IDecisionClient
 {
-    public const string ProviderName = "typesafe.ai";
+    internal const string ProviderName = "typesafe.ai";
 
     private readonly JevHttpClient _client;
     private readonly DecisionClientMetadata _metadata;
 
-    public JevDecisionClient(JevHttpClient client)
+    /// <summary>
+    /// Initializes a new instance of the <see cref="JevDecisionClient"/> class.
+    /// </summary>
+    /// <param name="credential">The TypeSafe API key, sent as a bearer token.</param>
+    /// <param name="options">The client and pipeline options. Defaults are used when <see langword="null"/>.</param>
+    /// <exception cref="ArgumentException">
+    /// <see cref="JevDecisionClientOptions.ModelId"/> is empty, or <see cref="JevDecisionClientOptions.Endpoint"/> is
+    /// not an absolute URI.
+    /// </exception>
+    public JevDecisionClient(ApiKeyCredential credential, JevDecisionClientOptions? options = null)
+        : this(CreateHttpClient(credential, options ?? new JevDecisionClientOptions()))
+    {
+    }
+
+    internal JevDecisionClient(JevHttpClient client)
     {
         this._client = Throw.IfNull(client);
         this._metadata = new DecisionClientMetadata(ProviderName, client.Endpoint, client.ModelId, [DecisionKind.Binary, DecisionKind.Choice, DecisionKind.Score]);
@@ -43,11 +65,13 @@ internal sealed class JevDecisionClient : IDecisionClient
     /// <exception cref="ArgumentException">The request breaks a TypeSafe rule, such as the number of Choice alternatives.</exception>
     /// <exception cref="InvalidOperationException">The Jev result does not answer every question as asked.</exception>
     /// <exception cref="DecisionProtocolException">An answer is not a complete, correlated decision answer.</exception>
-    /// <exception cref="System.ClientModel.ClientResultException">The TypeSafe API rejected the request.</exception>
+    /// <exception cref="ClientResultException">The TypeSafe API rejected the request.</exception>
     public async Task<DecisionResponse> GetResponseAsync(DecisionRequest request, DecisionOptions? options = null, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(request);
 
+        // A caller that has Jev's own questions, such as JevChatClient, sends them unchanged, so JSON instructions and
+        // criteria keep their form; the decision questions with the same IDs then only correlate the answers.
         IReadOnlyDictionary<string, JevQuestion>? jevQuestions = (options?.RawRepresentationFactory?.Invoke(this) as JevDecisionRequestOptions)?.Questions;
         var questions = new Dictionary<string, JevQuestion>(request.Questions.Count, StringComparer.Ordinal);
         foreach (DecisionQuestion question in request.Questions)
@@ -95,5 +119,22 @@ internal sealed class JevDecisionClient : IDecisionClient
     public void Dispose()
     {
         // The pipeline owns no disposable resources; its default transport shares one HttpClient per process.
+    }
+
+    private static JevHttpClient CreateHttpClient(ApiKeyCredential credential, JevDecisionClientOptions options)
+    {
+        _ = Throw.IfNull(credential);
+
+        if (string.IsNullOrWhiteSpace(options.ModelId))
+        {
+            Throw.ArgumentException(nameof(options), $"{nameof(JevDecisionClientOptions)}.{nameof(JevDecisionClientOptions.ModelId)} must not be empty.");
+        }
+
+        if (options.Endpoint?.IsAbsoluteUri is false)
+        {
+            Throw.ArgumentException(nameof(options), $"{nameof(JevDecisionClientOptions)}.{nameof(JevDecisionClientOptions.Endpoint)} must be an absolute URI.");
+        }
+
+        return new JevHttpClient(credential, options, options.Endpoint, options.ModelId);
     }
 }

@@ -1,9 +1,9 @@
 # DecisionChat
 
 The provider-neutral engine of a chat client for a decision model: a model that answers typed Binary, Choice, and
-Score questions about a state with probabilities, instead of writing text. It is built on the decision API in
-`../Decisions` and works with any `IDecisionClient`, so Jev, Azure OpenAI Decisions, and other decision models share
-one implementation.
+Score questions about a state with probabilities, instead of writing text. It is built on the decision API proposed for
+`Microsoft.Extensions.AI` and works with any `IDecisionClient`, so Jev, Azure OpenAI Decisions, and other decision
+models share one implementation.
 
 - `DecisionChatEngine` answers a chat request: it sends the conversation as the state, together with the caller's
   questions and the internal questions that choose a tool call, and returns a `FunctionCallContent` or the answers.
@@ -23,17 +23,15 @@ answers in its own result type through `DecisionChatEngineOptions.DescribeAnswer
 ```xml
 <PropertyGroup>
   <InjectSharedDecisionChat>true</InjectSharedDecisionChat>
-  <InjectSharedDecisions>true</InjectSharedDecisions>
-  <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
   <InjectSharedThrow>true</InjectSharedThrow>
   <NoWarn>$(NoWarn);MEAI001</NoWarn>
 </PropertyGroup>
 ```
 
-The project also needs package references to `Microsoft.Extensions.AI.Abstractions` and
-`Microsoft.Extensions.Logging.Abstractions`, and a project reference to `Microsoft.Agents.AI.Abstractions`. The code
-targets .NET 8 and later.
+The project also needs the decision API. Until `Microsoft.Extensions.AI` ships it, the only copy is in
+`Microsoft.Agents.AI.TypeSafe/MEAI`, so that package is the only one that can inject the engine today. It also needs
+package references to `Microsoft.Extensions.AI.Abstractions` and `Microsoft.Extensions.Logging.Abstractions`, and a
+project reference to `Microsoft.Agents.AI.Abstractions`. The code targets .NET 8 and later.
 
 The engine uses only the public surface of the decision API. Keep it that way, so it compiles unchanged once the API
-ships in `Microsoft.Extensions.AI` and `../Decisions` is deleted. At that point the engine can become a public type in
-an Agent Framework package.
+ships in `Microsoft.Extensions.AI`. At that point the engine can become a public type in an Agent Framework package.

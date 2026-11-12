@@ -16,7 +16,7 @@ namespace Microsoft.Extensions.AI;
 
 /// <summary>Identifies the semantic value projected by a feature coordinate.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal enum DecisionFeatureValueKind
+public enum DecisionFeatureValueKind
 {
     /// <summary>The probability that a binary proposition is true.</summary>
     BinaryTrueProbability,
@@ -39,7 +39,7 @@ internal enum DecisionFeatureValueKind
 
 /// <summary>Names one stable semantic coordinate in a feature schema.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionFeatureCoordinate
+public sealed class DecisionFeatureCoordinate
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionFeatureCoordinate"/> class.</summary>
     public DecisionFeatureCoordinate(
@@ -86,7 +86,7 @@ internal sealed class DecisionFeatureCoordinate
 
 /// <summary>Identifies a named feature schema and its version.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionFeatureSchema
+public sealed class DecisionFeatureSchema
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionFeatureSchema"/> class.</summary>
     public DecisionFeatureSchema(string id, int version, IEnumerable<DecisionFeatureCoordinate> coordinates)
@@ -129,7 +129,7 @@ internal sealed class DecisionFeatureSchema
 
 /// <summary>Represents one named native-double feature value.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionFeatureValue
+public sealed class DecisionFeatureValue
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionFeatureValue"/> class.</summary>
     public DecisionFeatureValue(string name, double value)
@@ -152,7 +152,7 @@ internal sealed class DecisionFeatureValue
 
 /// <summary>Represents a named feature projection with schema and provenance.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionFeatureVector
+public sealed class DecisionFeatureVector
 {
     internal DecisionFeatureVector(
         DecisionFeatureSchema schema,
@@ -176,7 +176,7 @@ internal sealed class DecisionFeatureVector
 
 /// <summary>Projects complete decision observations into named native-double coordinates.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal static class DecisionFeatureProjection
+public static class DecisionFeatureProjection
 {
     /// <summary>Projects a response without an inference call or probability repair.</summary>
     /// <returns>The named feature vector projected from the complete response.</returns>

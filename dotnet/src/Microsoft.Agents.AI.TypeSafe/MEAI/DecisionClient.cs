@@ -24,7 +24,7 @@ namespace Microsoft.Extensions.AI;
 
 /// <summary>Provides provider-neutral decision inference over a heterogeneous question batch.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal interface IDecisionClient : IDisposable
+public interface IDecisionClient : IDisposable
 {
     /// <summary>Evaluates all questions against the same request state.</summary>
     /// <param name="request">The owned decision request.</param>
@@ -43,7 +43,7 @@ internal interface IDecisionClient : IDisposable
 
 /// <summary>Provides per-request decision options.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal class DecisionOptions
+public class DecisionOptions
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionOptions"/> class.</summary>
     public DecisionOptions()
@@ -83,7 +83,7 @@ internal class DecisionOptions
 
 /// <summary>Provides metadata about an <see cref="IDecisionClient"/>.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionClientMetadata
+public sealed class DecisionClientMetadata
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionClientMetadata"/> class.</summary>
     public DecisionClientMetadata(
@@ -126,7 +126,7 @@ internal sealed class DecisionClientMetadata
 
 /// <summary>Classifies a provider failure without prescribing retry behavior.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionClientException : Exception
+public sealed class DecisionClientException : Exception
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionClientException"/> class.</summary>
     public DecisionClientException()
@@ -159,7 +159,7 @@ internal sealed class DecisionClientException : Exception
 
 /// <summary>Provides extensions for decision clients.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal static class DecisionClientExtensions
+public static class DecisionClientExtensions
 {
     /// <summary>Gets a typed provider service, or <see langword="null"/> when it is unavailable.</summary>
     /// <typeparam name="TService">The provider service type.</typeparam>
@@ -304,7 +304,7 @@ internal static class DecisionClientExtensions
 
 /// <summary>Identifies provider/model provenance without inventing missing identity.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionProvenance
+public sealed class DecisionProvenance
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionProvenance"/> class.</summary>
     public DecisionProvenance(
@@ -339,7 +339,7 @@ internal sealed class DecisionProvenance
 
 /// <summary>Represents a complete response correlated to one request.</summary>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionResponse
+public sealed class DecisionResponse
 {
     /// <summary>Initializes a new instance of the <see cref="DecisionResponse"/> class and validates it.</summary>
     [JsonConstructor]

@@ -198,6 +198,38 @@ public sealed class JevDecisionClientTests
     }
 
     [Fact]
+    public async Task Constructor_WithApiKeyAndOptions_SendsToTheConfiguredEndpointAsync()
+    {
+        // Arrange
+        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevChatTestData.Result(JevChatTestData.Noul("refund", 0.5)));
+        using var httpClient = new HttpClient(handler);
+        using var client = new JevDecisionClient(new ApiKeyCredential("test-key"), new JevDecisionClientOptions
+        {
+            Endpoint = new Uri("https://proxy.contoso.com/jev"),
+            Transport = new HttpClientPipelineTransport(httpClient),
+            RetryPolicy = new JevRetryPolicy { RecordedWaitsForTests = [] },
+        });
+
+        // Act
+        await client.GetResponseAsync(new DecisionRequest(s_state, [new BinaryDecisionQuestion("refund", "Refund?")]));
+
+        // Assert
+        JevTestHttpHandler.CapturedRequest request = Assert.Single(handler.Requests);
+        Assert.Equal(new Uri("https://proxy.contoso.com/jev"), request.Uri);
+        Assert.Equal("test-key", request.Authorization!.Parameter);
+        Assert.Equal("jev-latest", (string?)JsonNode.Parse(request.Body)!["model"]);
+    }
+
+    [Fact]
+    public void Constructor_InvalidOptions_Throws()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => new JevDecisionClient(null!));
+        Assert.Throws<ArgumentException>(() => new JevDecisionClient(new ApiKeyCredential("key"), new JevDecisionClientOptions { ModelId = " " }));
+        Assert.Throws<ArgumentException>(() => new JevDecisionClient(new ApiKeyCredential("key"), new JevDecisionClientOptions { Endpoint = new Uri("/jev", UriKind.Relative) }));
+    }
+
+    [Fact]
     public void ToDecisionQuestion_NoulWithOneCriterion_UsesItAsTheInstructions()
     {
         // Arrange: Jev accepts a Noul with only one outcome described, which a Binary question cannot express directly.

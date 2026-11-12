@@ -31,7 +31,7 @@ namespace Microsoft.Extensions.AI;
 /// </summary>
 /// <typeparam name="TResult">The application-owned result type.</typeparam>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionDefinition<TResult>
+public sealed class DecisionDefinition<TResult>
 {
     private readonly ReadOnlyCollection<DecisionDefinitionQuestion<TResult>> _questions;
 
@@ -679,7 +679,7 @@ internal sealed class DecisionDefinition<TResult>
 /// <summary>Contains a typed result and the complete neutral evidence that produced it.</summary>
 /// <typeparam name="TResult">The application-owned result type.</typeparam>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]
-internal sealed class DecisionResponse<TResult>
+public sealed class DecisionResponse<TResult>
 {
     private readonly DecisionDefinition<TResult> _definition;
 

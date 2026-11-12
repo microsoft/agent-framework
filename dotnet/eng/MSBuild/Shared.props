@@ -53,9 +53,6 @@
   <ItemGroup Condition="'$(InjectSharedSkills)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Skills\*.cs" LinkBase="Shared\Skills" />
   </ItemGroup>
-  <ItemGroup Condition="'$(InjectSharedDecisions)' == 'true'">
-    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Decisions\*.cs" LinkBase="Shared\Decisions" />
-  </ItemGroup>
   <ItemGroup Condition="'$(InjectSharedDecisionChat)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\DecisionChat\*.cs" LinkBase="Shared\DecisionChat" />
   </ItemGroup>
