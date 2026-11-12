@@ -24,9 +24,9 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.19.0,<2",
-    "hyperlight-sandbox>=0.9.0,<0.10",
-    "hyperlight-sandbox-backend-wasm>=0.9.0,<0.10 ; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
-    "hyperlight-sandbox-python-guest>=0.9.0,<0.10",
+    "hyperlight-sandbox>=0.8.0,<0.10",
+    "hyperlight-sandbox-backend-wasm>=0.8.0,<0.10 ; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
+    "hyperlight-sandbox-python-guest>=0.8.0,<0.10",
 ]
 
 [tool.uv]
