@@ -60,17 +60,16 @@ commitments.
   or a custom handler with a documented session-lifetime contract when continuity is required.
 - Standalone MCP GET/SSE streams for unsolicited messages are disabled; request-scoped SSE tool responses remain
   supported. Use an explicitly scoped integration for background subscriptions.
-- Construct `DefaultMcpToolHandler(IHttpClientFactory, string)` with an application-provided factory and stable named
-  configuration for HTTP handler reuse and rotation. Factory-created clients are disposed per invocation; the
-  factory remains application-owned. Configure the factory once with pooled handlers to avoid connection churn and
-  port exhaustion. Parameterless construction, callback-based constructors, and handler-level disposal are unsupported.
+- Keep MCP destination authorization in application-owned configuration rather than workflow content.
+  Use the default handler when an explicit destination policy and per-invocation sessions fit the application;
+  choose a custom handler when those policies need to differ. See the
+  [declarative workflow guidance](https://learn.microsoft.com/agent-framework/workflows/declarative).
 - Leave `DefaultMcpToolHandler.ProtocolVersion` unset for SDK automatic negotiation. When a server's protocol is
   known, an explicit legacy version skips the discovery probe but still creates a fresh session per invocation.
   Selection restricts negotiation and incompatible versions fail. Configure separate handlers for differing server
   policies; explicit newer revisions still perform discovery and do not downgrade to legacy-only servers.
-- Configure factory clients with cookies and redirects disabled, certificate revocation checking enabled, and
-  origin-bound credential injection. Do not retain per-workflow credentials or mutable origin state in pooled
-  handlers, and do not derive client names from workflow IDs, credentials, or arbitrary URLs.
+- Keep HTTP pipeline configuration and origin-bound credential injection application-owned. Avoid retaining
+  per-workflow credentials or mutable origin state in pooled handlers.
 - Bound concurrent MCP work and supply invocation deadlines/cancellation from the host. The handler owns no shared
   disposable resources; cancel and await calls before disposing the application's HTTP factory infrastructure.
 - Keep configuration exposure restricted to intentional values.

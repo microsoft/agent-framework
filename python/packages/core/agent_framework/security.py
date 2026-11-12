@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Annotated, Any, NoReturn, cast
 from weakref import WeakKeyDictionary
 
 from pydantic import BaseModel, Field
+from typing_extensions import Sentinel
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import (
@@ -50,10 +51,14 @@ from ._middleware import (
 )
 from ._serialization import SerializationMixin
 from ._sessions import (
+    _SERVICE_HISTORY_VERIFIED_SOURCES_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentSession,
     ContextProvider,
     HistoryProvider,
     SessionContext,
+    _get_initial_service_continuation,  # pyright: ignore[reportPrivateUsage]
+    _get_service_continuation,  # pyright: ignore[reportPrivateUsage]
+    _history_provider_covers_service_continuation,  # pyright: ignore[reportPrivateUsage]
 )
 from ._tools import (
     _APPROVAL_REQUEST_ID_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -137,6 +142,8 @@ _TOOL_POLICY_MAX_ALLOWED_CONFIDENTIALITY_KEY = "max_allowed_confidentiality"
 _TOOL_POLICY_SOURCE_INTEGRITY_KEY = "source_integrity"
 _MAX_REPLAY_CONTENT_DEPTH = 32
 _builtin_id = builtins.id
+_REPLAY_STATE_COVERED_KEY = "_agent_framework_fides_replay_state_covered"
+_REPLAY_STATE_COVERED_MARKER = Sentinel("_REPLAY_STATE_COVERED_MARKER")
 _TOOL_SECURITY_POLICY_KEYS = frozenset({
     _TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY,
     _TOOL_POLICY_CONFIDENTIALITY_KEY,
@@ -1364,15 +1371,16 @@ def _is_bound_approval_control(
     *,
     scope: _SecurityScope,
     approval_proofs: _ApprovalReplayProofs | None,
+    transport_authoritative: bool = False,
 ) -> Content | None:
-    """Return whether session state authenticates this approval control."""
+    """Return whether trusted transport or session state authenticates this approval control."""
     if content.type not in {"function_approval_request", "function_approval_response"} or content.id is None:
         return None
     authoritative_call = approval_proofs.function_call_for(content) if approval_proofs is not None else None
     function_call = authoritative_call or content.function_call
     if function_call is None or function_call.id is None or _function_call_replay_key(function_call) is None:
         return None
-    if authoritative_call is not None or _is_pending_approval_control(content, scope=scope):
+    if authoritative_call is not None or transport_authoritative or _is_pending_approval_control(content, scope=scope):
         return function_call
     return None
 
@@ -1382,6 +1390,7 @@ def _bound_approval_call_keys(
     *,
     scope: _SecurityScope,
     approval_proofs: _ApprovalReplayProofs | None,
+    replay_state_source_id: str | None = None,
 ) -> set[Any]:
     """Return authoritative call keys bound by approval controls across one replay batch."""
     return {
@@ -1394,6 +1403,10 @@ def _bound_approval_call_keys(
                 content,
                 scope=scope,
                 approval_proofs=approval_proofs,
+                transport_authoritative=(
+                    replay_state_source_id is not None
+                    and _is_replay_state_covered(message, source_id=replay_state_source_id)
+                ),
             )
         )
         is not None
@@ -1428,6 +1441,7 @@ def _replayed_message_label(
     scope: _SecurityScope,
     approval_proofs: _ApprovalReplayProofs | None = None,
     bound_approval_call_keys: set[Any] | None = None,
+    replay_state_source_id: str | None = None,
 ) -> ContentLabel:
     """Return a restriction-only label for caller-replayed or stored history."""
     role = str(message.role)
@@ -1441,6 +1455,7 @@ def _replayed_message_label(
             [message],
             scope=scope,
             approval_proofs=approval_proofs,
+            replay_state_source_id=replay_state_source_id,
         )
     for index, content in enumerate(message.contents):
         if not isinstance(content, Content):
@@ -1457,6 +1472,10 @@ def _replayed_message_label(
             content,
             scope=scope,
             approval_proofs=approval_proofs,
+            transport_authoritative=(
+                replay_state_source_id is not None
+                and _is_replay_state_covered(message, source_id=replay_state_source_id)
+            ),
         )
         is_bound_approval_control = authoritative_approval_call is not None
         has_bound_approval_control = has_bound_approval_control or is_bound_approval_control
@@ -1516,6 +1535,35 @@ def _replayed_message_label(
     return combine_labels(*labels)
 
 
+def _is_replay_state_covered(message: Message, *, source_id: str) -> bool:
+    """Return whether restored state for one provider covers this replay."""
+    coverage = message.additional_properties.get(_REPLAY_STATE_COVERED_KEY)
+    if not isinstance(coverage, Mapping):
+        return False
+    return cast(Mapping[str, Any], coverage).get(source_id) is _REPLAY_STATE_COVERED_MARKER
+
+
+def _clear_replay_state_covered_markers(
+    messages: Sequence[Message],
+    *,
+    source_id: str | None = None,
+) -> None:
+    """Remove one provider's private replay provenance, or all provenance after a failure."""
+    for message in messages:
+        coverage = message.additional_properties.get(_REPLAY_STATE_COVERED_KEY)
+        if source_id is None:
+            message.additional_properties.pop(_REPLAY_STATE_COVERED_KEY, None)
+            continue
+        if not isinstance(coverage, MutableMapping):
+            message.additional_properties.pop(_REPLAY_STATE_COVERED_KEY, None)
+            continue
+        mutable_coverage = cast(MutableMapping[str, Any], coverage)
+        if mutable_coverage.get(source_id) is _REPLAY_STATE_COVERED_MARKER:
+            mutable_coverage.pop(source_id, None)
+        if not any(marker is _REPLAY_STATE_COVERED_MARKER for marker in mutable_coverage.values()):
+            message.additional_properties.pop(_REPLAY_STATE_COVERED_KEY, None)
+
+
 # =============================================================================
 # Security Middleware
 # =============================================================================
@@ -1526,7 +1574,10 @@ _STATE_VARIABLES = "variables"
 _STATE_VARIABLE_METADATA = "variable_metadata"
 _STATE_AUDIT_LOG = "audit_log"
 _STATE_PENDING_APPROVALS = "pending_policy_approvals"
+_STATE_HISTORY_RECONSTRUCTION_COVERAGE = "history_reconstruction_coverage"
+_STATE_SERVICE_CONTINUATION_IDENTITY = "service_continuation_identity"
 _STANDALONE_SESSION_STATE_KEY = "__agent_framework_fides_security__"
+_RESTORED_CONTEXT_LABEL_METADATA_KEY = "_agent_framework_fides_restored_context_label"
 
 
 def _strict_json_value(
@@ -4331,8 +4382,7 @@ class SecureAgentConfig(ContextProvider):
                 The synchronous callback receives the authoritative ``source_id`` from the
                 ``SessionContext.context_messages`` bucket and the message in that bucket. It must return the
                 authoritative ``ContentLabel`` for that exact message. FIDES caches the result for the run without
-                mutating or stamping the message. Register ``SecureAgentConfig`` after every non-history provider
-                whose messages it should classify.
+                mutating or stamping the message. Register ``SecureAgentConfig`` as the last context provider.
             max_pending_approvals: Maximum pending policy approvals retained per session.
             pending_approval_ttl: Maximum age of an unconsumed approval. ``None`` disables expiry.
         """
@@ -4410,6 +4460,67 @@ class SecureAgentConfig(ContextProvider):
         """Return provider-customized middleware bound to one restored session scope."""
         return self._middleware_for_scope(self._scope_for_session(session))
 
+    def _mark_replay_state_covered_messages(self, messages: Sequence[Message]) -> None:
+        """Mark trusted transport-restored messages as already represented by session state."""
+        for message in messages:
+            coverage = message.additional_properties.get(_REPLAY_STATE_COVERED_KEY)
+            if not isinstance(coverage, MutableMapping):
+                coverage = {}
+                message.additional_properties[_REPLAY_STATE_COVERED_KEY] = coverage
+            cast(MutableMapping[str, Any], coverage)[self.source_id] = _REPLAY_STATE_COVERED_MARKER
+
+    def _fold_uncovered_replay_messages(
+        self,
+        session: AgentSession,
+        messages: Sequence[Message],
+        *,
+        complete_replay_messages: Sequence[Message] | None = None,
+        replay_history_complete: bool = True,
+    ) -> None:
+        """Fold new transport messages before a snapshot-only return persists them."""
+        state = session.state.setdefault(self.source_id, {})
+        if not isinstance(state, dict):
+            raise ValueError("Security provider state must be a dictionary.")
+        restored_context_label = _STATE_CONTEXT_LABEL in state
+        if not restored_context_label and not replay_history_complete:
+            _clear_replay_state_covered_markers(messages)
+            if complete_replay_messages is not None and complete_replay_messages is not messages:
+                _clear_replay_state_covered_markers(complete_replay_messages)
+            raise RuntimeError(
+                "Cannot reconstruct service-managed history without an authoritative FIDES context label."
+            )
+        scope = _SecurityScope(cast(dict[str, Any], state), scope_id=session.session_id)
+        replay_messages = (
+            messages if restored_context_label or complete_replay_messages is None else complete_replay_messages
+        )
+        approval_proofs = self._capture_core_approval_replay_proofs(
+            session,
+            replay_messages,
+        )
+        bound_call_keys = _bound_approval_call_keys(
+            replay_messages,
+            scope=scope,
+            approval_proofs=approval_proofs,
+            replay_state_source_id=self.source_id,
+        )
+        replay_labels = [
+            _replayed_message_label(
+                message,
+                reconstruct_unstamped=True,
+                scope=scope,
+                approval_proofs=approval_proofs,
+                bound_approval_call_keys=bound_call_keys,
+                replay_state_source_id=self.source_id,
+            )
+            for message in replay_messages
+            if not restored_context_label or not _is_replay_state_covered(message, source_id=self.source_id)
+        ]
+        if replay_labels:
+            scope.context_label = combine_labels(scope.context_label, *replay_labels)
+        _clear_replay_state_covered_markers(messages, source_id=self.source_id)
+        if replay_messages is not messages:
+            _clear_replay_state_covered_markers(replay_messages, source_id=self.source_id)
+
     @staticmethod
     def _capture_core_approval_replay_proofs(
         session: AgentSession,
@@ -4465,6 +4576,54 @@ class SecureAgentConfig(ContextProvider):
         }
 
     @staticmethod
+    def _history_providers(agent: Any) -> list[HistoryProvider]:
+        """Return loadable history providers visible on an agent."""
+        return [
+            provider
+            for provider in getattr(agent, "context_providers", ())
+            if isinstance(provider, HistoryProvider) and provider.load_messages
+        ]
+
+    @staticmethod
+    def _service_continuation_identity(state: Mapping[str, Any]) -> str | None:
+        """Return the continuation identity bound to restored FIDES state."""
+        raw_identity = state.get(_STATE_SERVICE_CONTINUATION_IDENTITY)
+        if raw_identity is None:
+            return None
+        try:
+            identity = _decode_durable_state(raw_identity, path="service continuation identity")
+        except ValueError:
+            return None
+        return identity if isinstance(identity, str) else None
+
+    @staticmethod
+    def _store_service_continuation_identity(state: dict[str, Any], identity: str) -> None:
+        """Bind authoritative FIDES state to one normalized continuation identity."""
+        state[_STATE_SERVICE_CONTINUATION_IDENTITY] = _encode_durable_state(
+            identity,
+            path="service continuation identity",
+        )
+
+    @staticmethod
+    def _verified_service_history_sources(
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        continuation_identity: str,
+    ) -> set[str]:
+        """Return providers whose loaded snapshot exactly covers the continuation."""
+        return {
+            provider.source_id
+            for provider in SecureAgentConfig._history_providers(agent)
+            if _history_provider_covers_service_continuation(
+                provider,
+                context=context,
+                state=session.state.get(provider.source_id, {}),
+                continuation_identity=continuation_identity,
+            )
+        }
+
+    @staticmethod
     def _fold_provider_message_map(
         scope: _SecurityScope,
         provider_messages: Mapping[str, Sequence[Message]],
@@ -4472,6 +4631,7 @@ class SecureAgentConfig(ContextProvider):
         session: AgentSession,
         source_ids: set[str],
         approval_proofs: _ApprovalReplayProofs,
+        replay_state_source_id: str,
         message_labeler: Callable[[str, Message], ContentLabel | None] | None = None,
     ) -> None:
         """Fold provider messages into one FIDES scope."""
@@ -4489,6 +4649,7 @@ class SecureAgentConfig(ContextProvider):
                 messages,
                 scope=scope,
                 approval_proofs=approval_proofs,
+                replay_state_source_id=replay_state_source_id,
             )
             for message in messages:
                 authoritative_label = message_labeler(source_id, message) if message_labeler is not None else None
@@ -4501,10 +4662,63 @@ class SecureAgentConfig(ContextProvider):
                         scope=scope,
                         approval_proofs=approval_proofs,
                         bound_approval_call_keys=bound_call_keys,
+                        replay_state_source_id=replay_state_source_id,
                     )
                 )
         if provider_labels:
             scope.context_label = combine_labels(scope.context_label, *provider_labels)
+
+    async def after_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Bind completed FIDES state to the continuation used by the run."""
+        del agent, session
+        continuation_present, continuation_identity = _get_service_continuation(context)
+        if continuation_present and continuation_identity is not None and _STATE_CONTEXT_LABEL in state:
+            self._store_service_continuation_identity(state, continuation_identity)
+        elif not continuation_present:
+            state.pop(_STATE_SERVICE_CONTINUATION_IDENTITY, None)
+
+    def _validate_service_continuation(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Validate service continuation authority against restored state or loaded history."""
+        restored_context_label = context.metadata.get(_RESTORED_CONTEXT_LABEL_METADATA_KEY) is True
+        continuation_present, continuation_identity = _get_initial_service_continuation(context)
+        if not continuation_present:
+            return
+        bound_identity = self._service_continuation_identity(state)
+        state_is_authoritative = (
+            continuation_identity is not None and restored_context_label and bound_identity == continuation_identity
+        )
+        verified_sources = (
+            self._verified_service_history_sources(agent, session, context, continuation_identity)
+            if continuation_identity is not None
+            else set[str]()
+        )
+        context.metadata[_SERVICE_HISTORY_VERIFIED_SOURCES_CONTEXT_KEY] = verified_sources
+        if (
+            continuation_identity is None
+            or (restored_context_label and not state_is_authoritative)
+            or (not restored_context_label and not verified_sources)
+        ):
+            state.pop(_STATE_SERVICE_CONTINUATION_IDENTITY, None)
+            state.pop(_STATE_HISTORY_RECONSTRUCTION_COVERAGE, None)
+            raise RuntimeError(
+                "Cannot reconstruct service-managed history without an authoritative FIDES context label."
+            )
+
+        self._store_service_continuation_identity(state, continuation_identity)
 
     async def before_run(
         self,
@@ -4526,6 +4740,8 @@ class SecureAgentConfig(ContextProvider):
             context: The invocation context - tools, instructions, and middleware are added here.
             state: The provider-scoped mutable state dict.
         """
+        restored_context_label = _STATE_CONTEXT_LABEL in state
+        context.metadata[_RESTORED_CONTEXT_LABEL_METADATA_KEY] = restored_context_label
         scope = _SecurityScope(state, scope_id=session.session_id)
         history_source_ids = self._history_source_ids(agent)
         configured_labeler = self._message_labeler
@@ -4533,7 +4749,9 @@ class SecureAgentConfig(ContextProvider):
         if configured_labeler is not None:
             raw_providers = getattr(agent, "context_providers", None)
             if not isinstance(raw_providers, Sequence):
-                raise ValueError("SecureAgentConfig with message_labeler requires an ordered context provider sequence.")
+                raise ValueError(
+                    "SecureAgentConfig with message_labeler requires an ordered context provider sequence."
+                )
             providers = cast(Sequence[Any], raw_providers)
             try:
                 config_index = next(index for index, provider in enumerate(providers) if provider is self)
@@ -4541,9 +4759,13 @@ class SecureAgentConfig(ContextProvider):
                 raise ValueError(
                     "SecureAgentConfig with message_labeler must be registered as a context provider."
                 ) from exc
-            if any(not isinstance(provider, HistoryProvider) for provider in providers[config_index + 1 :]):
-                raise ValueError("SecureAgentConfig with message_labeler must follow every non-history context provider.")
-            provider_source_ids = set(context.context_messages)
+            if providers[config_index + 1 :]:
+                raise ValueError("SecureAgentConfig must be the last context provider when message_labeler is set.")
+            provider_source_ids = {
+                provider.source_id
+                for provider in providers[:config_index]
+                if isinstance(getattr(provider, "source_id", None), str)
+            }
         message_labels: dict[int, tuple[Message, ContentLabel]] = {}
 
         def cached_provider_label(_: str, message: Message) -> ContentLabel | None:
@@ -4568,7 +4790,14 @@ class SecureAgentConfig(ContextProvider):
             context.input_messages,
         )
 
-        def fold_run_context() -> None:
+        def fold_run_context(*, validate_continuation: bool) -> None:
+            if validate_continuation:
+                self._validate_service_continuation(
+                    agent=agent,
+                    session=session,
+                    context=context,
+                    state=state,
+                )
             source_ids = provider_source_ids | history_source_ids
             if not source_ids:
                 return
@@ -4578,33 +4807,26 @@ class SecureAgentConfig(ContextProvider):
                 session=session,
                 source_ids=source_ids,
                 approval_proofs=approval_proofs,
+                replay_state_source_id=self.source_id,
                 message_labeler=classify_provider_message,
             )
 
-        fold_run_context()
-        # Per-service persistence loads history inside chat middleware, after inbound
-        # approvals may already execute. Without authority at this boundary, fail closed.
-        if bool(getattr(agent, "require_per_service_call_history_persistence", False)) and history_source_ids:
-            scope.context_label = combine_labels(
-                scope.context_label,
-                ContentLabel(
-                    integrity=IntegrityLabel.UNTRUSTED,
-                    confidentiality=ConfidentialityLabel.PRIVATE,
-                    metadata={"source": "unclassified_per_service_history"},
-                ),
-            )
+        fold_run_context(validate_continuation=False)
         input_bound_call_keys = _bound_approval_call_keys(
             context.input_messages,
             scope=scope,
             approval_proofs=approval_proofs,
+            replay_state_source_id=self.source_id,
         )
         input_labels = [
             _replayed_message_label(
                 message,
-                reconstruct_unstamped=True,
+                reconstruct_unstamped=not restored_context_label
+                or not _is_replay_state_covered(message, source_id=self.source_id),
                 scope=scope,
                 approval_proofs=approval_proofs,
                 bound_approval_call_keys=input_bound_call_keys,
+                replay_state_source_id=self.source_id,
             )
             for message in context.input_messages
         ]
@@ -4613,6 +4835,7 @@ class SecureAgentConfig(ContextProvider):
                 scope.context_label,
                 *input_labels,
             )
+        _clear_replay_state_covered_markers(context.input_messages, source_id=self.source_id)
         middleware: list[MiddlewareTypes] = [*self._middleware_for_scope(scope)]
 
         @function_middleware
@@ -4620,7 +4843,7 @@ class SecureAgentConfig(ContextProvider):
             _: FunctionInvocationContext,
             call_next: Callable[[], Awaitable[None]],
         ) -> None:
-            fold_run_context()
+            fold_run_context(validate_continuation=True)
             await call_next()
 
         @chat_middleware
@@ -4628,7 +4851,7 @@ class SecureAgentConfig(ContextProvider):
             chat_context: ChatContext,
             call_next: Callable[[], Awaitable[None]],
         ) -> None:
-            fold_run_context()
+            fold_run_context(validate_continuation=True)
             history_messages: dict[str, list[Message]] = {}
             for message in chat_context.messages:
                 attribution = message.additional_properties.get("_attribution")
@@ -4643,11 +4866,13 @@ class SecureAgentConfig(ContextProvider):
                 session=session,
                 source_ids=history_source_ids,
                 approval_proofs=approval_proofs,
+                replay_state_source_id=self.source_id,
                 message_labeler=cached_provider_label,
             )
             await call_next()
 
-        if history_source_ids:
+        continuation_present, _ = _get_service_continuation(context)
+        if history_source_ids or continuation_present:
             middleware.insert(0, fold_loaded_provider_context)
             middleware.append(fold_replayed_history)
         self._provider_state_used = True

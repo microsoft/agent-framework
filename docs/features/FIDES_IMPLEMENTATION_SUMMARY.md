@@ -372,5 +372,9 @@ cumulative security state before execution. Newly supplied assistant/tool messag
 when state was restored. Stored provider history is reconstructed conservatively whenever it is loaded; FIDES does not
 infer trust through transcript persistence, deduplication, compaction, or merging. Applications may instead configure
 `SecureAgentConfig.message_labeler` to authoritatively classify messages added by context providers registered before
-it, without mutating or stamping those messages.
-Per-service-call history that is unavailable at run setup is treated as **UNTRUSTED + PRIVATE**.
+it, without mutating or stamping those messages. When configured, `SecureAgentConfig` must be the last context
+provider.
+Local per-service-call history is prepared before approval execution. A resumed service-owned
+continuation requires authoritative FIDES state when no complete local snapshot is available.
+Chat middleware that rewrites outbound messages and restores them after downstream execution can make persisted
+history differ from the leaf request; applications that require exact durable requests must avoid that pattern.

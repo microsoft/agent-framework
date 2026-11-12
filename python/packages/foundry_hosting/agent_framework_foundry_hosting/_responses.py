@@ -2623,9 +2623,10 @@ class _OutputItemTracker:
                 call_id = persisted_item.get("call_id")
                 if isinstance(call_id, str):
                     self._outstanding_computer_calls.add(call_id)
-            elif persisted_item.get("type") == "computer_call_output":
-                if isinstance(call_id := persisted_item.get("call_id"), str):
-                    self._outstanding_computer_calls.discard(call_id)
+            elif persisted_item.get("type") == "computer_call_output" and isinstance(
+                call_id := persisted_item.get("call_id"), str
+            ):
+                self._outstanding_computer_calls.discard(call_id)
             if persisted_item.get("type") != "oauth_consent_request":
                 continue
             consent_link = persisted_item.get("consent_link")

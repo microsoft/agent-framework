@@ -145,6 +145,36 @@ def test_convert_approval_results_preserves_other_user_content() -> None:
     assert messages[2].contents[0].type == "text"
 
 
+def test_convert_approval_results_marks_only_exact_backend_rejection() -> None:
+    """Reusable call IDs and rejection text cannot authenticate a client-owned result."""
+    from agent_framework_ag_ui._agent_run import _convert_approval_results_to_tool_messages
+    from agent_framework_ag_ui._message_adapters import _take_backend_snapshot_messages
+
+    client_result = Content.from_function_result(
+        call_id="shared-call",
+        result="Error: Tool call invocation was rejected by user.",
+    )
+    synthesized_rejection = Content.from_function_result(
+        call_id="shared-call",
+        result="Error: Tool call invocation was rejected by user.",
+    )
+    messages = [
+        Message(role="tool", contents=[client_result]),
+        Message(role="user", contents=[synthesized_rejection]),
+    ]
+
+    _convert_approval_results_to_tool_messages(
+        messages,
+        backend_result_content_ids={id(synthesized_rejection)},
+    )
+
+    covered_messages = _take_backend_snapshot_messages(messages)
+    assert len(covered_messages) == 1
+    assert len(covered_messages[0].contents) == 1
+    assert covered_messages[0].contents[0] is synthesized_rejection
+    assert all(content is not client_result for message in covered_messages for content in message.contents)
+
+
 def test_sanitize_tool_history_filters_confirm_changes_keeps_other_tools() -> None:
     """Test that confirm_changes is filtered but other tools are preserved.
 

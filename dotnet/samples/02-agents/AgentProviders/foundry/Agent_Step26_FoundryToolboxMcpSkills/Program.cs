@@ -63,7 +63,18 @@ AIAgent agent = aiProjectClient.AsAIAgent(
             Instructions = "You are a helpful assistant. Use available skills to answer the user.",
         },
         AIContextProviders = [skillsProvider],
-    });
+    })
+    .AsBuilder()
+    .UseToolApproval(new ToolApprovalAgentOptions
+    {
+        // NOTE: Auto-approving all skill tools is done here for simplicity in
+        // this demonstration. In production, you should prompt the user before
+        // allowing script execution. See
+        // ..\..\..\AgentSkills\Agent_Step07_SkillsAutoApproval for a
+        // walkthrough of the full approval flow.
+        AutoApprovalRules = [AgentSkillsProvider.AllToolsAutoApprovalRule],
+    })
+    .Build();
 
 // --- Interactive prompt ---
 Console.Write("User: ");
