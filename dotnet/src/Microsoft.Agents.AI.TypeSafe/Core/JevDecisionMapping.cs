@@ -21,17 +21,18 @@ namespace Microsoft.Agents.AI.TypeSafe;
 /// </para>
 /// <para>
 /// The decision types require complete, correlated answers: every candidate and level needs a probability, and each
-/// distribution must sum to 1. Jev computes its values in floating point, so a value that exceeds its bounds by less
-/// than <see cref="Tolerance"/> is moved onto the bound, as <see cref="JevContractValidator"/> already accepts it.
-/// Nothing else is repaired.
+/// distribution must sum to 1 within the rounding of <see cref="Precision"/>. Jev computes its values in floating point,
+/// so a value that exceeds its bounds by less than <see cref="Tolerance"/> is moved onto the bound, as
+/// <see cref="JevContractValidator"/> already accepts it. Nothing else is repaired.
 /// </para>
 /// </remarks>
 internal static class JevDecisionMapping
 {
     /// <summary>
-    /// Gets the precision of Jev probabilities. Jev does not declare a rounding, so they are taken at face value.
+    /// Gets the precision of Jev probabilities, which the API rounds to two decimal places, so a distribution may sum
+    /// to slightly more or less than 1.
     /// </summary>
-    public const DecisionPrecision Precision = DecisionPrecision.HighPrecision;
+    public const DecisionPrecision Precision = DecisionPrecision.TwoDecimalPlaces;
 
     /// <summary>The name of the <see cref="DecisionAnswer.AdditionalProperties"/> entry that holds Jev's confidence.</summary>
     public const string ConfidenceProperty = "confidence";

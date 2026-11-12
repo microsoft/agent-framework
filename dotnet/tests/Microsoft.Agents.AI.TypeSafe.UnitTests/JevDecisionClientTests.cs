@@ -71,7 +71,8 @@ public sealed class JevDecisionClientTests
         // Assert: the provenance, usage, and raw result.
         Assert.Equal(JevDecisionClient.ProviderName, response.Provenance!.ProviderName);
         Assert.Equal("jev-test", response.Provenance.ModelId);
-        Assert.Equal(DecisionPrecision.HighPrecision, response.Provenance.Precision);
+        Assert.Equal(DecisionPrecision.TwoDecimalPlaces, response.Provenance.Precision);
+        Assert.All(response.Answers, answer => Assert.Equal(DecisionPrecision.TwoDecimalPlaces, answer.Precision));
         Assert.Equal(12, response.Usage!.TotalTokenCount);
         Assert.IsType<JevResult>(response.RawRepresentation);
     }
@@ -114,6 +115,24 @@ public sealed class JevDecisionClientTests
         // Act & Assert
         DecisionProtocolException exception = await Assert.ThrowsAsync<DecisionProtocolException>(() => client.GetResponseAsync(request));
         Assert.Contains("'technical'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_DistributionRoundedToTwoDecimals_IsAcceptedAsync()
+    {
+        // Arrange: Jev rounds to two decimals, so three even probabilities sum to 0.99 rather than 1.
+        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevChatTestData.Result(
+            "\"department\":{\"type\":\"choice\",\"choice\":\"billing\",\"confidence\":0.01,\"probabilities\":{\"billing\":0.33,\"technical\":0.33,\"sales\":0.33}}"));
+        using var httpClient = new HttpClient(handler);
+        using JevDecisionClient client = CreateClient(httpClient);
+        var request = new DecisionRequest(s_state, [new ChoiceDecisionQuestion("department", "Which team?", [new("billing", "Payments"), new("technical", "Bugs"), new("sales", "Plans")])]);
+
+        // Act
+        DecisionResponse response = await client.GetResponseAsync(request);
+
+        // Assert: the observed values are kept as reported.
+        ChoiceDecisionAnswer answer = Assert.IsType<ChoiceDecisionAnswer>(Assert.Single(response.Answers));
+        Assert.Equal([0.33, 0.33, 0.33], answer.Probabilities.Select(probability => probability.Value));
     }
 
     [Fact]
