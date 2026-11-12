@@ -34,6 +34,23 @@ def _encoded_checkpoint_hash(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _select_latest_checkpoint(checkpoints: list[WorkflowCheckpoint]) -> WorkflowCheckpoint:
+    """Return the latest checkpoint, resolving timestamp ties through the lineage chain.
+
+    Mirrors the tie-breaker used by the core checkpoint storages. Checkpoints taken at the
+    same superstep boundary can share a timestamp. Among the checkpoints with the newest
+    timestamp, one that another of them names as its ``previous_checkpoint_id`` is
+    superseded, so the result does not depend on the order the store lists keys in.
+    If several unsuperseded candidates remain, the one with the greatest ``checkpoint_id``
+    is returned, so the choice among them is stable too.
+    """
+    newest_timestamp = max(datetime.fromisoformat(cp.timestamp) for cp in checkpoints)
+    candidates = [cp for cp in checkpoints if datetime.fromisoformat(cp.timestamp) == newest_timestamp]
+    superseded_ids = {cp.previous_checkpoint_id for cp in candidates}
+    leaves = [cp for cp in candidates if cp.checkpoint_id not in superseded_ids]
+    return max(leaves or candidates, key=lambda cp: cp.checkpoint_id)
+
+
 def _store_scope(config: AgentConfig, platform_context: FoundryAgentRequestContext) -> FoundryRequestScope | None:
     if not config.is_hosted:
         return None
@@ -227,7 +244,7 @@ class FoundryCheckpointStore:
         checkpoints = await self.list_checkpoints(workflow_name=workflow_name)
         if not checkpoints:
             return None
-        return max(checkpoints, key=lambda checkpoint: datetime.fromisoformat(checkpoint.timestamp))
+        return _select_latest_checkpoint(checkpoints)
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         checkpoints = await self.list_checkpoints(workflow_name=workflow_name)

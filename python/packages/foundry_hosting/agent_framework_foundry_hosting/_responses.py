@@ -24,7 +24,7 @@ from collections.abc import (
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
 from copy import copy
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import TYPE_CHECKING, Generic, Literal, TypeGuard, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
 from agent_framework import (
@@ -50,9 +50,15 @@ from agent_framework import (
     add_usage_details,
     get_namespaced_value,
 )
+from agent_framework import (
+    Annotation as FrameworkAnnotation,
+)
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework._telemetry import mark_feature_used
+from agent_framework._types import _get_annotation_text_span_regions  # pyright: ignore[reportPrivateUsage]
+from agent_framework._workflows._agent import _StreamingRoleGate  # pyright: ignore[reportPrivateUsage]
 from agent_framework.exceptions import AgentFrameworkException
+from agent_framework.observability import OBSERVABILITY_SETTINGS
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
     ResponseContext,
@@ -63,11 +69,16 @@ from azure.ai.agentserver.responses._id_generator import IdGenerator
 from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import (
+    Annotation as ResponsesAnnotation,
+)
+from azure.ai.agentserver.responses.models import (
     ComputerAction,
     ComputerCallSafetyCheckParam,
     ComputerScreenshotImage,
     ContainerFileCitationBody,
     CreateResponse,
+    FileCitationBody,
+    FilePath,
     FunctionShellAction,
     FunctionShellCallOutputContent,
     FunctionShellCallOutputExitOutcome,
@@ -87,6 +98,7 @@ from azure.ai.agentserver.responses.models import (
     ResponseUsage,
     ResponseUsageInputTokensDetails,
     ResponseUsageOutputTokensDetails,
+    UrlCitationBody,
 )
 from azure.ai.agentserver.responses.streaming._builders import (
     OutputItemBuilder,
@@ -99,7 +111,6 @@ from azure.ai.agentserver.responses.streaming._builders import (
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import MCPError
-from typing_extensions import Any
 
 from ._agent_source import is_agent, resolve_agent, validate_agent_source
 from ._feature_usage import FeatureIndex
@@ -142,9 +153,53 @@ _HOSTED_PROVIDER_OUTPUT_COUNT_KEY = "_foundry_provider_output_count"
 _HOSTED_PROVIDER_USAGE_KEY = "_foundry_provider_usage"
 _PENDING_CONTAINER_FILE_CITATIONS_KEY = "_foundry_pending_container_file_citations"
 _CONTAINER_FILE_CITATIONS_KEY = "container_file_citations"
+_PUBLIC_STREAM_FAILURE_MESSAGE = "An internal server error occurred."
 
 _HistorySource = Literal["agent_server", "agent", "service"]
 _AGENT_SOURCE_UNSET = object()
+
+
+class _PublicResponseFailure(Exception):
+    """Mark a vetted failure message as safe for client-visible serialization."""
+
+    def __init__(self, error: Exception, public_message: str | None = None) -> None:
+        super().__init__(public_message or str(error) or type(error).__name__)
+        self.error = error
+        self.public_message = public_message or str(error) or type(error).__name__
+
+
+async def _set_agent_session(store: SessionStore, session_id: str, session: AgentSession) -> None:
+    """Persist a session while preserving the established public conflict contract."""
+    try:
+        await store.set(session_id, session)
+    except RuntimeError as exc:
+        if str(exc) == "Another request advanced this agent session; reload before writing.":
+            raise _PublicResponseFailure(exc) from None
+        raise
+
+
+def _log_response_failure(phase: str, response_id: str, exc: BaseException) -> None:
+    """Log a correlated hosted response failure under the sensitive-data policy."""
+    diagnostic_exception = exc.error if isinstance(exc, _PublicResponseFailure) else exc
+    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+        logger.error(
+            "Hosted Responses failure (phase=%s, response_id=%s, error_type=%s).",
+            phase,
+            response_id,
+            type(diagnostic_exception).__name__,
+            exc_info=(
+                type(diagnostic_exception),
+                diagnostic_exception,
+                diagnostic_exception.__traceback__,
+            ),
+        )
+    else:
+        logger.error(
+            "Hosted Responses failure (phase=%s, response_id=%s, error_type=%s).",
+            phase,
+            response_id,
+            type(diagnostic_exception).__name__,
+        )
 
 
 @dataclass(frozen=True)
@@ -227,6 +282,82 @@ def _container_file_citations_from_function_result(content: Content) -> list[_Co
     return citations
 
 
+def _annotations_to_output_text(
+    annotations: Sequence[FrameworkAnnotation] | None,
+) -> list[ResponsesAnnotation]:
+    """Convert framework citations into Responses output-text annotations.
+
+    Source-coordinate regions describe the cited source, not generated content, and
+    are not emitted as output-text spans.
+    """
+    if not annotations or not isinstance(annotations, Sequence) or isinstance(annotations, (str, bytes)):
+        return []
+
+    output_annotations: list[ResponsesAnnotation] = []
+    for annotation in annotations:
+        if not isinstance(annotation, Mapping):
+            continue
+        annotation_mapping = cast("Mapping[str, Any]", annotation)
+        if annotation_mapping.get("type") != "citation":
+            continue
+
+        raw_properties = annotation_mapping.get("additional_properties")
+        properties: Mapping[str, Any] = (
+            cast("Mapping[str, Any]", raw_properties) if isinstance(raw_properties, Mapping) else {}
+        )
+        regions = _get_annotation_text_span_regions(annotation_mapping)
+        file_id = annotation_mapping.get("file_id")
+        url = annotation_mapping.get("url")
+        title = annotation_mapping.get("title")
+        container_id = properties.get("container_id")
+        index = properties.get("index")
+
+        if isinstance(container_id, str) and container_id and isinstance(file_id, str) and file_id:
+            for region in regions:
+                output_annotations.append(
+                    ContainerFileCitationBody(
+                        type="container_file_citation",
+                        container_id=container_id,
+                        file_id=file_id,
+                        filename=url if isinstance(url, str) else "",
+                        start_index=region["start_index"],
+                        end_index=region["end_index"],
+                    )
+                )
+        elif isinstance(url, str) and url and not file_id:
+            for region in regions:
+                output_annotations.append(
+                    UrlCitationBody(
+                        type="url_citation",
+                        url=url,
+                        title=title if isinstance(title, str) else "",
+                        start_index=region["start_index"],
+                        end_index=region["end_index"],
+                    )
+                )
+        elif (
+            isinstance(file_id, str) and file_id and isinstance(url, str) and url and type(index) is int and index >= 0
+        ):
+            output_annotations.append(
+                FileCitationBody(
+                    type="file_citation",
+                    file_id=file_id,
+                    filename=url,
+                    index=index,
+                )
+            )
+        elif isinstance(file_id, str) and file_id and type(index) is int and index >= 0:
+            output_annotations.append(
+                FilePath(
+                    type="file_path",
+                    file_id=file_id,
+                    index=index,
+                )
+            )
+
+    return output_annotations
+
+
 def _is_refusal_text_content(content: Content) -> bool:
     return (
         content.type == "text"
@@ -268,7 +399,7 @@ def _validate_checkpoint_context_id(context_id: str) -> None:
         or os.path.isabs(context_id)
         or os.path.splitdrive(context_id)[0]
     ):
-        raise RuntimeError(f"Invalid context id: {context_id!r}")
+        raise _PublicResponseFailure(RuntimeError(f"Invalid context id: {context_id!r}"))
 
 
 def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
@@ -285,20 +416,79 @@ def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
 
 def _reject_busy_conversation(session: AgentSession) -> None:
     if session.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) is not None:
-        raise RuntimeError(
-            "A service-backed conversation already has an in-flight turn. Wait for it to finish; "
-            "if it failed or was cancelled after dispatch, start a new conversation rather than "
-            "reusing a possibly changed provider thread."
+        raise _PublicResponseFailure(
+            RuntimeError(
+                "A service-backed conversation already has an in-flight turn. Wait for it to finish; "
+                "if it failed or was cancelled after dispatch, start a new conversation rather than "
+                "reusing a possibly changed provider thread."
+            )
         )
 
 
-def _create_response_event_stream(context: ResponseContext) -> ResponseEventStream:
-    """Create a response stream seeded from recovery state when available."""
+def _request_without_reserved_metadata(request: CreateResponse) -> CreateResponse:
+    """Copy a create request with any client-supplied reserved metadata bag removed.
+
+    ``ResponseEventStream`` seeds the response from the request, and host recovery later trusts
+    that bag for incomplete status, provider cursors, usage, and citations. Only a persisted
+    response is a trusted source. The caller's request mapping is left unchanged.
+    """
+    raw_metadata = request.get("metadata")
+    if not isinstance(raw_metadata, Mapping):
+        return request
+    # Metadata is a TypedDict of known public keys. Cast so a client-supplied reserved key is visible.
+    metadata = cast(Mapping[str, Any], raw_metadata)
+    if _RESERVED_RESPONSE_METADATA_KEY not in metadata:
+        return request
+    public_metadata: dict[str, Any] = {
+        key: value for key, value in metadata.items() if key != _RESERVED_RESPONSE_METADATA_KEY
+    }
+    seeded: dict[str, Any] = dict(request)
+    if public_metadata:
+        seeded["metadata"] = public_metadata
+    else:
+        seeded.pop("metadata", None)
+    return cast(CreateResponse, seeded)
+
+
+def _create_response_event_stream(context: ResponseContext, request: CreateResponse) -> ResponseEventStream:
+    """Create a response stream from recovery state or the originating request."""
     if context.is_recovery:
         persisted_response = context.persisted_response
         if persisted_response is not None:
             return ResponseEventStream(response=persisted_response, response_id=context.response_id)
-    return ResponseEventStream(response_id=context.response_id)
+    return ResponseEventStream(
+        request=_request_without_reserved_metadata(request),
+        response_id=context.response_id,
+    )
+
+
+def _hosted_internal_metadata(stream: ResponseEventStream) -> dict[str, Any]:
+    """Keep private state in the durable envelope, outside the public metadata quota.
+
+    The SDK strips its reserved ``internal_metadata`` key at every wire boundary. Older
+    checkpoints used its quota-limited response metadata bag; copy that trusted state only
+    when the envelope has no private bag of its own.
+    """
+    metadata = stream.response.get("internal_metadata")
+    if metadata is None:
+        metadata = dict(stream.internal_metadata)
+        stream.response["internal_metadata"] = metadata
+    if not isinstance(metadata, dict):
+        raise RuntimeError("The persisted host metadata is invalid.")
+    return cast(dict[str, Any], metadata)
+
+
+def _read_persisted_incomplete_reason(stream: ResponseEventStream) -> str | None:
+    """Return a truncating finish reason restored from a trusted response snapshot."""
+    persisted = _hosted_internal_metadata(stream).get(_INCOMPLETE_REASON_KEY)
+    if isinstance(persisted, str):
+        return persisted
+    details = stream.response.get("incomplete_details")
+    if isinstance(details, Mapping):
+        reason = cast(Mapping[str, Any], details).get("reason")
+        if isinstance(reason, str):
+            return reason
+    return None
 
 
 def _agent_response_updates(response: AgentResponse[Any], response_id: str) -> list[AgentResponseUpdate]:
@@ -502,6 +692,10 @@ _LATEST_CHECKPOINT_ID_KEY = "_last_checkpoint_id"
 # ``internal_metadata`` key carrying a truncating finish reason across resilient checkpoints, so a
 # turn cut short before a crash still ends ``incomplete`` after recovery.
 _INCOMPLETE_REASON_KEY = "_incomplete_reason"
+# SDK-reserved response metadata entry. It round-trips server-owned recovery state (this reason,
+# provider cursors, usage, and citations). Clients may send the same key; it is never trusted on a
+# fresh request. Foundry counts it toward the 16-entry public metadata limit.
+_RESERVED_RESPONSE_METADATA_KEY = "_internal_metadata"
 
 
 # Foundry Toolbox Auth integration
@@ -1080,7 +1274,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 async for event in events:
                     yield event
             return
-        response_event_stream = _create_response_event_stream(context)
+        response_event_stream = _create_response_event_stream(context, request)
         if context.is_steered_turn:
             logger.debug("Serving steered turn (pending_input_count=%d)", context.pending_input_count)
         yield response_event_stream.emit_created()
@@ -1088,15 +1282,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         terminal_event: ResponseStreamEvent | None = None
         try:
-            scope = FoundryRequestScope.from_context(
-                self.config, get_request_context(), local_session_id=context.response_id
-            )
+            try:
+                scope = FoundryRequestScope.from_context(
+                    self.config, get_request_context(), local_session_id=context.response_id
+                )
+            except (TypeError, ValueError, RuntimeError) as exc:
+                raise _PublicResponseFailure(exc) from None
             if self._agent_source is None:
                 raise RuntimeError("The hosted agent source is not configured.")
             agent = await resolve_agent(self._agent_source)
-            configuration = self._configuration or _validate_agent_configuration(
-                agent, self._history_source, self._host_options, background_source=self._background_source
-            )
+            try:
+                configuration = self._configuration or _validate_agent_configuration(
+                    agent, self._history_source, self._host_options, background_source=self._background_source
+                )
+            except (TypeError, ValueError, RuntimeError) as exc:
+                raise _PublicResponseFailure(exc) from None
             if self._configuration is None:
                 _initialize_agent_history(agent, configuration)
             if configuration.workflow:
@@ -1104,14 +1304,25 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             hosted_request: HostedResponseRequest | None = None
             if configuration.workflow:
                 if self._prepare_options is not None:
-                    raise ValueError("prepare_options is only supported for regular agents.")
+                    raise _PublicResponseFailure(ValueError("prepare_options is only supported for regular agents."))
             else:
-                hosted_request = HostedResponseRequest(request, context, scope, response_run_options(request))
+                try:
+                    hosted_request = HostedResponseRequest(request, context, scope, response_run_options(request))
+                except (TypeError, ValueError) as exc:
+                    raise _PublicResponseFailure(exc) from None
                 await prepare_response_options(hosted_request, self._prepare_options)
-                validate_request_options(hosted_request.options)
+                try:
+                    validate_request_options(hosted_request.options)
+                except (TypeError, ValueError) as exc:
+                    raise _PublicResponseFailure(exc) from None
         except Exception as exc:
-            logger.error("Failed to prepare hosted Responses request", exc_info=(type(exc), exc, exc.__traceback__))
-            for event in self._emit_failure(response_event_stream, None, exc):
+            for event in self._emit_failure(
+                context.response_id,
+                "request preparation",
+                response_event_stream,
+                None,
+                exc,
+            ):
                 yield event
             return
 
@@ -1165,8 +1376,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         except AgentFrameworkException as ex:
             consent_errors_to_emit = consent_url_from_error(ex)
             if consent_errors_to_emit is None or len(consent_errors_to_emit) == 0:
-                logger.error("Failed to prepare agent: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
-                for event in self._emit_failure(response_event_stream, None, ex):
+                for event in self._emit_failure(
+                    context.response_id,
+                    "agent initialization",
+                    response_event_stream,
+                    None,
+                    ex,
+                ):
                     yield event
                 return
 
@@ -1185,14 +1401,24 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     f"OAuth consent request for tool '{invalid_consent.name}' must include an allowed safe HTTPS "
                     "consent link."
                 )
-                logger.error("%s", validation_error)
-                for event in self._emit_failure(response_event_stream, None, validation_error):
+                for event in self._emit_failure(
+                    context.response_id,
+                    "OAuth consent validation",
+                    response_event_stream,
+                    None,
+                    _PublicResponseFailure(validation_error),
+                ):
                     yield event
                 return
 
             if request.get("store") is False:
+                validation_error = ValueError("OAuth consent continuation requires store=true.")
                 for event in self._emit_failure(
-                    response_event_stream, None, ValueError("OAuth consent continuation requires store=true.")
+                    context.response_id,
+                    "OAuth consent validation",
+                    response_event_stream,
+                    None,
+                    _PublicResponseFailure(validation_error),
                 ):
                     yield event
                 return
@@ -1208,9 +1434,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     session = await session_storage.get(session_load_id) if session_load_id is not None else None
                     if session is None:
                         if previous_response_id is not None and context.conversation_id is None:
-                            raise RuntimeError(
-                                "Cannot find an existing agent session for "
-                                f"previous_response_id={previous_response_id}."
+                            raise _PublicResponseFailure(
+                                RuntimeError(
+                                    "Cannot find an existing agent session for "
+                                    f"previous_response_id={previous_response_id}."
+                                )
                             )
                         session = agent.create_session()
                     if context.conversation_id is not None:
@@ -1219,19 +1447,23 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         if session.service_session_id is not None and session.state.get(
                             _HOSTED_SOURCE_CONVERSATION_KEY
                         ):
-                            raise ValueError("A service-managed downstream conversation cannot be forked.")
+                            raise _PublicResponseFailure(
+                                ValueError("A service-managed downstream conversation cannot be forked.")
+                            )
                         session.state.pop(_HOSTED_SOURCE_CONVERSATION_KEY, None)
                     if context.conversation_id is not None:
                         session.state[_HOSTED_SOURCE_CONVERSATION_KEY] = context.conversation_id
-                    await session_storage.set(context.response_id, session)
+                    await _set_agent_session(session_storage, context.response_id, session)
                     if context.conversation_id is not None:
-                        await session_storage.set(context.conversation_id, session)
+                        await _set_agent_session(session_storage, context.conversation_id, session)
                 except Exception as save_error:
-                    logger.error(
-                        "Failed to persist the Agent Framework session for OAuth consent",
-                        exc_info=(type(save_error), save_error, save_error.__traceback__),
-                    )
-                    for event in self._emit_failure(response_event_stream, None, save_error):
+                    for event in self._emit_failure(
+                        context.response_id,
+                        "OAuth consent session persistence",
+                        response_event_stream,
+                        None,
+                        save_error,
+                    ):
                         yield event
                     return
 
@@ -1314,11 +1546,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             else:
                 yield response_event_stream.emit_completed(usage=tracker.usage)
         except Exception as ex:
-            logger.error("Failed to produce response for agent", exc_info=(type(ex), ex, ex.__traceback__))
             for event in tracker.close():
                 yield event
 
-            for event in self._emit_failure(response_event_stream, tracker, ex):
+            for event in self._emit_failure(
+                context.response_id,
+                "response production",
+                response_event_stream,
+                tracker,
+                ex,
+            ):
                 yield event
 
     async def _load_request_messages(
@@ -1397,15 +1634,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         conversation_already_committed = False
         try:
             if isinstance(agent, RawAgent):
-                validate_default_transport_options(
-                    agent.default_options,
-                    allow_agent_store=self._history_source == "agent" and stored,
-                )
+                try:
+                    validate_default_transport_options(
+                        agent.default_options,
+                        allow_agent_store=self._history_source == "agent" and stored,
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise _PublicResponseFailure(exc) from None
             if not stored:
                 if not isinstance(agent, RawAgent):
-                    raise RuntimeError(
-                        "store=false cannot guarantee that a custom agent will disable inner storage; "
-                        "use a RawAgent or store=true."
+                    raise _PublicResponseFailure(
+                        RuntimeError(
+                            "store=false cannot guarantee that a custom agent will disable inner storage; "
+                            "use a RawAgent or store=true."
+                        )
                     )
                 continuation_defaults = [
                     name
@@ -1429,9 +1671,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     and (provider.store_inputs or provider.store_context_messages or provider.store_outputs)
                     for provider in agent.context_providers
                 ):
-                    raise RuntimeError(
-                        "store=false cannot prevent an external HistoryProvider from persisting responses. "
-                        "Use an InMemoryHistoryProvider or store=true."
+                    raise _PublicResponseFailure(
+                        RuntimeError(
+                            "store=false cannot prevent an external HistoryProvider from persisting responses. "
+                            "Use an InMemoryHistoryProvider or store=true."
+                        )
                     )
                 if self._history_source == "agent":
                     stores_by_default = getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None)
@@ -1487,10 +1731,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
             if session is None:
                 if context.is_recovery and provider_background:
-                    raise RuntimeError("Provider background was interrupted before its continuation token was stored.")
+                    raise _PublicResponseFailure(
+                        RuntimeError("Provider background was interrupted before its continuation token was stored.")
+                    )
                 if stored and previous_response_id is not None and context.conversation_id is None:
-                    raise RuntimeError(
-                        f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
+                    raise _PublicResponseFailure(
+                        RuntimeError(
+                            f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
+                        )
                     )
                 session = agent.create_session()
             provider_state = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
@@ -1509,16 +1757,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     if not conversation_already_committed and (
                         head is None or head.state.get(_HOSTED_CONVERSATION_CLAIM_KEY) != context.response_id
                     ):
-                        raise RuntimeError(
-                            "Cannot recover provider background: the service-backed conversation claim "
-                            "is no longer held by this response."
+                        raise _PublicResponseFailure(
+                            RuntimeError(
+                                "Cannot recover provider background: the service-backed conversation claim "
+                                "is no longer held by this response."
+                            )
                         )
                 else:
                     _reject_busy_conversation(session)
             if not stored and self._history_source == "agent" and session.service_session_id is not None:
-                raise ValueError(
-                    "store=false cannot continue agent-managed downstream service history; "
-                    "start a new one-shot request or use store=true."
+                raise _PublicResponseFailure(
+                    ValueError(
+                        "store=false cannot continue agent-managed downstream service history; "
+                        "start a new one-shot request or use store=true."
+                    )
                 )
             if (
                 not context.is_recovery
@@ -1528,17 +1780,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     or cast(Mapping[str, Any], provider_state).get("completed") is not True
                 )
             ):
-                raise ValueError("A provider background response must complete before the next turn.")
+                raise _PublicResponseFailure(
+                    ValueError("A provider background response must complete before the next turn.")
+                )
             if previous_response_id is not None and context.conversation_id is None and not context.is_recovery:
                 if session.service_session_id is not None and session.state.get(_HOSTED_SOURCE_CONVERSATION_KEY):
-                    raise ValueError("A service-managed downstream conversation cannot be forked.")
+                    raise _PublicResponseFailure(
+                        ValueError("A service-managed downstream conversation cannot be forked.")
+                    )
                 if (
                     stored
                     and self._history_source in ("service", "agent")
                     and session.service_session_id is not None
                     and session.state.get(_HOSTED_SERVICE_CHILD_KEY)
                 ):
-                    raise ValueError("A service-managed downstream response cannot be forked.")
+                    raise _PublicResponseFailure(ValueError("A service-managed downstream response cannot be forked."))
         except BaseException as ex:
             # Session preparation failed (or the request was cancelled / the stream closed —
             # neither of which is an Exception). Cancel and drain the in-flight message-loading
@@ -1548,7 +1804,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 with suppress(BaseException):
                     await request_messages_task
             if isinstance(ex, Exception):
-                logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
+                _log_response_failure("state storage preparation", context.response_id, ex)
             raise
 
         request_failure: Exception | None = None
@@ -1596,7 +1852,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 run_kwargs["options"] = chat_options
             elif are_options_set:
                 if self._unsupported_options == "error":
-                    raise TypeError("The hosted agent does not accept caller runtime options.")
+                    raise _PublicResponseFailure(TypeError("The hosted agent does not accept caller runtime options."))
                 if self._unsupported_options == "warn":
                     logger.warning("Agent doesn't support runtime options. They will be ignored.")
 
@@ -1606,7 +1862,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         raise RuntimeError("Service history requires agent session storage.")
                     session.state[_HOSTED_SERVICE_CHILD_KEY] = context.response_id
                     try:
-                        await session_storage.set(previous_response_id, session)
+                        await _set_agent_session(session_storage, previous_response_id, session)
                     finally:
                         session.state.pop(_HOSTED_SERVICE_CHILD_KEY, None)
                 session.state.pop(_HOSTED_SOURCE_CONVERSATION_KEY, None)
@@ -1627,7 +1883,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # mutate its linear thread; a losing turn never reaches agent.run().
                 session.state[_HOSTED_CONVERSATION_CLAIM_KEY] = context.response_id
                 try:
-                    await session_storage.set(context.conversation_id, session)
+                    await _set_agent_session(session_storage, context.conversation_id, session)
                 finally:
                     session.state.pop(_HOSTED_CONVERSATION_CLAIM_KEY, None)
 
@@ -1636,7 +1892,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if provider_background:
                 if session_storage is None or not isinstance(agent, RawAgent):
                     raise RuntimeError("Provider background requires a stored MAF agent session.")
-                output_count = response_event_stream.internal_metadata.get(_HOSTED_PROVIDER_OUTPUT_COUNT_KEY, 0)
+                output_count = _hosted_internal_metadata(response_event_stream).get(
+                    _HOSTED_PROVIDER_OUTPUT_COUNT_KEY, 0
+                )
                 if type(output_count) is not int or output_count < 0:
                     raise RuntimeError("The persisted provider output cursor is invalid.")
                 responses = self._provider_background_responses(
@@ -1654,14 +1912,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         for update in _agent_response_updates(response, context.response_id):
                             if context.shutdown.is_set() or cancellation_signal.is_set():
                                 break
-                            async for event in tracker.handle_update(update, approval_storage=approval_storage):
+                            async for event in tracker.handle_update(
+                                update, approval_storage=approval_storage, complete_message=True
+                            ):
                                 yield event
                         if context.shutdown.is_set() or cancellation_signal.is_set():
                             continue
                         for event in tracker.close():
                             yield event
-                        response_event_stream.internal_metadata[_HOSTED_PROVIDER_OUTPUT_COUNT_KEY] = output_count
-                        response_event_stream.internal_metadata[_HOSTED_PROVIDER_USAGE_KEY] = tracker.usage_details
+                        private_metadata = _hosted_internal_metadata(response_event_stream)
+                        private_metadata[_HOSTED_PROVIDER_OUTPUT_COUNT_KEY] = output_count
+                        private_metadata[_HOSTED_PROVIDER_USAGE_KEY] = tracker.usage_details
                         if self._resilient_background:
                             yield response_event_stream.checkpoint()
             else:
@@ -1689,10 +1950,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             raise
         except Exception as ex:
             request_failure = ex
-            logger.error(
-                "Failed to produce response for agent",
-                exc_info=(type(ex), ex, ex.__traceback__),
-            )
+            _log_response_failure("agent execution", context.response_id, ex)
         finally:
             if configuration.hosted_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
@@ -1709,9 +1967,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     "The agent's chat client stored this turn server-side despite store=False for the inner model. "
                     "Configure the client to honor store=False, or use history_source='service' with store=true."
                 )
-                logger.error("%s", misconfigured)
+                _log_response_failure("stored output validation", context.response_id, misconfigured)
                 if request_failure is None and not request_interrupted:
-                    request_failure = misconfigured
+                    request_failure = _PublicResponseFailure(misconfigured)
             if (
                 self._history_source == "service"
                 and stored
@@ -1744,7 +2002,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if stored and session_storage is not None and not stored_output_violation and final_provider_state:
                     if context.conversation_id is not None:
                         session.state[_HOSTED_SOURCE_CONVERSATION_KEY] = context.conversation_id
-                    await session_storage.set(context.response_id, session)
+                    await _set_agent_session(session_storage, context.response_id, session)
                     if (
                         context.conversation_id is not None
                         and not conversation_already_committed
@@ -1759,7 +2017,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         if provider_background:
                             session.state.pop(_HOSTED_PROVIDER_STATE_KEY, None)
                         session.state[_HOSTED_CONVERSATION_COMMITTED_KEY] = context.response_id
-                        await session_storage.set(context.conversation_id, session)
+                        await _set_agent_session(session_storage, context.conversation_id, session)
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:
@@ -1768,7 +2026,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     message = "Failed to persist the Agent Framework session after an agent failure"
                 else:
                     message = "Failed to persist the Agent Framework session after a successful request"
-                logger.error(message, exc_info=(type(save_error), save_error, save_error.__traceback__))
+                _log_response_failure(message, context.response_id, save_error)
 
         if request_failure is not None and save_failure is not None:
             raise RuntimeError(
@@ -1808,8 +2066,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     await context.exit_for_recovery()
                 if has_token:
                     raise RuntimeError("Provider background recovery requires resilient_background=True.")
-                raise RuntimeError(
-                    "Provider background submission stopped before its token was saved; cannot safely retry it."
+                raise _PublicResponseFailure(
+                    RuntimeError(
+                        "Provider background submission stopped before its token was saved; cannot safely retry it."
+                    )
                 )
             if cancellation_signal.is_set():
                 raise RuntimeError("Provider background was interrupted without a client cancellation.")
@@ -1876,10 +2136,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         if context.is_recovery:
             saved = session.state.get(_HOSTED_PROVIDER_STATE_KEY)
             if not isinstance(saved, Mapping):
-                raise RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+                raise _PublicResponseFailure(
+                    RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+                )
             saved_payload = cast(Mapping[str, Any], saved)
             if saved_payload.get("outer_response_id") != context.response_id:
-                raise RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+                raise _PublicResponseFailure(
+                    RuntimeError("Cannot recover a provider background job without its stored continuation token.")
+                )
             token = saved_payload.get("continuation_token")
             if not isinstance(token, Mapping):
                 raise RuntimeError("The stored provider continuation token is invalid.")
@@ -2034,7 +2298,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # snapshot (recorded in that snapshot's own metadata) -- NOT simply the latest workflow
                 # checkpoint in storage, which may be ahead of what response.output actually reflects if
                 # the crash happened between two response-stream checkpoint() calls.
-                checkpoint_id = response_event_stream.internal_metadata.get(_LATEST_CHECKPOINT_ID_KEY)
+                checkpoint_id = _hosted_internal_metadata(response_event_stream).get(_LATEST_CHECKPOINT_ID_KEY)
                 if checkpoint_id is not None:
                     logger.debug("Serving recovery request from workflow checkpoint %s", checkpoint_id)
                     run_stream = self._resume_workflow_from_checkpoint(
@@ -2088,8 +2352,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
                 if latest_checkpoint is None and previous_response_id is not None:
                     # A previous_response_id must have a prior workflow checkpoint to resume from
-                    raise RuntimeError(
-                        f"Cannot find an existing workflow checkpoint for previous_response_id={previous_response_id}."
+                    raise _PublicResponseFailure(
+                        RuntimeError(
+                            "Cannot find an existing workflow checkpoint for "
+                            f"previous_response_id={previous_response_id}."
+                        )
                     )
 
                 if latest_checkpoint is not None:
@@ -2147,12 +2414,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             ) -> Generator[ResponseStreamEvent | ResponseCheckpointEvent]:
                 # Pair the response output emitted so far with the workflow checkpoint it corresponds
                 # to, so recovery from that checkpoint replays exactly the updates that came after it.
-                if checkpoint_id is None or checkpoint_id == response_event_stream.internal_metadata.get(
+                if checkpoint_id is None or checkpoint_id == _hosted_internal_metadata(response_event_stream).get(
                     _LATEST_CHECKPOINT_ID_KEY
                 ):
                     return
                 yield from tracker.close()
-                response_event_stream.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = checkpoint_id
+                _hosted_internal_metadata(response_event_stream)[_LATEST_CHECKPOINT_ID_KEY] = checkpoint_id
                 yield response_event_stream.checkpoint()
 
             main_iter = _SignalledIterator(
@@ -2187,8 +2454,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # recovery after this point does not replay the last superstep.
                 for event in snapshot_response(await latest_checkpoint_id()):
                     yield event
-        except Exception:
-            logger.exception("Failed to produce response for workflow agent")
+        except Exception as exc:
+            _log_response_failure("workflow execution", context.response_id, exc)
             raise
 
     async def _resume_workflow_from_checkpoint(
@@ -2211,38 +2478,49 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         TODO(@taochen): #7677
         """
+        role_gate = _StreamingRoleGate()
         async for event in agent.workflow.run(
             stream=True,
             checkpoint_id=checkpoint_id,
             checkpoint_storage=checkpoint_storage,
         ):
             for update in agent._convert_workflow_event_to_agent_response_updates(  # pyright: ignore[reportPrivateUsage]
-                response_id, event
+                response_id, event, role_gate
             ):
                 yield update
 
     @staticmethod
     def _emit_failure(
+        response_id: str,
+        phase: str,
         response_event_stream: ResponseEventStream,
         tracker: _OutputItemTracker | None,
         ex: BaseException,
+        *,
+        public_message: str | None = None,
     ) -> Generator[ResponseStreamEvent]:
-        """Yield a terminal ``response.failed`` event for ``ex``.
+        """Log ``ex`` and yield a terminal ``response.failed`` event.
 
         Drains any in-progress streaming output item first so the resulting
-        SSE stream stays well-formed, then emits ``response.failed`` carrying
-        the exception's message (falling back to the exception type name when
-        ``str(ex)`` is empty). Any error raised while draining the tracker is
-        logged and otherwise ignored so that the original failure is always
-        what the client sees.
+        SSE stream stays well-formed, then emits ``response.failed`` carrying a
+        stable public message unless the caller explicitly supplies a safe
+        validation message. Any error raised while draining the tracker is
+        logged and otherwise ignored so that the original failure remains the
+        terminal failure.
         """
+        _log_response_failure(phase, response_id, ex)
         if tracker is not None:
             try:
                 yield from tracker.close()
-            except Exception:
-                logger.exception("Error while closing streaming tracker after failure")
+            except Exception as close_error:
+                _log_response_failure("failed tracker cleanup", response_id, close_error)
             tracker.discard_pending_container_file_citations()
-        message = str(ex) or type(ex).__name__
+        if public_message is not None:
+            message = public_message
+        elif isinstance(ex, _PublicResponseFailure):
+            message = ex.public_message
+        else:
+            message = _PUBLIC_STREAM_FAILURE_MESSAGE
         yield response_event_stream.emit_failed(message=message, usage=tracker.usage if tracker is not None else None)
 
 
@@ -2269,7 +2547,7 @@ class _OutputItemTracker:
         self._stream = stream
         self._allowed_oauth_consent_origins = allowed_oauth_consent_origins
         self._usage_details: UsageDetails | None = None
-        persisted_usage = stream.internal_metadata.get(_HOSTED_PROVIDER_USAGE_KEY)
+        persisted_usage = _hosted_internal_metadata(stream).get(_HOSTED_PROVIDER_USAGE_KEY)
         if persisted_usage is not None:
             if not isinstance(persisted_usage, Mapping) or any(
                 not isinstance(key, str) or (value is not None and type(value) is not int)
@@ -2298,18 +2576,19 @@ class _OutputItemTracker:
         self._outstanding_computer_calls: set[str] = set()
         self._oauth_consent_requests: set[tuple[str, str]] = set()
         self._pending_container_file_citations: dict[str, _ContainerFileCitation] = {}
-        self._message_text_annotations: dict[int, list[ContainerFileCitationBody]] = {}
+        self._text_annotations: list[ResponsesAnnotation] = []
+        self._message_text_annotations: dict[int, list[ResponsesAnnotation]] = {}
         # Set when an agent update reports the model stopped early (content filter, token
         # limit); the response then ends as ``incomplete`` instead of ``completed`` so callers
-        # can tell a cut-short turn from a successful one. Mirrored into the stream's
-        # ``internal_metadata`` so it survives a resilient checkpoint/recovery cycle, which
-        # rebuilds this tracker from the persisted response.
+        # can tell a cut-short turn from a successful one. Mirrored onto the response so it
+        # survives a resilient checkpoint/recovery cycle, which rebuilds this tracker from the
+        # persisted response.
         self._incomplete_reason: ResponseIncompleteReason | None = None
-        persisted_reason = stream.internal_metadata.get(_INCOMPLETE_REASON_KEY)
-        if isinstance(persisted_reason, str):
+        persisted_reason = _read_persisted_incomplete_reason(stream)
+        if persisted_reason is not None:
             with suppress(ValueError):
                 self._incomplete_reason = ResponseIncompleteReason(persisted_reason)
-        persisted_citations = stream.internal_metadata.get(_PENDING_CONTAINER_FILE_CITATIONS_KEY)
+        persisted_citations = _hosted_internal_metadata(stream).get(_PENDING_CONTAINER_FILE_CITATIONS_KEY)
         if persisted_citations is not None:
             if not isinstance(persisted_citations, Sequence) or isinstance(
                 persisted_citations, (str, bytes, bytearray)
@@ -2344,9 +2623,10 @@ class _OutputItemTracker:
                 call_id = persisted_item.get("call_id")
                 if isinstance(call_id, str):
                     self._outstanding_computer_calls.add(call_id)
-            elif persisted_item.get("type") == "computer_call_output":
-                if isinstance(call_id := persisted_item.get("call_id"), str):
-                    self._outstanding_computer_calls.discard(call_id)
+            elif persisted_item.get("type") == "computer_call_output" and isinstance(
+                call_id := persisted_item.get("call_id"), str
+            ):
+                self._outstanding_computer_calls.discard(call_id)
             if persisted_item.get("type") != "oauth_consent_request":
                 continue
             consent_link = persisted_item.get("consent_link")
@@ -2397,7 +2677,8 @@ class _OutputItemTracker:
         Only finish reasons that mean the model stopped early are retained, mapped onto the
         Responses ``incomplete_details.reason`` vocabulary. A content filter is kept in
         preference to a token limit if both are seen during a multi-step turn, since it is the
-        more actionable signal for the caller.
+        more actionable signal for the caller. The reason is recorded even when the caller's
+        metadata already fills the public map, and that map is left intact.
         """
         if finish_reason == "content_filter":
             self._incomplete_reason = ResponseIncompleteReason.CONTENT_FILTER
@@ -2405,7 +2686,7 @@ class _OutputItemTracker:
             self._incomplete_reason = ResponseIncompleteReason.MAX_OUTPUT_TOKENS
         else:
             return
-        self._stream.internal_metadata[_INCOMPLETE_REASON_KEY] = self._incomplete_reason.value
+        _hosted_internal_metadata(self._stream)[_INCOMPLETE_REASON_KEY] = self._incomplete_reason.value
 
     def _consume_text_update(self, text: str, merge_mode: Literal["append", "replace"] | None) -> str:
         """Update the authoritative text buffer and return the wire delta still needed."""
@@ -2420,22 +2701,32 @@ class _OutputItemTracker:
         if not previous:
             self._accumulated[:] = [text]
             return text
-        raise RuntimeError("Cannot project a divergent replacement text snapshot onto an append-only Responses stream.")
+        raise _PublicResponseFailure(
+            RuntimeError("Cannot project a divergent replacement text snapshot onto an append-only Responses stream.")
+        )
 
     async def handle_update(
         self,
         update: AgentResponseUpdate,
         *,
         approval_storage: FunctionApprovalStore | None = None,
+        complete_message: bool = False,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Process one agent update: note its finish reason, then handle each of its contents.
 
         This is the single entry point for both the plain-agent and the workflow loops, so the
-        finish reason cannot be forgotten on one of them.
+        finish reason cannot be forgotten on one of them. Set ``complete_message`` when the
+        update contains a completed message's independent content parts rather than streaming
+        deltas; text and refusal parts then retain their original boundaries and citation offsets.
         """
         self.record_finish_reason(update.finish_reason)
         for content in update.contents:
-            async for event in self.handle(content, message_id=update.message_id, approval_storage=approval_storage):
+            async for event in self.handle(
+                content,
+                message_id=update.message_id,
+                approval_storage=approval_storage,
+                start_new_content_part=complete_message,
+            ):
                 yield event
 
     async def handle(
@@ -2444,6 +2735,7 @@ class _OutputItemTracker:
         message_id: str | None = None,
         *,
         approval_storage: FunctionApprovalStore | None = None,
+        start_new_content_part: bool = False,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Process a content item, yielding its events.
 
@@ -2455,9 +2747,11 @@ class _OutputItemTracker:
                 merged into it.
             approval_storage: Used for content types that fall back to one-shot emission
                 (anything not recognized as a streaming delta type) to save/load approval requests.
+            start_new_content_part: Whether text and refusal content start a new independent
+                content part instead of continuing the current streaming occurrence.
         """
         if _is_refusal_text_content(content) and content.text is not None:
-            for event in self._ensure_message_content("refusal", message_id):
+            for event in self._ensure_message_content("refusal", message_id, start_new_part=start_new_content_part):
                 yield event
             self._active_message_id = message_id
             delta = self._consume_text_update(content.text, content.merge_mode)
@@ -2465,10 +2759,13 @@ class _OutputItemTracker:
                 yield self._refusal_content.emit_delta(delta)
 
         elif content.type == "text" and content.text is not None:
-            for event in self._ensure_message_content("text", message_id):
+            for event in self._ensure_message_content("text", message_id, start_new_part=start_new_content_part):
                 yield event
             self._active_message_id = message_id
             delta = self._consume_text_update(content.text, content.merge_mode)
+            for annotation in _annotations_to_output_text(content.annotations):
+                if annotation not in self._text_annotations:
+                    self._text_annotations.append(annotation)
             if delta and self._text_content is not None:
                 yield self._text_content.emit_delta(delta)
 
@@ -2501,9 +2798,9 @@ class _OutputItemTracker:
                 for event in self._open_function_call(content):
                     yield event
             args_str = _json_safe_to_str(content.arguments)
-            self._accumulated.append(args_str)
-            if self._fc_builder is not None:
-                yield self._fc_builder.emit_arguments_delta(args_str)
+            delta = self._consume_text_update(args_str, content.merge_mode)
+            if delta and self._fc_builder is not None:
+                yield self._fc_builder.emit_arguments_delta(delta)
 
         elif content.type == "function_result":
             for event in self._close():
@@ -2529,9 +2826,9 @@ class _OutputItemTracker:
                 for event in self._open_mcp_call(content):
                     yield event
             args_str = _json_safe_to_str(content.arguments)
-            self._accumulated.append(args_str)
-            if self._mcp_builder is not None:
-                yield self._mcp_builder.emit_arguments_delta(args_str)
+            delta = self._consume_text_update(args_str, content.merge_mode)
+            if delta and self._mcp_builder is not None:
+                yield self._mcp_builder.emit_arguments_delta(delta)
 
         elif (
             content.type == "mcp_server_tool_result"
@@ -2553,7 +2850,10 @@ class _OutputItemTracker:
         elif content.type == "image_generation_tool_result" and content.outputs is not None:
             for event in self._close():
                 yield event
-            async for event in self._stream.output_item_image_gen_call(str(content.outputs)):
+            result = _image_generation_result(content.outputs)
+            if result is None:
+                logger.warning("Image generation result has no base64 image; emitting it with an empty result.")
+            async for event in self._stream.output_item_image_gen_call(result or ""):
                 yield event
 
         elif content.type == "mcp_server_tool_call":
@@ -2659,7 +2959,7 @@ class _OutputItemTracker:
 
         elif content.type == "computer_tool_result":
             if not content.call_id or content.screenshot is None:
-                raise ValueError("A computer result requires a call_id and screenshot.")
+                raise _PublicResponseFailure(ValueError("A computer result requires a call_id and screenshot."))
             for event in self._close():
                 yield event
             if content.id and IdGenerator.is_valid(content.id)[0]:
@@ -2778,11 +3078,13 @@ class _OutputItemTracker:
         self,
         content_type: Literal["text", "refusal"],
         message_id: str | None,
+        *,
+        start_new_part: bool = False,
     ) -> Generator[ResponseStreamEvent]:
         message_changed = (
             message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
         )
-        if self._active_type == content_type and not message_changed:
+        if self._active_type == content_type and not message_changed and not start_new_part:
             return
         if self._message_item is not None and self._active_type in {"text", "refusal"} and not message_changed:
             yield from self._close_message_content()
@@ -2810,6 +3112,7 @@ class _OutputItemTracker:
             yield self._refusal_content.emit_added()
         else:
             self._text_content = self._message_item.add_text_content()
+            self._text_annotations.clear()
             yield self._text_content.emit_added()
 
     def _open_reasoning(self, content: Content) -> Generator[ResponseStreamEvent]:
@@ -2919,7 +3222,10 @@ class _OutputItemTracker:
     def _close_message_content(self) -> Generator[ResponseStreamEvent]:
         accumulated = "".join(self._accumulated)
         if self._active_type == "text" and self._text_content is not None:
-            annotations = self._container_file_annotations_for_text(accumulated)
+            annotations = list(self._text_annotations)
+            for annotation in self._container_file_annotations_for_text(accumulated):
+                if annotation not in annotations:
+                    annotations.append(annotation)
             yield self._text_content.emit_text_done(accumulated)
             for annotation in annotations:
                 yield self._text_content.emit_annotation_added(annotation)
@@ -2931,6 +3237,7 @@ class _OutputItemTracker:
                 self._message_text_annotations[self._text_content.content_index] = annotations
             yield content_done
             self._text_content = None
+            self._text_annotations.clear()
         elif self._active_type == "refusal" and self._refusal_content is not None:
             yield self._refusal_content.emit_refusal_done(accumulated)
             yield self._refusal_content.emit_done()
@@ -2986,9 +3293,9 @@ class _OutputItemTracker:
 
     def _persist_pending_container_file_citations(self) -> None:
         if not self._pending_container_file_citations:
-            self._stream.internal_metadata.pop(_PENDING_CONTAINER_FILE_CITATIONS_KEY, None)
+            _hosted_internal_metadata(self._stream).pop(_PENDING_CONTAINER_FILE_CITATIONS_KEY, None)
             return
-        self._stream.internal_metadata[_PENDING_CONTAINER_FILE_CITATIONS_KEY] = [
+        _hosted_internal_metadata(self._stream)[_PENDING_CONTAINER_FILE_CITATIONS_KEY] = [
             {
                 "container_id": citation.container_id,
                 "file_id": citation.file_id,
@@ -3243,7 +3550,10 @@ async def _item_to_message(
 
     if item["type"] == "mcp_approval_request":
         if approval_storage is not None:
-            function_approval_request_content = await approval_storage.load_approval_request(item["id"])
+            try:
+                function_approval_request_content = await approval_storage.load_approval_request(item["id"])
+            except (KeyError, ValueError) as exc:
+                raise _PublicResponseFailure(exc) from None
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
         return Message(
@@ -3253,9 +3563,12 @@ async def _item_to_message(
 
     if item["type"] == "mcp_approval_response":
         if approval_storage is not None:
-            function_approval_request_content = await approval_storage.load_approval_request(
-                item["approval_request_id"]
-            )
+            try:
+                function_approval_request_content = await approval_storage.load_approval_request(
+                    item["approval_request_id"]
+                )
+            except (KeyError, ValueError) as exc:
+                raise _PublicResponseFailure(exc) from None
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
         return Message(
@@ -3675,6 +3988,38 @@ def _json_safe_to_str(value: Any | None) -> str:
         return json.dumps(value, default=_json_default)
     except (TypeError, ValueError):
         return json.dumps(str(value))
+
+
+def _image_generation_result(outputs: Any) -> str | None:
+    """Return the base64 image of an image generation tool result, as the Responses API expects.
+
+    Only a non-empty, valid base64 string or the valid base64 payload of a base64 data URI qualifies. Other URIs
+    (https, file, blob), data URIs without the base64 marker and malformed payloads are not base64, so they give
+    None.
+    """
+    if isinstance(outputs, str):
+        return outputs if _is_base64(outputs) else None
+    items: Sequence[Any] = [outputs]
+    if isinstance(outputs, Sequence) and not isinstance(outputs, (bytes, bytearray)):
+        items = cast(Sequence[Any], outputs)
+    for item in items:
+        if isinstance(item, Content) and item.uri and item.uri.startswith("data:"):
+            # RFC 2397: only the metadata before the first comma can carry the marker, as its last parameter.
+            metadata, _, payload = item.uri.partition(",")
+            if metadata.endswith(";base64") and _is_base64(payload):
+                return payload
+    return None
+
+
+def _is_base64(value: str) -> bool:
+    """Check whether a string is non-empty, valid base64."""
+    if not value:
+        return False
+    try:
+        base64.b64decode(value, validate=True)
+    except ValueError:
+        return False
+    return True
 
 
 def _reasoning_encrypted_content(content: Content) -> str | None:

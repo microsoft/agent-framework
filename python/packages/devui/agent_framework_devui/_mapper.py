@@ -388,12 +388,11 @@ class MessageMapper:
                                     }
 
                         # Other output items (message, etc.) - track for later
-                        elif item_type == "message":
-                            if isinstance(item, ResponseOutputMessage):
-                                if item.id not in message_order:
-                                    message_order.append(item.id)
-                                if item.content:
-                                    complete_messages[item.id] = item
+                        elif item_type == "message" and isinstance(item, ResponseOutputMessage):
+                            if item.id not in message_order:
+                                message_order.append(item.id)
+                            if item.content:
+                                complete_messages[item.id] = item
 
                 # Handle function call arguments delta - accumulate arguments
                 elif event_type == "response.function_call_arguments.delta":
@@ -1432,7 +1431,7 @@ class MessageMapper:
         """Map TextReasoningContent to ResponseReasoningTextDeltaEvent."""
         return ResponseReasoningTextDeltaEvent(
             type="response.reasoning_text.delta",
-            delta=content.text,
+            delta=content.text or "",
             item_id=context["item_id"],
             output_index=context["output_index"],
             content_index=context["content_index"],

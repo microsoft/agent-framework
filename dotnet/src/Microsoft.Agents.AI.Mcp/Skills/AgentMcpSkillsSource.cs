@@ -3,128 +3,155 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Internal;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
-using ModelContextProtocol;
 using ModelContextProtocol.Client;
-using ModelContextProtocol.Protocol;
 
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// An <see cref="AgentSkillsSource"/> that discovers Agent Skills served over the Model Context Protocol (MCP).
+/// Lists skills from an MCP server and provides access to their <c>SKILL.md</c> files and supporting resources.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Discovery follows the SEP-2640 recommended approach: the source reads the well-known
-/// <c>skill://index.json</c> resource and constructs one <see cref="AgentSkill"/> per index entry.
+/// <see cref="GetSkillsAsync"/> requests the available skills through <c>skills/list</c>.
+/// The server must declare the <c>io.modelcontextprotocol/skills</c> extension;
+/// otherwise, this source returns an empty list without sending a request.
+/// Each listed skill includes a name, description, and either a complete resource list with expected byte sizes
+/// and content hashes (a manifest), or the marker <c>"dynamic"</c> when no such list is provided.
+/// A manifest includes <c>SKILL.md</c>, which contains the skill's instructions.
 /// </para>
 /// <para>
-/// Index entries are dispatched to an <see cref="IMcpSkillEntryLoader"/> by their <c>type</c>:
+/// The skill list may span multiple response pages, each with a time to live (TTL).
+/// The list is cached until any page expires, then fetched again on the next <see cref="GetSkillsAsync"/> call.
+/// By default, a missing, zero, or negative page TTL causes the list to be fetched on every call.
+/// Configure <see cref="AgentMcpSkillsSourceOptions.TtlResolver"/> to override page, skill metadata, and resource TTLs.
+/// Disable other caches around this source, including the builder's cache through
+/// <see cref="AgentSkillsProviderBuilder.DisableCaching"/>, so this source can check expiration on each call.
+/// </para>
+/// <para>
+/// By default, all callers share one cache. If this source is shared by several users or tenants,
+/// set <see cref="AgentMcpSkillsSourceOptions.CacheIsolationKeySelector"/> so each of them gets its own cache partition.
+/// </para>
+/// <para>
+/// According to the MCP specification, each <c>skills/list</c>, <c>skills/get</c>, and <c>resources/read</c> response
+/// must declare a <c>cacheScope</c>. Not all servers do, so the source handles it as follows:
 /// <list type="bullet">
-///   <item><description><c>skill-md</c> - handled by <see cref="SkillMdEntryLoader"/>; the skill's
-///   <c>SKILL.md</c> and sibling resources are fetched on demand from the MCP server.</description></item>
-///   <item><description><c>archive</c> - handled by <see cref="ArchiveEntryLoader"/>; the entry's
-///   <c>url</c> points to a single archive resource whose content unpacks into the skill's
-///   namespace.</description></item>
+/// <item><description>Missing or <see langword="null"/>: treated as <c>public</c>.</description></item>
+/// <item><description><c>public</c>: always accepted.</description></item>
+/// <item><description><c>private</c>: accepted only when <see cref="AgentMcpSkillsSourceOptions.CacheIsolationKeySelector"/> is set;
+/// otherwise, <see cref="InvalidOperationException"/> is thrown.</description></item>
 /// </list>
-/// Entries whose type has no registered loader (e.g. <c>mcp-resource-template</c>) are skipped.
+/// Each response is checked on its own. For example, a skill from a public list still fails if its
+/// <c>SKILL.md</c> is returned as private and no selector is set.
 /// </para>
 /// <para>
-/// If <c>skill://index.json</c> is absent, unreadable, empty, or fails to parse, this source returns an
-/// empty list.
+/// Listing a skill does not fetch its files. The returned skill object fetches <c>SKILL.md</c>
+/// and supporting resources only when their content is requested. Manifest-backed skills expose only listed resources.
+/// Dynamic skills read requested relative paths within their skill directory without listing files in advance.
+/// Each resource response must contain one text or binary content block; <c>SKILL.md</c> must contain text.
+/// Manifest-backed content is checked against its expected size and content hash.
+/// Dynamic content has no expected hashes to check, but reads still validate the response and enforce size limits.
+/// For both kinds of skill, all metadata fields at the start of <c>SKILL.md</c> (frontmatter)
+/// must match the metadata provided when the skill was listed.
 /// </para>
 /// <para>
-/// Archive entries may supply a <c>digest</c> in the form <c>sha256:</c> followed by 64 lowercase
-/// hexadecimal characters. It is verified against the decoded archive bytes before extraction.
-/// Malformed, unsupported, or mismatched digest strings are logged as warnings and the affected archives
-/// are skipped; omitted or null digests remain supported. Discovery returns the remaining skills,
-/// so a successful cache refresh replaces its list without rejected archives. This verification
-/// does not apply to lazily fetched <c>skill-md</c> entries or their supporting resources.
+/// Each skill object caches resource content separately from the skill list, using each resource response's TTL.
+/// Expired resource content is fetched again on access. By default, a missing, zero, or negative resource TTL
+/// causes content to be fetched on every access. All TTLs start when responses arrive, before validation.
 /// </para>
 /// <para>
-/// Archive members resolving to the same file keep the first file's content. Later colliding members
-/// are skipped with a warning, and discovery continues with the remaining archive content.
-/// This applies whether or not an archive supplies a matching digest.
+/// For manifest-backed skills, if fetched content has a different size or content hash than its manifest entry,
+/// the skill that owns that resource is queued for refresh.
+/// The resource read returns previously verified cached content if available and caches it indefinitely for that skill object;
+/// otherwise, it throws. Other resource-read and validation errors propagate without queuing a skill refresh.
 /// </para>
 /// <para>
-/// <b>Thread safety and archive reconciliation.</b> For <c>archive</c>-type skills, every call to
-/// <see cref="GetSkillsAsync"/> reconciles a shared on-disk directory: it extracts newly advertised
-/// skills, re-extracts existing ones, and prunes those the server no longer advertises. Because that
-/// work mutates files (and internal state) that concurrent calls would also touch, running it from
-/// multiple threads at once could corrupt the directory or surface partially-extracted skills. To
-/// prevent this, the archive reconciliation is guarded by a per-instance lock: only one call performs
-/// it at a time, and other concurrent callers wait and then run sequentially.
+/// On the next <see cref="GetSkillsAsync"/> call, <c>skills/get</c> fetches updated metadata and resource lists
+/// for queued skills. Skills that no longer exist on the server are removed from the cached list.
+/// If the cached skill list has expired, <c>skills/list</c> fetches the whole list instead.
+/// Each successful <c>skills/get</c> response controls only that skill's lifetime, not the list's lifetime.
+/// When the skill expires, the next <see cref="GetSkillsAsync"/> call refreshes it through <c>skills/get</c>.
+/// A failed refresh leaves the previous list unchanged and is retried on a later call.
 /// </para>
 /// <para>
-/// This keeps the directory consistent but means concurrent (and repeated) calls do not share work —
-/// each one re-contacts the MCP server and re-reconciles. To avoid that redundant work, place a caching
-/// layer in front of this source (for example, via <see cref="AgentSkillsProviderBuilder"/>, which adds
-/// one by default):
-/// <list type="bullet">
-///   <item><description>When the server's skills do not change at runtime, cache with no isolation key
-///   (the default <see cref="CachingAgentSkillsSourceOptions.CacheIsolationKeySelector"/>), so a single
-///   fetch and reconciliation is shared by all callers for the lifetime of the cache.</description></item>
-///   <item><description>When the server's skills can change, additionally set
-///   <see cref="CachingAgentSkillsSourceOptions.RefreshInterval"/> so the cache periodically re-fetches
-///   and reconciles instead of doing so on every call.</description></item>
-/// </list>
+/// Refreshes return a new list with new objects for updated skills. Previously returned manifest-backed skill objects
+/// continue using the resource URIs, sizes, and content hashes they were created with.
+/// Previously returned content stays unchanged. Callers must load the new skill object to use an update.
+/// Refreshes happen only on request, not in the background.
 /// </para>
 /// <para>
-/// Supporting resource names are checked for absolute paths, parent traversal (including
-/// percent-encoded forms), and control characters before an MCP request is sent. Index URLs
-/// retain their MCP resource schemes: they are sent to the connected server, not opened locally.
-/// This client-side guard does not replace server-side authorization.
+/// <see cref="AgentMcpSkillsSourceOptions"/> limits discovery and the number and combined size of resources per skill.
+/// Invalid pages, repeated cursors, and exceeded limits fail the request rather than returning a partial list.
+/// These limits do not bound incoming message size or total memory use. Configure input-size limits
+/// in the MCP client, transport, or host as needed.
 /// </para>
 /// <para>
-/// <strong>Security considerations:</strong> This source discovers and loads skills — including full
-/// skill instructions and, for <c>archive</c>-type entries, files extracted to local disk — from a
-/// remote MCP server that the caller connects to explicitly (via <c>UseMcpSkills</c>); it is never
-/// enabled by default. A compromised, malicious, or simply untrustworthy MCP server can return
-/// adversarial skill content designed to manipulate the agent through indirect prompt injection, or
-/// instructions/scripts designed to exfiltrate data once loaded and, for script-capable skills,
-/// executed. Only connect this source to MCP servers you trust, and review archive extraction limits (<see cref="AgentMcpSkillsSourceOptions"/>)
-/// to bound the impact of a malicious server. A matching digest proves consistency with the index,
-/// not trustworthiness: a server controlling both the index and archive can replace both or omit
-/// the digest.
+/// Supporting-resource names must stay within the skill's directory.
+/// Resource URIs are sent to the connected MCP server, not opened locally.
+/// These checks do not replace server-side authorization.
+/// </para>
+/// <para>
+/// The caller owns the MCP client. Disposing this source does not dispose the client;
+/// previously returned skills can continue reading resources while that client remains usable.
+/// </para>
+/// <para>
+/// <strong>Security:</strong> Remote skills are loaded only when this source is explicitly configured.
+/// Only connect to servers you trust and treat their content as untrusted input.
+/// Malicious instructions or scripts can manipulate the agent or expose data.
+/// A matching content hash does not prove that content is safe: the server supplies both the hash and the content.
 /// </para>
 /// </remarks>
-internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
+public sealed partial class AgentMcpSkillsSource : AgentSkillsSource
 {
-    /// <summary>
-    /// SEP-2640 canonical discovery document URI.
-    /// </summary>
-    private const string IndexUri = "skill://index.json";
+    private const string SkillsExtensionName = "io.modelcontextprotocol/skills";
 
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "The MCP client is supplied and owned by the caller, who is responsible for disposing it.")]
     private readonly McpClient _client;
     private readonly ILogger _logger;
-    private readonly Dictionary<string, IMcpSkillEntryLoader> _loaders;
+    private readonly McpSkillsCatalog _catalog;
+    private readonly AgentMcpSkillsSourceOptions? _options;
+    private readonly TimeProvider _timeProvider;
+    private readonly MemoryCache _catalogs;
+    private readonly int? _maxCachedPartitions;
+    private readonly MemoryCacheEntryOptions? _catalogEntryOptions;
+    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentMcpSkillsSource"/> class.
     /// </summary>
-    /// <param name="client">An MCP client connected to a server that exposes Agent Skills resources. The caller retains ownership of the client and is responsible for disposing it.</param>
-    /// <param name="options">Optional options that control archive-distributed skill handling.</param>
-    /// <param name="loggerFactory">Optional logger factory.</param>
+    /// <param name="client">An MCP client connected to a server that supports <c>skills/list</c>. The caller retains ownership of the client and is responsible for disposing it.</param>
+    /// <param name="options">Optional settings for caching, discovery, and resource limits.</param>
+    /// <param name="loggerFactory">Optional factory for diagnostic logging.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="client"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">A configured limit is not positive.</exception>
     public AgentMcpSkillsSource(McpClient client, AgentMcpSkillsSourceOptions? options = null, ILoggerFactory? loggerFactory = null)
+        : this(client, options, loggerFactory, TimeProvider.System)
+    {
+    }
+
+    internal AgentMcpSkillsSource(McpClient client, AgentMcpSkillsSourceOptions? options, ILoggerFactory? loggerFactory, TimeProvider timeProvider)
     {
         this._client = Throw.IfNull(client);
         loggerFactory ??= NullLoggerFactory.Instance;
         this._logger = loggerFactory.CreateLogger<AgentMcpSkillsSource>();
+        this._timeProvider = Throw.IfNull(timeProvider);
+        this._options = options;
 
-        IMcpSkillEntryLoader[] loaders =
-        [
-            new SkillMdEntryLoader(this._client, loggerFactory),
-            new ArchiveEntryLoader(this._client, options, loggerFactory),
-        ];
+        this._catalog = new McpSkillsCatalog(this._client, this._options, this._logger, this._timeProvider);
 
-        this._loaders = loaders.ToDictionary(l => l.EntryType, StringComparer.OrdinalIgnoreCase);
+        var cacheOptions = options?.ToMemoryCacheOptions() ?? new MemoryCacheOptions();
+        cacheOptions.Clock = new CatalogClock(this._timeProvider);
+
+        this._catalogs = new MemoryCache(cacheOptions);
+        this._maxCachedPartitions = options?.MaxCachedPartitions;
+
+        this._catalogEntryOptions = options?.ToMemoryCacheEntryOptions();
     }
 
     /// <inheritdoc/>
@@ -134,110 +161,87 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
         FeatureUsage.MarkUsed((int)Mcp.FeatureIndex.CoreMcpSkillsSource);
 #pragma warning restore MAAI001
 
-        McpSkillIndex? index = await this.TryReadIndexAsync(cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        // Group entries by type and set aside those a registered loader can handle; entries of any
-        // other type are unsupported and logged.
-        var entriesByType = new Dictionary<string, List<McpSkillIndexEntry>>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var group in (index?.Skills ?? []).GroupBy(e => e.Type ?? string.Empty, StringComparer.OrdinalIgnoreCase))
+        if (this._client.ServerCapabilities.Extensions?.ContainsKey(SkillsExtensionName) != true)
         {
-            if (this._loaders.ContainsKey(group.Key))
-            {
-                entriesByType[group.Key] = group.ToList();
-            }
-            else
-            {
-                foreach (var entry in group)
-                {
-                    LogIndexEntrySkipped(this._logger, entry.Name ?? "(unnamed)", $"unsupported type '{entry.Type ?? "(none)"}'");
-                }
-            }
+            LogSkillsExtensionAbsent(this._logger);
+            return [];
         }
 
-        // Invoke every registered loader, even when the server advertises no entries of its type, so
-        // each type's lifecycle still runs (e.g. the archive loader prunes leftover directories).
-        var skills = new List<AgentSkill>();
+        string? key = this._options?.CacheIsolationKeySelector is { } selector
+            ? Throw.IfNullOrWhitespace(await selector(context, cancellationToken).ConfigureAwait(false))
+            : null;
 
-        foreach (var loader in this._loaders.Values)
-        {
-            var entries = entriesByType.TryGetValue(loader.EntryType, out List<McpSkillIndexEntry>? matched) ? matched : [];
-            skills.AddRange(await loader.LoadAsync(entries, context, cancellationToken).ConfigureAwait(false));
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(this._disposed, this);
 
+        McpSkillsCatalog catalog = key is null
+            ? this._catalog
+            : this.GetOrCreateCatalog(key);
+
+        IList<AgentSkill> skills = await catalog.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
         LogSkillsLoadedTotal(this._logger, skills.Count);
 
         return skills;
     }
 
+    private McpSkillsCatalog GetOrCreateCatalog(string key)
+    {
+        if (this._catalogs.TryGetValue(key, out McpSkillsCatalog? catalog))
+        {
+            return catalog!;
+        }
+
+        // Serialize partition creation and compaction so a new partition has room in the cache.
+        lock (this._catalogs)
+        {
+            if (this._catalogs.TryGetValue(key, out catalog))
+            {
+                return catalog!;
+            }
+
+            int count = this._catalogs.Count;
+            if (this._maxCachedPartitions is > 0 && count >= this._maxCachedPartitions)
+            {
+                // Target 5% (5 of 100 entries) to avoid compacting for every new key.
+                // Since Compact rounds down, 1.0 / count ensures a target of at least one entry for small caches.
+                this._catalogs.Compact(Math.Max(0.05, 1.0 / count));
+            }
+
+            return this._catalogs.GetOrCreate(
+                key,
+                _ => new McpSkillsCatalog(this._client, this._options, this._logger, this._timeProvider, hasIsolationKey: true),
+                this._catalogEntryOptions)!;
+        }
+    }
+
+    private sealed class CatalogClock(TimeProvider timeProvider) : ISystemClock
+    {
+        public DateTimeOffset UtcNow => timeProvider.GetUtcNow();
+    }
+
     /// <inheritdoc/>
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
+        if (disposing && !this._disposed)
         {
-            foreach (var loader in this._loaders.Values)
-            {
-                (loader as IDisposable)?.Dispose();
-            }
+            this._disposed = true;
+            this._catalogs.Dispose();
         }
 
         base.Dispose(disposing);
     }
 
-    private async Task<McpSkillIndex?> TryReadIndexAsync(CancellationToken cancellationToken)
-    {
-        ReadResourceResult result;
+    /// <summary>
+    /// Logs that the server does not declare support for skills.
+    /// </summary>
+    [LoggerMessage(LogLevel.Debug, "No io.modelcontextprotocol/skills extension declared by MCP server; skill discovery is skipped.")]
+    private static partial void LogSkillsExtensionAbsent(ILogger logger);
 
-        try
-        {
-#pragma warning disable CA2234 // Pass system uri objects instead of strings
-            result = await this._client.ReadResourceAsync(IndexUri, cancellationToken: cancellationToken).ConfigureAwait(false);
-#pragma warning restore CA2234 // Pass system uri objects instead of strings
-        }
-        catch (McpException ex) when (ex is McpProtocolException pex && pex.ErrorCode == McpErrorCode.ResourceNotFound)
-        {
-            LogIndexAbsent(this._logger, ex.Message);
-            return null;
-        }
-        catch (McpException ex)
-        {
-            LogIndexReadFailed(this._logger, ex);
-            return null;
-        }
-
-        string? indexText = result.Contents.OfType<TextResourceContents>().FirstOrDefault()?.Text;
-        if (string.IsNullOrWhiteSpace(indexText))
-        {
-            LogIndexEmpty(this._logger);
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize(indexText, McpJsonContext.Default.McpSkillIndex);
-        }
-        catch (JsonException ex)
-        {
-            LogIndexParseFailed(this._logger, ex);
-            return null;
-        }
-    }
-
+    /// <summary>
+    /// Reports how many skills the source returned.
+    /// </summary>
     [LoggerMessage(LogLevel.Information, "Successfully loaded {Count} skills from MCP server")]
     private static partial void LogSkillsLoadedTotal(ILogger logger, int count);
-
-    [LoggerMessage(LogLevel.Debug, "No skill://index.json resource available on MCP server: {Reason}")]
-    private static partial void LogIndexAbsent(ILogger logger, string reason);
-
-    [LoggerMessage(LogLevel.Warning, "Failed to read skill://index.json from MCP server.")]
-    private static partial void LogIndexReadFailed(ILogger logger, Exception exception);
-
-    [LoggerMessage(LogLevel.Debug, "skill://index.json on MCP server returned empty/non-text contents")]
-    private static partial void LogIndexEmpty(ILogger logger);
-
-    [LoggerMessage(LogLevel.Warning, "Failed to parse skill://index.json JSON document.")]
-    private static partial void LogIndexParseFailed(ILogger logger, Exception exception);
-
-    [LoggerMessage(LogLevel.Debug, "Skipping skill index entry '{SkillName}': {Reason}")]
-    private static partial void LogIndexEntrySkipped(ILogger logger, string skillName, string reason);
 }

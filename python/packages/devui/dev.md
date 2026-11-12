@@ -63,6 +63,9 @@ This launches the UI with all example agents/workflows at http://localhost:8080
 DevUI is auth-enabled by default. Copy the generated token from startup logs and pass it as
 `Authorization: Bearer <token>` for direct API calls. Use `--no-auth` only for loopback-only local testing.
 
+Even on loopback, `--no-auth` removes protection against HTTP requests sent by hostile websites to local DevUI.
+Use it only in an isolated loopback development environment.
+
 ## 5. What You'll See
 
 - A web interface for testing agents interactively

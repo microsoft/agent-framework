@@ -33,7 +33,7 @@
     <RootNamespace>HostedObservability</RootNamespace>
     <AssemblyName>HostedObservability</AssemblyName>
     <UserSecretsId>f401dcb9-9636-4c3d-ab4a-4fb68773a1a1</UserSecretsId>
-    <AgentFrameworkVersion>1.22.0-preview.260918.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.27.0-preview.261030.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>

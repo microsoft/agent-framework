@@ -27,6 +27,11 @@ public sealed class FileSpanExporter : BaseExporter<Activity>
         lock (this._lock)
         {
             using var writer = new StreamWriter(this._filePath, append: true);
+            foreach (var attribute in this.ParentProvider.GetResource().Attributes)
+            {
+                writer.WriteLine($"Resource: {attribute.Key}: {attribute.Value}");
+            }
+
             foreach (var activity in batch)
             {
                 WriteActivity(writer, activity);

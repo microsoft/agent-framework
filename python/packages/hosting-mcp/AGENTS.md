@@ -23,10 +23,17 @@ authentication, authorization, session-key policy, concurrency policy, or
 outbound delivery. Applications compose the adapter and conversion helpers
 with native MCP SDK constructs.
 
-`AgentMCPTool` owns only the schema for its single generated agent tool. It
-does not register that schema with a server. Applications call
-`await adapter.list_tools()` and `await adapter.call_tool(...)` from native MCP
-handlers.
+`AgentMCPTool` generates and validates the schema for its single agent tool.
+`call_tool(...)` rejects schema-invalid arguments before conversion, agent
+execution, or session-store access. It does not register that schema with a
+server. Applications call `await adapter.list_tools()` and
+`await adapter.call_tool(...)` from native MCP handlers. Direct
+`mcp_to_run(...)` conversion does not perform schema validation.
+
+Parameter schemas are trusted application configuration. Validation is
+synchronous and has no execution timeout; applications must choose regex
+patterns with predictable matching time for caller-controlled values and
+property names. Schema enforcement does not provide execution isolation.
 
 `WorkflowMCPTool` owns only the schema derived from the start executor. It
 requires exactly one input type. Workflow factories and continuation policy

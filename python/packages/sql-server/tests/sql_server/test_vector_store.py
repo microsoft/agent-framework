@@ -572,7 +572,7 @@ async def test_cancelled_failing_operation_preserves_cancellation_until_worker_c
     connection.close.assert_called_once()
     assert any(
         "worker failed after caller cancellation" in record.message
-        and record.exc_info is not None
+        and isinstance(record.exc_info, tuple)
         and isinstance(record.exc_info[1], IntegrationException)
         and record.exc_info[1].__cause__ is driver_error
         for record in caplog.records

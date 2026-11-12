@@ -3,8 +3,8 @@ name = "agent-framework-tools"
 description = "Built-in tools for the Microsoft Agent Framework (local shell, and more)."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
-requires-python = ">=3.10"
-version = "1.0.0b261015"
+requires-python = ">=3.11"
+version = "1.0.0b261112"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -15,7 +15,6 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -29,7 +28,7 @@ dependencies = [
     # mandatory dep because it's the difference between "child processes
     # may survive timeout on Windows" and "they don't" — a security-relevant
     # property, not an optional one.
-    "psutil>=5.9",
+    "psutil>=5.9.6",
 ]
 
 [tool.uv]
@@ -71,7 +70,7 @@ exclude = ['tests']
 [tool.mypy]
 plugins = ['pydantic.mypy']
 strict = true
-python_version = "3.10"
+python_version = "3.11"
 ignore_missing_imports = true
 disallow_untyped_defs = true
 no_implicit_optional = true

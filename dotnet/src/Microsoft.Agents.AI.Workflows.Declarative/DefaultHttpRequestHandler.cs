@@ -18,90 +18,74 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This handler supports per-request authentication via an optional <c>httpClientProvider</c> callback that
-/// returns a pre-configured <see cref="HttpClient"/> for a given request (e.g. authenticated, custom handler).
-/// When the provider returns <see langword="null"/>, or no provider is supplied, a shared internal <see cref="HttpClient"/>
-/// is used.
+/// This handler obtains a handler pipeline from the application-owned <see cref="IHttpMessageHandlerFactory"/>
+/// and creates and disposes an HTTP client for each request, including redirects, without disposing the pipeline.
+/// The factory manages the lifetime of the underlying HTTP handlers.
+/// Configure the named pipeline with automatic redirects and cookies disabled. Authentication handlers must
+/// bind credentials to the intended origin on each request, including redirects; do not put credentials in
+/// headers when multiple origins are allowed. Client configuration registered through
+/// <see cref="IHttpClientFactory"/> does not apply; configure headers and authentication in delegating handlers.
+/// </para>
+/// <para>
+/// Requests must use HTTP or HTTPS and target a host explicitly allowed by the application, including after
+/// redirects. Every constructor requires an explicit allowlist; an empty list rejects all requests.
+/// Host matching is exact and case-insensitive, with internationalized names and trailing DNS dots normalized;
+/// wildcards and implicit subdomains are not supported. Entries may include a port; omitted ports default to 443.
+/// Authorization matches the host and port, independently of whether HTTP or HTTPS is used.
+/// The allowlist is copied at construction and applies before creating a client.
+/// Workflow-supplied Host headers are rejected; the transport derives the authority from the request URL.
+/// DNS resolution and network routing are delegated to the HTTP transport, not classified by this handler.
 /// </para>
 /// <para>
 /// The handler applies the per-request <see cref="HttpRequestInfo.Timeout"/> using a linked <see cref="CancellationTokenSource"/>
-/// so it does not mutate <see cref="HttpClient.Timeout"/> on shared instances.
+/// for the entire operation, including redirects and response body reads. A positive per-request timeout
+/// disables the client's independent timeout so longer workflow deadlines are honored.
 /// </para>
 /// <para>
-/// Redirects are handled by this handler only when using its internally owned client, which disables automatic
-/// redirects so per-request headers are not forwarded to redirect destinations. If a supplied client returns a
-/// redirect response, this handler does not follow it because the client's redirect behavior is opaque. Supplied
-/// clients should disable automatic redirects and handle redirect responses before returning them to this handler.
+/// Redirects are handled explicitly so each destination is checked against the allowlist and workflow-supplied
+/// headers are not forwarded. Before sending, the pipeline must terminate in a supported HTTP transport with
+/// automatic redirects and cookies disabled. Unsupported transports are rejected. Application-owned delegating
+/// handlers must preserve the validated destination and must not follow redirects themselves.
 /// </para>
 /// </remarks>
-public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDisposable
+public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
 {
     private const int MaxAutomaticRedirections = 50;
 
-    private readonly Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
-    private readonly Lazy<HttpClient> _ownedHttpClient;
+    private readonly AllowedHttpHosts _allowedHosts;
+    private readonly IHttpMessageHandlerFactory _httpMessageHandlerFactory;
+    private readonly string _httpClientName;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class that uses an
-    /// internally owned <see cref="HttpClient"/> for all requests. The internal client is disposed
-    /// when <see cref="DisposeAsync"/> is called.
+    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class with allowed hosts
+    /// and an application-owned HTTP message handler factory.
     /// </summary>
-    public DefaultHttpRequestHandler()
-        : this(httpClientProvider: null)
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class that uses the
-    /// supplied <see cref="HttpClient"/> for all requests.
-    /// </summary>
-    /// <param name="httpClient">
-    /// The <see cref="HttpClient"/> to use for all requests. The caller retains ownership of this
-    /// instance; it is not disposed by <see cref="DisposeAsync"/>.
+    /// <param name="allowedHosts">
+    /// The exact DNS names or IP literals, optionally including a port, the application permits.
+    /// Omitted ports default to 443. Use brackets around IPv6 literals when specifying a port.
+    /// Schemes, paths, and wildcards are not supported. An empty collection rejects all requests.
+    /// The collection is copied.
     /// </param>
-    /// <exception cref="ArgumentNullException"><paramref name="httpClient"/> is <see langword="null"/>.</exception>
-    public DefaultHttpRequestHandler(HttpClient httpClient)
-        : this(CreateSingleClientProvider(httpClient))
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="DefaultHttpRequestHandler"/> class that selects
-    /// an <see cref="HttpClient"/> per request via a caller-supplied callback — for example, to route
-    /// different URLs through differently authenticated clients.
-    /// </summary>
-    /// <param name="httpClientProvider">
-    /// An optional callback invoked for each request. The callback receives the <see cref="HttpRequestInfo"/>
-    /// and should return a pre-configured <see cref="HttpClient"/> (e.g. with authentication or a custom
-    /// transport). Return <see langword="null"/> to fall back to the handler's shared internal
-    /// <see cref="HttpClient"/>.
+    /// <param name="httpMessageHandlerFactory">
+    /// The factory supplying pooled handler pipelines. The primary handler must be a
+    /// <see cref="HttpClientHandler"/> or, on .NET, a <c>SocketsHttpHandler</c>,
+    /// with automatic redirects and cookies disabled. Bind authentication to the intended origin in a
+    /// delegating handler. The application owns the factory and its handlers.
     /// </param>
-    /// <remarks>
-    /// <para>
-    /// <b>Ownership</b>: the caller is solely responsible for the lifetime of clients returned by this
-    /// callback. <see cref="DefaultHttpRequestHandler"/> will <b>not</b> dispose provider-returned
-    /// clients; only the handler's internally owned fallback client is disposed by <see cref="DisposeAsync"/>.
-    /// </para>
-    /// <para>
-    /// <b>Reuse</b>: callers are expected to cache and reuse clients (for example, keyed by base URL or
-    /// auth scope) across requests. Returning a newly allocated <see cref="HttpClient"/> on every
-    /// invocation will leak sockets and handler resources.
-    /// </para>
-    /// </remarks>
-    public DefaultHttpRequestHandler(Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider)
+    /// <param name="httpClientName">The configured client name, or <see langword="null"/> for the default client.</param>
+    /// <exception cref="ArgumentNullException">An argument other than <paramref name="httpClientName"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">An allowed host is invalid.</exception>
+    public DefaultHttpRequestHandler(
+        IEnumerable<string> allowedHosts,
+        IHttpMessageHandlerFactory httpMessageHandlerFactory,
+        string? httpClientName = null)
     {
-        this._httpClientProvider = httpClientProvider;
-        this._ownedHttpClient = new Lazy<HttpClient>(CreateOwnedHttpClient, LazyThreadSafetyMode.ExecutionAndPublication);
-    }
+        Throw.IfNull(allowedHosts);
+        Throw.IfNull(httpMessageHandlerFactory);
+        this._allowedHosts = new(allowedHosts);
 
-    private static Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>> CreateSingleClientProvider(HttpClient httpClient)
-    {
-        if (httpClient is null)
-        {
-            throw new ArgumentNullException(nameof(httpClient));
-        }
-
-        return (_, _) => Task.FromResult<HttpClient?>(httpClient);
+        this._httpMessageHandlerFactory = httpMessageHandlerFactory;
+        this._httpClientName = httpClientName ?? string.Empty;
     }
 
     /// <inheritdoc/>
@@ -124,6 +108,17 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
         HttpRequestInfo currentRequest = CreateCanonicalRequestInfo(request, out Uri currentUri);
 
+        if (request.Headers is not null)
+        {
+            foreach (KeyValuePair<string, string> header in request.Headers)
+            {
+                if (string.Equals(header.Key, "Host", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new HttpRequestException("Request headers must not override the Host header.");
+                }
+            }
+        }
+
         using CancellationTokenSource? timeoutCts = request.Timeout is { } timeout && timeout > TimeSpan.Zero
             ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
             : null;
@@ -134,13 +129,18 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
         for (int redirectCount = 0; redirectCount <= MaxAutomaticRedirections; redirectCount++)
         {
-            HttpClient? providedClient = null;
-            if (this._httpClientProvider is not null)
+            if (!this._allowedHosts.Contains(currentUri))
             {
-                providedClient = await this._httpClientProvider(currentRequest, effectiveToken).ConfigureAwait(false);
+                throw new HttpRequestException("The request host and port are not in the allowed hosts list.");
             }
 
-            HttpClient client = providedClient ?? this._ownedHttpClient.Value;
+            HttpMessageHandler messageHandler = this._httpMessageHandlerFactory.CreateHandler(this._httpClientName);
+            HttpTransportValidation.Validate(messageHandler);
+            using HttpClient client = new(messageHandler, disposeHandler: false);
+            if (timeoutCts is not null)
+            {
+                client.Timeout = Timeout.InfiniteTimeSpan;
+            }
 
             using HttpRequestMessage httpRequest = BuildHttpRequestMessage(currentRequest);
 
@@ -148,8 +148,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
                 .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, effectiveToken)
                 .ConfigureAwait(false);
 
-            if (providedClient is null &&
-                TryCreateRedirectRequest(httpResponse, currentRequest, currentUri, out HttpRequestInfo? redirectRequest, out Uri? redirectUri))
+            if (TryCreateRedirectRequest(httpResponse, currentRequest, currentUri, out HttpRequestInfo? redirectRequest, out Uri? redirectUri))
             {
                 currentRequest = redirectRequest;
                 currentUri = redirectUri;
@@ -202,17 +201,6 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         cancellationToken.ThrowIfCancellationRequested();
         throw new OperationCanceledException(cancellationToken);
 #endif
-    }
-
-    /// <inheritdoc/>
-    public ValueTask DisposeAsync()
-    {
-        if (this._ownedHttpClient.IsValueCreated)
-        {
-            this._ownedHttpClient.Value.Dispose();
-        }
-
-        return default;
     }
 
     private static HttpRequestMessage BuildHttpRequestMessage(HttpRequestInfo request)
@@ -281,23 +269,17 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             $"HTTP header '{name}' contains invalid characters.");
     }
 
-    private static HttpClient CreateOwnedHttpClient()
-    {
-        HttpClientHandler handler = new()
-        {
-            AllowAutoRedirect = false,
-            UseCookies = false,
-            CheckCertificateRevocationList = true
-        };
-
-        return new HttpClient(handler);
-    }
-
     private static Uri CreateAbsoluteUri(string requestUri)
     {
         if (!Uri.TryCreate(requestUri, UriKind.Absolute, out Uri? uri))
         {
             throw new ArgumentException("Request URL must be an absolute URL.", nameof(requestUri));
+        }
+
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new HttpRequestException("Request URLs must use HTTP or HTTPS.");
         }
 
         return uri;
@@ -336,6 +318,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         redirectUri = response.Headers.Location.IsAbsoluteUri
             ? response.Headers.Location
             : new Uri(currentUri, response.Headers.Location);
+        redirectUri = CreateAbsoluteUri(redirectUri.ToString());
 
         if (IsHttpsToHttpRedirect(currentUri, redirectUri))
         {

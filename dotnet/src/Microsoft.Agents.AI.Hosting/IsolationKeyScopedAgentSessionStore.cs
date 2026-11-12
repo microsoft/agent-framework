@@ -130,6 +130,16 @@ public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
         await this.InnerStore.SaveSessionAsync(agent, scopedKey, session, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
+    public override async ValueTask DeleteSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+    {
+        AgentSessionStoreKey scopedKey = await this.GetScopedKeyAsync(key, cancellationToken).ConfigureAwait(false);
+        await this.InnerStore.DeleteSessionAsync(agent, scopedKey, cancellationToken).ConfigureAwait(false);
+    }
+
     private sealed class CapturedIsolationKeyScope : IDisposable
     {
         private readonly string? _previousIsolationKey;

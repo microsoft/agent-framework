@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = [
 #     "agent-framework-foundry",
 #     "agent-framework-hosting-mcp",
@@ -47,12 +47,16 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 
 
-async def list_tools(_ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+async def list_tools(
+    _ctx: ServerRequestContext[dict[str, Any]], params: types.PaginatedRequestParams | None
+) -> types.ListToolsResult:
     """Describe the app-owned MCP tool schema."""
     return await agent_tool.list_tools()
 
 
-async def call_tool(_ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams) -> types.CallToolResult:
+async def call_tool(
+    _ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+) -> types.CallToolResult:
     """Run the app-owned tool with native MCP and Agent Framework values."""
     return await agent_tool.call_tool(params.name, params.arguments)
 

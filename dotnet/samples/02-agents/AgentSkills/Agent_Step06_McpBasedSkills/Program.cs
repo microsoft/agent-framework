@@ -3,15 +3,19 @@
 // This sample demonstrates how to discover Agent Skills served over MCP.
 //
 // When launched with "--server", this executable runs a small MCP stdio server
-// that exposes a unit-converter skill via the SEP-2640 convention:
-//   - skill://index.json      — discovery document listing all skills
-//   - skill://unit-converter/SKILL.md — the skill instructions
+// that advertises the Skills extension and exposes a unit-converter skill:
+//   - skills/list - discovery method listing all skills
+//   - skill://unit-converter/SKILL.md - the skill instructions
+//   - skill://unit-converter/references/conversion-table.md - conversion factors
 //
 // In default (client) mode the sample launches itself as a child process,
 // connects via StdioClientTransport, and uses AgentSkillsProviderBuilder
 // to discover and inject the skill into a ChatClientAgent.
 
 using System.ComponentModel;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Nodes;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -19,6 +23,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
 if (args.Length > 0 && args[0] == "--server")
@@ -28,7 +33,7 @@ if (args.Length > 0 && args[0] == "--server")
 }
 
 // --- Configuration ---
-string openAiEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
@@ -47,13 +52,14 @@ await using McpClient client = await McpClient.CreateAsync(
 
 var skillsProvider = new AgentSkillsProviderBuilder()
     .UseMcpSkills(client)
+    .DisableCaching()
     .Build();
 
 // --- Agent ---
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AIProjectClient(new Uri(openAiEndpoint), new DefaultAzureCredential())
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
     .AsAIAgent(new ChatClientAgentOptions
     {
         Name = "SkillsAgent",
@@ -94,9 +100,30 @@ static async Task RunMcpServerAsync()
     builder.Logging.ClearProviders();
     builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 
-    builder.Services.AddMcpServer(o => o.ServerInfo = new() { Name = "SkillsServer", Version = "1.0.0" })
+#pragma warning disable MCPEXP002 // Custom extension methods require raw server request handlers.
+    builder.Services.AddMcpServer(o =>
+    {
+        o.ServerInfo = new() { Name = "SkillsServer", Version = "1.0.0" };
+        o.Capabilities = new ServerCapabilities
+        {
+            Resources = new(),
+            Extensions = new Dictionary<string, object>
+            {
+                ["io.modelcontextprotocol/skills"] = new JsonObject(),
+            },
+        };
+        o.RequestHandlers =
+        [
+            new()
+            {
+                Method = "skills/list",
+                Handler = (_, _) => ValueTask.FromResult(SkillResources.ListSkills()),
+            },
+        ];
+    })
     .WithStdioServerTransport()
     .WithResources<SkillResources>();
+#pragma warning restore MCPEXP002
 
     await builder.Build().RunAsync();
 }
@@ -106,29 +133,30 @@ static async Task RunMcpServerAsync()
 internal sealed class SkillResources
 #pragma warning restore CA1812
 {
-    private const string IndexJson = """
-        {
-            "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
-            "skills": [
-                {
-                    "name": "unit-converter",
-                    "type": "skill-md",
-                    "description": "Convert between common units using a multiplication factor. Use when asked to convert miles, kilometers, pounds, or kilograms.",
-                    "url": "skill://unit-converter/SKILL.md"
-                }
-            ]
-        }
-        """;
+    private const string SkillName = "unit-converter";
+    private const string SkillDescription =
+        "Convert between common units using a multiplication factor. Use when asked to convert miles, kilometers, pounds, or kilograms.";
+    private const string SkillUri = "skill://unit-converter/SKILL.md";
+    private const string ConversionTableUri = "skill://unit-converter/references/conversion-table.md";
 
-    private const string SkillMd = """
+    private const string SkillMd = $$"""
         ---
-        name: unit-converter
-        description: Convert between common units using a multiplication factor. Use when asked to convert miles, kilometers, pounds, or kilograms.
+        name: {{SkillName}}
+        description: {{SkillDescription}}
         ---
 
         ## Usage
 
-        When the user requests a unit conversion, use these factors:
+        When the user requests a unit conversion:
+        1. First, review `references/conversion-table.md` to find the correct factor
+        2. Calculate the result by multiplying the value by the factor
+        3. Present the converted value clearly with both units
+        """;
+
+    private const string ConversionTable = """
+        # Conversion Tables
+
+        Formula: **result = value × factor**
 
         | From        | To          | Factor   |
         |-------------|-------------|----------|
@@ -136,15 +164,66 @@ internal sealed class SkillResources
         | kilometers  | miles       | 0.621371 |
         | pounds      | kilograms   | 0.453592 |
         | kilograms   | pounds      | 2.20462  |
-
-        Formula: result = value × factor
         """;
 
-    [McpServerResource(UriTemplate = "skill://index.json", Name = "Skill Index", MimeType = "application/json")]
-    [Description("SEP-2640 skill discovery index")]
-    public static string GetIndex() => IndexJson;
+    private static readonly string s_skillsListJson = $$"""
+        {
+            "resultType": "complete",
+            "ttlMs": 300000,
+            "cacheScope": "public",
+            "skills": [
+                {
+                    "uri": "{{SkillUri}}",
+                    "frontmatter": {
+                        "name": "{{SkillName}}",
+                        "description": "{{SkillDescription}}"
+                    },
+                    "resources": [
+                        {
+                            "uri": "{{SkillUri}}",
+                            "digest": "{{ComputeDigest(SkillMd)}}",
+                            "size": {{Encoding.UTF8.GetByteCount(SkillMd)}}
+                        },
+                        {
+                            "uri": "{{ConversionTableUri}}",
+                            "digest": "{{ComputeDigest(ConversionTable)}}",
+                            "size": {{Encoding.UTF8.GetByteCount(ConversionTable)}}
+                        }
+                    ]
+                }
+            ]
+        }
+        """;
 
-    [McpServerResource(UriTemplate = "skill://unit-converter/SKILL.md", Name = "Unit Converter Skill", MimeType = "text/markdown")]
+    /// <summary>
+    /// Lists the available skills and their resource metadata.
+    /// </summary>
+    public static JsonNode? ListSkills() => JsonNode.Parse(s_skillsListJson);
+
+    private static string ComputeDigest(string content) =>
+        "sha256:" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
+
+    /// <summary>
+    /// Returns the unit-converter skill instructions.
+    /// </summary>
+    [McpServerResource(UriTemplate = SkillUri, Name = "Unit Converter Skill", MimeType = "text/markdown")]
     [Description("Unit converter skill instructions")]
-    public static string GetSkillMd() => SkillMd;
+    public static ReadResourceResult GetSkillMd() => new()
+    {
+        Contents = [new TextResourceContents { Uri = SkillUri, Text = SkillMd, MimeType = "text/markdown" }],
+        TimeToLive = TimeSpan.FromMinutes(5),
+        CacheScope = CacheScope.Public,
+    };
+
+    /// <summary>
+    /// Returns the conversion factors used by the unit-converter skill.
+    /// </summary>
+    [McpServerResource(UriTemplate = ConversionTableUri, Name = "Conversion Table", MimeType = "text/markdown")]
+    [Description("Unit conversion factors")]
+    public static ReadResourceResult GetConversionTable() => new()
+    {
+        Contents = [new TextResourceContents { Uri = ConversionTableUri, Text = ConversionTable, MimeType = "text/markdown" }],
+        TimeToLive = TimeSpan.FromMinutes(5),
+        CacheScope = CacheScope.Public,
+    };
 }

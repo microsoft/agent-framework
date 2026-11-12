@@ -5,9 +5,7 @@
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, TypedDict, cast
-
-from typing_extensions import NotRequired
+from typing import Any, NotRequired, TypedDict, cast
 
 logger = logging.getLogger(__name__)
 

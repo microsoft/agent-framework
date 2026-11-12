@@ -96,14 +96,12 @@ public sealed class SteerableLongRunningIntegrationTests
         builder.WebHost.UseTestServer();
         builder.Services.AddFoundryResponses(
             agent,
-            new InMemoryAgentSessionStore(),
-            options =>
+            new TestAgentSessionStore(),
+            new FoundryResponsesServerOptions
             {
-                options.ResilientBackground = true;
-                options.SteerableConversations = true;
+                ResilientBackground = true,
+                SteerableConversations = true,
             });
-        builder.Services.AddSingleton<HostedSessionIsolationKeyProvider>(
-            new FakeHostedSessionIsolationKeyProvider());
         builder.Services.AddLogging();
 
         WebApplication app = builder.Build();

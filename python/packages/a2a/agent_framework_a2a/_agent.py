@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import base64
 import json
-import sys
 import uuid
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-from typing import Any, Final, Literal, TypeAlias, cast, overload
+from typing import Any, Final, Literal, TypeAlias, TypedDict, cast, overload
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory, minimal_agent_card
@@ -53,11 +52,6 @@ from google.protobuf.struct_pb2 import Struct
 
 from ._feature_usage import FeatureIndex
 from ._utils import AGENT_FRAMEWORK_METADATA_KEY, get_uri_data
-
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 _A2A_METADATA_KEY: Final = "a2a"
 _LEGACY_A2A_METADATA_KEY: Final = "a2a_metadata"
@@ -1353,7 +1347,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     contents.append(
                         Content.from_data(
                             data=part.raw,
-                            media_type=part.media_type or "",
+                            # media_type is optional in A2A; "data:;base64,..." would not parse later.
+                            media_type=part.media_type or "application/octet-stream",
                             additional_properties=part_metadata,
                             raw_representation=part,
                         )

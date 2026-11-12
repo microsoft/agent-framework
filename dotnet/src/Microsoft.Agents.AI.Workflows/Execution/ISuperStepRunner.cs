@@ -13,6 +13,8 @@ internal interface ISuperStepRunner
 
     string StartExecutorId { get; }
 
+    string? WorkflowName { get; }
+
     WorkflowTelemetryContext TelemetryContext { get; }
 
     bool HasUnservicedRequests { get; }

@@ -49,6 +49,7 @@ from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMidd
 from agent_framework._settings import SecretString
 from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
 from agent_framework._tools import (
+    _LOCAL_TOOL_RESULT_KEY,  # pyright: ignore[reportPrivateUsage]
     SHELL_TOOL_KIND_VALUE,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -72,6 +73,7 @@ from agent_framework._types import (
     Role,
     TextSpanRegion,
     UsageDetails,
+    _get_annotation_text_span_regions,  # pyright: ignore[reportPrivateUsage]
     _set_operation_state,  # pyright: ignore[reportPrivateUsage]
     detect_media_type_from_base64,
     get_namespaced_value,
@@ -87,6 +89,7 @@ from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
 from openai.types.responses import (
     FunctionShellToolParam,
     ResponseCustomToolCall,
+    ResponseErrorEvent,
     ResponseFunctionShellToolCall,
     ResponseFunctionShellToolCallOutput,
     ResponseFunctionToolCallOutputItem,
@@ -112,6 +115,9 @@ from openai.types.responses.tool_param import (
     CodeInterpreterContainerCodeInterpreterToolAuto,
     ImageGeneration,
     Mcp,
+    McpRequireApprovalMcpToolApprovalFilter,
+    McpRequireApprovalMcpToolApprovalFilterAlways,
+    McpRequireApprovalMcpToolApprovalFilterNever,
 )
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -136,10 +142,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 _prompt_cache_options_supported = hasattr(response_create_params, "PromptCacheOptions")
 
@@ -161,6 +163,25 @@ logger = logging.getLogger("agent_framework.openai")
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
 _TERMINAL_RESPONSE_STATUSES: Final[frozenset[str]] = frozenset({"completed", "failed", "incomplete", "cancelled"})
+
+
+class _OpenAIResponseStreamError(RuntimeError):
+    """Retain the provider metadata from a flat Responses API error event."""
+
+    def __init__(self, event: ResponseErrorEvent) -> None:
+        self.event = event
+        self.code = event.code
+        self.message = event.message
+        self.param = event.param
+        error_details = event.message
+        if event.code:
+            error_details = f"{event.code}: {error_details}"
+        if event.param:
+            error_details = f"{error_details} (parameter: {event.param})"
+        super().__init__(f"OpenAI streaming error: {error_details}")
+
+    def __reduce__(self) -> tuple[type[_OpenAIResponseStreamError], tuple[ResponseErrorEvent], dict[str, Any]]:
+        return type(self), (self.event,), self.__dict__
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -510,7 +531,8 @@ def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> lis
 
     Each Responses API annotation dict carries at most one `start_index`/`end_index` pair, so an
     `Annotation` with multiple `annotated_regions` is fanned out into one entry per region.
-    Regions missing valid integer span bounds are skipped.
+    Regions missing valid integer span bounds are skipped. Source-coordinate regions
+    are retained on the framework annotation but are not emitted as generated-text spans.
     """
     if not annotations:
         return []
@@ -519,7 +541,7 @@ def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> lis
         if annotation.get("type") != "citation":
             continue
         props = annotation.get("additional_properties") or {}
-        regions = annotation.get("annotated_regions") or []
+        regions = _get_annotation_text_span_regions(annotation)
         file_id = annotation.get("file_id")
         url = annotation.get("url")
         title = annotation.get("title")
@@ -601,6 +623,12 @@ class RawOpenAIChatClient(
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
     STORES_BY_DEFAULT: ClassVar[bool] = True
+    SERVICE_CONTINUATION_OPTION_NAMES: ClassVar[tuple[str, ...]] = (
+        "conversation_id",
+        "previous_response_id",
+        "conversation",
+        "continuation_token",
+    )
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
     _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.OPENAI
 
@@ -730,9 +758,12 @@ class RawOpenAIChatClient(
         """Initialize a raw OpenAI Chat client.
 
         Keyword Args:
-            model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI,
-                or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL`` for Azure.
+            model: Model identifier to use for the request. An explicit value wins over an
+                injected ``AsyncAzureOpenAI`` deployment, which wins over environment variables.
+                Otherwise the constructor reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL``
+                for OpenAI, or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL`` for
+                Azure. An injected ``AsyncOpenAI`` client has no deployment, so the OpenAI
+                variables still apply.
             api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
                 For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,
@@ -797,6 +828,8 @@ class RawOpenAIChatClient(
         )
 
         self.client = client
+        self._owns_client = async_client is None
+        self._client_closed = False
         self.model: str = settings.get("model") or ""
 
         # Store configuration for serialization
@@ -855,6 +888,13 @@ class RawOpenAIChatClient(
             ),
             inner_exception=ex,
         ) from ex
+
+    @override
+    async def close(self) -> None:
+        """Close the connector-owned SDK connection, not caller-supplied credentials."""
+        if self._owns_client and not self._client_closed:
+            await self.client.close()
+            self._client_closed = True
 
     @override
     def service_url(self) -> str:
@@ -1051,8 +1091,28 @@ class RawOpenAIChatClient(
         self._enrich_mcp_search_citations([content for update in updates for content in update.contents])
         response = super()._finalize_response_updates(updates, response_format=response_format)
         self._mark_completed_computer_calls([content for message in response.messages for content in message.contents])
-        logprobs: list[Any] = []
+        message_logprobs: list[list[Any]] = []
+        current_message_id: str | None = None
+        current_author_name: str | None = None
+        current_role: str | None = None
         for update in updates:
+            is_new_message = (
+                not message_logprobs
+                or (update.message_id and current_message_id and current_message_id != update.message_id)
+                or (update.author_name and current_author_name and current_author_name != update.author_name)
+                or (update.role and current_role != update.role)
+            )
+            if is_new_message:
+                message_logprobs.append([])
+                current_message_id = None
+                current_author_name = None
+                current_role = "assistant"
+            if update.message_id:
+                current_message_id = update.message_id
+            if update.author_name is not None:
+                current_author_name = update.author_name
+            if update.role is not None:
+                current_role = update.role
             for content in update.contents:
                 if content.type != "text":
                     continue
@@ -1063,15 +1123,15 @@ class RawOpenAIChatClient(
                     default=[],
                 )
                 if isinstance(content_logprobs, list):
-                    logprobs.extend(cast("list[Any]", content_logprobs))
-        if logprobs:
+                    message_logprobs[-1].extend(cast("list[Any]", content_logprobs))
+        for message, logprobs in zip(response.messages, message_logprobs):
+            if not logprobs or message.role != "assistant":
+                continue
             assistant_text = next(
                 (
                     content
-                    for message in response.messages
-                    if message.role == "assistant"
                     for content in message.contents
-                    if content.type == "text"
+                    if content.type == "text" and not _is_refusal_text_content(content)
                 ),
                 None,
             )
@@ -1619,10 +1679,18 @@ class RawOpenAIChatClient(
             if isinstance(approval_mode, str):
                 mcp["require_approval"] = "always" if approval_mode == "always_require" else "never"
             else:
+                # Both keys can be supplied together ("and/or" per the docstring), so build
+                # one combined mapping instead of letting the second assignment overwrite
+                # the first, which silently dropped the always-approval tool list.
+                require_approval = McpRequireApprovalMcpToolApprovalFilter()
                 if always_require := approval_mode.get("always_require_approval"):
-                    mcp["require_approval"] = {"always": {"tool_names": always_require}}
+                    require_approval["always"] = McpRequireApprovalMcpToolApprovalFilterAlways(
+                        tool_names=always_require
+                    )
                 if never_require := approval_mode.get("never_require_approval"):
-                    mcp["require_approval"] = {"never": {"tool_names": never_require}}
+                    require_approval["never"] = McpRequireApprovalMcpToolApprovalFilterNever(tool_names=never_require)
+                if require_approval:
+                    mcp["require_approval"] = require_approval
 
         return mcp
 
@@ -2005,7 +2073,10 @@ class RawOpenAIChatClient(
                             args = {"type": "message", "role": message.role}
                         all_messages.append(function_call)
                 case "shell_tool_call" | "shell_tool_result":
-                    if request_uses_service_side_storage:
+                    if request_uses_service_side_storage and not (
+                        content.type == "shell_tool_result"
+                        and content.additional_properties.get(_LOCAL_TOOL_RESULT_KEY) is True
+                    ):
                         continue
                     if "content" in args or "tool_calls" in args:
                         all_messages.append(args)
@@ -2702,6 +2773,22 @@ class RawOpenAIChatClient(
                         raw_representation=item,
                     )
                 )
+                if (
+                    local_shell_tool_name
+                    and is_local_environment
+                    and shell_call_id
+                    and shell_call_item_id
+                    and isinstance(raw_shell_commands, list)
+                    and not raw_shell_commands
+                ):
+                    contents.append(
+                        Content.from_shell_tool_result(
+                            call_id=shell_call_id,
+                            outputs=[],
+                            max_output_length=shell_max_output,
+                            additional_properties={_LOCAL_TOOL_RESULT_KEY: True},
+                        )
+                    )
         elif item_type == "local_shell_call":
             raw_local_call_id = getattr(item, "call_id", None)
             local_call_id = raw_local_call_id if isinstance(raw_local_call_id, str) else ""
@@ -2974,6 +3061,16 @@ class RawOpenAIChatClient(
         expected_type: Literal["shell_call", "shell_call_output", "local_shell_call"],
     ) -> dict[str, Any]:
         """Restore a provider-issued shell transcript item for stateless replay."""
+        if (
+            expected_type == "shell_call_output"
+            and content.raw_representation is None
+            and content.call_id
+            and content.outputs == []
+        ):
+            output: dict[str, Any] = {"type": "shell_call_output", "call_id": content.call_id, "output": []}
+            if content.max_output_length is not None:
+                output["max_output_length"] = content.max_output_length
+            return output
         payload = cls._serialize_provider_payload(content.raw_representation)
         if isinstance(payload, Mapping):
             typed_payload = cast("Mapping[str, Any]", payload)
@@ -3448,13 +3545,23 @@ class RawOpenAIChatClient(
         structured_response: BaseModel | None = response.output_parsed if isinstance(response, ParsedResponse) else None  # type: ignore[reportUnknownMemberType]
 
         metadata: dict[str, Any] = response.metadata or {}
-        contents: list[Content] = []
+        messages: list[Message] = []
         local_shell_tool_name = self._get_local_shell_tool_name(options.get("tools"))
+
+        def contents_for_message(message_id: str | None = None) -> list[Content]:
+            if not messages or (message_id and messages[-1].message_id and messages[-1].message_id != message_id):
+                messages.append(Message(role="assistant", contents=[], message_id=message_id))
+            elif message_id:
+                messages[-1].message_id = message_id
+            return messages[-1].contents
+
         try:
             response_outputs = response.output  # type: ignore[reportUnknownMemberType]
         except AttributeError:
             response_outputs = []
         for item in response_outputs:  # type: ignore[reportUnknownVariableType]
+            message_id = cast(Any, item).id if item.type == "message" else None
+            contents = contents_for_message(message_id if isinstance(message_id, str) else None)
             match item.type:
                 # types:
                 # ParsedResponseOutputMessage[Unknown] |
@@ -3736,14 +3843,16 @@ class RawOpenAIChatClient(
                     contents.extend(self._shell_item_to_contents(item, local_shell_tool_name))
                 case _:
                     logger.debug("Unparsed output of type: %s: %s", item.type, item)
-        self._mark_completed_computer_calls(contents)
-        response_message = Message(role="assistant", contents=contents)
+        if not messages:
+            messages.append(Message(role="assistant", contents=[]))
+        all_contents = [content for message in messages for content in message.contents]
+        self._mark_completed_computer_calls(all_contents)
         args: dict[str, Any] = {
             "response_id": response.id,
             "created_at": datetime.fromtimestamp(response.created_at, tz=timezone.utc).strftime(
                 "%Y-%m-%dT%H:%M:%S.%fZ"
             ),
-            "messages": response_message,
+            "messages": messages,
             "model": response.model,
             "additional_properties": metadata,
             "raw_representation": response,
@@ -3763,8 +3872,7 @@ class RawOpenAIChatClient(
         if response.status and response.status in ("in_progress", "queued"):
             args["continuation_token"] = OpenAIContinuationToken(response_id=response.id)
         chat_response = ChatResponse(**args)
-        if chat_response.messages:
-            self._enrich_mcp_search_citations(chat_response.messages[0].contents)
+        self._enrich_mcp_search_citations(all_contents)
         return chat_response
 
     def _parse_annotation_from_openai(self, annotation: Any, annotation_index: int) -> Annotation | None:
@@ -3936,12 +4044,7 @@ class RawOpenAIChatClient(
             # ResponseCustomToolCallInputDeltaEvent,
             # ResponseCustomToolCallInputDoneEvent,
             case "error":
-                error_details = event.message
-                if event.code:
-                    error_details = f"{event.code}: {error_details}"
-                if event.param:
-                    error_details = f"{error_details} (parameter: {event.param})"
-                self._handle_request_error(RuntimeError(f"OpenAI streaming error: {error_details}"))
+                self._handle_request_error(_OpenAIResponseStreamError(event))
             case "response.content_part.added":
                 event_part = event.part
                 match event_part.type:
@@ -4505,14 +4608,72 @@ class RawOpenAIChatClient(
                         seen_function_call_output_ids, done_item
                     ):
                         contents.append(self._parse_function_call_output_content(output_item, done_call_id))
+                elif getattr(done_item, "type", None) == "code_interpreter_call":
+                    # The completed item is the only place `outputs` (logs/images) are ever
+                    # delivered during streaming - there is no incremental outputs event for them -
+                    # and its `code` is the authoritative final value, so both are tagged `replace`
+                    # even though `code_interpreter_call_code.done` (above) usually already set the code.
+                    call_id = getattr(done_item, "call_id", None) or getattr(done_item, "id", None)
+                    outputs: list[Content] = []
+                    if done_item_outputs := getattr(done_item, "outputs", None):
+                        for code_output in done_item_outputs:
+                            if getattr(code_output, "type", None) == "logs":
+                                outputs.append(
+                                    Content.from_text(
+                                        text=code_output.logs,
+                                        raw_representation=code_output,
+                                    )
+                                )
+                            elif getattr(code_output, "type", None) == "image":
+                                outputs.append(
+                                    Content.from_uri(
+                                        uri=code_output.url,
+                                        raw_representation=code_output,
+                                        media_type="image",
+                                    )
+                                )
+                    if done_item_code := getattr(done_item, "code", None):
+                        contents.append(
+                            Content.from_code_interpreter_tool_call(
+                                call_id=call_id,
+                                inputs=[
+                                    Content.from_text(
+                                        text=done_item_code,
+                                        merge_mode="replace",
+                                        raw_representation=done_item,
+                                    )
+                                ],
+                                status=_provider_status(getattr(done_item, "status", None)),
+                                merge_mode="replace",
+                                raw_representation=done_item,
+                            )
+                        )
+                    contents.append(
+                        Content.from_code_interpreter_tool_result(
+                            call_id=call_id,
+                            outputs=outputs,
+                            status=_provider_status(getattr(done_item, "status", None)),
+                            merge_mode="replace",
+                            raw_representation=done_item,
+                        )
+                    )
                 elif getattr(done_item, "type", None) == _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
                     pass
             case _:
                 if not isinstance(event.type, str) or not event.type.startswith(_AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX):
                     logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
+        message_id: str | None = None
+        if any(content.type == "text" for content in contents):
+            item_id = getattr(event, "item_id", None)
+            if event.type == "response.output_item.done":
+                item_id = event.item.id
+            if isinstance(item_id, str):
+                message_id = item_id
+
         update = ChatResponseUpdate(
             contents=contents,
+            message_id=message_id,
             conversation_id=conversation_id,
             response_id=response_id,
             role="assistant",
@@ -4698,10 +4859,12 @@ class OpenAIChatClient(
         """Initialize an OpenAI Responses client.
 
         Keyword Args:
-            model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI
-                routing, or ``AZURE_OPENAI_CHAT_MODEL`` and then
-                ``AZURE_OPENAI_MODEL`` for Azure routing.
+            model: Model identifier to use for the request. An explicit value wins over an
+                injected ``AsyncAzureOpenAI`` deployment, which wins over environment variables.
+                Otherwise the constructor reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL``
+                for OpenAI routing, or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL``
+                for Azure routing. An injected ``AsyncOpenAI`` client has no deployment, so the
+                OpenAI variables still apply.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,

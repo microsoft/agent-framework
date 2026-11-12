@@ -19,6 +19,59 @@ Hyperlight-backed CodeAct integrations for Microsoft Agent Framework.
 > Sandbox isolation does not supply FIDES enforcement.
 > See the [FIDES guide](../../samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md).
 
+## Error diagnostics
+
+Host tool callbacks expose a generic `RuntimeError("Host tool execution failed.")`
+by default, before diagnostics reach generated code. Raw sandbox failure details
+are omitted from error contents. Successful outputs and known-safe output-limit
+or cleanup errors retain their existing behavior.
+
+Both `HyperlightCodeActProvider` and `HyperlightExecuteCodeTool` accept the
+host-side option `include_detailed_errors=True` for trusted channels. It preserves
+original callback exceptions and sandbox error details, which may contain
+sensitive data. It is not a parameter of `execute_code` and is independent of the
+outer chat client's error policy and sensitive-data logging.
+
+The policy is captured in each run snapshot and serialized state. Sandbox cache
+keys include it, so detailed-error callbacks are not reused for redacted runs.
+Initialization, snapshot restore, and execution failures follow the same policy.
+Failed sandbox entries are retired; cancellation and system-exit signals still
+propagate without becoming ordinary execution errors.
+
+## Execution limits
+
+Guest execution has a finite 30-second budget by default. Both
+`HyperlightCodeActProvider` and `HyperlightExecuteCodeTool` accept the host-side
+`execution_timeout_seconds` option, which must be a positive finite number.
+Applications that intentionally run longer must configure a larger budget.
+The option is captured in provider run snapshots and serialized state; it is
+not a model-controlled `execute_code` argument.
+
+Reaching the budget returns an error content with
+`Code execution exceeded its time limit.` Caller task cancellation interrupts
+guest execution and propagates `asyncio.CancelledError`. Cancellation waits for
+native execution and its interruption thread to finish, even if the caller
+cancels again. Queued cancellation does not interrupt another invocation.
+The next invocation restores the warm snapshot before reusing the sandbox.
+
+The budget starts on the sandbox's owning worker, not while waiting for that
+worker. Initialization and warm-up share the invocation's budget, but runtime
+initialization and host tool callbacks cannot be interrupted. Host tools must
+enforce their own cancellation and time limits. Completed results and unrelated
+execution failures are not replaced with a timeout that arrives late.
+
+Guest execution uses the cross-thread `Sandbox.interrupt_handle()` API documented
+for Hyperlight SDK 0.9.0 or later. Installation permits SDK 0.8.0, but guest
+execution still requires an SDK that provides this API.
+
+To run the native regressions on a KVM host with the required SDK and both
+backends installed:
+
+```bash
+HYPERLIGHT_RUN_GUEST_TESTS=true uv run --directory python/packages/hyperlight pytest \
+  tests/hyperlight/test_execution_limits.py -m integration
+```
+
 ## Installation
 
 ```bash
@@ -27,9 +80,9 @@ pip install agent-framework-hyperlight --pre
 
 This package depends on `hyperlight-sandbox`, the packaged Python guest, and the
 Wasm backend package on supported platforms. The backend is currently installed
-for Python 3.10 through 3.14. If a compatible backend is not published for your
-current platform and Python version, `execute_code` will fail at runtime when it
-tries to create the sandbox.
+for supported Python versions 3.11 through 3.15 on Linux x86_64 and Windows AMD64. If a compatible
+backend is not published for your current platform and Python version,
+`execute_code` will fail at runtime when it tries to create the sandbox.
 
 ## Quick start
 

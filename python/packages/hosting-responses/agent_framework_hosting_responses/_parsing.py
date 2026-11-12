@@ -13,7 +13,11 @@ pass through to ``agent.run(...)`` and which request-owned fields to drop.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
+import logging
+import mimetypes
 import time
 import uuid
 import warnings
@@ -31,6 +35,8 @@ from agent_framework import (
     get_namespaced_value,
 )
 from agent_framework._telemetry import mark_feature_used
+from agent_framework.exceptions import ContentError
+from agent_framework.observability import OBSERVABILITY_SETTINGS
 from agent_framework_hosting import AgentRunArgs
 from openai.types.responses import (
     Response as OpenAIResponse,
@@ -51,8 +57,11 @@ from pydantic import TypeAdapter, ValidationError
 
 from ._feature_usage import FeatureIndex
 
+logger = logging.getLogger(__name__)
+
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
+_PUBLIC_STREAM_FAILURE_MESSAGE = "An internal server error occurred."
 _RESPONSE_OUTPUT_ITEM_ADAPTER: TypeAdapter[Any] = TypeAdapter(ResponseOutputItem)
 _RESPONSE_USAGE_ADAPTER: TypeAdapter[Any] = TypeAdapter(ResponseUsage)
 
@@ -74,6 +83,23 @@ _RESPONSES_CONTINUATION_KEYS = ("previous_response_id", "conversation", "convers
 _RESPONSES_INPUT_MESSAGE_ROLES = frozenset({"user", "assistant", "system", "developer"})
 _RESPONSES_STATUSES = frozenset({"completed", "failed", "in_progress", "cancelled", "queued", "incomplete"})
 _STREAMING_TERMINAL_STATUSES = frozenset({"completed", "failed", "incomplete"})
+
+
+def _log_stream_failure(response_id: str, exc: Exception) -> None:
+    """Log a correlated stream failure under the framework's sensitive-data policy."""
+    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+        logger.error(
+            "Responses stream failed (phase=stream processing, response_id=%s, error_type=%s).",
+            response_id,
+            type(exc).__name__,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+    else:
+        logger.error(
+            "Responses stream failed (phase=stream processing, response_id=%s, error_type=%s).",
+            response_id,
+            type(exc).__name__,
+        )
 
 
 def _is_refusal_text_content(content: Content) -> bool:
@@ -119,8 +145,8 @@ def _content_from_input_item(item: Mapping[str, Any]) -> Content:
     """Convert a single OpenAI Responses ``input`` item into a :class:`Content` part.
 
     Handles the ``input_text``/``output_text``/``text`` text variants,
-    ``input_image`` URL references, and ``input_file`` references via either
-    a public URL or a hosted ``file_id``. Raises ``ValueError`` for any
+    ``input_image`` URL references, and ``input_file`` references via a public
+    URL, a hosted ``file_id``, or inline ``file_data``. Raises ``ValueError`` for any
     unsupported item type so the surrounding parser can return a 422.
     """
     item_type = item.get("type")
@@ -186,7 +212,33 @@ def _content_from_input_item(item: Mapping[str, Any]) -> Content:
                     **({"filename": filename} if isinstance(filename, str) else {}),
                 },
             )
-        raise ValueError("input_file requires a non-empty string `file_url` or `file_id`")
+        file_data = item.get("file_data")
+        if file_data is not None:
+            if not isinstance(file_data, str) or not file_data:
+                raise ValueError("input_file `file_data` must be a non-empty string")
+            filename = item.get("filename")
+            if file_data.startswith("data:"):
+                header, comma, payload = file_data.partition(",")
+                if not comma or not header.endswith(";base64"):
+                    raise ValueError("input_file `file_data` must be a base64 data URI or plain base64")
+            else:
+                # Plain base64 without a data URI prefix; take the media type from the filename.
+                guessed = mimetypes.guess_type(filename)[0] if isinstance(filename, str) else None
+                header, payload = f"data:{guessed or 'application/octet-stream'};base64", file_data
+            try:
+                base64.b64decode(payload, validate=True)
+                return Content.from_uri(
+                    uri=f"{header},{payload}",
+                    name=filename if isinstance(filename, str) else None,
+                    additional_properties={
+                        "openai": {"content_type": "input_file"},
+                        "openai_content_type": "input_file",
+                        **({"filename": filename} if isinstance(filename, str) else {}),
+                    },
+                )
+            except (binascii.Error, ContentError) as exc:
+                raise ValueError(f"input_file `file_data` is not valid base64 data: {exc}") from exc
+        raise ValueError("input_file requires a non-empty string `file_url`, `file_id`, or `file_data`")
     raise ValueError(f"Unsupported Responses input content type: {item_type!r}")
 
 
@@ -1495,6 +1547,7 @@ async def responses_from_streaming_run(
         terminal_event_type = f"response.{status}"
         yield event(terminal_event_type, response=payload)
     except Exception as exc:
+        _log_stream_failure(response_id, exc)
         for stream_event in close_message("incomplete"):
             yield stream_event
         partial_contents = [
@@ -1513,7 +1566,7 @@ async def responses_from_streaming_run(
             "metadata": {},
             "error": {
                 "code": "server_error",
-                "message": str(exc),
+                "message": _PUBLIC_STREAM_FAILURE_MESSAGE,
             },
         }
         if conversation_id is not None:

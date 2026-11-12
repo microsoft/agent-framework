@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import date, datetime
 from itertools import groupby
-from typing import Any, ClassVar, Generic, TypeAlias, cast
+from typing import Any, ClassVar, Generic, Self, TypeAlias, cast
 from uuid import UUID
 
 from agent_framework import (
@@ -35,7 +35,7 @@ from psycopg import AsyncConnection, Error, sql
 from psycopg.rows import dict_row, tuple_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
-from typing_extensions import Self, TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeVar
 
 KeyT = TypeVar("KeyT", default=Any)
 ModelT = TypeVar("ModelT", default=Any)
@@ -122,8 +122,6 @@ def _create_client(
     env_file_encoding: str | None,
 ) -> _Client:
     if client is not None:
-        if connection_string is not None or env_file_path is not None or env_file_encoding is not None:
-            raise ValueError("client cannot be combined with connection_string, env_file_path, or env_file_encoding.")
         return _Client(None, client)
     settings = load_settings(
         PostgresSettings,
@@ -430,13 +428,14 @@ class PostgresCollection(
             record_type: Decorated/registered model type, or ``dict``.
             connection_string: Psycopg conninfo or URI for an owned lazy pool. Falls back to
                 ``POSTGRES_CONNECTION_STRING`` in the selected .env file or process environment.
-            client: An open caller-owned async connection or pool, instead of conninfo.
+            client: An open caller-owned async connection or pool. When provided,
+                connection_string and .env options are ignored.
             schema: Existing PostgreSQL schema containing the table.
             definition: Explicit field definition for dictionary records.
             collection_name: Table name, overriding the model's collection name.
             embedding_generator: Default local embedding client.
-            env_file_path: Optional .env file to read; cannot be combined with an injected client.
-            env_file_encoding: Encoding of the .env file; cannot be combined with an injected client.
+            env_file_path: Optional .env file to read when creating a pool.
+            env_file_encoding: Encoding of the .env file used when creating a pool.
         """
         super().__init__(
             record_type,
@@ -724,6 +723,8 @@ class PostgresCollection(
         if keys is not None:
             if order_by:
                 raise ValueError("order_by applies only to filtered retrieval, not key lookup.")
+            if skip:
+                raise ValueError("PostgreSQL key retrieval cannot be combined with skip.")
             if not keys:
                 return []
             adapted = [self._prepare_key(key) for key in keys]
@@ -877,11 +878,12 @@ class PostgresStore(BaseVectorStore):
         Args:
             connection_string: Psycopg conninfo or URI for an owned lazy pool. Falls back to
                 ``POSTGRES_CONNECTION_STRING`` in the selected .env file or process environment.
-            client: An open caller-owned async connection or pool.
+            client: An open caller-owned async connection or pool. When provided,
+                connection_string and .env options are ignored.
             schema: Existing schema used by all collection clients.
             embedding_generator: Default embedding generator for collections.
-            env_file_path: Optional .env file to read; cannot be combined with an injected client.
-            env_file_encoding: Encoding of the .env file; cannot be combined with an injected client.
+            env_file_path: Optional .env file to read when creating a pool.
+            env_file_encoding: Encoding of the .env file used when creating a pool.
         """
         super().__init__(embedding_generator=embedding_generator, managed_client=client is None)
         _prepare_identifier(schema)
