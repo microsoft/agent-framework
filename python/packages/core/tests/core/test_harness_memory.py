@@ -111,21 +111,23 @@ def test_memory_harness_classes_have_deprecation_metadata(memory_class: type[obj
     assert isinstance(message, str)
     assert memory_class.__name__ in message
     assert "FileMemoryProvider" in message
+    assert "will be removed after December 31, 2026" in message
+    assert "will be removed after December 31, 2026" in (memory_class.__doc__ or "")
 
 
 def test_memory_harness_classes_warn_when_used(tmp_path: Path) -> None:
-    with pytest.warns(DeprecationWarning, match="MemoryIndexEntry.*FileMemoryProvider"):
+    with pytest.warns(DeprecationWarning, match="MemoryIndexEntry.*after December 31, 2026.*FileMemoryProvider"):
         MemoryIndexEntry("preferences", "preferences", "A summary", "2026-01-01")  # ty: ignore[deprecated]
-    with pytest.warns(DeprecationWarning, match="MemoryTopicRecord.*FileMemoryProvider"):
+    with pytest.warns(DeprecationWarning, match="MemoryTopicRecord.*after December 31, 2026.*FileMemoryProvider"):
         MemoryTopicRecord(topic="preferences", summary="A summary", memories=["A memory"], updated_at="2026-01-01")  # ty: ignore[deprecated]
-    with pytest.warns(DeprecationWarning, match="MemoryFileStore.*FileMemoryProvider"):
+    with pytest.warns(DeprecationWarning, match="MemoryFileStore.*after December 31, 2026.*FileMemoryProvider"):
         store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
-    with pytest.warns(DeprecationWarning, match="MemoryContextProvider.*FileMemoryProvider"):
+    with pytest.warns(DeprecationWarning, match="MemoryContextProvider.*after December 31, 2026.*FileMemoryProvider"):
         MemoryContextProvider(store=store)  # ty: ignore[deprecated]
 
 
 def test_memory_store_warns_when_subclassed() -> None:
-    with pytest.warns(DeprecationWarning, match="MemoryStore.*FileMemoryProvider") as caught:
+    with pytest.warns(DeprecationWarning, match="MemoryStore.*after December 31, 2026.*FileMemoryProvider") as caught:
 
         class CustomMemoryStore(MemoryStore):  # ty: ignore[deprecated]
             pass

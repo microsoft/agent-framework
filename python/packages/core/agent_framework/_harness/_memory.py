@@ -86,7 +86,8 @@ Rules:
 """
 _FILE_HISTORY_ENCODED_SESSION_PREFIX = "~session-"
 _MEMORY_STORE_DEPRECATION_MESSAGE = (
-    "MemoryStore is deprecated. Use AgentFileStore with FileMemoryProvider for new file-based memory."
+    "MemoryStore is deprecated and will be removed after December 31, 2026. "
+    "Use AgentFileStore with FileMemoryProvider for new file-based memory."
 )
 HistoryMessageFilter = Callable[[Message], Message | None]
 # Match word-like tokens of >=2 characters. ``[^\W_]`` is a Unicode letter or
@@ -265,11 +266,15 @@ def _format_search_results(results: Sequence[Mapping[str, Any]]) -> str:
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
-@deprecated("MemoryIndexEntry is deprecated. Use FileMemoryProvider for new file-based memory.", stacklevel=2)
+@deprecated(
+    "MemoryIndexEntry is deprecated and will be removed after December 31, 2026. "
+    "Use FileMemoryProvider for new file-based memory.",
+    stacklevel=2,
+)
 class MemoryIndexEntry:
     """Represent one pointer entry written into ``MEMORY.md``.
 
-    This type is deprecated along with :class:`MemoryContextProvider`.
+    This type is deprecated along with :class:`MemoryContextProvider` and will be removed after December 31, 2026.
     """
 
     topic: str
@@ -373,11 +378,15 @@ class MemoryIndexEntry:
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
-@deprecated("MemoryTopicRecord is deprecated. Use FileMemoryProvider for new file-based memory.", stacklevel=2)
+@deprecated(
+    "MemoryTopicRecord is deprecated and will be removed after December 31, 2026. "
+    "Use FileMemoryProvider for new file-based memory.",
+    stacklevel=2,
+)
 class MemoryTopicRecord:
     """Represent one topic memory markdown file.
 
-    This type is deprecated along with :class:`MemoryContextProvider`.
+    This type is deprecated along with :class:`MemoryContextProvider` and will be removed after December 31, 2026.
     """
 
     topic: str
@@ -588,11 +597,14 @@ class MemoryTopicRecord:
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 @deprecated(
-    "MemoryStore is deprecated. Use AgentFileStore with FileMemoryProvider for new file-based memory.",
+    _MEMORY_STORE_DEPRECATION_MESSAGE,
     category=None,
 )
 class MemoryStore(ABC):
-    """Define the deprecated backing store for the legacy memory harness."""
+    """Define the deprecated backing store for the legacy memory harness.
+
+    This class will be removed after December 31, 2026.
+    """
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -700,13 +712,14 @@ class MemoryStore(ABC):
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 @deprecated(
-    "MemoryFileStore is deprecated. Use FileSystemAgentFileStore with FileMemoryProvider for new file-based memory.",
+    "MemoryFileStore is deprecated and will be removed after December 31, 2026. "
+    "Use FileSystemAgentFileStore with FileMemoryProvider for new file-based memory.",
     stacklevel=2,
 )
 class MemoryFileStore(MemoryStore):  # pyright: ignore[reportDeprecated]
     """Store memory files under ``MEMORY.md``, ``topics/``, and ``transcripts/``.
 
-    This store is deprecated along with :class:`MemoryContextProvider`.
+    This store is deprecated along with :class:`MemoryContextProvider` and will be removed after December 31, 2026.
 
     The storage directory must not be writable by untrusted users, because they could
     replace the final memory files independently of this store's secure temporary writes.
@@ -1069,13 +1082,17 @@ class MemoryFileStore(MemoryStore):  # pyright: ignore[reportDeprecated]
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
-@deprecated("MemoryContextProvider is deprecated. Use FileMemoryProvider for new file-based memory.", stacklevel=2)
+@deprecated(
+    "MemoryContextProvider is deprecated and will be removed after December 31, 2026. "
+    "Use FileMemoryProvider for new file-based memory.",
+    stacklevel=2,
+)
 class MemoryContextProvider(HistoryProvider):
     """Inject ``MEMORY.md``, topic memory tools, and transcript-backed extraction.
 
-    This provider is deprecated. :class:`~agent_framework.FileMemoryProvider` uses a
-    different storage format and does not automatically extract memories or provide
-    transcript history.
+    This provider is deprecated and will be removed after December 31, 2026.
+    :class:`~agent_framework.FileMemoryProvider` uses a different storage format and does not automatically extract
+    memories or provide transcript history.
     """
 
     _LOCKS_GUARD: ClassVar[threading.Lock] = threading.Lock()
