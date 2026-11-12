@@ -39,7 +39,7 @@ _FakeWindowsHost: TypeAlias = Callable[[str, Iterable[str]], None]
 
 _DOCKER = r"C:\Runtimes\docker.exe" if sys.platform == "win32" else "/usr/bin/docker"
 _PODMAN = r"C:\Runtimes\podman.exe" if sys.platform == "win32" else "/usr/bin/podman"
-_HOST_DOCKER = find_executable("docker")
+_HOST_DOCKER = find_executable("docker") or ""
 _CREATE_PROCESS = "agent_framework_tools.shell._docker.asyncio.create_subprocess_exec"
 
 
@@ -91,7 +91,7 @@ class _FakeProcess:
 
 
 def _docker_image_available(image: str) -> bool:
-    if _HOST_DOCKER is None or not is_docker_available(_HOST_DOCKER):
+    if not _HOST_DOCKER or not is_docker_available(_HOST_DOCKER):
         return False
     try:
         result = subprocess.run(
