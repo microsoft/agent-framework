@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.26.0,<2",
-    "redis>=6.4.0,<7.2.1",
+    "redis>=6.4.0,<8.1.1",
     "redisvl>=0.11.0,<0.33",
     "numpy>=2.2.6,<3"
 ]
