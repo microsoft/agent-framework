@@ -629,7 +629,7 @@ async def test_local_shell_tool_as_function_returns_policy_errors() -> None:
 def test_local_shell_tool_reanchors_powershell_paths() -> None:
     tool = LocalShellTool(
         mode="persistent",
-        shell=r"C:\Program Files\PowerShell\7\pwsh.exe" if sys.platform == "win32" else "/usr/bin/pwsh",
+        shell=[r"C:\Program Files\PowerShell\7\pwsh.exe"] if sys.platform == "win32" else ["/usr/bin/pwsh"],
         workdir="C:\\repo",
         approval_mode="never_require",
         acknowledge_unsafe=True,
