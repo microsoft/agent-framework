@@ -358,24 +358,28 @@ internal sealed class WorkflowSession : AgentSession
     /// <summary>
     /// Creates the workflow-facing request content surfaced in response updates.
     /// </summary>
-    private AIContent CreateRequestContentForDelivery(ExternalRequest request)
+    private AIContent[] CreateRequestContentForDelivery(ExternalRequest request)
     {
         // If the request payload is a higher-layer envelope (e.g., a declarative
         // ExternalInputRequest), surface its inner FCC/TARC to the host on the wire.
         if (this.TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
         {
             AIContent? inner = envelope.GetInnerRequestContent();
-            if (inner is ToolApprovalRequestContent toolApprovalRequest)
+            AIContent? requestContent = inner switch
             {
-                return CloneToolApprovalRequestContent(toolApprovalRequest, request.RequestId);
-            }
-            if (inner is FunctionCallContent functionCall)
+                ToolApprovalRequestContent toolApprovalRequest => CloneToolApprovalRequestContent(toolApprovalRequest, request.RequestId),
+                FunctionCallContent functionCall => CloneFunctionCallContent(functionCall, request.RequestId),
+                _ => null,
+            };
+            if (requestContent is not null)
             {
-                return CloneFunctionCallContent(functionCall, request.RequestId);
+                return envelope is IExternalRequestEnvelopeWithContext withContext
+                    ? [.. withContext.GetRequestContext(), requestContent]
+                    : [requestContent];
             }
         }
 
-        return request switch
+        return [request switch
         {
             ExternalRequest externalRequest when externalRequest.TryGetDataAs(out FunctionCallContent? functionCallContent)
                 => CloneFunctionCallContent(functionCallContent, externalRequest.RequestId),
@@ -383,7 +387,7 @@ internal sealed class WorkflowSession : AgentSession
                 => CloneToolApprovalRequestContent(toolApprovalRequestContent, externalRequest.RequestId),
             ExternalRequest externalRequest
                 => externalRequest.ToFunctionCall(),
-        };
+        }];
     }
 
     /// <summary>
@@ -525,7 +529,7 @@ internal sealed class WorkflowSession : AgentSession
                     break;
 
                 case RequestInfoEvent requestInfo:
-                    AIContent requestContent = this.CreateRequestContentForDelivery(requestInfo.Request);
+                    AIContent[] requestContent = this.CreateRequestContentForDelivery(requestInfo.Request);
 
                     // Track the pending request so we can convert incoming responses back to ExternalResponse.
                     // External callers respond using the workflow-facing request ID, which is always RequestId.

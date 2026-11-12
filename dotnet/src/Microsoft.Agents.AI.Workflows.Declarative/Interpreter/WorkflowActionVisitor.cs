@@ -507,7 +507,12 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         }
 
         // Entry point to invoke MCP tool - may yield for approval
-        InvokeMcpToolExecutor action = new(item, this._workflowOptions.McpToolHandler, this._workflowOptions.AgentProvider, this._workflowState);
+        InvokeMcpToolExecutor action = new(
+            item,
+            this._workflowOptions.McpToolHandler,
+            this._workflowOptions.AgentProvider,
+            this._workflowState,
+            this._workflowOptions.McpApprovalHeaderFingerprintKey?.ToArray());
         this.ContinueWith(action);
 
         // Transition to post action if no external input is required (no approval needed)

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 
@@ -9,7 +10,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Events;
 /// <summary>
 /// Represents a request for external input.
 /// </summary>
-public sealed class ExternalInputRequest : IExternalRequestEnvelope
+public sealed class ExternalInputRequest : IExternalRequestEnvelopeWithContext
 {
     /// <summary>
     /// The source message that triggered the request for external input.
@@ -39,6 +40,24 @@ public sealed class ExternalInputRequest : IExternalRequestEnvelope
     /// hosts which speak the approval protocol see the approval-bearing content.
     /// </remarks>
     AIContent? IExternalRequestEnvelope.GetInnerRequestContent() => this.GetInnerRequestContent();
+
+    /// <inheritdoc />
+    IReadOnlyList<TextContent> IExternalRequestEnvelopeWithContext.GetRequestContext()
+    {
+        AIContent? inner = this.GetInnerRequestContent();
+        if (inner is not null)
+        {
+            foreach (ChatMessage message in this.AgentResponse.Messages)
+            {
+                if (message.Contents.Any(content => ReferenceEquals(content, inner)))
+                {
+                    return [.. message.Contents.OfType<TextContent>()];
+                }
+            }
+        }
+
+        return [];
+    }
 
     private AIContent? GetInnerRequestContent()
     {

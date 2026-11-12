@@ -29,12 +29,17 @@ internal sealed class InvokeMcpToolExecutor(
     InvokeMcpTool model,
     IMcpToolHandler mcpToolHandler,
     ResponseAgentProvider agentProvider,
-    WorkflowFormulaState state) :
+    WorkflowFormulaState state,
+    byte[]? approvalHeaderFingerprintKey = null) :
     DeclarativeActionExecutor<InvokeMcpTool>(model, state)
 {
     private const string ApprovalSnapshotStateKey = nameof(_approvalSnapshots);
     private const string LegacyApprovalSnapshotStateKey = "_approvalSnapshot";
     private const string ListToolsToolName = "tools/list";
+
+    private static readonly byte[] s_processHeaderFingerprintKey = CreateProcessHeaderFingerprintKey();
+
+    private readonly byte[] _approvalHeaderFingerprintKey = (byte[])(approvalHeaderFingerprintKey ?? s_processHeaderFingerprintKey).Clone();
 
     /// <summary>
     /// Snapshots of evaluated parameters captured at approval-request time, keyed by
@@ -186,8 +191,30 @@ internal sealed class InvokeMcpToolExecutor(
         }
         else if (snapshot.RequiresHeaderReapprovalAfterRestore || this.Model.Headers is { Count: > 0 })
         {
-            await this.RequestApprovalAsync(context, snapshot.AutoSend, cancellationToken).ConfigureAwait(false);
-            return;
+            if (snapshot.HeaderFingerprint is null && snapshot.HeaderFingerprintKeyId is null)
+            {
+                await this.RequestApprovalAsync(context, snapshot.AutoSend, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (snapshot.HeaderFingerprint is null || snapshot.HeaderFingerprintKeyId is null)
+            {
+                throw this.Exception("The MCP approval header fingerprint in the checkpoint is incomplete.");
+            }
+
+            byte[] currentKeyId = this.ComputeHeaderFingerprint(approvalResponse.RequestId, headers: null, keyIdentifier: true);
+            if (!FixedTimeEquals(snapshot.HeaderFingerprintKeyId, currentKeyId))
+            {
+                throw this.Exception("The MCP approval header fingerprint key is missing or has changed. Restore the original key to resume the approval.");
+            }
+
+            headers = this.GetHeaders();
+            byte[] currentFingerprint = this.ComputeHeaderFingerprint(approvalResponse.RequestId, headers, keyIdentifier: false);
+            if (!FixedTimeEquals(snapshot.HeaderFingerprint, currentFingerprint))
+            {
+                await this.RequestApprovalAsync(context, snapshot.AutoSend, cancellationToken).ConfigureAwait(false);
+                return;
+            }
         }
         else
         {
@@ -353,11 +380,14 @@ internal sealed class InvokeMcpToolExecutor(
         bool isListTools = string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal);
         bool isDiscoveryApproval = toolDefinitionFingerprint is null && !isListTools;
         string requestId = Guid.NewGuid().ToString("N");
+        bool requiresHeaderFingerprint = headers is not null || this.Model.Headers is { Count: > 0 };
 
         this._approvalSnapshots[requestId] = new ApprovalSnapshot(serverUrl, serverLabel, toolName, arguments, connectionName)
         {
             ConnectionNameValidated = true,
-            RequiresHeaderReapprovalAfterRestore = this.Model.Headers is { Count: > 0 },
+            RequiresHeaderReapprovalAfterRestore = requiresHeaderFingerprint,
+            HeaderFingerprintKeyId = requiresHeaderFingerprint ? this.ComputeHeaderFingerprint(requestId, headers: null, keyIdentifier: true) : null,
+            HeaderFingerprint = requiresHeaderFingerprint ? this.ComputeHeaderFingerprint(requestId, headers, keyIdentifier: false) : null,
             AutoSend = autoSend,
             ToolDefinitionFingerprint = toolDefinitionFingerprint,
             IsDiscoveryApproval = isDiscoveryApproval,
@@ -388,6 +418,69 @@ internal sealed class InvokeMcpToolExecutor(
             ? new ChatMessage(ChatRole.Assistant, [new TextContent(reapprovalNotice), approvalRequest])
             : new ChatMessage(ChatRole.Assistant, [approvalRequest]);
         await context.SendMessageAsync(new ExternalInputRequest(new AgentResponse([requestMessage])), cancellationToken).ConfigureAwait(false);
+    }
+
+    private static byte[] CreateProcessHeaderFingerprintKey()
+    {
+        byte[] key = new byte[32];
+        using RandomNumberGenerator random = RandomNumberGenerator.Create();
+        random.GetBytes(key);
+        return key;
+    }
+
+    private static bool FixedTimeEquals(byte[] left, byte[] right)
+    {
+        if (left.Length != right.Length)
+        {
+            return false;
+        }
+
+        int difference = 0;
+        for (int index = 0; index < left.Length; index++)
+        {
+            difference |= left[index] ^ right[index];
+        }
+
+        return difference == 0;
+    }
+
+    private byte[] ComputeHeaderFingerprint(string requestId, Dictionary<string, string>? headers, bool keyIdentifier)
+    {
+        using MemoryStream stream = new();
+        using (Utf8JsonWriter writer = new(stream))
+        {
+            writer.WriteStartArray();
+            writer.WriteStringValue(keyIdentifier ? "mcp-header-fingerprint-key-v1" : "mcp-header-fingerprint-v1");
+            writer.WriteStringValue(this.Id);
+            writer.WriteStringValue(requestId);
+            if (!keyIdentifier)
+            {
+                if (headers is null)
+                {
+                    writer.WriteNullValue();
+                }
+                else
+                {
+                    writer.WriteStartArray();
+                    foreach (KeyValuePair<string, string> header in headers
+                        .OrderBy(header => header.Key, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(header => header.Key, StringComparer.Ordinal))
+                    {
+                        writer.WriteStartArray();
+                        writer.WriteStringValue(header.Key.ToUpperInvariant());
+                        writer.WriteStringValue(header.Value);
+                        writer.WriteEndArray();
+                    }
+
+                    writer.WriteEndArray();
+                }
+            }
+
+            writer.WriteEndArray();
+        }
+
+        using HMACSHA256 hmac = new(this._approvalHeaderFingerprintKey);
+        return hmac.ComputeHash(stream.ToArray());
     }
 
     private async ValueTask<string> GetToolDefinitionFingerprintAsync(
@@ -741,6 +834,10 @@ internal sealed class InvokeMcpToolExecutor(
         public bool ConnectionNameValidated { get; init; }
 
         public bool RequiresHeaderReapprovalAfterRestore { get; init; }
+
+        public byte[]? HeaderFingerprintKeyId { get; init; }
+
+        public byte[]? HeaderFingerprint { get; init; }
 
         public string? ToolDefinitionFingerprint { get; init; }
 

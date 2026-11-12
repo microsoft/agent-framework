@@ -67,10 +67,16 @@ authorizes that operation, without requiring it to appear in the tool catalog.
 Actions without approval retain their existing direct-invocation behavior.
 
 Each stage uses a distinct request identifier. Responses use captured invocation
-parameters rather than reevaluating them. Headers remain in memory only. If a
-restore loses required headers, the executor reevaluates the configuration and
-starts a fresh discovery approval before contacting the newly evaluated
-destination. Denied or consumed requests cannot authorize a later stage.
+parameters rather than reevaluating them. Headers remain in memory only. Approval
+snapshots include a keyed fingerprint of captured workflow headers, but neither
+the header values nor the key are persisted. Hosts can provide a stable,
+cryptographically random key of at least 32 bytes to support cross-process
+restoration. When omitted, a process-local key is used; a checkpoint cannot be
+resumed after that key is lost. After restoration, changed headers require fresh
+discovery consent, while a missing or changed fingerprint key fails closed until
+the original key is restored. Older snapshots without a header fingerprint
+restart discovery approval. Denied or consumed requests cannot authorize a later
+stage.
 
 Handlers must return structured `tools/list` output containing complete protocol
 tool definitions, including annotations and metadata. Object properties are
@@ -79,7 +85,8 @@ preserved. Missing or ambiguous definitions stop the action rather than bypassin
 approval. This compares published metadata, not server implementation identity,
 and does not eliminate the interval between discovery and invocation.
 
-Existing approval UIs must handle the additional discovery request and its notice.
-Older snapshots without discovery consent restart discovery approval, as do
-snapshots requiring unavailable headers. The ADR remains
-proposed pending the listed deciders' PR review.
+Existing approval UIs must handle the additional discovery request and its
+notice. When an `ExternalInputRequest` is delivered through `WorkflowSession`,
+informational text accompanying its inner approval content is preserved in
+delivery order. Older snapshots without discovery consent restart discovery
+approval. The ADR remains proposed pending the listed deciders' PR review.
