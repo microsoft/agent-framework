@@ -69,6 +69,7 @@ uv python install 3.11 3.12 3.13 3.14 3.15
 # Use Python 3.11 through 3.14 for a full-workspace development environment
 PYTHON_VERSION="3.13"
 uv venv --python $PYTHON_VERSION
+# Activate your virtual environment per console instructions
 # Install AF and all workspace dependencies
 uv run poe install
 # Install prek hooks
