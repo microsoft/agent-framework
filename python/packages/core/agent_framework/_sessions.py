@@ -74,6 +74,7 @@ _WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY = "workflow.defer_computer_functio
 _SERVICE_CONTINUATION_CONTEXT_KEY = "_agent_framework_service_continuation"
 _INITIAL_SERVICE_CONTINUATION_CONTEXT_KEY = "_agent_framework_initial_service_continuation"
 _LOADED_HISTORY_MESSAGES_CONTEXT_KEY = "_agent_framework_loaded_history_messages"
+_FIDES_PREPARE_HISTORY_CONTEXT_KEY = "_agent_framework_fides_prepare_history"
 _SERVICE_HISTORY_VERIFIED_SOURCES_CONTEXT_KEY = "_agent_framework_service_history_verified_sources"
 _SERVICE_HISTORY_COVERAGE_STATE_KEY = "_agent_framework_service_history_coverage"
 
@@ -785,7 +786,6 @@ class ContextProvider:
     """
 
     after_run_once_per_turn: bool = False
-    requires_loaded_context_before_invocation: bool = False
 
     def __init__(self, source_id: str):
         """Initialize the provider.
@@ -836,16 +836,6 @@ class ContextProvider:
             state: The provider-scoped mutable state dict for this provider.
                 Full cross-provider state remains available at ``session.state``.
         """
-
-    async def after_context_loaded(
-        self,
-        *,
-        agent: SupportsAgentRun,
-        session: AgentSession,
-        context: SessionContext,
-        state: dict[str, Any],
-    ) -> None:
-        """Finalize context after every loadable provider has run."""
 
 
 def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
@@ -1108,23 +1098,6 @@ class HistoryProvider(ContextProvider):
             return context.get_messages(sources=self.store_context_from)
         return context.get_messages(exclude_sources={self.source_id})
 
-    def _get_messages_to_store(self, context: SessionContext, session: AgentSession) -> list[Message]:
-        """Return the exact framework-owned messages this provider will persist."""
-        messages_to_store: list[Message] = []
-        messages_to_store.extend(self._get_context_messages_to_store(context))
-        if self.store_inputs:
-            messages_to_store.extend(context.input_messages)
-        if self.store_outputs and context.response and context.response.messages:
-            output_messages = context.response.messages
-            if (
-                self.load_messages
-                and self.store_inputs
-                and session.state.get(_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY)
-            ):
-                output_messages = _without_deferred_workflow_function_results(output_messages)
-            messages_to_store.extend(output_messages)
-        return messages_to_store
-
     async def before_run(
         self,
         *,
@@ -1141,39 +1114,6 @@ class HistoryProvider(ContextProvider):
             context.metadata[_LOADED_HISTORY_MESSAGES_CONTEXT_KEY] = loaded_history
         cast(dict[str, list[Message]], loaded_history)[self.source_id] = list(history)
         context.extend_messages(self, history)
-
-    def _loaded_history_messages(self, context: SessionContext) -> list[Message] | None:
-        """Return the exact filtered snapshot loaded by the base provider lifecycle."""
-        loaded_history = context.metadata.get(_LOADED_HISTORY_MESSAGES_CONTEXT_KEY)
-        if not isinstance(loaded_history, Mapping):
-            return None
-        messages = cast(Mapping[str, Any], loaded_history).get(self.source_id)
-        if not isinstance(messages, list):
-            return None
-        message_items = cast(list[Any], messages)
-        if any(not isinstance(message, Message) for message in message_items):
-            return None
-        return cast(list[Message], message_items)
-
-    def _covers_service_continuation(
-        self,
-        *,
-        context: SessionContext,
-        state: Mapping[str, Any],
-        continuation_identity: str,
-    ) -> bool:
-        """Return whether loaded history exactly covers one previously persisted continuation."""
-        coverage = state.get(_SERVICE_HISTORY_COVERAGE_STATE_KEY)
-        if not isinstance(coverage, Mapping):
-            return False
-        coverage_mapping = cast(Mapping[str, Any], coverage)
-        if coverage_mapping.get("identity") != continuation_identity:
-            return False
-        loaded = self._loaded_history_messages(context)
-        if loaded is None:
-            return False
-        fingerprint = _history_messages_fingerprint(loaded)
-        return fingerprint is not None and fingerprint == coverage_mapping.get("fingerprint")
 
     async def after_run(
         self,
@@ -1194,11 +1134,23 @@ class HistoryProvider(ContextProvider):
         )
         may_certify_history = not initial_continuation_present or self.source_id in verified_sources
         state.pop(_SERVICE_HISTORY_COVERAGE_STATE_KEY, None)
-        messages_to_store = self._get_messages_to_store(context, session)
+        messages_to_store: list[Message] = []
+        messages_to_store.extend(self._get_context_messages_to_store(context))
+        if self.store_inputs:
+            messages_to_store.extend(context.input_messages)
+        if self.store_outputs and context.response and context.response.messages:
+            output_messages = context.response.messages
+            if (
+                self.load_messages
+                and self.store_inputs
+                and session.state.get(_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY)
+            ):
+                output_messages = _without_deferred_workflow_function_results(output_messages)
+            messages_to_store.extend(output_messages)
         if messages_to_store:
             await self.save_messages(context.session_id, messages_to_store, state=state)
         continuation_present, continuation_identity = _get_service_continuation(context)
-        loaded = self._loaded_history_messages(context)
+        loaded = _loaded_history_messages(context, self.source_id)
         if (
             may_certify_history
             and continuation_present
@@ -1580,6 +1532,41 @@ def _history_messages_fingerprint(messages: Sequence[Message]) -> str | None:
     return sha256(payload).hexdigest()
 
 
+def _loaded_history_messages(context: SessionContext, source_id: str) -> list[Message] | None:
+    """Return the exact filtered snapshot loaded for one history source."""
+    loaded_history = context.metadata.get(_LOADED_HISTORY_MESSAGES_CONTEXT_KEY)
+    if not isinstance(loaded_history, Mapping):
+        return None
+    messages = cast(Mapping[str, Any], loaded_history).get(source_id)
+    if not isinstance(messages, list):
+        return None
+    message_items = cast(list[Any], messages)
+    if any(not isinstance(message, Message) for message in message_items):
+        return None
+    return cast(list[Message], message_items)
+
+
+def _history_provider_covers_service_continuation(  # pyright: ignore[reportUnusedFunction]
+    provider: HistoryProvider,
+    *,
+    context: SessionContext,
+    state: Mapping[str, Any],
+    continuation_identity: str,
+) -> bool:
+    """Return whether one loaded provider snapshot exactly covers a continuation."""
+    coverage = state.get(_SERVICE_HISTORY_COVERAGE_STATE_KEY)
+    if not isinstance(coverage, Mapping):
+        return False
+    coverage_mapping = cast(Mapping[str, Any], coverage)
+    if coverage_mapping.get("identity") != continuation_identity:
+        return False
+    loaded = _loaded_history_messages(context, provider.source_id)
+    if loaded is None:
+        return False
+    fingerprint = _history_messages_fingerprint(loaded)
+    return fingerprint is not None and fingerprint == coverage_mapping.get("fingerprint")
+
+
 def _response_contains_follow_up_request(response: ChatResponse) -> bool:
     """Return whether a response requires another model call in the current run."""
     return any(
@@ -1814,7 +1801,6 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         agent: SupportsAgentRun,
         session: AgentSession,
         providers: Sequence[HistoryProvider],
-        context_providers: Sequence[ContextProvider],
         run_context: SessionContext,
         service_stores_history: bool = False,
         prepared_context: SessionContext | None = None,
@@ -1826,7 +1812,6 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             agent: The agent that owns the history providers.
             session: The active session for the current run.
             providers: The history providers participating in per-service-call persistence.
-            context_providers: All providers participating in the owning run.
             run_context: The owning run's SessionContext.
             service_stores_history: When True, the chat client stores history server-side. The
                 middleware then skips loading providers and leaves the real conversation id
@@ -1839,7 +1824,6 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         self._agent = agent
         self._session = session
         self._providers = list(providers)
-        self._context_providers = list(context_providers)
         self._run_context = run_context
         self._service_stores_history = service_stores_history
         self._prepared_context = prepared_context
@@ -1883,15 +1867,6 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             if not provider.load_messages:
                 continue
             await provider.before_run(
-                agent=self._agent,
-                session=self._session,
-                context=service_call_context,
-                state=self._session.state.setdefault(provider.source_id, {}),
-            )
-        for provider in self._context_providers:
-            if not provider.requires_loaded_context_before_invocation:
-                continue
-            await provider.after_context_loaded(
                 agent=self._agent,
                 session=self._session,
                 context=service_call_context,

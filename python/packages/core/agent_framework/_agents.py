@@ -39,6 +39,7 @@ from ._middleware import (
 )
 from ._serialization import SerializationMixin
 from ._sessions import (
+    _FIDES_PREPARE_HISTORY_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentSession,
     ContextProvider,
     HistoryProvider,
@@ -1822,7 +1823,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 agent=self,
                 session=active_session,
                 providers=per_service_call_history_providers,
-                context_providers=self.context_providers,
                 run_context=session_context,
                 service_stores_history=service_stores_history,
                 prepared_context=(
@@ -1946,7 +1946,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         )
 
         # Run before_run providers (forward order, skip HistoryProvider when per-service-call
-        # persistence owns loading)
+        # persistence owns loading).
         for provider in self.context_providers:
             if per_service_call_history_required and isinstance(provider, HistoryProvider):
                 continue
@@ -1961,16 +1961,23 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 state=provider_session.state.setdefault(provider.source_id, {}),
             )
 
-        loaded_context = session_context
-        initial_tool_count = len(session_context.tools)
-        initial_instruction_count = len(session_context.instructions)
-        requires_loaded_context = any(
-            provider.requires_loaded_context_before_invocation for provider in self.context_providers
+        prepare_history_for_security = (
+            per_service_call_history_required
+            and not service_stores_history
+            and session_context.metadata.get(_FIDES_PREPARE_HISTORY_CONTEXT_KEY) is True
         )
-        if per_service_call_history_required and not service_stores_history and requires_loaded_context:
+        if prepare_history_for_security:
             if provider_session is None:
-                raise RuntimeError("Provider session must be available when per-service history is classified.")
-            loaded_context = SessionContext(
+                raise RuntimeError("Provider session must be available when FIDES prepares local history.")
+            for provider in self.context_providers:
+                if isinstance(provider, HistoryProvider) and provider.load_messages:
+                    await provider.before_run(
+                        agent=self,
+                        session=provider_session,
+                        context=session_context,
+                        state=provider_session.state.setdefault(provider.source_id, {}),
+                    )
+            prepared_context = SessionContext(
                 session_id=provider_session.session_id,
                 service_session_id=provider_session.service_session_id,
                 input_messages=list(session_context.input_messages),
@@ -1982,29 +1989,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 options=dict(session_context.options),
                 metadata=session_context.metadata,
             )
-            for provider in self.context_providers:
-                if isinstance(provider, HistoryProvider) and provider.load_messages:
-                    await provider.before_run(
-                        agent=self,
-                        session=provider_session,
-                        context=loaded_context,
-                        state=provider_session.state.setdefault(provider.source_id, {}),
-                    )
-            session_context.metadata[_PREPARED_PER_SERVICE_CALL_HISTORY_CONTEXT_KEY] = loaded_context
-
-        if self.context_providers:
-            if provider_session is None:
-                raise RuntimeError("Provider session must be available when loaded context is finalized.")
-            for provider in self.context_providers:
-                await provider.after_context_loaded(
-                    agent=self,
-                    session=provider_session,
-                    context=loaded_context,
-                    state=provider_session.state.setdefault(provider.source_id, {}),
-                )
-        if loaded_context is not session_context:
-            session_context.tools.extend(loaded_context.tools[initial_tool_count:])
-            session_context.instructions.extend(loaded_context.instructions[initial_instruction_count:])
+            session_context.metadata[_PREPARED_PER_SERVICE_CALL_HISTORY_CONTEXT_KEY] = prepared_context
 
         # Merge provider-contributed tools into chat_options
         if session_context.tools:

@@ -274,10 +274,8 @@ for that exact message, including permission to mark data trusted. The
 synchronous callback result replaces any embedded message label when FIDES
 folds that message into the current run. FIDES caches the result for the exact
 message object and does not mutate or stamp the message. Register
-`SecureAgentConfig` after every non-history provider whose messages it should
-classify. Explicit history providers should also precede it when their messages
-need application-owned labels. It must return `ContentLabel`; invalid results
-and callback failures stop the run.
+`SecureAgentConfig` as the last context provider when `message_labeler` is set.
+It must return `ContentLabel`; invalid results and callback failures stop the run.
 
 The callback does not classify caller input messages and does not authenticate
 approval controls, hidden references, or other control-plane structures. Those
