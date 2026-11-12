@@ -139,7 +139,7 @@ async def test_get_returns_plain_ints_for_bson_int64_values(definition_factory, 
             "number": Int64(big),
             "ratio": 1.0,
             "flag": True,
-            "tags": [Int64(big)],
+            "tags": [Int64(big), [Int64(big)], {"nested": [Int64(big)]}],
             "contentVector": [1.0, 0.0, 0.0],
         }
     ])
@@ -148,7 +148,10 @@ async def test_get_returns_plain_ints_for_bson_int64_values(definition_factory, 
 
     assert type(records[0]["id"]) is int and records[0]["id"] == big
     assert type(records[0]["number"]) is int
-    assert type(records[0]["tags"][0]) is int
+    tags = records[0]["tags"]
+    assert type(tags[0]) is int
+    assert type(tags[1][0]) is int
+    assert type(tags[2]["nested"][0]) is int
     await collection.upsert(records, generate_vectors=False)
     pymongo_objects[2].bulk_write.assert_awaited_once()
 
