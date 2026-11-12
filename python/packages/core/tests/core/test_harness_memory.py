@@ -26,8 +26,10 @@ from agent_framework import (
     MemoryStore,
     MemoryTopicRecord,
     Message,
+    SupportsChatGetResponse,
 )
 from agent_framework import _filesystem as filesystem_module
+from agent_framework._harness._memory import _topic_stem
 
 from .test_filesystem import COLLIDING_IDENTIFIERS
 
@@ -1599,6 +1601,661 @@ def test_memory_file_store_encodes_non_ascii_owner_ids(tmp_path) -> None:
     assert roots[0] != roots[1]
 
 
+def test_memory_file_store_topics_with_the_same_slug_do_not_collide(tmp_path) -> None:
+    """Distinct topics that share a readable slug must keep separate memory files.
+
+    ``C ++`` and ``C #`` both slugify to ``c``, so a slug-only filename let the
+    second topic's write destroy the first topic's memories.
+    """
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    first = MemoryTopicRecord(
+        topic="C++", summary="cpp", memories=["smart pointers"], updated_at="2026-10-26T00:00:00+00:00"
+    )
+    second = MemoryTopicRecord(
+        topic="C#", summary="csharp", memories=["primary constructors"], updated_at="2026-10-26T00:00:00+00:00"
+    )
+    store.write_topic(session, first, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    store.write_topic(session, second, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="C++").memories == ["smart pointers"]
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="C#").memories == ["primary constructors"]
+    listed = sorted(entry.topic for entry in store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID))
+    assert listed == ["C#", "C++"]
+
+
+def test_memory_file_store_reads_topics_from_the_legacy_slug_filename(tmp_path) -> None:
+    """Topic files written before the digest suffix stay readable."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    topics_dir = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    topics_dir.mkdir(parents=True, exist_ok=True)
+    (topics_dir / "python.md").write_text("# python\n\n## Memories\n\n- old note\n", encoding="utf-8")
+
+    record = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Python")
+    assert record.memories == ["old note"]
+
+
+def test_memory_lookup_never_bleeds_across_slug_prefixes(tmp_path) -> None:
+    """A missing short topic must not read, merge into, or delete a longer
+    topic whose slug starts with the same characters."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="Collection", slug=None, summary="a", memories=["x"], updated_at="t"),
+        source_id="src",
+    )
+
+    with pytest.raises(FileNotFoundError):
+        store.get_topic(session, source_id="src", topic="coll")
+
+
+def test_memory_lookup_validates_identity_for_colliding_slugs(tmp_path) -> None:
+    """Colliding topics such as C++ and C# resolve to their own records, and a
+    lookup for a topic that does not exist under a shared slug finds nothing
+    rather than an arbitrary same-slug file."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="C++", slug=None, summary="cpp", memories=["smart pointers"], updated_at="t"),
+        source_id="src",
+    )
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="C#", slug=None, summary="cs", memories=["ctors"], updated_at="t"),
+        source_id="src",
+    )
+
+    assert store.get_topic(session, source_id="src", topic="C++").memories == ["smart pointers"]
+    assert store.get_topic(session, source_id="src", topic="C#").memories == ["ctors"]
+    with pytest.raises(FileNotFoundError):
+        store.get_topic(session, source_id="src", topic="C")
+
+
+def test_memory_write_retires_a_legacy_slug_file_for_the_same_topic(tmp_path) -> None:
+    """Rewriting a topic that lived at a legacy slug-only filename leaves a
+    single authoritative record: the digest-stemmed file."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    topics_dir = store._get_topics_directory(session, source_id="src")
+
+    legacy = topics_dir / "legacy-topic.md"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(
+        "# Legacy Topic\n\nUpdated: t0\nSessions: -\n\n## Summary\nold\n\n## Memories\n- old fact\n",
+        encoding="utf-8",
+    )
+
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="Legacy Topic", slug=None, summary="new", memories=["new fact"], updated_at="t1"),
+        source_id="src",
+    )
+
+    assert not legacy.exists()
+    record = store.get_topic(session, source_id="src", topic="Legacy Topic")
+    assert record.memories == ["new fact"]
+    assert sorted(path.name for path in topics_dir.glob("legacy*.md")) == [f"{record.storage_stem}.md"]
+
+
+def test_memory_index_pointer_links_resolve_to_the_persisted_files(tmp_path) -> None:
+    """Index entries link the persisted stem, so every pointer line names a
+    file that exists even when several topics share a readable slug."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="C++", slug=None, summary="cpp", memories=["m"], updated_at="t"),
+        source_id="src",
+    )
+    store.write_topic(
+        session, MemoryTopicRecord(topic="C#", slug=None, summary="cs", memories=["m"], updated_at="t"), source_id="src"
+    )
+    topics_dir = store._get_topics_directory(session, source_id="src")
+
+    entries = store.rebuild_index(session, source_id="src", line_limit=50, line_length=200)
+
+    assert len(entries) == 2
+    assert len({entry.storage_stem for entry in entries}) == 2
+    for entry in entries:
+        assert f"(topics/{entry.storage_stem}.md)" in entry.to_pointer_line()
+        assert (topics_dir / f"{entry.storage_stem}.md").exists()
+
+
+def test_memory_explicit_slug_override_is_persisted_and_findable(tmp_path) -> None:
+    """A record with an explicit slug override persists under that slug and is
+    findable by it after a reload, without letting lookups for other names
+    bleed into the overridden record."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="Machine Learning", slug="ml-notes", summary="s", memories=["fact"], updated_at="t"),
+        source_id="src",
+    )
+
+    record = store.get_topic(session, source_id="src", topic="ml-notes")
+    assert record.topic == "Machine Learning"
+    assert record.memories == ["fact"]
+    with pytest.raises(FileNotFoundError):
+        store.get_topic(session, source_id="src", topic="machine")
+
+
+def test_memory_writing_a_shared_slug_name_keeps_the_other_topic(tmp_path) -> None:
+    """Writing a topic whose name shares another topic's slug must not retire it."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="C++", slug=None, summary="cpp", memories=["smart pointers"], updated_at="t"),
+        source_id="src",
+    )
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="c", slug=None, summary="cee", memories=["letter"], updated_at="t"),
+        source_id="src",
+    )
+
+    assert store.get_topic(session, source_id="src", topic="C++").memories == ["smart pointers"]
+    assert store.get_topic(session, source_id="src", topic="c").memories == ["letter"]
+    with pytest.raises(FileNotFoundError):
+        store.delete_topic(session, source_id="src", topic="c2")
+    store.delete_topic(session, source_id="src", topic="c")
+    assert store.get_topic(session, source_id="src", topic="C++").memories == ["smart pointers"]
+
+
+def test_memory_writing_a_new_slug_keeps_an_unrelated_legacy_slug_file(tmp_path) -> None:
+    """A legacy slug-only file holding another topic is never retired by a write."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    topics_dir = store._get_topics_directory(session, source_id="src")
+
+    legacy = topics_dir / "c.md"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(
+        "# C++\n\nUpdated: t\nSessions: -\n\n## Summary\ncpp\n\n## Memories\n- smart pointers\n",
+        encoding="utf-8",
+    )
+
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="C#", slug=None, summary="cs", memories=["ctors"], updated_at="t"),
+        source_id="src",
+    )
+
+    assert store.get_topic(session, source_id="src", topic="C++").memories == ["smart pointers"]
+    assert legacy.exists()
+
+
+def test_memory_topic_truncation_after_a_separator_stays_canonical(tmp_path) -> None:
+    """A slug cut right after a separator must not produce a double dash stem."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    topic = "a" * 186 + " " + "b" * 10
+    written = MemoryTopicRecord(topic=topic, summary="s", memories=["kept"], updated_at="t")
+    store.write_topic(session, written, source_id="src")
+
+    assert "--" not in written.storage_stem
+    assert store.get_topic(session, source_id="src", topic=topic).memories == ["kept"]
+    entries = store.rebuild_index(session, source_id="src", line_limit=10, line_length=200)
+    for entry in entries:
+        assert entry.storage_stem is not None
+        assert (store._get_topics_directory(session, source_id="src") / f"{entry.storage_stem}.md").exists()
+        assert store.get_topic(session, source_id="src", topic=entry.storage_stem).memories == ["kept"]
+
+
+def test_memory_index_pointer_lines_keep_the_full_link_for_long_names(tmp_path) -> None:
+    """Trimming a long pointer line shortens the label and summary, never the link."""
+    entry = MemoryIndexEntry(
+        topic="release " + "notes " * 18,
+        slug="release-notes-" + "f" * 16,
+        summary="quarterly planning review with the product and research teams across every region",
+        updated_at="t",
+    )
+    destination = entry.slug
+    line = entry.to_pointer_line(max_length=150)
+    assert len(line) <= 150
+    assert line.endswith(f"](topics/{destination}.md): ...") or line.endswith("...")
+    assert f"](topics/{destination}.md)" in line
+    parsed_slug = line.split("(topics/", 1)[1].split(".md)", 1)[0]
+    assert parsed_slug == destination
+
+
+def test_memory_reads_a_legacy_topic_file_with_a_long_slug(tmp_path) -> None:
+    """A legacy slug only filename near the component limit stays readable.
+
+    Lookup probes digest candidates first; without bounding, the longest
+    candidate for a long slug overshoots the filesystem component limit before
+    the legacy name is reached.
+    """
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    topics_dir = store._get_topics_directory(session, source_id="src")
+
+    legacy_slug = "a" * 240
+    topics_dir.mkdir(parents=True, exist_ok=True)
+    (topics_dir / f"{legacy_slug}.md").write_text(
+        f"# {legacy_slug}\n\nUpdated: t\nSessions: -\n\n## Summary\ns\n\n## Memories\n- legacy fact\n",
+        encoding="utf-8",
+    )
+
+    record = store.get_topic(session, source_id="src", topic=legacy_slug)
+    assert record.memories == ["legacy fact"]
+
+
+def test_memory_long_topic_writes_and_reloads_within_the_filename_limit(tmp_path) -> None:
+    """A topic whose slug overshoots the component limit still writes and reloads."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    long_topic = " ".join(["engineering"] * 48)
+    written = MemoryTopicRecord(topic=long_topic, summary="s", memories=["kept"], updated_at="t")
+    store.write_topic(session, written, source_id="src")
+
+    assert len(written.storage_stem.encode("utf-8")) + len(".md") <= 255
+    assert store.get_topic(session, source_id="src", topic=long_topic).memories == ["kept"]
+    # Index entries link the same bounded stem and resolve after a reload.
+    by_stem = store.get_topic(session, source_id="src", topic=written.storage_stem)
+    assert by_stem.memories == ["kept"]
+    entries = store.rebuild_index(session, source_id="src", line_limit=10, line_length=400)
+    for entry in entries:
+        assert (store._get_topics_directory(session, source_id="src") / f"{entry.storage_stem}.md").exists()
+
+
+def test_memory_topics_that_differ_only_by_case_stay_distinct(tmp_path) -> None:
+    """Slug shaped neighbours such as API and api must not merge through the
+    case folded ownership check, in either write order."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    for first, second in (("API", "api"), ("api", "API")):
+        for name in (first, second):
+            store.write_topic(
+                session,
+                MemoryTopicRecord(topic=name, summary="s", memories=[name + " fact"], updated_at="t"),
+                source_id="src",
+            )
+        assert store.get_topic(session, source_id="src", topic=first).memories == [first + " fact"]
+        assert store.get_topic(session, source_id="src", topic=second).memories == [second + " fact"]
+        topics_dir = store._get_topics_directory(session, source_id="src")
+        assert len(list(topics_dir.glob("*.md"))) == 2
+        for path in topics_dir.glob("*.md"):
+            path.unlink()
+
+
+def test_memory_topic_is_deletable_by_every_lookup_alias(tmp_path) -> None:
+    """Deletion accepts the same aliases get_topic answers.
+
+    The slug and the persisted stem an index link carries both resolve through
+    get_topic; rejecting them in delete_topic left callers able to read a
+    record by an alias but unable to remove it by the same alias.
+    """
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    record = MemoryTopicRecord(topic="Travel Preferences", summary="s", memories=["window seat"], updated_at="t")
+    for alias in (record.slug, record.storage_stem, "Travel Preferences"):
+        store.write_topic(session, record, source_id="src")
+        store.delete_topic(session, source_id="src", topic=alias)
+        with pytest.raises(FileNotFoundError):
+            store.get_topic(session, source_id="src", topic="Travel Preferences")
+
+
+def test_memory_topic_is_reloadable_by_its_default_slug(tmp_path) -> None:
+    """A normally written topic reloads by its default slug, which callers
+    holding record.slug rely on."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    record = MemoryTopicRecord(topic="Travel Preferences", summary="s", memories=["window seat"], updated_at="t")
+    store.write_topic(session, record, source_id="src")
+
+    reloaded = store.get_topic(session, source_id="src", topic=record.slug)
+    assert reloaded.topic == "Travel Preferences"
+    assert reloaded.memories == ["window seat"]
+
+
+def test_memory_topics_colliding_on_the_digest_keep_separate_files(tmp_path) -> None:
+    """Two topics whose normalized names share a short digest must keep separate files.
+
+    主题乚丢一 and 主题亊不七 both digest to 74043f1d in their first eight hex
+    characters and both slugify to memory-topic, so a shorter digest let the
+    second write silently replace the first topic's memories, and reading the
+    first topic returned the second topic's fact.
+    """
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+
+    first_topic = "主题乚丢一"
+    second_topic = "主题亊不七"
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic=first_topic, summary="a", memories=["fact a"], updated_at="t"),
+        source_id="src",
+    )
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic=second_topic, summary="b", memories=["fact b"], updated_at="t"),
+        source_id="src",
+    )
+
+    assert store.get_topic(session, source_id="src", topic=first_topic).memories == ["fact a"]
+    assert store.get_topic(session, source_id="src", topic=second_topic).memories == ["fact b"]
+    listed = {record.topic: record.memories for record in store.list_topics(session, source_id="src")}
+    assert listed == {first_topic: ["fact a"], second_topic: ["fact b"]}
+
+
+def test_memory_write_extends_the_stem_when_another_topic_owns_the_primary_stem(tmp_path) -> None:
+    """A write must never replace a different topic that already lives at the
+    primary stem; the digest extends until the stem is free."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    topics_dir = store._get_topics_directory(session, source_id="src")
+
+    alpha = MemoryTopicRecord(topic="Alpha Topic", summary="a", memories=["alpha fact"], updated_at="t")
+    beta = MemoryTopicRecord(topic="Beta Topic", summary="b", memories=["beta fact"], updated_at="t")
+    primary = topics_dir / f"{_topic_stem('Beta Topic')}.md"
+    primary.parent.mkdir(parents=True, exist_ok=True)
+    primary.write_text(f"{alpha.to_markdown()}\n", encoding="utf-8")
+
+    store.write_topic(session, beta, source_id="src")
+
+    reread_alpha = MemoryTopicRecord.from_markdown(primary.read_text(encoding="utf-8"))
+    assert reread_alpha.memories == ["alpha fact"]
+    beta_files = [path for path in sorted(topics_dir.glob("beta-topic-*.md")) if path != primary]
+    assert len(beta_files) == 1
+    assert beta_files[0].stem != primary.stem
+    assert beta.storage_stem == beta_files[0].stem
+    assert store.get_topic(session, source_id="src", topic="Beta Topic").memories == ["beta fact"]
+
+    entries = store.rebuild_index(session, source_id="src", line_limit=10, line_length=200)
+    for entry in entries:
+        assert (topics_dir / f"{entry.storage_stem}.md").exists()
+
+
+async def test_memory_consolidation_processes_records_stored_under_an_explicit_slug(tmp_path) -> None:
+    """Consolidation reloads by the persisted stem, so override slug records are not skipped."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    consolidation_client = _MemoryHarnessClient(
+        consolidation_payload={"summary": "Consolidated override.", "memories": ["Visit Oslo in June."]}
+    )
+    provider = MemoryContextProvider(
+        store=store,
+        consolidation_client=consolidation_client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    )
+    agent = Agent(
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        context_providers=[provider],
+        default_options=_no_store_options(),
+    )
+
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Remember this."])],
+    )
+    consolidate_memories = _tool_by_name(options["tools"], "consolidate_memories")
+
+    store.write_topic(
+        session,
+        MemoryTopicRecord(
+            topic="Machine Learning",
+            slug="ml-notes",
+            summary="s",
+            memories=["prefers short answers"],
+            updated_at="t",
+        ),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    await consolidate_memories.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    record = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="ml-notes")
+    assert record.topic == "Machine Learning"
+    assert record.summary == "Consolidated override."
+    assert consolidation_client.calls == ["consolidate"]
+
+
+async def test_memory_consolidation_does_not_lose_a_write_through_an_index_stem(tmp_path) -> None:
+    """A write through a persisted stem alias during consolidation must survive it."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    provider = MemoryContextProvider(store=store)
+    agent = Agent(
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        context_providers=[provider],
+        default_options=_no_store_options(),
+    )
+
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Remember this."])],
+    )
+    write_memory = _tool_by_name(options["tools"], "write_memory")
+    await write_memory.invoke(arguments={"topic": "Travel Preferences", "memory": "window seat"})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    written = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Travel Preferences")
+    stem = written.storage_stem
+
+    original_consolidate = provider._consolidate_topic  # type: ignore[reportPrivateUsage]
+    pending_merge: asyncio.Task[MemoryTopicRecord] | None = None
+
+    async def consolidate_with_a_write_in_flight(
+        *,
+        client: SupportsChatGetResponse[Any] | None,
+        record: MemoryTopicRecord,
+        now: datetime,
+    ) -> tuple[MemoryTopicRecord, bool]:
+        # A write arrives through the index stem alias while consolidation is
+        # mid call. With one canonical lock identity it waits for the lock and
+        # then applies on top of the consolidated record; with alias keyed
+        # locks it would complete now and be overwritten by the stale result.
+        del client
+        nonlocal pending_merge
+        pending_merge = asyncio.create_task(
+            provider._merge_memory(session=session, topic=stem, memory="urgent fact", now=now)  # type: ignore[reportPrivateUsage]
+        )
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        return record, True
+
+    provider._consolidate_topic = consolidate_with_a_write_in_flight  # type: ignore[method-assign,reportPrivateUsage]  # ty: ignore[invalid-assignment]
+    await provider._run_consolidation(  # type: ignore[reportPrivateUsage]
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        session=session,
+        force=True,
+        now=datetime.now(timezone.utc),
+    )
+    assert pending_merge is not None
+    await pending_merge
+
+    final_record = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Travel Preferences")
+    assert "urgent fact" in final_record.memories
+    assert "window seat" in final_record.memories
+    del original_consolidate
+
+
+class _AliasOnlyDictStore(MemoryStore):
+    """Conforming non-file store resolving get_topic by topic name or slug."""
+
+    def __init__(self) -> None:
+        self.topics: dict[str, MemoryTopicRecord] = {}
+
+    def list_topics(self, session: AgentSession, *, source_id: str) -> list[MemoryTopicRecord]:
+        return list(self.topics.values())
+
+    def get_topic(self, session: AgentSession, *, source_id: str, topic: str) -> MemoryTopicRecord:
+        for record in self.topics.values():
+            if record.topic == topic or record.slug == topic:
+                return record
+        raise FileNotFoundError(topic)
+
+    def write_topic(self, session: AgentSession, record: MemoryTopicRecord, *, source_id: str) -> None:
+        self.topics[record.topic] = record
+
+    def delete_topic(self, session: AgentSession, *, source_id: str, topic: str) -> None:
+        self.topics.pop(topic, None)
+
+    def rebuild_index(
+        self, session: AgentSession, *, source_id: str, line_limit: int, line_length: int
+    ) -> list[MemoryIndexEntry]:
+        return [MemoryIndexEntry.from_topic_record(r) for r in self.topics.values()][:line_limit]
+
+    def get_index_text(
+        self,
+        session: AgentSession,
+        *,
+        source_id: str,
+        line_limit: int,
+        line_length: int,
+        index_entries: Sequence[MemoryIndexEntry] | None = None,
+    ) -> str:
+        return ""
+
+    def get_transcripts_directory(self, session: AgentSession, *, source_id: str) -> Path:
+        return Path(".")
+
+    def search_transcripts(
+        self,
+        session: AgentSession,
+        *,
+        source_id: str,
+        query: str,
+        session_id: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        return []
+
+    def read_state(self, session: AgentSession, *, source_id: str) -> dict[str, Any]:
+        return {}
+
+    def write_state(self, session: AgentSession, state: Mapping[str, Any], *, source_id: str) -> None:
+        pass
+
+
+async def test_memory_before_run_injects_topics_from_a_conforming_custom_store() -> None:
+    """A custom store's entries resolve through the documented topic or slug.
+
+    The index entry factory derives from topic records, so its output must stay
+    inside the documented get_topic contract: injection resolves the readable
+    slug and topic name for stores that have no persisted filename stem.
+    """
+    store = _AliasOnlyDictStore()
+    provider = MemoryContextProvider(store=store)
+    session = AgentSession(session_id="session-1")
+    record = MemoryTopicRecord(topic="Notes", summary="s", memories=["kept"], updated_at="t")
+    store.write_topic(session, record, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    # The entry the file store style factory produces: readable slug, stem optional.
+    entry = MemoryIndexEntry.from_topic_record(record)
+    assert entry.slug == record.slug
+
+    from agent_framework._sessions import SessionContext
+
+    context = SessionContext(
+        input_messages=[Message(role="user", contents=["Read the notes topic."])],
+    )
+    state: dict[str, Any] = {}
+    await provider.before_run(agent=None, session=session, context=context, state=state)  # pyright: ignore[reportPrivateUsage,reportArgumentType]
+
+    # before_run succeeded: the selected topic resolved through the documented
+    # slug or topic alias, and its content reached the injected messages.
+    injected_texts = [m.text for group in context.context_messages.values() for m in group]
+    assert any("kept" in text for text in injected_texts)
+
+
+async def test_memory_consolidation_processes_topics_in_a_conforming_custom_store(tmp_path) -> None:
+    """Consolidation reloads through documented aliases, not file-specific stems.
+
+    A store whose get_topic answers the topic name and slug is the documented
+    contract; reloading by the persisted storage stem skipped every record in
+    such stores, so consolidation silently did nothing.
+    """
+    store = _AliasOnlyDictStore()
+    provider = MemoryContextProvider(store=store)
+    session = AgentSession(session_id="session-1")
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="Notes", summary="s", memories=["m"], updated_at="t"),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+
+    count = await provider._run_consolidation(  # pyright: ignore[reportPrivateUsage]
+        client=_MemoryHarnessClient(  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+            consolidation_payload={"summary": "consolidated", "memories": ["m"]}
+        ),
+        session=session,
+        force=True,
+        now=datetime.now(timezone.utc),
+    )
+
+    assert count == 1
+    reloaded = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Notes")
+    assert reloaded.summary == "consolidated"
+
+
+async def test_memory_consolidation_processes_topics_whose_slug_differs_from_their_name(tmp_path) -> None:
+    """Forced consolidation reloads each topic by exact identity, so a topic
+    whose default slug differs from its name is consolidated rather than
+    silently skipped."""
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    consolidation_client = _MemoryHarnessClient(
+        consolidation_payload={"summary": "Consolidated summary.", "memories": ["Visit Oslo in June."]}
+    )
+    provider = MemoryContextProvider(
+        store=store,
+        consolidation_client=consolidation_client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    )
+    agent = Agent(
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        context_providers=[provider],
+        default_options=_no_store_options(),
+    )
+
+    _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Remember this."])],
+    )
+    write_memory = _tool_by_name(options["tools"], "write_memory")
+    consolidate_memories = _tool_by_name(options["tools"], "consolidate_memories")
+
+    await write_memory.invoke(arguments={"topic": "Travel Preferences", "memory": "Window seat."})  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    await consolidate_memories.invoke()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    topic = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Travel Preferences")
+    assert topic.summary == "Consolidated summary."
+    assert topic.memories == ["Visit Oslo in June."]
+    assert consolidation_client.calls == ["consolidate"]
+
+
 def test_memory_file_store_uses_literal_folders_for_safe_identifiers(tmp_path) -> None:
     """Safe identifiers are readable on disk rather than opaque encoded segments."""
     store = MemoryFileStore(tmp_path, owner_prefix="user_", owner_state_key="owner_id")
@@ -1609,6 +2266,140 @@ def test_memory_file_store_uses_literal_folders_for_safe_identifiers(tmp_path) -
     parts = root.relative_to(tmp_path.resolve()).parts
     assert parts[0] == "memory"
     assert parts[1] == "user_alice"
+
+
+def _seed_legacy_file_holding_another_topic(store: MemoryFileStore, session: AgentSession) -> Path:
+    """Seed a legacy ``c.md`` holding the C++ record, as pre digest stores wrote."""
+    topics_dir = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    topics_dir.mkdir(parents=True, exist_ok=True)
+    legacy = topics_dir / "c.md"
+    legacy.write_text(
+        "# C++\n\nUpdated: t\nSessions: -\n\n## Summary\ncpp\n\n## Memories\n- smart pointers\n",
+        encoding="utf-8",
+    )
+    return legacy
+
+
+async def test_memory_merge_creates_a_distinct_topic_when_a_legacy_slug_file_holds_another_topic(tmp_path) -> None:
+    """A legacy slug-only file must not answer a different topic's merge.
+
+    Reading ``C#`` through the legacy ``c.md`` that holds ``C++`` merged the
+    new memory into the C++ record and wrote it back under the C++ stem, so
+    the C# topic was never created and its lookup kept returning the C++
+    record.
+    """
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    legacy = _seed_legacy_file_holding_another_topic(store, session)
+
+    provider = MemoryContextProvider(store=store)
+    await provider._merge_memory(  # pyright: ignore[reportPrivateUsage]
+        session=session, topic="C#", memory="ctors", now=datetime.now(timezone.utc)
+    )
+
+    cpp = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="C++")
+    assert cpp.memories == ["smart pointers"]
+    cs = store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="C#")
+    assert cs.memories == ["ctors"]
+    assert cs.storage_stem != legacy.stem
+    assert legacy.exists()
+
+
+def _seed_dual_file_topic(store: MemoryFileStore, session: AgentSession) -> Path:
+    """Leave a topic on both the digest stem and a legacy slug-only file.
+
+    This is the state an interrupted migration leaves behind: the digest
+    write completed, the unlink of the old file did not.
+    """
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="Travel Preferences", summary="s", memories=["kept"], updated_at="t"),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    topics_dir = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    digest_path = next(path for path in topics_dir.glob("*.md"))
+    legacy = topics_dir / "travel-preferences.md"
+    legacy.write_text(digest_path.read_text(encoding="utf-8"), encoding="utf-8")
+    return digest_path
+
+
+def test_memory_lists_one_record_while_a_migration_left_two_files(tmp_path) -> None:
+    """A leftover legacy copy must not duplicate the topic in listings."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    digest_path = _seed_dual_file_topic(store, session)
+    topics_dir = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    listed = store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    assert [record.topic for record in listed] == ["Travel Preferences"]
+    assert listed[0].storage_stem == digest_path.stem
+    entries = store.rebuild_index(session, source_id=DEFAULT_MEMORY_SOURCE_ID, line_limit=10, line_length=200)
+    assert len(entries) == 1
+    assert entries[0].storage_stem is not None
+    assert (topics_dir / f"{entries[0].storage_stem}.md").exists()
+
+
+def test_memory_delete_removes_every_file_left_by_an_interrupted_migration(tmp_path) -> None:
+    """Deleting a topic removes the stale legacy copy, so the topic cannot resurrect."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    _seed_dual_file_topic(store, session)
+    topics_dir = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+
+    store.delete_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Travel Preferences")
+
+    assert not any(topics_dir.glob("*.md"))
+    with pytest.raises(FileNotFoundError):
+        store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Travel Preferences")
+
+
+def test_memory_write_sweeps_a_leftover_legacy_file_after_a_failed_unlink(tmp_path, monkeypatch) -> None:
+    """A migration whose unlink failed heals on the next write of the topic."""
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    session = AgentSession(session_id="session-1")
+    session.state["owner_id"] = "alice"
+    topics_dir = store._get_topics_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
+    topics_dir.mkdir(parents=True)
+    legacy = topics_dir / "travel-preferences.md"
+    legacy.write_text(
+        "# Travel Preferences\n\nUpdated: t\nSessions: -\n\n## Summary\ns\n\n## Memories\n- kept\n",
+        encoding="utf-8",
+    )
+
+    real_unlink = Path.unlink
+
+    def failing_unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name == legacy.name:
+            raise OSError("simulated crash between write and unlink")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+    with pytest.raises(OSError, match="simulated crash"):
+        store.write_topic(
+            session,
+            MemoryTopicRecord(topic="Travel Preferences", summary="s", memories=["kept"], updated_at="t2"),
+            source_id=DEFAULT_MEMORY_SOURCE_ID,
+        )
+    monkeypatch.undo()
+
+    # The interrupted migration left both files behind, but the stale copy is
+    # hidden rather than listed as a second topic.
+    assert legacy.exists()
+    assert len(store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID)) == 1
+
+    # The next write reconciles the directory: only the digest stem remains.
+    store.write_topic(
+        session,
+        MemoryTopicRecord(topic="Travel Preferences", summary="s", memories=["kept", "kept"], updated_at="t3"),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+    remaining = sorted(path.name for path in topics_dir.glob("*.md"))
+    assert len(remaining) == 1
+    assert remaining[0].startswith("travel-preferences-")
+    assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic="Travel Preferences").memories == ["kept"]
 
 
 # endregion
