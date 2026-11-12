@@ -234,6 +234,13 @@ codeact = MontyCodeActProvider(
   `max_memory`, `gc_interval`, `max_recursion_depth`, `max_suspensions`, and
   `max_total_sleep_secs`. These interpreter limits do not independently bound
   host-side post-execution attachment capture.
+- Sandbox code runs in Monty worker processes, so it does not block the event
+  loop, and cancelling an `execute_code` call discards its worker. When
+  `resource_limits` sets neither `max_feed_duration_secs` nor `max_duration_secs`,
+  a **30-second** `max_feed_duration_secs` applies. Set it to another value, or to
+  `None` (`resource_limits={"max_feed_duration_secs": None}`), to change or remove
+  the limit. Concurrent `execute_code` calls overlap, so calls that share a
+  `read-write` mount can capture each other's written files.
 
 ## DSL inside `execute_code`
 

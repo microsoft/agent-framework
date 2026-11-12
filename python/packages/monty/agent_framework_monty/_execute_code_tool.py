@@ -249,7 +249,12 @@ class MontyExecuteCodeTool(FunctionTool):
     Hyperlight's ``/output`` flow.
 
     ``resource_limits`` is forwarded to Monty's ``ResourceLimits`` to cap CPU
-    time, memory, output size, recursion depth, and GC frequency.
+    time, memory, output size, recursion depth, and GC frequency. The legacy
+    ``max_duration_secs`` key is an alias for ``max_feed_duration_secs``, and
+    supplying both is an error. When neither key is present, guest execution is
+    limited to 30 seconds (``max_feed_duration_secs``, which excludes time spent
+    waiting on host tools). Set ``max_feed_duration_secs`` to another value, or to
+    ``None`` to remove the limit.
 
     ``tool_description_format`` controls parameter documentation in both the
     description and instructions: ``"compact"`` (default) or ``"json"`` globally,
@@ -258,8 +263,10 @@ class MontyExecuteCodeTool(FunctionTool):
     are copied and retain entries for tools registered later.
 
     All mutators (``add_tools``, ``add_file_mounts`` etc.) must be called from
-    the same task/thread that owns the tool. Monty itself runs on the event
-    loop, so no internal locking is needed.
+    the same task/thread that owns the tool; they are not synchronized. Guest
+    code runs in Monty worker processes and does not block the event loop, so
+    concurrent ``execute_code`` calls overlap. Calls that share a read-write
+    mount can capture each other's written files.
 
     Keyword Args:
         include_detailed_errors: Include host exception types/messages and execution error details.
@@ -398,7 +405,10 @@ class MontyExecuteCodeTool(FunctionTool):
 
     @property
     def resource_limits(self) -> dict[str, Any] | None:
-        """Return the configured Monty :class:`pydantic_monty.ResourceLimits`, if any."""
+        """Return the configured Monty :class:`pydantic_monty.ResourceLimits`, if any.
+
+        The default guest execution limit applied when no feed duration is configured is not included.
+        """
         return dict(self._resource_limits) if self._resource_limits else None
 
     def build_instructions(self, *, tools_visible_to_model: bool) -> str:

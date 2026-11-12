@@ -53,11 +53,11 @@ class _FakeFunctionSnapshot:
     is_os_function: bool = False
     _script: _FakeScript | None = None
 
-    def resume(self, payload: Any) -> Any:
+    async def resume(self, payload: Any) -> Any:
         assert self._script is not None, "Snapshot must be attached to a script."
         return self._script.advance(("function_resume", self, payload))
 
-    def resume_auto(self) -> Any:
+    async def resume_auto(self) -> Any:
         assert self._script is not None, "Snapshot must be attached to a script."
         return self._script.advance(("function_resume_auto", self, None))
 
@@ -67,7 +67,7 @@ class _FakeFutureSnapshot:
     pending_call_ids: list[int]
     _script: _FakeScript | None = None
 
-    def resume(self, payload: Any) -> Any:
+    async def resume(self, payload: Any) -> Any:
         assert self._script is not None, "Snapshot must be attached to a script."
         return self._script.advance(("future_resume", self, payload))
 
@@ -127,8 +127,11 @@ def _get_script() -> _FakeScript:
     return script
 
 
+_checkouts: list[_FakeSession] = []
+
+
 class _FakeSession:
-    """Fake ``MontySession`` matching the pydantic-monty pool/checkout API."""
+    """Fake ``AsyncMontySession`` matching the pydantic-monty async pool/checkout API."""
 
     def __init__(
         self,
@@ -145,13 +148,13 @@ class _FakeSession:
         self.code: str | None = None
         self._script = _get_script()
 
-    def __enter__(self) -> _FakeSession:
+    async def __aenter__(self) -> _FakeSession:
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: Any) -> None:
         return None
 
-    def feed_start(
+    async def feed_start(
         self,
         code: str,
         *,
@@ -171,16 +174,16 @@ class _FakeSession:
 
 
 class _FakeMonty:
-    """Fake ``Monty`` pool: ``with Monty() as pool: with pool.checkout() as session``."""
+    """Fake ``AsyncMonty`` pool: ``async with AsyncMonty() as pool, pool.checkout() as session``."""
 
     def __init__(self, **kwargs: Any) -> None:
         self.pool_kwargs = kwargs
         self.last_session: _FakeSession | None = None
 
-    def __enter__(self) -> _FakeMonty:
+    async def __aenter__(self) -> _FakeMonty:
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: Any) -> None:
         return None
 
     def checkout(
@@ -198,6 +201,7 @@ class _FakeMonty:
             type_check_stubs=type_check_stubs,
             limits=limits,
         )
+        _checkouts.append(self.last_session)
         return self.last_session
 
 
@@ -205,16 +209,18 @@ class _FakeMonty:
 def fake_monty_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Install a fake ``pydantic_monty`` module for the duration of each test."""
     fake = types.ModuleType("pydantic_monty")
-    fake.Monty = _FakeMonty  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+    fake.AsyncMonty = _FakeMonty  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
     fake.MontyComplete = _FakeMontyComplete  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
-    fake.FunctionSnapshot = _FakeFunctionSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
-    fake.FutureSnapshot = _FakeFutureSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
-    fake.NameLookupSnapshot = _FakeNameLookupSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+    fake.AsyncFunctionSnapshot = _FakeFunctionSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+    fake.AsyncFutureSnapshot = _FakeFutureSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+    fake.AsyncNameLookupSnapshot = _FakeNameLookupSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
 
     monkeypatch.setitem(sys.modules, "pydantic_monty", fake)
     _current_script[0] = None
+    _checkouts.clear()
     yield
     _current_script[0] = None
+    _checkouts.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -741,6 +747,33 @@ def test_resource_limits_round_trip() -> None:
     assert monty_tool.resource_limits == {"max_duration_secs": 5.0}
     state = monty_tool.build_serializable_state()
     assert state["resource_limits"] == {"max_duration_secs": 5.0}
+
+
+@pytest.mark.parametrize(
+    ("resource_limits", "expected_limits"),
+    [
+        (None, {"max_feed_duration_secs": 30.0}),
+        ({}, {"max_feed_duration_secs": 30.0}),
+        ({"max_memory": 1024}, {"max_memory": 1024, "max_feed_duration_secs": 30.0}),
+        ({"max_turn_duration_secs": 2.0}, {"max_turn_duration_secs": 2.0, "max_feed_duration_secs": 30.0}),
+        ({"max_feed_duration_secs": 5.0}, {"max_feed_duration_secs": 5.0}),
+        ({"max_duration_secs": 5.0}, {"max_feed_duration_secs": 5.0}),
+        ({"max_feed_duration_secs": None}, {"max_feed_duration_secs": None}),
+        ({"max_duration_secs": None}, {"max_feed_duration_secs": None}),
+    ],
+)
+async def test_guest_execution_limit_defaults_unless_a_feed_duration_is_configured(
+    resource_limits: dict[str, Any] | None, expected_limits: dict[str, Any]
+) -> None:
+    _set_script(_FakeMontyComplete(output=None))
+    monty_tool = MontyExecuteCodeTool(resource_limits=resource_limits)
+
+    await monty_tool._run_code(code="None")
+
+    assert _checkouts[-1].limits == expected_limits
+    # The default applies at run time only; configuration and serialized state keep what the caller supplied.
+    assert monty_tool.resource_limits == (resource_limits or None)
+    assert monty_tool.build_serializable_state()["resource_limits"] == (resource_limits or None)
 
 
 def test_build_instructions_includes_registered_tools() -> None:

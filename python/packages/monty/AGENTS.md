@@ -36,7 +36,9 @@ from agent_framework.monty import (
 - `file_mounts` — sequence of `FileMountInput` (str shorthand,
   `(host_path, mount_path)` tuple, or `FileMount`)
 - `resource_limits` — Monty 1.x `ResourceLimits` keys; legacy `max_duration_secs`
-  maps to `max_feed_duration_secs`, and supplying both is an error
+  maps to `max_feed_duration_secs`, and supplying both is an error. When neither
+  key is set, a 30-second `max_feed_duration_secs` applies at run time (it is not
+  part of the `resource_limits` property or serializable state); `None` removes it.
 - `include_detailed_errors` — keyword-only Boolean, default `False`. Host failures become generic
   `RuntimeError`s and execution errors omit raw details. Trusted opt-in preserves original diagnostics.
   The flag is not a code input, is independent of outer-client error/logging settings, and is copied
@@ -74,7 +76,9 @@ Tool-management methods on both classes: `add_tools`, `get_tools`,
   builders, and the post-execution file-capture flow that surfaces files
   written to `read-write` mounts as `Content.from_data` items.
 - **`_monty_bridge.py`** — `InlineCodeBridge` and `generate_type_stubs`,
-  adapted from the reference Monty CodeAct repo. Pauses on `FunctionSnapshot`
+  adapted from the reference Monty CodeAct repo. Runs guest code through the
+  async pool (`AsyncMonty`) so it never blocks the event loop, and awaits every
+  `feed_start` / `resume` / `resume_auto`. Pauses on `AsyncFunctionSnapshot`
   to dispatch host calls, then resumes; supports direct typed tool calls
   (keyword arguments only; the generated stubs are keyword-only, omit parameters
   guest code cannot supply such as an injected context, `self`, `*args` and

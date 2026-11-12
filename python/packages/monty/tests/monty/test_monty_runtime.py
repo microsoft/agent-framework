@@ -4,15 +4,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+from pathlib import Path
 from typing import Any
 
 import pytest
 from agent_framework import FunctionTool
-from pydantic_monty import MontyRuntimeError
+from pydantic_monty import MontyRuntimeError, MountDir
 
 from agent_framework_monty import MontyExecuteCodeTool
+from agent_framework_monty import _monty_bridge as bridge_module
 from agent_framework_monty._execute_code_tool import _make_tool_callback
 from agent_framework_monty._monty_bridge import InlineCodeBridge
+
+_RUNAWAY_GUEST = "while True:\n    pass"
+_READ_MOUNT_FILE = "from pathlib import Path\nPath('/input/value.txt').read_text()\n"
+_READ_MOUNT_FILE_IGNORING_ERRORS = (
+    "from pathlib import Path\ntry:\n    Path('/input/value.txt').read_text()\nexcept Exception:\n    pass\n"
+)
 
 
 @pytest.mark.parametrize(
@@ -62,6 +72,72 @@ async def test_legacy_and_feed_duration_limits_are_rejected_as_ambiguous(legacy_
 
     with pytest.raises(ValueError, match="Specify only one of max_duration_secs and max_feed_duration_secs"):
         await bridge.run("print('must not run')")
+
+
+async def test_default_feed_duration_limit_stops_runaway_guest_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bridge_module, "DEFAULT_MAX_FEED_DURATION_SECS", 0.3)
+
+    with pytest.raises(MontyRuntimeError, match="feed time limit exceeded"):
+        await InlineCodeBridge({}).run(_RUNAWAY_GUEST)
+
+
+@pytest.mark.parametrize(
+    ("code", "use_mount"),
+    [
+        (_RUNAWAY_GUEST, False),
+        (f"await record()\n{_RUNAWAY_GUEST}", False),
+        (f"{_READ_MOUNT_FILE_IGNORING_ERRORS}{_RUNAWAY_GUEST}", False),
+        (f"{_READ_MOUNT_FILE}{_RUNAWAY_GUEST}", True),
+    ],
+    ids=["feed", "resume_after_host_tool", "resume_after_os_error", "resume_after_mount_read"],
+)
+async def test_runaway_guest_code_does_not_block_the_event_loop(code: str, use_mount: bool, tmp_path: Path) -> None:
+    (tmp_path / "value.txt").write_text("value", encoding="utf-8")
+    mounts = [MountDir(host_path=str(tmp_path), virtual_path="/input", mode="read-only")] if use_mount else None
+    loop = asyncio.get_running_loop()
+    timestamps = [loop.time()]
+
+    async def record() -> None:
+        # Measure only the time after the guest resumes from this host call.
+        timestamps[:] = [loop.time()]
+
+    async def heartbeat() -> None:
+        while True:
+            await asyncio.sleep(0.01)
+            timestamps.append(loop.time())
+
+    bridge = InlineCodeBridge({"record": record}, mounts=mounts, resource_limits={"max_feed_duration_secs": 1.0})
+    heartbeat_task = asyncio.create_task(heartbeat())
+    try:
+        with pytest.raises(MontyRuntimeError, match="feed time limit exceeded"):
+            await bridge.run(code)
+    finally:
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
+    timestamps.append(loop.time())
+
+    # A blocked loop leaves a gap about as long as the 1 s guest budget.
+    assert max(later - earlier for earlier, later in zip(timestamps, timestamps[1:])) < 0.5
+
+
+async def test_timeout_around_running_guest_code_returns_promptly_and_later_runs_recover() -> None:
+    guest_started = asyncio.Event()
+
+    async def record() -> None:
+        guest_started.set()
+
+    bridge = InlineCodeBridge({"record": record}, resource_limits={"max_feed_duration_secs": 2.0})
+    run = asyncio.create_task(bridge.run(f"await record()\n{_RUNAWAY_GUEST}"))
+    await asyncio.wait_for(guest_started.wait(), timeout=30)
+    started = asyncio.get_running_loop().time()
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(run, timeout=0.3)
+
+    assert run.cancelled()
+    assert asyncio.get_running_loop().time() - started < 1.5
+    assert (await InlineCodeBridge({}).run("1 + 1"))["output"] == 2
 
 
 @pytest.mark.parametrize("recording_host_tool", ["positional_or_keyword", "keyword_only"], indirect=True)
