@@ -5512,6 +5512,205 @@ class TestStreaming:
         assert len(args_done) == 1
         assert args_done[0]["data"]["arguments"] == '{"q": "hello"}'
 
+    async def test_function_call_replace_snapshot_not_appended(self) -> None:
+        """A ``replace`` snapshot (function_call_arguments.done) must not be appended after streamed fragments."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_1", "get_weather", arguments="{", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            "call_1", "get_weather", arguments='"location":"Seattle"}', merge_mode="append"
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            "call_1", "get_weather", arguments='{"location":"Seattle"}', merge_mode="replace"
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_result("call_1", result="The weather in Seattle is sunny.")],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+
+        # Two fragment deltas only; the replace snapshot equals the accumulated
+        # fragments, so it must NOT be re-emitted as a third delta.
+        assert types.count("response.function_call_arguments.delta") == 2
+
+        args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
+        assert len(args_done) == 1
+        assert args_done[0]["data"]["arguments"] == '{"location":"Seattle"}'
+
+        completed = events[-1]["data"]["response"]
+        fc_item = next(item for item in completed["output"] if item["type"] == "function_call")
+        assert fc_item["arguments"] == '{"location":"Seattle"}'
+        assert fc_item["status"] == "completed"
+
+    async def test_function_call_replace_snapshot_extends_fragments(self) -> None:
+        """When the replace snapshot carries more than the streamed fragments, only the unsent suffix streams."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call("call_2", "get_weather",
+                                                arguments='{"loc', merge_mode="append")
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            "call_2", "get_weather", arguments='{"location":"Seattle"}', merge_mode="replace"
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_result("call_2", result="The weather in Seattle is sunny.")],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+
+        args_deltas = [e for e in events if e["event"] == "response.function_call_arguments.delta"]
+        assert [e["data"]["delta"] for e in args_deltas] == ['{"loc', 'ation":"Seattle"}']
+
+        args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
+        assert len(args_done) == 1
+        assert args_done[0]["data"]["arguments"] == '{"location":"Seattle"}'
+
+    async def test_function_call_replace_snapshot_without_fragments(self) -> None:
+        """A replace snapshot with no prior fragments streams the whole snapshot once as the delta."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            "call_3", "get_weather", arguments='{"location":"Seattle"}', merge_mode="replace"
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_result("call_3", result="Sunny.")],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+
+        args_deltas = [e for e in events if e["event"] == "response.function_call_arguments.delta"]
+        assert [e["data"]["delta"] for e in args_deltas] == ['{"location":"Seattle"}']
+
+        args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
+        assert len(args_done) == 1
+        assert args_done[0]["data"]["arguments"] == '{"location":"Seattle"}'
+
+    async def test_function_call_divergent_snapshot_fails_stream(self) -> None:
+        """A replace snapshot that is not an extension of the fragments fails the stream, like text does."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call("call_4", "get_weather", arguments='{"a":1', merge_mode="append")
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call("call_4", "get_weather", arguments='{"b":2}', merge_mode="replace")
+                    ],
+                    role="assistant",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        events = _parse_sse_events(resp.text)
+        assert events[-1]["event"] == "response.failed"
+        assert "divergent replacement text snapshot" in events[-1]["data"]["response"]["error"]["message"]
+
+    async def test_function_call_without_arguments_emits_no_empty_delta(self) -> None:
+        """A call with no arguments closes with empty arguments and emits no empty delta event."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_5", "ping")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_result("call_5", result="pong")],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+
+        assert "response.function_call_arguments.delta" not in _sse_event_types(events)
+        args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
+        assert len(args_done) == 1
+        assert args_done[0]["data"]["arguments"] == ""
+
+    async def test_non_streaming_function_call_replace_snapshot_not_appended(self) -> None:
+        """Non-streaming requests collect the same streamed updates; arguments stay the single snapshot."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_6", "get_weather", arguments="{", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            "call_6", "get_weather", arguments='{"location":"Seattle"}', merge_mode="replace"
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_result("call_6", result="Sunny.")],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=False)
+
+        assert resp.status_code == 200
+        fc_items = [item for item in resp.json()["output"] if item["type"] == "function_call"]
+        assert len(fc_items) == 1
+        assert fc_items[0]["arguments"] == '{"location":"Seattle"}'
+
     async def test_function_result_omits_internal_exception(self) -> None:
         agent = _make_agent(
             stream_updates=[

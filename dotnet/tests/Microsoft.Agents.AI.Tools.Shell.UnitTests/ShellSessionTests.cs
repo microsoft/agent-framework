@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.IO;
 
 namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 
@@ -137,5 +138,37 @@ public sealed class ShellSessionTests
         // round-trips through UTF-8.
         var rt = System.Text.Encoding.UTF8.GetString(System.Text.Encoding.UTF8.GetBytes(text));
         Assert.Equal(text, rt);
+    }
+
+    [Fact]
+    public void TryFindOnPath_SkipsRelativeEntries()
+    {
+        // Arrange
+        // Create the folders under the current directory so the planted entry stays relative on any drive layout.
+        var rootName = "af-shell-path-" + Guid.NewGuid().ToString("N");
+        var root = Path.Combine(Directory.GetCurrentDirectory(), rootName);
+        var plantedDir = Directory.CreateDirectory(Path.Combine(root, "planted")).FullName;
+        var trustedDir = Directory.CreateDirectory(Path.Combine(root, "trusted")).FullName;
+        File.WriteAllText(Path.Combine(plantedDir, "setsid"), string.Empty);
+        File.WriteAllText(Path.Combine(trustedDir, "setsid"), string.Empty);
+        var relativePlantedDir = Path.Combine(rootName, "planted");
+
+        try
+        {
+            // Act
+            var foundWithTrusted = ShellSession.TryFindOnPath(
+                string.Join(Path.PathSeparator, relativePlantedDir, string.Empty, trustedDir), "setsid", out var fullPath);
+            var foundRelativeOnly = ShellSession.TryFindOnPath(relativePlantedDir, "setsid", out _);
+
+            // Assert
+            Assert.True(File.Exists(Path.Combine(relativePlantedDir, "setsid")));
+            Assert.True(foundWithTrusted);
+            Assert.Equal(Path.Combine(trustedDir, "setsid"), fullPath);
+            Assert.False(foundRelativeOnly);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 }

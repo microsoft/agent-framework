@@ -23,6 +23,7 @@ This folder contains focused middleware samples for `Agent`, chat clients, tools
 | [`runtime_context_delegation.py`](./runtime_context_delegation.py) | Demonstrates delegating arguments with runtime context data. |
 | [`session_behavior_middleware.py`](./session_behavior_middleware.py) | Shows how middleware interacts with session-backed runs. |
 | [`shared_state_middleware.py`](./shared_state_middleware.py) | Demonstrates sharing mutable state across middleware invocations. |
+| [`task_scoped_authority_middleware.py`](./task_scoped_authority_middleware.py) | Demonstrates giving a delegated sub-agent only the authority its task needs: a coordinator hands a billing agent a grant for one invoice and a refund ceiling, and a `FunctionMiddleware` checks each tool call's arguments against it, setting `context.result` to the denial without calling `call_next()` when a call falls outside. Grants are signed tokens that can only narrow on delegation, checked in-process with the open, Apache-2.0 Tenuo library (`pip install tenuo`). |
 | [`usage_tracking_middleware.py`](./usage_tracking_middleware.py) | Demonstrates one chat middleware function that registers stream transforms on `ChatContext` before execution to track per-call usage in non-streaming and streaming tool-loop runs. |
 
 ## Running the usage tracking sample

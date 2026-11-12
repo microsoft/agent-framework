@@ -14,6 +14,7 @@ from agent_framework_azure_contentunderstanding import (
 from agent_framework_foundry import (
     FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY,
     FoundryAgent,
+    FoundryAgentOptions,
     FoundryChatClient,
     FoundryChatOptions,
     FoundryEmbeddingClient,
@@ -66,6 +67,7 @@ __all__ = [
     "FileSearchBackend",
     "FileSearchConfig",
     "FoundryAgent",
+    "FoundryAgentOptions",
     "FoundryAgentSessionStore",
     "FoundryChatClient",
     "FoundryChatOptions",
