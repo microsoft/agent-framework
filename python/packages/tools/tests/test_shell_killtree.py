@@ -5,6 +5,8 @@ import os
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agent_framework_tools.shell._killtree import (
     _kill_via_psutil,
     _kill_via_stdlib,
@@ -56,6 +58,19 @@ def test_resolve_taskkill_uses_systemroot_and_caches(monkeypatch) -> None:
     expected_path = os.path.join("C:\\Windows", "System32", "taskkill.exe")
     assert _resolve_taskkill() == expected_path
     assert _resolve_taskkill() == expected_path
+
+
+def test_resolve_taskkill_refuses_the_bare_name_when_the_system_binary_is_missing(monkeypatch) -> None:
+    import agent_framework_tools.shell._killtree as killtree_module
+
+    monkeypatch.setattr(killtree_module, "_taskkill_path", None)
+    monkeypatch.setenv("SystemRoot", "C:\\Windows")
+    monkeypatch.setattr(killtree_module.os.path, "isfile", lambda path: False)
+
+    with pytest.raises(FileNotFoundError, match="taskkill.exe"):
+        _resolve_taskkill()
+
+    assert killtree_module._taskkill_path is None
 
 
 async def test_kill_process_tree_short_circuits_or_delegates(monkeypatch) -> None:
@@ -126,6 +141,23 @@ async def test_kill_via_stdlib_windows_uses_taskkill_and_proc_kill(monkeypatch) 
         await _kill_via_stdlib(proc, grace=0.01)
 
     assert killer.killed is True
+    assert raw_proc.killed is True
+
+
+async def test_kill_via_stdlib_windows_does_not_launch_taskkill_when_it_is_missing(monkeypatch) -> None:
+    import agent_framework_tools.shell._killtree as killtree_module
+
+    monkeypatch.setattr(killtree_module.sys, "platform", "win32")
+    monkeypatch.setattr(killtree_module, "_taskkill_path", None)
+    monkeypatch.setenv("SystemRoot", "C:\\Windows")
+    monkeypatch.setattr(killtree_module.os.path, "isfile", lambda path: False)
+    raw_proc = _FakeAsyncProcess(pid=55, returncode=None)
+    proc = cast(asyncio.subprocess.Process, raw_proc)
+
+    with patch("agent_framework_tools.shell._killtree.asyncio.create_subprocess_exec", AsyncMock()) as create_proc:
+        await _kill_via_stdlib(proc, grace=0.01)
+
+    create_proc.assert_not_awaited()
     assert raw_proc.killed is True
 
 

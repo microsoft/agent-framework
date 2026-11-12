@@ -10,6 +10,10 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 internal sealed class TestAgentSessionStore : AgentSessionStore
 {
     private readonly ConcurrentDictionary<(string AgentIdentity, AgentSessionStoreKey Key), JsonElement> _sessions = new();
+    private int _saveCount;
+
+    /// <summary>Gets how many times a session was saved.</summary>
+    internal int SaveCount => Volatile.Read(ref this._saveCount);
 
     public override async ValueTask SaveSessionAsync(
         AIAgent agent,
@@ -17,6 +21,7 @@ internal sealed class TestAgentSessionStore : AgentSessionStore
         AgentSession session,
         CancellationToken cancellationToken = default)
     {
+        Interlocked.Increment(ref this._saveCount);
         this._sessions[GetKey(agent, key)] =
             await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken).ConfigureAwait(false);
     }

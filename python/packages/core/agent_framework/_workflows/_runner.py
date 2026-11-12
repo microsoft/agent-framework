@@ -297,9 +297,6 @@ class RunnerImpl:
             checkpoint_storage: Optional storage to load checkpoints from when the
                 runner context itself is not configured with checkpointing.
 
-        Returns:
-            None on success.
-
         Raises:
             WorkflowCheckpointException on failure.
         """

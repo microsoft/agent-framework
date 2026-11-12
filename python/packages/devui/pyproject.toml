@@ -4,7 +4,7 @@ description = "Debug UI for Microsoft Agent Framework with OpenAI-compatible API
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.0.0b261106"
+version = "1.0.0b261112"
 license-files = ["LICENSE"]
 urls.homepage = "https://github.com/microsoft/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -33,12 +33,12 @@ classifiers = [
 [project.optional-dependencies]
 dev = [
     "pytest==9.2.0",
-    "watchdog==6.0.0",
+    "watchdog==7.1.0",
     "agent-framework-orchestrations>=1.0,<2.0",
 ]
 all = [
     "pytest==9.2.0",
-    "watchdog==6.0.0",
+    "watchdog==7.1.0",
 ]
 
 [project.scripts]

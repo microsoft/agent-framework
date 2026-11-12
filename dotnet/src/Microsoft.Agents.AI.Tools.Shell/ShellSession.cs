@@ -9,6 +9,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Tools.Shell;
 
@@ -711,16 +712,24 @@ internal sealed class ShellSession : IAsyncDisposable
             }
         }
         // Fall back to PATH.
-        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        return TryFindOnPath(Environment.GetEnvironmentVariable("PATH"), "setsid", out fullPath);
+    }
+
+    /// <summary>
+    /// Searches the fully qualified directories in <paramref name="pathEnv"/> for <paramref name="fileName"/>.
+    /// Empty and relative entries are skipped so the result never depends on the current directory.
+    /// </summary>
+    internal static bool TryFindOnPath(string? pathEnv, string fileName, out string fullPath)
+    {
         if (!string.IsNullOrEmpty(pathEnv))
         {
             foreach (var dir in pathEnv!.Split(Path.PathSeparator))
             {
-                if (string.IsNullOrEmpty(dir))
+                if (!PathValidation.IsFullyQualifiedPath(dir))
                 {
                     continue;
                 }
-                var candidate = Path.Combine(dir, "setsid");
+                var candidate = Path.Combine(dir, fileName);
                 if (File.Exists(candidate))
                 {
                     fullPath = candidate;

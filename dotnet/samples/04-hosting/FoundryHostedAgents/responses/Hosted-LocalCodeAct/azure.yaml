@@ -22,6 +22,7 @@ services:
         env:
             ASPNETCORE_URLS: http://+:8088
             AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+            LOCAL_CODEACT_PYTHON: ${LOCAL_CODEACT_PYTHON}
         container:
             resources:
                 cpu: "0.5"

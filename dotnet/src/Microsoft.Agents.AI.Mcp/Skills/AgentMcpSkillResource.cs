@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -12,48 +11,36 @@ using ModelContextProtocol.Protocol;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// An <see cref="AgentSkillResource"/> backed by content fetched from an MCP server.
+/// A supporting resource for a skill discovered through <c>skills/list</c>.
 /// </summary>
-/// <remarks>
-/// The <see cref="ReadResourceResult"/> is fetched eagerly by <see cref="AgentMcpSkill.GetResourceAsync"/>
-/// at construction time; <see cref="ReadAsync"/> extracts the content from the result.
-/// </remarks>
 internal sealed class AgentMcpSkillResource : AgentSkillResource
 {
-    private readonly ReadResourceResult _result;
+    private readonly ResourceContents _content;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentMcpSkillResource"/> class with a pre-fetched result.
+    /// Initializes a supporting resource with verified content fetched from the MCP server.
     /// </summary>
-    /// <param name="name">The resource name (e.g. a relative path or identifier).</param>
-    /// <param name="result">The result returned by the MCP server's <c>resources/read</c> request.</param>
+    /// <param name="name">The resource's relative name.</param>
+    /// <param name="content">The resource content that has passed size and digest verification.</param>
     /// <param name="description">An optional description of the resource.</param>
-    public AgentMcpSkillResource(string name, ReadResourceResult result, string? description = null)
+    public AgentMcpSkillResource(string name, ResourceContents content, string? description = null)
         : base(Throw.IfNullOrWhitespace(name), description)
     {
-        this._result = Throw.IfNull(result);
+        this._content = Throw.IfNull(content);
     }
 
     /// <inheritdoc/>
     /// <returns>
-    /// A <see cref="DataContent"/> when the resource contains binary content, a <see cref="string"/> when
-    /// it contains text, or <see langword="null"/> when the server returned no content blocks.
+    /// Binary content as <see cref="DataContent"/>, text as a <see cref="string"/>,
+    /// or <see langword="null"/> for empty text.
     /// </returns>
     public override Task<object?> ReadAsync(IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default)
     {
-        BlobResourceContents? blob = this._result.Contents.OfType<BlobResourceContents>().FirstOrDefault();
-        if (blob is not null)
+        return Task.FromResult<object?>(this._content switch
         {
-            return Task.FromResult<object?>(blob.ToAIContent());
-        }
-
-        string text = string.Join("\n", this._result.Contents.OfType<TextResourceContents>().Select(c => c.Text));
-
-        if (text.Length == 0)
-        {
-            return Task.FromResult<object?>(null);
-        }
-
-        return Task.FromResult<object?>(text);
+            TextResourceContents text => text.Text.Length == 0 ? null : text.Text,
+            BlobResourceContents binary => binary.ToAIContent(),
+            _ => throw new InvalidOperationException("Unsupported listed skill content."),
+        });
     }
 }

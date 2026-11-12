@@ -49,7 +49,7 @@ internal sealed class HostedWorkflowCheckpointingHealthCheck : IHealthCheck
     /// </summary>
     internal bool IsHosted { get; set; } = FoundryEnvironment.IsHosted;
 
-    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
+    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(context);
 
@@ -57,42 +57,48 @@ internal sealed class HostedWorkflowCheckpointingHealthCheck : IHealthCheck
         {
             // Nothing redirects checkpoints outside a Foundry container, so an agent that brings its
             // own checkpoint manager is not competing with anything.
-            return Task.FromResult(HealthCheckResult.Healthy(
-                "Workflow checkpointing: not running in a Foundry container, so workflow checkpoints are left where each agent puts them."));
+            return HealthCheckResult.Healthy(
+                "Workflow checkpointing: not running in a Foundry container, so workflow checkpoints are left where each agent puts them.");
         }
 
         List<string> incompatibleAgents = [];
         var checkedAgents = 0;
 
-        foreach (var agent in ServiceCollectionExtensions.ResolveRegisteredAgents(this._serviceProvider))
+        // Agents may be registered as scoped or transient, so they are resolved from a scope that is
+        // disposed once the check is done, the same way the response handler resolves them per run.
+        AsyncServiceScope serviceScope = this._serviceProvider.CreateAsyncScope();
+        await using (serviceScope.ConfigureAwait(false))
         {
-            if (agent.GetService<WorkflowAgentMetadata>() is not { } metadata)
+            foreach (var agent in ServiceCollectionExtensions.ResolveRegisteredAgents(serviceScope.ServiceProvider))
             {
-                continue;
-            }
+                if (agent.GetService<WorkflowAgentMetadata>() is not { } metadata)
+                {
+                    continue;
+                }
 
-            checkedAgents++;
-            AIAgent redirected = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(
-                agent,
-                this._serviceProvider.GetService<ILoggerFactory>());
+                checkedAgents++;
+                AIAgent redirected = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(
+                    agent,
+                    this._serviceProvider.GetService<ILoggerFactory>());
 
-            if (metadata.UsesOwnCheckpointStorage || ReferenceEquals(redirected, agent))
-            {
-                incompatibleAgents.Add(agent.Name ?? agent.Id);
+                if (metadata.UsesOwnCheckpointStorage || ReferenceEquals(redirected, agent))
+                {
+                    incompatibleAgents.Add(agent.Name ?? agent.Id);
+                }
             }
         }
 
         if (incompatibleAgents.Count > 0)
         {
-            return Task.FromResult(new HealthCheckResult(
+            return new HealthCheckResult(
                 status: context.Registration.FailureStatus,
                 description: string.Create(
                     CultureInfo.InvariantCulture,
                     $"Workflow checkpointing: {incompatibleAgents.Count} registered workflow agent(s) cannot use the checkpoint store supplied by hosting. Remove a caller-configured checkpoint manager and register the workflow agent directly rather than behind middleware."),
-                data: new Dictionary<string, object>(StringComparer.Ordinal) { ["incompatibleAgents"] = incompatibleAgents }));
+                data: new Dictionary<string, object>(StringComparer.Ordinal) { ["incompatibleAgents"] = incompatibleAgents });
         }
 
-        return Task.FromResult(HealthCheckResult.Healthy(
-            string.Create(CultureInfo.InvariantCulture, $"Workflow checkpointing: {checkedAgents} workflow agent(s) checked, all leaving their checkpoint storage to hosting.")));
+        return HealthCheckResult.Healthy(
+            string.Create(CultureInfo.InvariantCulture, $"Workflow checkpointing: {checkedAgents} workflow agent(s) checked, all leaving their checkpoint storage to hosting."));
     }
 }

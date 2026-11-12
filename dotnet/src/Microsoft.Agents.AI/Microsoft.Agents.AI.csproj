@@ -10,6 +10,7 @@
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectSharedRedaction>true</InjectSharedRedaction>
     <InjectSharedUsage>true</InjectSharedUsage>
+    <InjectSharedSkills>true</InjectSharedSkills>
     <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
     <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
