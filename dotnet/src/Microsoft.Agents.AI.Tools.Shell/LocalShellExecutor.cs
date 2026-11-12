@@ -131,6 +131,9 @@ public sealed class LocalShellExecutor : ShellExecutor
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The captured <see cref="ShellResult"/>.</returns>
     /// <exception cref="ShellCommandRejectedException">Thrown when the policy denies the command.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown on Linux and macOS when the shell's <c>PATH</c> is missing or has no fully qualified directories.
+    /// </exception>
     public override async Task<ShellResult> RunAsync(string command, CancellationToken cancellationToken = default)
     {
         if (command is null)

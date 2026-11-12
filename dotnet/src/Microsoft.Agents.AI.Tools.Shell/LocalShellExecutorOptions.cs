@@ -71,7 +71,8 @@ public sealed class LocalShellExecutorOptions
     /// <c>PATH</c> passed to the shell, including a <c>PATH</c> supplied here. On Windows,
     /// <c>NoDefaultCurrentDirectoryInExePath</c> is also set, so <c>cmd.exe</c> does not run
     /// programs from the working directory unless they are named with a path, such as
-    /// <c>.\tool.exe</c>.
+    /// <c>.\tool.exe</c>. On Linux and macOS, the shell is not started if <c>PATH</c> is removed or
+    /// has no fully qualified directories left.
     /// </remarks>
     public IReadOnlyDictionary<string, string?>? Environment { get; set; }
 

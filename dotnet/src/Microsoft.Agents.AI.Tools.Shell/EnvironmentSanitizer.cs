@@ -51,6 +51,9 @@ internal static class EnvironmentSanitizer
     /// Call this after all other changes to <paramref name="environment"/> have been applied.
     /// </remarks>
     /// <param name="environment">The environment dictionary to update in-place.</param>
+    /// <exception cref="InvalidOperationException">
+    /// On platforms other than Windows, <c>PATH</c> is missing or has no fully qualified directories.
+    /// </exception>
     public static void RestrictExecutableSearch(IDictionary<string, string?> environment)
     {
         if (environment is null)
@@ -71,14 +74,24 @@ internal static class EnvironmentSanitizer
             }
         }
 
+        var hasUsablePath = false;
         foreach (var name in pathNames)
         {
-            environment[name] = PathValidation.RemoveRelativePathEntries(environment[name]);
+            var filtered = PathValidation.RemoveRelativePathEntries(environment[name]);
+            environment[name] = filtered;
+            hasUsablePath |= filtered.Length > 0;
         }
 
         if (isWindows)
         {
             environment[NoDefaultCurrentDirectoryInExePath] = "1";
+        }
+        else if (!hasUsablePath)
+        {
+            // POSIX shells treat an empty PATH as the current directory, and bash may use a built-in
+            // default that includes it when PATH is missing.
+            throw new InvalidOperationException(
+                "The shell's PATH has no fully qualified directories. Set LocalShellExecutorOptions.Environment[\"PATH\"] to a list of full directory paths.");
         }
     }
 

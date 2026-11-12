@@ -545,6 +545,33 @@ public sealed class LocalShellExecutorTests
         }
     }
 
+    [Theory]
+    [InlineData(ShellMode.Stateless, "relative")]
+    [InlineData(ShellMode.Stateless, "removed")]
+    [InlineData(ShellMode.Persistent, "relative")]
+    [InlineData(ShellMode.Persistent, "removed")]
+    public async Task PathWithoutFullyQualifiedEntries_ThrowsOnPosixAsync(ShellMode mode, string pathKind)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return;
+        }
+
+        // Arrange
+        var path = string.Equals(pathKind, "relative", StringComparison.Ordinal)
+            ? string.Join(Path.PathSeparator, "bin", ".", string.Empty)
+            : null;
+        await using var shell = new LocalShellExecutor(new()
+        {
+            Mode = mode,
+            Environment = new Dictionary<string, string?> { ["PATH"] = path },
+            Timeout = TimeSpan.FromSeconds(20),
+        });
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => shell.RunAsync("echo hi"));
+    }
+
     [Fact]
     public async Task ShellExecutor_LocalShellTool_ImplementsInterfaceAsync()
     {
