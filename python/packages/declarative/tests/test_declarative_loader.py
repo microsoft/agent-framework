@@ -19,6 +19,7 @@ from agent_framework_declarative._models import (
     AnonymousConnection,
     ApiKeyConnection,
     ArrayProperty,
+    Binding,
     CodeInterpreterTool,
     Connection,
     CustomTool,
@@ -1551,6 +1552,128 @@ tools:
         # Should have parsed the tool with binding
         tools = agent.default_options.get("tools", [])
         assert len(tools) == 1
+
+    @pytest.mark.parametrize("safe_mode", [True, False])
+    async def test_parse_registered_function_tool_preserves_policy(
+        self, function_call_client: Any, safe_mode: bool
+    ) -> None:
+        """Registered tool policy remains authoritative after declarative wrapping."""
+        from agent_framework import ChatResponse, Content, Message
+        from agent_framework import FunctionTool as AFFunctionTool
+
+        from agent_framework_declarative import AgentFactory
+
+        executions: list[str] = []
+
+        def sensitive_action() -> str:
+            executions.append("executed")
+            return "done"
+
+        def parse_result(result: Any) -> str:
+            return f"parsed: {result}"
+
+        registered_tool = AFFunctionTool(
+            name="registered_action",
+            description="Registered description",
+            func=sensitive_action,
+            approval_mode="always_require",
+            kind="sensitive",
+            max_invocations=1,
+            max_invocation_exceptions=1,
+            additional_properties={"security": {"integrity": "trusted"}},
+            result_parser=parse_result,
+        )
+        factory = AgentFactory(bindings={"registered_action": registered_tool}, safe_mode=safe_mode)
+        wrapped_tool = factory._parse_tool(
+            FunctionTool(
+                name="declarative_action",
+                description="Declarative description",
+                bindings=[Binding(name="registered_action")],
+            )
+        )
+
+        assert isinstance(wrapped_tool, AFFunctionTool)
+        assert wrapped_tool.name == "declarative_action"
+        assert wrapped_tool.description == "Declarative description"
+        assert wrapped_tool.func is registered_tool
+        assert wrapped_tool.approval_mode == "always_require"
+        assert wrapped_tool.kind == registered_tool.kind
+        assert wrapped_tool.additional_properties == registered_tool.additional_properties
+        assert wrapped_tool.result_parser is registered_tool.result_parser
+        assert wrapped_tool.max_invocations is None
+        assert wrapped_tool.max_invocation_exceptions is None
+
+        function_call_client.responses.append(
+            ChatResponse(
+                messages=Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call-1",
+                            name="declarative_action",
+                            arguments={},
+                        )
+                    ],
+                )
+            )
+        )
+        response = await function_call_client.get_response(
+            [Message(role="user", contents=["Run the sensitive action."])],
+            options={"tools": [wrapped_tool]},
+        )
+
+        assert executions == []
+        approval_requests = [
+            content
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        ]
+        assert len(approval_requests) == 1
+
+    def test_parse_registered_function_tool_keeps_invocation_limit(self) -> None:
+        """The original registered tool remains the invocation-limit authority."""
+        from agent_framework import FunctionTool as AFFunctionTool
+        from agent_framework.exceptions import ToolException
+
+        from agent_framework_declarative import AgentFactory
+
+        registered_tool = AFFunctionTool(name="registered_action", func=lambda: "done", max_invocations=1)
+        wrapped_tool = AgentFactory(bindings={"registered_action": registered_tool})._parse_tool(
+            FunctionTool(name="declarative_action", bindings=[Binding(name="registered_action")])
+        )
+
+        assert isinstance(wrapped_tool, AFFunctionTool)
+        assert wrapped_tool() == "done"
+        with pytest.raises(ToolException, match="maximum invocation limit"):
+            wrapped_tool()
+
+        assert registered_tool.invocation_count == 1
+        assert wrapped_tool.max_invocations is None
+
+    def test_parse_registered_function_tool_keeps_exception_limit(self) -> None:
+        """The original registered tool remains the exception-limit authority."""
+        from agent_framework import FunctionTool as AFFunctionTool
+        from agent_framework.exceptions import ToolException
+
+        from agent_framework_declarative import AgentFactory
+
+        def fail() -> None:
+            raise RuntimeError("boom")
+
+        registered_tool = AFFunctionTool(name="registered_action", func=fail, max_invocation_exceptions=1)
+        wrapped_tool = AgentFactory(bindings={"registered_action": registered_tool})._parse_tool(
+            FunctionTool(name="declarative_action", bindings=[Binding(name="registered_action")])
+        )
+
+        assert isinstance(wrapped_tool, AFFunctionTool)
+        with pytest.raises(RuntimeError, match="boom"):
+            wrapped_tool()
+        with pytest.raises(ToolException, match="maximum exception limit"):
+            wrapped_tool()
+
+        assert registered_tool.invocation_exception_count == 1
+        assert wrapped_tool.max_invocation_exceptions is None
 
     def test_parse_file_search_tool_with_all_options(self):
         """Test parsing FileSearchTool with ranker and filters."""

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 import yaml
 from agent_framework import (
@@ -757,11 +757,22 @@ class AgentFactory:
                     for binding in tool_resource.bindings:
                         if binding.name and (func := self.bindings.get(binding.name)):
                             break
+                registered_tool = func if isinstance(func, AFFunctionTool) else None
+                approval_mode: Literal["always_require", "never_require"] | None = None
+                if registered_tool:
+                    if registered_tool.approval_mode == "always_require":
+                        approval_mode = "always_require"
+                    elif registered_tool.approval_mode == "never_require":
+                        approval_mode = "never_require"
                 return AFFunctionTool(
                     name=tool_resource.name,  # type: ignore
                     description=tool_resource.description,  # type: ignore
                     input_model=tool_resource.parameters.to_json_schema() if tool_resource.parameters else None,
                     func=func,
+                    approval_mode=approval_mode,
+                    kind=registered_tool.kind if registered_tool else None,
+                    additional_properties=registered_tool.additional_properties if registered_tool else None,
+                    result_parser=registered_tool.result_parser if registered_tool else None,
                 )
             case WebSearchTool():
                 result: dict[str, Any] = {"type": "web_search_preview"}
