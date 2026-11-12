@@ -18,6 +18,7 @@ from agent_framework import (
     InMemoryAgentFileStore,
 )
 from agent_framework._harness._file_memory import (
+    _DIGEST_DESCRIPTION_PREFIX,
     _MAX_INDEX_ENTRIES,
     _MEMORY_INDEX_FILE_NAME,
     DEFAULT_FILE_MEMORY_INSTRUCTIONS,
@@ -25,6 +26,8 @@ from agent_framework._harness._file_memory import (
     _combine_paths,
     _description_file_name,
     _is_internal_file,
+    _is_reserved_digest_name,
+    _legacy_description_file_name,
 )
 from agent_framework._sessions import SessionContext
 
@@ -55,13 +58,71 @@ async def _prepare(
     return context, tools
 
 
-def test_description_file_name_replaces_extension() -> None:
-    """The description sidecar replaces a known extension and appends otherwise."""
-    assert _description_file_name("notes.md") == "notes_description.md"
-    assert _description_file_name("data.json") == "data_description.md"
-    assert _description_file_name("noext") == "noext_description.md"
-    # Leading-dot files have no stem, so the suffix is appended.
-    assert _description_file_name(".hidden") == ".hidden_description.md"
+def test_description_file_name_appends_to_the_whole_name() -> None:
+    """The description sidecar keeps the whole memory file name, so distinct files stay distinct."""
+    assert _description_file_name("notes.md") == "notes.md._description.md"
+    assert _description_file_name("data.json") == "data.json._description.md"
+    assert _description_file_name("noext") == "noext._description.md"
+    # Leading-dot files have no stem, so the suffix is appended to the whole name.
+    assert _description_file_name(".hidden") == ".hidden._description.md"
+    # The original defect: names differing only by extension must not share a sidecar.
+    assert _description_file_name("notes") == "notes._description.md"
+    assert _description_file_name("notes.md") != _description_file_name("notes")
+    assert _description_file_name("notes.md") != _description_file_name("notes.md.md")
+
+
+def test_description_file_name_is_disjoint_from_legacy_names() -> None:
+    """No new-format sidecar name can equal a legacy sidecar name (format isolation).
+
+    A legacy sidecar is ``<stem>_description.md`` and a stem never ends in a dot,
+    so appending ``._description.md`` to a memory file name can never reproduce
+    one. This is what stops an old sidecar from being read as another memory's
+    description during the format transition.
+    """
+    for memory_name in ("notes.md", "notes", "notes.md.md", ".hidden", "a.b.c"):
+        new_name = _description_file_name(memory_name)
+        assert new_name.endswith("._description.md")
+        for legacy_of in ("notes.md", "notes", "notes.md.md", ".hidden", "a.b.c", "x.y"):
+            assert new_name != _legacy_description_file_name(legacy_of)
+
+
+def test_description_file_name_stays_within_filesystem_name_limits() -> None:
+    """Sidecars over the 255-byte name budget fall back to a digest that fits inside it."""
+    # 238 + ".md" = 241 bytes; the suffix adds 16 -> 257 > 255, so digest.
+    long_name = "a" * 238 + ".md"
+    sidecar = _description_file_name(long_name)
+    assert sidecar.startswith(_DIGEST_DESCRIPTION_PREFIX)
+    assert sidecar.endswith("._description.md")
+    assert len(sidecar.encode("utf-8")) <= 255
+
+    # At the budget the verbatim name is kept, so ordinary names stay readable.
+    fitting = "b" * (255 - len("._description.md"))
+    assert _description_file_name(fitting) == f"{fitting}._description.md"
+
+    # Distinct long names still get distinct sidecars (injective).
+    assert _description_file_name(long_name) != _description_file_name("a" * 237 + "c.md")
+    # Deterministic: the same name always resolves to the same sidecar.
+    assert _description_file_name(long_name) == _description_file_name(long_name)
+
+
+def test_reserved_prefix_routes_to_digest_case_and_unicode_safely() -> None:
+    """Every spelling a folding filesystem treats as ``~memory-desc-`` must take the digest branch."""
+    # ASCII case variants.
+    assert _is_reserved_digest_name("~memory-desc-forged")
+    assert _is_reserved_digest_name("~MEMORY-DESC-FORGED")
+    assert _is_reserved_digest_name("~MeMoRy-DeSc-Forged")
+    # Fullwidth (NFKC) spelling of the whole prefix.
+    assert _is_reserved_digest_name("～ｍｅｍｏｒｙ－ｄｅｓｃ－forged")
+    # Long s U+017F casefolds to ASCII 's'.
+    assert _is_reserved_digest_name("~memory-deſc-forged")
+    # A name merely containing the prefix is not reserved.
+    assert not _is_reserved_digest_name("notes.md")
+    assert not _is_reserved_digest_name("prefix~memory-desc-x.md")
+
+    # Reserved names take the digest branch even though they are short.
+    forged = _description_file_name("~memory-desc-forged")
+    assert forged.startswith(_DIGEST_DESCRIPTION_PREFIX)
+    assert forged != "~memory-desc-forged._description.md"
 
 
 def test_is_internal_file_detects_sidecars_and_index() -> None:
@@ -152,7 +213,7 @@ async def test_description_sidecar_is_written_and_listed() -> None:
     )
     assert "with description" in _text(result)
 
-    sidecar = await store.read(_combine_paths("user-1", "arch_description.md"))
+    sidecar = await store.read(_combine_paths("user-1", "arch.md._description.md"))
     assert sidecar == "system architecture"
 
     listed = json.loads(_text(await list_files.invoke()))
@@ -160,7 +221,7 @@ async def test_description_sidecar_is_written_and_listed() -> None:
 
     # Re-saving without a description removes the sidecar.
     await save.invoke(arguments={"file_name": "arch.md", "content": "big content"})
-    assert await store.read(_combine_paths("user-1", "arch_description.md")) is None
+    assert await store.read(_combine_paths("user-1", "arch.md._description.md")) is None
     listed_again = json.loads(_text(await list_files.invoke()))
     assert listed_again == [{"name": "arch.md", "type": "file", "description": None}]
 
@@ -172,10 +233,10 @@ async def test_delete_removes_sidecar() -> None:
     _, tools = await _prepare(provider)
 
     await tools["file_memory_write"].invoke(arguments={"file_name": "arch.md", "content": "x", "description": "desc"})
-    assert await store.read(_combine_paths("user-1", "arch_description.md")) == "desc"
+    assert await store.read(_combine_paths("user-1", "arch.md._description.md")) == "desc"
 
     await tools["file_memory_delete"].invoke(arguments={"file_name": "arch.md"})
-    assert await store.read(_combine_paths("user-1", "arch_description.md")) is None
+    assert await store.read(_combine_paths("user-1", "arch.md._description.md")) is None
 
 
 async def test_index_is_rebuilt_and_injected_on_next_run() -> None:
@@ -740,6 +801,155 @@ async def test_file_memory_replace_lines_honours_expected_line() -> None:
         }
     )
     assert await store.read("scope-1/notes.md") == "one\nTWO\nthree\n"
+
+
+# endregion
+
+
+# region description sidecar isolation (#9871)
+
+
+async def test_extension_aliases_have_independent_lifecycles() -> None:
+    """The #9871 repro: ``notes.md`` and ``notes`` must not share a sidecar.
+
+    One file's description must never overwrite the other's, rewriting one
+    without a description must not destroy the other's, and deleting one must
+    not delete the other.
+    """
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+    save = tools["file_memory_write"]
+    delete = tools["file_memory_delete"]
+    read = tools["file_memory_read"]
+    list_files = tools["file_memory_ls"]
+
+    await save.invoke(arguments={"file_name": "notes.md", "content": "a", "description": "architecture"})
+    await save.invoke(arguments={"file_name": "notes", "content": "b", "description": "scratch"})
+
+    # Each file owns its own sidecar.
+    assert await store.read(_combine_paths("user-1", "notes.md._description.md")) == "architecture"
+    assert await store.read(_combine_paths("user-1", "notes._description.md")) == "scratch"
+    listed = {e["name"]: e["description"] for e in json.loads(_text(await list_files.invoke()))}
+    assert listed == {"notes.md": "architecture", "notes": "scratch"}
+
+    # Rewriting ``notes`` without a description must not destroy ``notes.md``'s.
+    await save.invoke(arguments={"file_name": "notes", "content": "b2"})
+    assert await store.read(_combine_paths("user-1", "notes.md._description.md")) == "architecture"
+    assert await store.read(_combine_paths("user-1", "notes._description.md")) is None
+
+    # Deleting ``notes`` must not delete ``notes.md`` or its description.
+    await delete.invoke(arguments={"file_name": "notes"})
+    assert _text(await read.invoke(arguments={"file_name": "notes.md"})) == "a"
+    listed = {e["name"]: e["description"] for e in json.loads(_text(await list_files.invoke()))}
+    assert listed == {"notes.md": "architecture"}
+
+
+async def test_extension_aliases_do_not_share_a_legacy_sidecar() -> None:
+    """``notes`` and ``notes.md`` both stem to ``notes_description.md``; neither may claim it."""
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+    # Both files exist up front alongside the pre-isolation sidecar they share,
+    # so the sidecar is ambiguous for every subsequent operation.
+    await store.write(_combine_paths("user-1", "notes.md"), "a")
+    await store.write(_combine_paths("user-1", "notes"), "b")
+    await store.write(_combine_paths("user-1", "notes_description.md"), "legacy")
+
+    listed = {e["name"]: e["description"] for e in json.loads(_text(await tools["file_memory_ls"].invoke()))}
+    assert listed == {"notes.md": None, "notes": None}
+
+    # Rewriting one of them without a description must not destroy the shared
+    # sidecar: it is ambiguous, so it is neither read nor deleted.
+    await tools["file_memory_write"].invoke(arguments={"file_name": "notes.md", "content": "a2"})
+    assert await store.read(_combine_paths("user-1", "notes_description.md")) == "legacy"
+
+
+async def test_unambiguous_legacy_sidecar_is_still_read() -> None:
+    """A legacy sidecar that can only belong to one file remains visible after the format change."""
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+    await store.write(_combine_paths("user-1", "arch.md"), "content")
+    await store.write(_combine_paths("user-1", "arch_description.md"), "legacy summary")
+
+    listed = json.loads(_text(await tools["file_memory_ls"].invoke()))
+    assert listed == [{"name": "arch.md", "type": "file", "description": "legacy summary"}]
+
+
+async def test_clearing_description_clears_unambiguous_legacy_sidecar() -> None:
+    """Rewriting without a description clears the legacy sidecar too, so it cannot resurface."""
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+    await store.write(_combine_paths("user-1", "arch.md"), "content")
+    await store.write(_combine_paths("user-1", "arch_description.md"), "legacy summary")
+
+    await tools["file_memory_write"].invoke(arguments={"file_name": "arch.md", "content": "content2"})
+    assert await store.read(_combine_paths("user-1", "arch_description.md")) is None
+    listed = json.loads(_text(await tools["file_memory_ls"].invoke()))
+    assert listed == [{"name": "arch.md", "type": "file", "description": None}]
+
+
+async def test_digest_sidecar_follows_the_stored_name_across_case_aliases() -> None:
+    """A digest sidecar derives from the backend's canonical name, not the caller's spelling.
+
+    On a case-folding store the same memory can be addressed several ways;
+    hashing each spelling would scatter one description across sidecars, and a
+    later read under a different spelling would find nothing.
+    """
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+    save = tools["file_memory_write"]
+    list_files = tools["file_memory_ls"]
+    delete = tools["file_memory_delete"]
+
+    # Long enough that the verbatim sidecar exceeds the 255-byte budget.
+    canonical = "N" + "a" * 240 + ".md"
+    alias = canonical.lower()
+
+    await save.invoke(arguments={"file_name": canonical, "content": "x", "description": "first"})
+    entries = [e.name for e in await store.list_children("user-1")]
+    sidecars = [name for name in entries if name.startswith(_DIGEST_DESCRIPTION_PREFIX)]
+    assert len(sidecars) == 1
+
+    # Editing through the case alias must hit the same sidecar, not a second one.
+    await save.invoke(arguments={"file_name": alias, "content": "y", "description": "second"})
+    entries = [e.name for e in await store.list_children("user-1")]
+    assert [name for name in entries if name.startswith(_DIGEST_DESCRIPTION_PREFIX)] == sidecars
+
+    listed = json.loads(_text(await list_files.invoke()))
+    assert len(listed) == 1
+    assert listed[0]["description"] == "second"
+    assert await store.read(_combine_paths("user-1", sidecars[0])) == "second"
+
+    # Deleting through the alias removes the file and its single sidecar.
+    await delete.invoke(arguments={"file_name": alias})
+    remaining = [e.name for e in await store.list_children("user-1") if not e.name.startswith("~")]
+    assert remaining == [_MEMORY_INDEX_FILE_NAME]
+
+
+async def test_long_name_round_trips_through_write_list_delete() -> None:
+    """A name over the byte budget still writes, lists with its description, and deletes cleanly."""
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store, scope="user-1")
+    _, tools = await _prepare(provider)
+
+    long_name = "c" * 240 + ".md"
+    await tools["file_memory_write"].invoke(
+        arguments={"file_name": long_name, "content": "body", "description": "big file"}
+    )
+
+    listed = json.loads(_text(await tools["file_memory_ls"].invoke()))
+    assert listed == [{"name": long_name, "type": "file", "description": "big file"}]
+
+    await tools["file_memory_delete"].invoke(arguments={"file_name": long_name})
+    listed = json.loads(_text(await tools["file_memory_ls"].invoke()))
+    assert listed == []
+    # No orphaned sidecar is left behind.
+    leftovers = [e.name for e in await store.list_children("user-1") if e.name != _MEMORY_INDEX_FILE_NAME]
+    assert leftovers == []
 
 
 # endregion

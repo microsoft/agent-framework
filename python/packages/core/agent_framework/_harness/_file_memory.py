@@ -4,10 +4,11 @@
 
 :class:`FileMemoryProvider` gives an agent a session-scoped, file-based memory
 system. Each memory is stored as an individual file with a meaningful name, and
-large files can carry a companion description file (suffixed with
-``_description.md``) that provides a short summary used for discovery. A
-``memories.md`` index file is maintained automatically and injected into the
-agent's context so the model knows what memories already exist.
+large files can carry a companion description file — named after the whole
+memory file name (``notes.md`` becomes ``notes.md._description.md``) — that
+provides a short summary used for discovery. A ``memories.md`` index file is
+maintained automatically and injected into the agent's context so the model
+knows what memories already exist.
 
 File access is mediated through the :class:`~agent_framework.AgentFileStore`
 abstraction (shared with :class:`~agent_framework.FileAccessProvider`), so the
@@ -42,7 +43,10 @@ per-invocation :class:`~agent_framework.SessionContext` in
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import unicodedata
+from collections.abc import Iterable
 from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
@@ -84,24 +88,151 @@ DEFAULT_FILE_MEMORY_INSTRUCTIONS = (
 
 
 _DESCRIPTION_SUFFIX = "_description.md"
+# New-format sidecars are ``<whole memory file name>._description.md``. The
+# separating dot is what isolates the format: a *legacy* sidecar is
+# ``<stem>_description.md`` where ``<stem>`` is the memory file name with its
+# last extension removed, and a stem never ends in ``.`` (removing an extension
+# always cuts at a dot). So ``<name>._description.md`` can never equal any
+# legacy sidecar name, which makes the two namespaces disjoint by construction:
+# an old sidecar can never be read as another memory's description.
+_NEW_DESCRIPTION_SUFFIX = f".{_DESCRIPTION_SUFFIX}"
 _MEMORY_INDEX_FILE_NAME = "memories.md"
 _MAX_INDEX_ENTRIES = 50
-# Prefix for scopes that are not usable verbatim as a folder name. Kept distinct
-# from the other harness prefixes so the same value under a different component
-# never lands in the same directory.
+# Common per-component filesystem name budget (bytes on ext4, APFS and NTFS).
+# A sidecar must fit inside it so every valid memory file name keeps a writable
+# companion; names too long to carry the suffix verbatim use a digest instead.
+_MAX_DESCRIPTION_FILE_NAME_BYTES = 255
+# Prefix for scope values that are not usable verbatim as a folder name. Kept
+# distinct from the other harness prefixes so the same value under a different
+# component never lands in the same directory.
 _ENCODED_SCOPE_PREFIX = "~scope-"
+# Namespace for description sidecars that cannot be spelled verbatim: memory
+# names whose sidecar would exceed the name budget, plus names that could
+# otherwise forge a digest sidecar. Digest names keep the description suffix so
+# they stay internal and hidden from the agent.
+_DIGEST_DESCRIPTION_PREFIX = "~memory-desc-"
+
+
+def _is_reserved_digest_name(file_name: str) -> bool:
+    """Return whether ``file_name`` belongs to the reserved digest namespace.
+
+    The check runs on an NFKC-normalized, case-folded copy of the name so that
+    every spelling a case-folding or Unicode-folding filesystem treats as the
+    prefix is caught: ASCII case variants (``~MEMORY-DESC-``), Unicode case
+    pairs (long s folding to ``s``) and NFKC compatibility forms (a fullwidth
+    spelling of the prefix). Matching only ASCII lower-casing would
+    let a short name alias a long name's digest sidecar on default APFS or
+    NTFS, where writing the short name would overwrite the long name's
+    description and deleting it would remove that description.
+    """
+    normalized = unicodedata.normalize("NFKC", file_name).casefold()
+    return normalized.startswith(_DIGEST_DESCRIPTION_PREFIX)
+
+
+def _requires_digest_sidecar(file_name: str) -> bool:
+    """Return whether ``file_name`` must use the digest sidecar namespace.
+
+    This is true when the verbatim sidecar would exceed the filesystem name
+    budget, and when the name itself sits in the reserved digest namespace —
+    otherwise a short name could be spelled so that its verbatim sidecar is
+    exactly another name's digest sidecar, and the two would collide without
+    any hash collision.
+    """
+    if _is_reserved_digest_name(file_name):
+        return True
+    return len(f"{file_name}{_NEW_DESCRIPTION_SUFFIX}".encode("utf-8")) > _MAX_DESCRIPTION_FILE_NAME_BYTES
 
 
 def _description_file_name(file_name: str) -> str:
     """Return the companion description file name for ``file_name``.
 
-    The suffix replaces the original extension when present (so ``notes.md``
-    becomes ``notes_description.md``); otherwise it is appended.
+    The suffix is appended to the *whole* memory file name after a separating
+    dot, so ``notes.md`` becomes ``notes.md._description.md`` while ``notes``
+    becomes ``notes._description.md``. Keeping the extension in the derivation
+    makes the mapping injective — distinct memory files always get distinct
+    sidecars — and the dot keeps the new names disjoint from every legacy
+    ``<stem>_description.md`` name (see :data:`_NEW_DESCRIPTION_SUFFIX`).
+
+    Names whose verbatim sidecar would not fit within
+    :data:`_MAX_DESCRIPTION_FILE_NAME_BYTES`, and names in the reserved digest
+    namespace, are derived from a SHA-256 digest instead. The caller is
+    responsible for passing the backend's canonical stored file name, because
+    on a case-folding store the digest must not depend on which spelling the
+    caller used.
+    """
+    if _requires_digest_sidecar(file_name):
+        digest = hashlib.sha256(file_name.encode("utf-8")).hexdigest()
+        return f"{_DIGEST_DESCRIPTION_PREFIX}{digest}{_NEW_DESCRIPTION_SUFFIX}"
+    return f"{file_name}{_NEW_DESCRIPTION_SUFFIX}"
+
+
+def _legacy_description_file_name(file_name: str) -> str:
+    """Return the pre-isolation description file name for ``file_name``.
+
+    Sidecars written before format isolation replaced the original extension
+    when one was present (``notes.md`` became ``notes_description.md``) and
+    appended the suffix otherwise. This name is only ever read as a fallback,
+    and only when :func:`_legacy_sidecar_is_unambiguous` says it can belong to
+    exactly one existing memory file.
     """
     dot_index = file_name.rfind(".")
     if dot_index > 0:
         return f"{file_name[:dot_index]}{_DESCRIPTION_SUFFIX}"
     return f"{file_name}{_DESCRIPTION_SUFFIX}"
+
+
+def _legacy_sidecar_is_unambiguous(file_name: str, existing_file_names: Iterable[str]) -> bool:
+    """Return whether the legacy sidecar of ``file_name`` can only belong to it.
+
+    Two memory files share a legacy sidecar exactly when they share a stem, so
+    the sidecar is unambiguous when no other existing memory file maps to the
+    same legacy name. Reading it anyway would hand one memory another's
+    description; when it is ambiguous the description is left unread rather
+    than guessed at.
+
+    Stems are compared with :meth:`str.casefold` because a case-folding store
+    (NTFS, APFS) treats ``Notes.md`` and ``notes.md`` as the same file and folds
+    their legacy sidecars together too; folding in the conservative direction
+    only ever suppresses a risky read, it never invents one.
+    """
+    dot_index = file_name.rfind(".")
+    folded_file_name = file_name.casefold()
+    stem = (file_name[:dot_index] if dot_index > 0 else file_name).casefold()
+    for other in existing_file_names:
+        if other.casefold() == folded_file_name:
+            continue
+        other_dot_index = other.rfind(".")
+        other_stem = (other[:other_dot_index] if other_dot_index > 0 else other).casefold()
+        if other_stem == stem:
+            return False
+    return True
+
+
+async def _canonical_file_name(store: AgentFileStore, working_folder: str, file_name: str) -> str:
+    """Return the name under which ``file_name`` is actually stored.
+
+    Only consulted before hashing a digest sidecar: on a case-folding store the
+    same memory can be addressed under several spellings, and hashing each
+    spelling would scatter one description across several sidecars. A
+    case-sensitive store keeps distinct spellings distinct because
+    :meth:`~agent_framework.AgentFileStore.file_exists` answers for the exact
+    name only, so a differently-cased name that does not exist yet keeps its own
+    spelling instead of being collapsed onto its neighbour.
+
+    The alias search folds with :meth:`str.lower`, mirroring the key function
+    :class:`InMemoryAgentFileStore` itself uses, so an entry is only adopted
+    when the store would treat it as the very same file.
+    """
+    entries = await store.list_children(working_folder)
+    if any(entry.name == file_name for entry in entries):
+        return file_name
+    if not await store.file_exists(_combine_paths(working_folder, file_name)):
+        return file_name
+    lowered = file_name.lower()
+    for entry in entries:
+        if entry.name.lower() == lowered:
+            return entry.name
+    return file_name
 
 
 def _is_internal_file(file_name: str) -> bool:
@@ -323,6 +454,41 @@ class FileMemoryProvider(ContextProvider):
             )
         return _storage_key_segment(raw_scope, encoded_prefix=_ENCODED_SCOPE_PREFIX)
 
+    async def _memory_file_names(self, working_folder: str) -> set[str]:
+        """Return the agent-visible memory file names in ``working_folder``."""
+        entries = await self.store.list_children(working_folder)
+        return {
+            entry.name for entry in entries if entry.type == FileStoreEntry.FILE and not _is_internal_file(entry.name)
+        }
+
+    async def _sidecar_path(self, working_folder: str, file_name: str) -> str:
+        """Return the store path of the new-format description sidecar for ``file_name``.
+
+        Digest names are derived from the backend's canonical stored file name
+        so a case-folding store cannot scatter one description across several
+        sidecars; verbatim names need no resolution because the store folds them
+        on its own.
+        """
+        if _requires_digest_sidecar(file_name):
+            file_name = await _canonical_file_name(self.store, working_folder, file_name)
+        return _combine_paths(working_folder, _description_file_name(file_name))
+
+    def _legacy_sidecar_path(self, working_folder: str, file_name: str, existing: set[str]) -> str | None:
+        """Return the legacy sidecar path, or ``None`` when it is not unambiguously ``file_name``'s."""
+        if not _legacy_sidecar_is_unambiguous(file_name, existing):
+            return None
+        return _combine_paths(working_folder, _legacy_description_file_name(file_name))
+
+    async def _read_description(self, working_folder: str, file_name: str, existing: set[str]) -> str | None:
+        """Return the description for ``file_name``, falling back to an unambiguous legacy sidecar."""
+        description = await self.store.read(await self._sidecar_path(working_folder, file_name))
+        if description is not None:
+            return description
+        legacy_path = self._legacy_sidecar_path(working_folder, file_name, existing)
+        if legacy_path is None:
+            return None
+        return await self.store.read(legacy_path)
+
     async def _rebuild_index(self, working_folder: str) -> None:
         """Rebuild the ``memories.md`` index for ``working_folder``.
 
@@ -332,10 +498,11 @@ class FileMemoryProvider(ContextProvider):
         entries = await self.store.list_children(working_folder)
         file_names = [entry.name for entry in entries if entry.type == FileStoreEntry.FILE]
         sorted_files = sorted((name for name in file_names if not _is_internal_file(name)), key=str.lower)
+        available = set(sorted_files)
 
         lines = ["# Memory Index", ""]
         for file_name in sorted_files[:_MAX_INDEX_ENTRIES]:
-            description = await self.store.read(_combine_paths(working_folder, _description_file_name(file_name)))
+            description = await self._read_description(working_folder, file_name, available)
             if description and description.strip():
                 lines.append(f"- **{file_name}**: {description.strip()}")
             else:
@@ -377,18 +544,26 @@ class FileMemoryProvider(ContextProvider):
                 )
 
             path = _combine_paths(working_folder, normalized)
-            desc_path = _combine_paths(working_folder, _description_file_name(normalized))
             # Every mutating tool locks the whole working folder, not just the file, because each
             # write and delete rebuilds the folder's memories.md index. The lock is shared by all
             # providers on the store, including file-access tools editing a file in this folder, so
             # they cannot interleave edits or index rebuilds.
             async with _store_write_lock(self.store, working_folder):
                 try:
+                    desc_path = await self._sidecar_path(working_folder, normalized)
                     await self.store.write(path, content)
                     if description and description.strip():
                         await self.store.write(desc_path, description)
                     else:
                         await self.store.delete(desc_path)
+                        # A legacy sidecar left behind by the pre-isolation format would otherwise
+                        # be read back as this file's description, so clearing the description
+                        # clears it too — but only when it unambiguously belongs to this file.
+                        legacy_path = self._legacy_sidecar_path(
+                            working_folder, normalized, await self._memory_file_names(working_folder)
+                        )
+                        if legacy_path is not None:
+                            await self.store.delete(legacy_path)
                     await self._rebuild_index(working_folder)
                 except ValueError as exc:
                     return f"Could not write file '{file_name}': {exc}"
@@ -426,11 +601,19 @@ class FileMemoryProvider(ContextProvider):
                 return f"File '{file_name}' not found."
 
             path = _combine_paths(working_folder, normalized)
-            desc_path = _combine_paths(working_folder, _description_file_name(normalized))
             async with _store_write_lock(self.store, working_folder):
                 try:
+                    # Resolve the sidecar before the file disappears: a digest name is derived
+                    # from the backend's canonical stored name, which is only discoverable while
+                    # the file is still listed.
+                    desc_path = await self._sidecar_path(working_folder, normalized)
                     deleted = await self.store.delete(path)
                     await self.store.delete(desc_path)
+                    legacy_path = self._legacy_sidecar_path(
+                        working_folder, normalized, await self._memory_file_names(working_folder)
+                    )
+                    if legacy_path is not None:
+                        await self.store.delete(legacy_path)
                     await self._rebuild_index(working_folder)
                 except ValueError as exc:
                     return f"Could not delete file '{file_name}': {exc}"
@@ -443,22 +626,18 @@ class FileMemoryProvider(ContextProvider):
             """List all memory files with their descriptions (if available). Optionally filter file names with a glob_pattern (e.g. "*.md"). Internal files (description sidecars and the memory index) are not shown. Each entry is {"name": <name>, "type": "file", "description": <desc-or-null>}."""  # ruff:ignore[line-too-long]
             try:
                 entries = await self.store.list_children(working_folder)
+                file_names = [entry.name for entry in entries if entry.type == FileStoreEntry.FILE]
+                available = {name for name in file_names if not _is_internal_file(name)}
+                results: list[dict[str, Any]] = []
+                for file_name in file_names:
+                    if _is_internal_file(file_name):
+                        continue
+                    if not _matches_glob(file_name, glob_pattern):
+                        continue
+                    description = await self._read_description(working_folder, file_name, available)
+                    results.append({"name": file_name, "type": "file", "description": description})
             except OSError as exc:
                 return f"Could not list memory files: {exc.strerror or exc}"
-
-            file_names = [entry.name for entry in entries if entry.type == FileStoreEntry.FILE]
-            available = set(file_names)
-            results: list[dict[str, Any]] = []
-            for file_name in file_names:
-                if _is_internal_file(file_name):
-                    continue
-                if not _matches_glob(file_name, glob_pattern):
-                    continue
-                description: str | None = None
-                desc_file_name = _description_file_name(file_name)
-                if desc_file_name in available:
-                    description = await self.store.read(_combine_paths(working_folder, desc_file_name))
-                results.append({"name": file_name, "type": "file", "description": description})
             return results
 
         @tool(name="file_memory_replace", schema=_ReplaceInput, approval_mode="never_require")

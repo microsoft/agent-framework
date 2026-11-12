@@ -1151,10 +1151,19 @@ class InMemoryAgentFileStore(AgentFileStore):
             if not overwrite and key in self._files:
                 raise FileExistsError(f"File already exists: {path!r}")
             is_new_file = key not in self._files
-            self._files[key] = (display, content)
             if is_new_file:
+                self._files[key] = (display, content)
                 for ancestor in ancestors:
                     self._dir_counts[ancestor] = self._dir_counts.get(ancestor, 0) + 1
+            else:
+                # Overwriting through a differently-cased path updates the same
+                # file without renaming it — that is what a case-insensitive
+                # filesystem does — so keep the display name recorded when the
+                # file was created. Callers that derive stable identities from
+                # the stored name (such as FileMemoryProvider's digest
+                # sidecars) would otherwise see it flip with each spelling.
+                previous_display = self._files[key][0]
+                self._files[key] = (previous_display, content)
 
     async def read(self, path: str) -> str | None:
         """Return the file content, or ``None`` if the file does not exist."""
