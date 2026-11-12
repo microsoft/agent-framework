@@ -104,6 +104,8 @@ logger = logging.getLogger(__name__)
 
 
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+_MAX_DEFERRED_APPROVAL_UPDATES = 4096
+_MAX_DEFERRED_APPROVAL_BYTES = 4 * 1024 * 1024
 
 _HistorySource = Literal["host_managed", "agent_managed", "inference_service"]
 
@@ -758,9 +760,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 for wire_id, item in zip(wire_ids, stored_items, strict=True):
                     if item is None or item["type"] != "mcp_approval_request" or item["id"] != wire_id:
                         raise _PublicResponseFailure(ValueError(f"No native pending approval matches {wire_id!r}."))
-                    approval_ids[wire_id] = _native_approval_id(
-                        cast(Mapping[str, Any], item), session_id=resolved_session.session_id
-                    )
+                    approval_ids[wire_id] = _native_approval_id(cast(Mapping[str, Any], item), session=resolved_session)
             return await _items_to_messages(
                 input_items,
                 session=resolved_session,
@@ -1066,6 +1066,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             inner_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] | None = None
             updates: _SignalledIterator[AgentResponseUpdate] | None = None
             deferred_updates: list[AgentResponseUpdate] = []
+            deferred_bytes = 0
 
             async def publish_update(
                 update: AgentResponseUpdate, *, complete_message: bool = False
@@ -1144,6 +1145,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         ):
                             # Native providers can record approval authority only after their stream
                             # finishes. Keep subsequent output ordered behind that approval.
+                            if len(deferred_updates) >= _MAX_DEFERRED_APPROVAL_UPDATES:
+                                raise _PublicResponseFailure(
+                                    ValueError("Deferred approval output exceeds the update-count limit.")
+                                )
+                            update_bytes = len(
+                                update.to_json(ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode(
+                                    "utf-8"
+                                )
+                            )
+                            if deferred_bytes + update_bytes > _MAX_DEFERRED_APPROVAL_BYTES:
+                                raise _PublicResponseFailure(
+                                    ValueError("Deferred approval output exceeds the serialized-size limit.")
+                                )
+                            deferred_bytes += update_bytes
                             deferred_updates.append(update)
                         else:
                             async for event in publish_update(update):

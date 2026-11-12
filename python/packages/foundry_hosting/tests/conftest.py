@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from functools import partial
@@ -14,7 +15,9 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 if TYPE_CHECKING:
-    from agent_framework import Agent, AgentSession, Content, Message
+    from unittest.mock import MagicMock
+
+    from agent_framework import Agent, AgentResponseUpdate, AgentSession, Content, Message
     from agent_framework.openai import OpenAIChatClient
 
     from agent_framework_foundry_hosting import (
@@ -34,6 +37,53 @@ def approval_session() -> Callable[[Content], AgentSession]:
         session = AgentSession()
         _store_pending_approval_requests(session, [request])
         return session
+
+    return create
+
+
+@pytest.fixture
+def deferred_approval_agent(
+    approval_session: Callable[[Content], AgentSession],
+) -> Callable[
+    [Sequence[AgentResponseUpdate], bool],
+    tuple[MagicMock, list[AgentResponseUpdate], asyncio.Event],
+]:
+    from unittest.mock import MagicMock
+
+    from agent_framework import AgentResponse, AgentResponseUpdate, Content, ResponseStream, SupportsAgentRun
+
+    def create(
+        tail: Sequence[AgentResponseUpdate], repeat: bool
+    ) -> tuple[MagicMock, list[AgentResponseUpdate], asyncio.Event]:
+        approval = Content.from_function_approval_request(
+            "deferred-approval",
+            Content.from_function_call("deferred-call", "delete_file", arguments={}, hosted=True),
+        )
+        updates = [AgentResponseUpdate(role="assistant", contents=[approval]), *tail]
+        closed = asyncio.Event()
+        agent = MagicMock(spec=SupportsAgentRun)
+        agent.id = "deferred-approval-agent"
+        agent.name = "Deferred approval agent"
+        agent.description = "Produce approval output with observable stream cleanup."
+        agent.context_providers = []
+        agent.create_session.side_effect = lambda **kwargs: approval_session(approval)
+
+        async def generate() -> AsyncIterator[AgentResponseUpdate]:
+            try:
+                for update in updates:
+                    yield update
+                if repeat:
+                    empty = AgentResponseUpdate(role="assistant")
+                    while True:
+                        yield empty
+            finally:
+                closed.set()
+
+        def run(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            return ResponseStream(generate(), finalizer=AgentResponse.from_updates)
+
+        agent.run.side_effect = run
+        return agent, updates, closed
 
     return create
 

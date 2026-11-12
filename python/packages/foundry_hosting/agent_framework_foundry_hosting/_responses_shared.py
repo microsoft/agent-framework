@@ -22,6 +22,7 @@ from collections.abc import (
 )
 from contextlib import suppress
 from dataclasses import asdict, dataclass, is_dataclass
+from decimal import Decimal
 from typing import Any, Generic, Literal, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
@@ -2025,10 +2026,43 @@ async def _output_items_to_messages(  # pyright: ignore[reportUnusedFunction]
     return messages
 
 
+def _approval_arguments_match(stored: Any, current: Any) -> bool:
+    """Compare wire arguments without coercing JSON value types or rounding numbers."""
+    if not isinstance(stored, str):
+        return False
+    current_text = _json_safe_to_str(current)
+    if stored == current_text:
+        return True
+    try:
+        stored_value = json.loads(stored, parse_float=Decimal)
+        current_value = json.loads(current_text, parse_float=Decimal)
+    except json.JSONDecodeError:
+        return False
+
+    def matches(left: Any, right: Any) -> bool:
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, dict):
+            left_dict = cast(dict[str, Any], left)
+            right_dict = cast(dict[str, Any], right)
+            return left_dict.keys() == right_dict.keys() and all(
+                matches(value, right_dict[key]) for key, value in left_dict.items()
+            )
+        if isinstance(left, list):
+            left_list = cast(list[Any], left)
+            right_list = cast(list[Any], right)
+            return len(left_list) == len(right_list) and all(
+                matches(left_item, right_item) for left_item, right_item in zip(left_list, right_list, strict=True)
+            )
+        return bool(left == right)
+
+    return matches(stored_value, current_value)
+
+
 def _native_approval_id(  # pyright: ignore[reportUnusedFunction]
-    item: Mapping[str, Any], *, session_id: str | None = None
+    item: Mapping[str, Any], *, session: AgentSession | None = None
 ) -> str:
-    """Read transport correlation, never executable authority, from a stored output item."""
+    """Resolve stored wire correlation without allowing it to redirect native authority."""
     raw_metadata = item.get("internal_metadata")
     metadata: Mapping[str, Any] = cast(Mapping[str, Any], raw_metadata) if isinstance(raw_metadata, Mapping) else {}
     request_id = metadata.get(_NATIVE_APPROVAL_ID_KEY)
@@ -2036,8 +2070,20 @@ def _native_approval_id(  # pyright: ignore[reportUnusedFunction]
         raise _PublicResponseFailure(
             ValueError("The approval uses an unsupported stored format; start a new conversation.")
         )
-    if session_id is not None and metadata.get(_NATIVE_APPROVAL_SESSION_KEY) != session_id:
-        raise _PublicResponseFailure(ValueError("The approval does not belong to this native session."))
+    if session is not None:
+        if metadata.get(_NATIVE_APPROVAL_SESSION_KEY) != session.session_id:
+            raise _PublicResponseFailure(ValueError("The approval does not belong to this native session."))
+        request = _load_pending_approval_requests(session).get(request_id)
+        function_call = request.function_call if request is not None else None
+        if (
+            function_call is None
+            or item.get("server_label") != (function_call.server_name or "agent_framework")
+            or item.get("name") != function_call.name
+            or not _approval_arguments_match(item.get("arguments"), function_call.arguments)
+        ):
+            raise _PublicResponseFailure(
+                ValueError("The stored approval does not match the current native pending request.")
+            )
     return request_id
 
 
