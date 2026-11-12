@@ -99,7 +99,9 @@ covering basics, function tools, structured output, middleware, MCP, code interp
 | Sample | Description |
 | --- | --- |
 | [Agent with TypeSafe](./typesafe/Agent_With_TypeSafe/) | Use Jev, the TypeSafe System One model, as an IChatClient that answers typed questions and calls closed-set tools |
-| [Loop judge](./typesafe/Agent_TypeSafe_Step01_LoopJudge/) | Use Jev as the judge of a LoopAgent, with one yes or no question per criterion |
+| [Loop judge](./typesafe/Agent_TypeSafe_Step01_LoopJudge/) | Use Jev as the judge of a LoopAgent, through an IDecisionClient and a typed decision definition |
+| [Decision tool](./typesafe/Agent_TypeSafe_Step02_DecisionTool/) | Give an agent a decision as a tool with `DecisionDefinition.AsAIFunction`, and answer it with Jev or a local decision client |
+| [Decision routing](./typesafe/Agent_TypeSafe_Step03_DecisionRouting/) | Route each request of an agent to a fast or a reasoning model, with Jev choosing the route through `RoutingChatClient` |
 
 ## Running the samples
 

@@ -133,6 +133,38 @@ internal static class AgentsSamples
             ],
         },
 
+        new SampleDefinition
+        {
+            Name = "Agent_TypeSafe_Step02_DecisionTool",
+            ProjectPath = "samples/02-agents/AgentProviders/typesafe/Agent_TypeSafe_Step02_DecisionTool",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "TYPESAFE_API_KEY"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
+            MustContain = ["Ticket:", "Tool result:", "department", "The same tool, answered by a local keyword decision client:"],
+            ExpectedOutputDescription =
+            [
+                "Each ticket should show a tool result with department, urgentProbability, and frustration values, followed by a one-line agent reply.",
+                "The failing Stripe integration ticket should be routed to Technical with a high urgent probability, and the invoice request should be routed to Billing with a low urgent probability.",
+                "The last part should show a tool result from the local keyword decision client for the invoice ticket, routed to Billing, followed by an agent reply.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
+            Name = "Agent_TypeSafe_Step03_DecisionRouting",
+            ProjectPath = "samples/02-agents/AgentProviders/typesafe/Agent_TypeSafe_Step03_DecisionRouting",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "TYPESAFE_API_KEY"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL", "FOUNDRY_REASONING_MODEL"],
+            MustContain = ["User:", "Route: Fast", "Route: Reasoning", "Agent:"],
+            ExpectedOutputDescription =
+            [
+                "The question about the capital of France should be routed to Fast and answered with Paris.",
+                "The demand forecasting request should be routed to Reasoning and answered with a comparison of three methods and a recommendation.",
+                "Each route line should show the probabilities of both routes and the model that answered.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
         // ── Agents ──────────────────────────────────────────────────────────
 
         new SampleDefinition
