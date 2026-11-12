@@ -127,6 +127,7 @@
     <!-- MCP -->
     <PackageVersion Include="ModelContextProtocol" Version="2.2.0" />
     <PackageVersion Include="ModelContextProtocol.Extensions.Tasks" Version="2.2.0" />
+    <PackageVersion Include="YamlDotNet" Version="18.1.0" />
     <!-- Hyperlight -->
     <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.9.0" />
     <PackageVersion Include="Hyperlight.HyperlightSandbox.Guest.Python" Version="0.9.0" />

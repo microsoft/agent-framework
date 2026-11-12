@@ -941,9 +941,9 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "hyperlight-sandbox", specifier = ">=0.9.0,<0.10" },
-    { name = "hyperlight-sandbox-backend-wasm", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", specifier = ">=0.9.0,<0.10" },
-    { name = "hyperlight-sandbox-python-guest", specifier = ">=0.9.0,<0.10" },
+    { name = "hyperlight-sandbox", specifier = ">=0.8.0,<0.10" },
+    { name = "hyperlight-sandbox-backend-wasm", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')", specifier = ">=0.8.0,<0.10" },
+    { name = "hyperlight-sandbox-python-guest", specifier = ">=0.8.0,<0.10" },
 ]
 
 [[package]]
