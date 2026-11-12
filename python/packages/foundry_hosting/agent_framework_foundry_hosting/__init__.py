@@ -5,7 +5,14 @@ from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
     from ._invocations import InvocationsHostServer
-    from ._request import HostedResponseRequest, InvocationRun, WorkflowTurn, response_input_messages
+    from ._request import (
+        DEFAULT_CALLER_ALLOWED_EXTRA_BODY_FIELDS,
+        DEFAULT_CALLER_ALLOWED_FIELDS,
+        HostedResponseRequest,
+        InvocationRun,
+        WorkflowTurn,
+        response_input_messages,
+    )
     from ._responses import ResponsesHostServer
     from ._scope import FoundryRequestScope
     from ._state_store import (
@@ -31,6 +38,8 @@ _LAZY_EXPORTS: Final[dict[str, str]] = {
     "AgentSessionStoreProvider": "._state_store",
     "CheckpointStoreProvider": "._state_store",
     "ContextScopedStoreProvider": "._state_store",
+    "DEFAULT_CALLER_ALLOWED_EXTRA_BODY_FIELDS": "._request",
+    "DEFAULT_CALLER_ALLOWED_FIELDS": "._request",
     "FoundryAgentSessionStore": "._state_store",
     "FoundryCheckpointStore": "._state_store",
     "FoundryFunctionApprovalStore": "._state_store",
@@ -49,6 +58,8 @@ _LAZY_EXPORTS: Final[dict[str, str]] = {
 }
 
 __all__ = [
+    "DEFAULT_CALLER_ALLOWED_EXTRA_BODY_FIELDS",
+    "DEFAULT_CALLER_ALLOWED_FIELDS",
     "AgentSessionStoreProvider",
     "CheckpointStoreProvider",
     "ContextScopedStoreProvider",

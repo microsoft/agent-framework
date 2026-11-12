@@ -258,11 +258,12 @@ version is assumed. Non-steerable background polling and legacy `WorkflowAgent` 
 
 Allowed native CreateResponse generation fields become MAF runtime options (notably `max_output_tokens` ->
 `max_tokens` and `parallel_tool_calls` -> `allow_multiple_tool_calls`). Caller-supplied top-level fields and
-`extra_body` keys are checked against separate, hard-coded
-[default allowlists](./agent_framework_foundry_hosting/_request.py). Unlisted fields are rejected even when their
-value is `null`, unless an author explicitly opts them in through `prepare_options`. These allowlists check field
-names, not arbitrary values or nested contents of allowed fields. Allowed, flattened `extra_body` options overlay
-translated keys **last**, before the hook.
+`extra_body` keys are checked against separate, hard-coded default allowlists, exposed as the read-only
+`DEFAULT_CALLER_ALLOWED_FIELDS` and `DEFAULT_CALLER_ALLOWED_EXTRA_BODY_FIELDS` constants. Unlisted fields are rejected
+even when their value is `null`, unless an author explicitly opts them in through `prepare_options`, so the constants
+describe the default policy rather than every field an application accepts. Future releases may add fields; removing
+one is a breaking change. These allowlists check field names, not arbitrary values or nested contents of allowed
+fields. Allowed, flattened `extra_body` options overlay translated keys **last**, before the hook.
 
 A sync or async `prepare_options(request: HostedResponseRequest, options: dict)` hook can inspect a copy of the original
 request, remove or replace caller options, or opt an unlisted caller field in by returning it as a run option. Validate

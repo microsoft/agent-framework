@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Generic, Literal, TypeAlias, cast
+from typing import Any, Final, Generic, Literal, TypeAlias, cast
 
 from agent_framework import AgentRunInputs, Content, Message, WorkflowInvocationKwargs
 from azure.ai.agentserver.responses import ResponseContext
@@ -94,6 +94,50 @@ class InvocationRun:
             raise TypeError("InvocationRun.stream must be a boolean.")
 
 
+DEFAULT_CALLER_ALLOWED_FIELDS: Final[frozenset[str]] = frozenset({
+    "agent_session_id",
+    "agent_reference",
+    "background",
+    "conversation",
+    "extra_body",
+    "include",
+    "input",
+    "max_output_tokens",
+    "metadata",
+    "model",
+    "parallel_tool_calls",
+    "previous_response_id",
+    "reasoning",
+    "store",
+    "stream",
+    "temperature",
+    "text",
+    "top_p",
+    "user",
+})
+"""Top-level Responses request fields callers may set by default.
+
+``prepare_options`` can opt in additional fields per request, so this set describes the default policy rather than
+every field an application accepts. Future releases may add fields; removing one is a breaking change.
+"""
+
+DEFAULT_CALLER_ALLOWED_EXTRA_BODY_FIELDS: Final[frozenset[str]] = frozenset({
+    "allow_multiple_tool_calls",
+    "max_output_tokens",
+    "max_tokens",
+    "model",
+    "parallel_tool_calls",
+    "reasoning",
+    "temperature",
+    "text",
+    "top_p",
+})
+"""Keys callers may set inside a Responses request's ``extra_body`` by default.
+
+``prepare_options`` can opt in additional keys per request, so this set describes the default policy rather than
+every key an application accepts. Future releases may add keys; removing one is a breaking change.
+"""
+
 _HOST_CONTROLLED_FIELDS = frozenset({
     "agent",
     "agent_reference",
@@ -116,38 +160,6 @@ _HOST_CONTROLLED_FIELDS = frozenset({
 })
 _OPTION_NAMES = {"max_output_tokens": "max_tokens", "parallel_tool_calls": "allow_multiple_tool_calls"}
 _NATIVE_FIELDS = frozenset(CreateResponse.__annotations__)
-_CALLER_ALLOWED_FIELDS = frozenset({
-    "agent_session_id",
-    "agent_reference",
-    "background",
-    "conversation",
-    "extra_body",
-    "include",
-    "input",
-    "max_output_tokens",
-    "metadata",
-    "model",
-    "parallel_tool_calls",
-    "previous_response_id",
-    "reasoning",
-    "store",
-    "stream",
-    "temperature",
-    "text",
-    "top_p",
-    "user",
-})
-_CALLER_ALLOWED_EXTRA_BODY_FIELDS = frozenset({
-    "allow_multiple_tool_calls",
-    "max_output_tokens",
-    "max_tokens",
-    "model",
-    "parallel_tool_calls",
-    "reasoning",
-    "temperature",
-    "text",
-    "top_p",
-})
 
 
 def reject_disallowed_caller_fields(request: CreateResponse, options: Mapping[str, Any]) -> None:
@@ -161,7 +173,7 @@ def reject_disallowed_caller_fields(request: CreateResponse, options: Mapping[st
         ValueError: If a caller field is not allowed.
     """
     returned_fields = set(options)
-    rejected = set(request).difference(_CALLER_ALLOWED_FIELDS).difference(returned_fields)
+    rejected = set(request).difference(DEFAULT_CALLER_ALLOWED_FIELDS).difference(returned_fields)
     extra_body = request.get("extra_body")
     if extra_body is not None:
         if not isinstance(extra_body, Mapping) or any(
@@ -171,7 +183,7 @@ def reject_disallowed_caller_fields(request: CreateResponse, options: Mapping[st
         rejected.update(
             f"extra_body.{name}"
             for name in cast(Mapping[str, Any], extra_body)
-            if name not in _CALLER_ALLOWED_EXTRA_BODY_FIELDS and name not in returned_fields
+            if name not in DEFAULT_CALLER_ALLOWED_EXTRA_BODY_FIELDS and name not in returned_fields
         )
     if rejected:
         raise ValueError(
@@ -183,11 +195,11 @@ def response_run_options(request: CreateResponse) -> dict[str, Any]:
     """Translate allowed native generation fields, with flattened extra-body values winning collisions."""
     native: dict[str, Any] = {}
     nested_extra: dict[str, Any] = {}
-    unlisted_option_names = set(request).difference(_CALLER_ALLOWED_FIELDS)
+    unlisted_option_names = set(request).difference(DEFAULT_CALLER_ALLOWED_FIELDS)
     extra_body = request.get("extra_body")
     if isinstance(extra_body, Mapping):
         for field_name in cast(Mapping[object, object], extra_body):
-            if isinstance(field_name, str) and field_name not in _CALLER_ALLOWED_EXTRA_BODY_FIELDS:
+            if isinstance(field_name, str) and field_name not in DEFAULT_CALLER_ALLOWED_EXTRA_BODY_FIELDS:
                 unlisted_option_names.add(field_name)
 
     for name, value in request.items():
@@ -202,11 +214,11 @@ def response_run_options(request: CreateResponse) -> dict[str, Any]:
                 raise ValueError("Nested extra_body is not supported; flatten provider options instead.")
             for name, item in cast(Mapping[str, Any], value).items():
                 option_name = _OPTION_NAMES.get(name, name)
-                if name in _CALLER_ALLOWED_EXTRA_BODY_FIELDS and option_name not in unlisted_option_names:
+                if name in DEFAULT_CALLER_ALLOWED_EXTRA_BODY_FIELDS and option_name not in unlisted_option_names:
                     nested_extra[option_name] = item
         elif name in _HOST_CONTROLLED_FIELDS:
             continue
-        elif name in _CALLER_ALLOWED_FIELDS and name in _NATIVE_FIELDS:
+        elif name in DEFAULT_CALLER_ALLOWED_FIELDS and name in _NATIVE_FIELDS:
             option_name = _OPTION_NAMES.get(name, name)
             if option_name not in unlisted_option_names:
                 native[option_name] = value
