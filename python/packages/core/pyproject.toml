@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "msgspec>=0.20.0,<0.23",
-    "typing-extensions>=4.15.0,<5",
+    "typing-extensions>=4.16.0,<5",
     "pydantic>=2,<3",
     "python-dotenv>=1,<2",
     "opentelemetry-api>=1.39.0,<2",

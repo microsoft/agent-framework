@@ -9,6 +9,7 @@ import logging
 import math
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
+from copy import copy, deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
@@ -55,6 +56,8 @@ from agent_framework._tools import (
 )
 from agent_framework._types import Content, normalize_messages
 from agent_framework.security import (
+    _REPLAY_STATE_COVERED_KEY,
+    _REPLAY_STATE_COVERED_MARKER,
     _REWRITTEN_ARGUMENT_INDICES_KEY,
     _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,
     ConfidentialityLabel,
@@ -3688,6 +3691,134 @@ class TestSecureAgentSessionIsolation:
         await FunctionMiddlewarePipeline(scoped_tracker, scoped_policy).execute(invocation, execute)
 
         assert executed is True
+
+    async def test_transport_marked_replay_uses_restored_state_and_clears_marker(self) -> None:
+        """Trusted transport replay keeps restored confidentiality without leaking its marker."""
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="transport-covered-history")
+        tracker, _ = await _get_session_security_middleware(config, session)
+        tracker._update_context_label(ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+        restored_message = Message(role="assistant", contents=["Previously covered history"])
+        config._mark_replay_state_covered_messages([restored_message])
+        provider_context = SessionContext(session_id=session.session_id, input_messages=[restored_message])
+
+        await config.before_run(
+            agent=SimpleNamespace(context_providers=[config]),
+            session=session,
+            context=provider_context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        scoped_tracker = provider_context.get_middleware()[0]
+        assert isinstance(scoped_tracker, LabelTrackingFunctionMiddleware)
+        label = scoped_tracker.get_context_label()
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PUBLIC
+        assert "_agent_framework_fides_replay_state_covered" not in restored_message.additional_properties
+
+    def test_transport_replay_marker_survives_message_copy(self) -> None:
+        """Supported shallow and deep copies preserve replay sentinel identity."""
+        config = SecureAgentConfig()
+        restored_message = Message(role="assistant", contents=["Previously covered history"])
+        config._mark_replay_state_covered_messages([restored_message])
+
+        for copied_message in (copy(restored_message), deepcopy(restored_message)):
+            coverage = copied_message.additional_properties.get(_REPLAY_STATE_COVERED_KEY)
+            assert isinstance(coverage, dict)
+            assert coverage.get(config.source_id) is _REPLAY_STATE_COVERED_MARKER
+
+    async def test_transport_marked_replay_is_consumed_per_security_provider(self) -> None:
+        """Each security provider consumes only its own replay coverage."""
+        configs = (
+            SecureAgentConfig(source_id="security-a"),
+            SecureAgentConfig(source_id="security-b"),
+        )
+        session = AgentSession(session_id="provider-scoped-transport-coverage")
+        for config in configs:
+            tracker, _ = await _get_session_security_middleware(config, session)
+            tracker._update_context_label(ContentLabel())
+
+        restored_message = Message(role="assistant", contents=["Previously covered history"])
+        for config in configs:
+            config._mark_replay_state_covered_messages([restored_message])
+        provider_context = SessionContext(session_id=session.session_id, input_messages=[restored_message])
+        agent = SimpleNamespace(context_providers=list(configs))
+
+        for index, config in enumerate(configs):
+            await config.before_run(
+                agent=agent,
+                session=session,
+                context=provider_context,
+                state=session.state.setdefault(config.source_id, {}),
+            )
+            coverage = restored_message.additional_properties.get(_REPLAY_STATE_COVERED_KEY)
+            if index == 0:
+                assert isinstance(coverage, dict)
+                assert set(coverage) == {configs[1].source_id}
+                assert coverage[configs[1].source_id] is _REPLAY_STATE_COVERED_MARKER
+            else:
+                assert coverage is None
+
+        scoped_trackers = [
+            middleware
+            for middleware in provider_context.get_middleware()
+            if isinstance(middleware, LabelTrackingFunctionMiddleware)
+        ]
+        assert len(scoped_trackers) == 2
+        for tracker in scoped_trackers:
+            label = tracker.get_context_label()
+            assert label.integrity == IntegrityLabel.TRUSTED
+            assert label.confidentiality == ConfidentialityLabel.PUBLIC
+
+    async def test_transport_fold_consumes_replay_coverage_per_security_provider(self) -> None:
+        """Snapshot folding preserves coverage until every security provider consumes it."""
+        configs = (
+            SecureAgentConfig(source_id="security-a"),
+            SecureAgentConfig(source_id="security-b"),
+        )
+        session = AgentSession(session_id="provider-scoped-snapshot-coverage")
+        for config in configs:
+            tracker, _ = await _get_session_security_middleware(config, session)
+            tracker._update_context_label(ContentLabel())
+
+        restored_message = Message(role="assistant", contents=["Previously covered history"])
+        for config in configs:
+            config._mark_replay_state_covered_messages([restored_message])
+
+        for index, config in enumerate(configs):
+            config._fold_uncovered_replay_messages(session, [restored_message])
+            label = ContentLabel.from_dict(json.loads(session.state[config.source_id]["context_label"]))
+            assert label.integrity == IntegrityLabel.TRUSTED
+            assert label.confidentiality == ConfidentialityLabel.PUBLIC
+            coverage = restored_message.additional_properties.get(_REPLAY_STATE_COVERED_KEY)
+            if index == 0:
+                assert isinstance(coverage, dict)
+                assert set(coverage) == {configs[1].source_id}
+                assert coverage[configs[1].source_id] is _REPLAY_STATE_COVERED_MARKER
+            else:
+                assert coverage is None
+
+    def test_transport_fold_rejects_missing_label_for_incomplete_service_history(self) -> None:
+        """Snapshot replay cannot stand in for unavailable service-owned history."""
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="incomplete-service-history", service_session_id="remote-conversation")
+        replayed = Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="external-call", result="snapshot-visible result")],
+        )
+
+        with pytest.raises(
+            RuntimeError,
+            match="Cannot reconstruct service-managed history without an authoritative FIDES context label",
+        ):
+            config._fold_uncovered_replay_messages(
+                session,
+                [replayed],
+                complete_replay_messages=[replayed],
+                replay_history_complete=False,
+            )
+
+        assert "context_label" not in session.state[config.source_id]
 
     async def test_modified_hidden_placeholder_is_not_authenticated_by_client_flag(self) -> None:
         """A real variable ID does not authenticate a client-modified placeholder."""
