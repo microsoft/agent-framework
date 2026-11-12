@@ -14,6 +14,15 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </remarks>
 internal sealed class FoundryHostingAgent : DelegatingAIAgent
 {
+    /// <summary>The prefix of the identity of an agent's sessions that is derived from its name.</summary>
+    private const string NameIdentityPrefix = "name:";
+
+    /// <summary>
+    /// The prefix of the identity that releases through 1.28.0 gave the sessions of an agent resolved from a
+    /// keyed registration that was not also the default agent.
+    /// </summary>
+    private const string LegacyKeyIdentityPrefix = "key:";
+
     internal FoundryHostingAgent(AIAgent innerAgent, string sessionStorageIdentity)
         : base(innerAgent)
     {
@@ -41,7 +50,7 @@ internal sealed class FoundryHostingAgent : DelegatingAIAgent
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
         {
-            return $"name:{agent.Name}";
+            return NameIdentityPrefix + agent.Name;
         }
 
         if (allowInstanceId)
@@ -76,11 +85,41 @@ internal sealed class FoundryHostingAgent : DelegatingAIAgent
 
         if (registrationKey is not null && !ReferenceEquals(agent, defaultAgent))
         {
-            return $"key:{registrationKey}";
+            return LegacyKeyIdentityPrefix + registrationKey;
         }
 
         return !string.IsNullOrWhiteSpace(agent.Name)
-            ? $"name:{agent.Name}"
+            ? NameIdentityPrefix + agent.Name
             : "default";
+    }
+
+    /// <summary>
+    /// Gets the identity under which releases through 1.28.0 may have saved the sessions of the agent that
+    /// now uses <paramref name="sessionStorageIdentity"/>, so they can still be read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Those releases saved the sessions of an agent resolved from a keyed registration that was not also the
+    /// default agent under <c>key:{registrationKey}</c>, for example the second agent a container registered
+    /// with <c>AddFoundryResponses(agent)</c>. The only such sessions this can recover are those of an agent
+    /// registered under its own name, so the legacy identity is derived from the current
+    /// <c>name:{agent.Name}</c> identity and never from anything a request carries. Other identities,
+    /// including <c>default</c> for an unnamed agent, have no legacy counterpart.
+    /// </para>
+    /// <para>
+    /// Only the agent component of a storage key is replaced. The session id and every partition, including
+    /// the user partition, are kept, so the legacy identity cannot reach another user's or another
+    /// conversation's session.
+    /// </para>
+    /// </remarks>
+    /// <param name="sessionStorageIdentity">The identity the agent's sessions are saved under now.</param>
+    /// <returns>The legacy identity, or <see langword="null"/> when there is none.</returns>
+    internal static string? GetLegacySessionStorageIdentity(string sessionStorageIdentity)
+    {
+        _ = Throw.IfNull(sessionStorageIdentity);
+
+        return sessionStorageIdentity.StartsWith(NameIdentityPrefix, StringComparison.Ordinal)
+            ? string.Concat(LegacyKeyIdentityPrefix, sessionStorageIdentity.AsSpan(NameIdentityPrefix.Length))
+            : null;
     }
 }
