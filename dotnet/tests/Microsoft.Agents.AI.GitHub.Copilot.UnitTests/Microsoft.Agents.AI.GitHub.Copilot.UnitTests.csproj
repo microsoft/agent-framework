@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <!-- GitHub.Copilot.SDK only supports .NET 8.0+ -->
-    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <TargetFrameworks>$(TestTargetFrameworksCore)</TargetFrameworks>
     <NoWarn>$(NoWarn);GHCP001</NoWarn>
   </PropertyGroup>
 

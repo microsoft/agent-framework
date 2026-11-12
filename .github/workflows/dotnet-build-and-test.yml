@@ -354,7 +354,6 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
-          dotnet-version: "10.0.x"
 
       - name: Generate test solution (no samples)
         shell: pwsh
@@ -575,12 +574,11 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
-          dotnet-version: "10.0.x"
 
       # Build the test csproj directly instead of a filtered slnx + -f override.
-      # The test project pins TargetFrameworks=net10.0 and its ProjectReference closure
+      # The test project pins TargetFrameworks=$(TestTargetFrameworksCore) and its ProjectReference closure
       # gives MSBuild a single-rooted graph, so each multi-targeted dependency is invoked
-      # exactly once for net10.0. This avoids the MSB3026/MSB3491/MSB4018/MSB3883 file-lock
+      # exactly once for that framework. This avoids the MSB3026/MSB3491/MSB4018/MSB3883 file-lock
       # collisions caused by parallel inner-builds racing on shared bin/obj output paths
       # under the previous slnx + global TFM override approach.
       - name: Build Foundry hosted IT (and its deps)

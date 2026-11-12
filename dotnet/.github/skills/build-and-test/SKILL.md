@@ -48,31 +48,31 @@ Example: Building a single code project for all target frameworks
 dotnet build ./src/Microsoft.Agents.AI.Abstractions
 ```
 
-Example: Building a single code project for just .NET 10.
+Example: Building a single code project for just .NET 11.
 
 ```bash
 # From dotnet/ directory
-dotnet build ./src/Microsoft.Agents.AI.Abstractions -f net10.0
+dotnet build ./src/Microsoft.Agents.AI.Abstractions -f net11.0
 ```
 
-Example: Running tests for a single project using .NET 10.
+Example: Running tests for a single project using .NET 11.
 
 ```bash
 # From dotnet/ directory
-dotnet test --project ./tests/Microsoft.Agents.AI.Abstractions.UnitTests -f net10.0
+dotnet test --project ./tests/Microsoft.Agents.AI.Abstractions.UnitTests -f net11.0
 ```
 
-Example: Running a single test in a specific project using .NET 10.
+Example: Running a single test in a specific project using .NET 11.
 Provide the full namespace, class name, and method name for the test you want to run:
 
 ```bash
 # From dotnet/ directory
-dotnet test --project ./tests/Microsoft.Agents.AI.Abstractions.UnitTests -f net10.0 --filter-query "/*/Microsoft.Agents.AI.Abstractions.UnitTests/AgentRunOptionsTests/CloningConstructorCopiesProperties"
+dotnet test --project ./tests/Microsoft.Agents.AI.Abstractions.UnitTests -f net11.0 --filter-query "/*/Microsoft.Agents.AI.Abstractions.UnitTests/AgentRunOptionsTests/CloningConstructorCopiesProperties"
 ```
 
 ### Multi-target framework tip
 
-Most projects target multiple .NET frameworks. If the affected code does **not** use `#if` directives for framework-specific logic, pass `-f net10.0` to speed up building and testing.
+Most projects target multiple .NET frameworks. If the affected code does **not** use `#if` directives for framework-specific logic, pass `-f net11.0` to speed up building and testing.
 
 ### Package Restore tip
 
@@ -85,7 +85,7 @@ Just remember to run `dotnet restore` after pulling changes, making changes to p
 
 Unit tests target both .NET Framework as well as .NET Core. When running on Linux, only the .NET Core tests can be run, as .NET Framework is not supported on Linux.
 
-To run only the .NET Core tests, use the `-f net10.0` option with `dotnet test`.
+To run only the .NET Core tests, use the `-f net11.0` option with `dotnet test`.
 
 ### Microsoft Testing Platform (MTP)
 
@@ -101,10 +101,10 @@ Tests use the [Microsoft Testing Platform](https://learn.microsoft.com/dotnet/co
 
 ```bash
 # Run all unit tests across the solution, ignoring projects with no matching tests
-dotnet test --solution ./agent-framework-dotnet.slnx --no-build -f net10.0 --ignore-exit-code 8
+dotnet test --solution ./agent-framework-dotnet.slnx --no-build -f net11.0 --ignore-exit-code 8
 ```
 
-- **Running tests with `--solution` for a specific TFM** requires all projects in the solution to support that TFM. Not all projects target every framework (e.g., some are `net10.0`-only). Use `./dotnet/eng/scripts/New-FilteredSolution.ps1` to generate a filtered solution:
+- **Running tests with `--solution` for a specific TFM** requires all projects in the solution to support that TFM. Not all projects target every framework (e.g., some are `net11.0`-only). Use `./dotnet/eng/scripts/New-FilteredSolution.ps1` to generate a filtered solution:
 
 ```powershell
 # Generate a filtered solution for net472 and run tests
@@ -112,19 +112,19 @@ $filtered = ./dotnet/eng/scripts/New-FilteredSolution.ps1 -Solution dotnet/agent
 dotnet test --solution $filtered --no-build -f net472 --ignore-exit-code 8
 
 # Exclude samples and keep only unit test projects
-./dotnet/eng/scripts/New-FilteredSolution.ps1 -Solution dotnet/agent-framework-dotnet.slnx -TargetFramework net10.0 -ExcludeSamples -TestProjectNameFilter "*UnitTests*" -OutputPath dotnet/filtered-unit.slnx
+./dotnet/eng/scripts/New-FilteredSolution.ps1 -Solution dotnet/agent-framework-dotnet.slnx -TargetFramework net11.0 -ExcludeSamples -TestProjectNameFilter "*UnitTests*" -OutputPath dotnet/filtered-unit.slnx
 ```
 
 ```bash
 # Run tests via dotnet test (uses MTP under the hood)
-dotnet test --project ./tests/Microsoft.Agents.AI.UnitTests -f net10.0
+dotnet test --project ./tests/Microsoft.Agents.AI.UnitTests -f net11.0
 
 # Run tests with code coverage (Cobertura format)
-dotnet test --project ./tests/Microsoft.Agents.AI.UnitTests -f net10.0 --coverage --coverage-output-format cobertura --coverage-settings ./tests/coverage.runsettings
+dotnet test --project ./tests/Microsoft.Agents.AI.UnitTests -f net11.0 --coverage --coverage-output-format cobertura --coverage-settings ./tests/coverage.runsettings
 
 # Run tests directly via dotnet run (MTP native command line)
-dotnet run --project ./tests/Microsoft.Agents.AI.UnitTests -f net10.0
+dotnet run --project ./tests/Microsoft.Agents.AI.UnitTests -f net11.0
 
 # Show MTP command line help
-dotnet run --project ./tests/Microsoft.Agents.AI.UnitTests -f net10.0 -- -?
+dotnet run --project ./tests/Microsoft.Agents.AI.UnitTests -f net11.0 -- -?
 ```

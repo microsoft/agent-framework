@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <!-- Generator tests need to reference Roslyn which requires newer TFMs -->
-    <TargetFrameworks>net11.0;net10.0</TargetFrameworks>
+    <TargetFrameworks>$(TestTargetFrameworksCore)</TargetFrameworks>
     <!-- Suppress "mark as const" warnings for test source strings -->
     <NoWarn>$(NoWarn);RCS1118</NoWarn>
   </PropertyGroup>

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net11.0;net10.0</TargetFrameworks>
+    <TargetFrameworks>$(TestTargetFrameworksCore)</TargetFrameworks>
   </PropertyGroup>
 
   <ItemGroup>
