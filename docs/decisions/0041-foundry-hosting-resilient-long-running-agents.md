@@ -49,10 +49,9 @@ two process-level choices during that registration call: whether local SSE repla
 storage and whether the conversation task accepts steering. Configuring the options only through
 the later `IOptions` pipeline is too late for those choices.
 
-The first `AddFoundryResponses` call owns this host-level configuration. Repeated calls do not
-register another Responses server or redefine its resilience mode. Later calls can still configure
-MAF-only options such as `AllowStoredOutputEnabled`; attempting to enable an AgentServer task
-feature after the first call fails immediately instead of leaving AgentServer and MAF with
+The `AddFoundryResponses` call owns this host-level configuration. A container serves exactly one
+agent, so `AddFoundryResponses` is called once and a second call throws; the Responses server and its
+resilience mode are therefore registered exactly once, and AgentServer and MAF cannot end up with
 different settings.
 
 ```csharp
