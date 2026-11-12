@@ -4699,9 +4699,7 @@ class SecureAgentConfig(ContextProvider):
             return
         bound_identity = self._service_continuation_identity(state)
         state_is_authoritative = (
-            continuation_identity is not None
-            and restored_context_label
-            and bound_identity == continuation_identity
+            continuation_identity is not None and restored_context_label and bound_identity == continuation_identity
         )
         verified_sources = (
             self._verified_service_history_sources(agent, session, context, continuation_identity)
@@ -4762,9 +4760,7 @@ class SecureAgentConfig(ContextProvider):
                     "SecureAgentConfig with message_labeler must be registered as a context provider."
                 ) from exc
             if providers[config_index + 1 :]:
-                raise ValueError(
-                    "SecureAgentConfig must be the last context provider when message_labeler is set."
-                )
+                raise ValueError("SecureAgentConfig must be the last context provider when message_labeler is set.")
             provider_source_ids = {
                 provider.source_id
                 for provider in providers[:config_index]

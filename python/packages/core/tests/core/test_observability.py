@@ -310,16 +310,12 @@ async def test_chat_client_observability_accepts_model_in_client_kwargs(
     messages = [Message(role="user", contents=["Test message"])]
     span_exporter.clear()
     if stream:
-        resp_stream = client.get_response(
-            messages=messages, stream=True, client_kwargs={"model": "override-model"}
-        )
+        resp_stream = client.get_response(messages=messages, stream=True, client_kwargs={"model": "override-model"})
         async for _ in resp_stream:
             pass
         response = await resp_stream.get_final_response()
     else:
-        response = await client.get_response(
-            messages=messages, client_kwargs={"model": "override-model"}
-        )
+        response = await client.get_response(messages=messages, client_kwargs={"model": "override-model"})
     assert response is not None
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
