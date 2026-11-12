@@ -2694,7 +2694,8 @@ class AgentTelemetryLayer:
 
 # ``FunctionTool.additional_properties`` keys under which an MCP-served function carries the identity of the
 # MCP server it calls. ``get_function_span_attributes`` reads them to stamp ``microsoft.tool.server.name`` and
-# ``url.full`` on the ``execute_tool`` span. The URL is stored already stripped of credentials and query string.
+# ``url.full`` on the ``execute_tool`` span. The URL is stored already stripped of credentials and query string;
+# its path is dropped at emit time unless sensitive-data capture is enabled.
 MCP_SERVER_NAME_PROPERTY = "_mcp_server_name"
 MCP_SERVER_URL_PROPERTY = "_mcp_server_url"
 
@@ -2723,8 +2724,18 @@ def get_function_span_attributes(function: FunctionTool, tool_call_id: str | Non
         attributes[OtelAttr.TOOL_SERVER_NAME] = server_name
     server_url = properties.get(MCP_SERVER_URL_PROPERTY)
     if isinstance(server_url, str) and server_url:
+        # The path can embed credentials (for example ``/token/<secret>/mcp``), so it is only emitted when
+        # sensitive-data capture is enabled. Otherwise only scheme, host and port are recorded.
+        if not OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+            server_url = _strip_url_path(server_url)
         attributes[OtelAttr.URL_FULL] = server_url
     return attributes
+
+
+def _strip_url_path(url: str) -> str:
+    """Return ``scheme://host[:port]`` for an already sanitized http(s) URL."""
+    parts = urlparse(url)
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 def get_function_span(

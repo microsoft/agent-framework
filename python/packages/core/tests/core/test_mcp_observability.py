@@ -554,7 +554,10 @@ def test_mcp_server_identity_properties_for_stdio_tool_omits_url():
     assert _mcp_server_identity_properties(tool) == {MCP_SERVER_NAME_PROPERTY: "local"}
 
 
-def test_function_span_attributes_include_mcp_server_identity():
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+def test_function_span_attributes_include_mcp_server_identity(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+):
     from agent_framework import FunctionTool
     from agent_framework.observability import (
         MCP_SERVER_NAME_PROPERTY,
@@ -568,15 +571,19 @@ def test_function_span_attributes_include_mcp_server_identity():
         func=lambda: "ok",
         additional_properties={
             MCP_SERVER_NAME_PROPERTY: "weather",
-            MCP_SERVER_URL_PROPERTY: "https://mcp.example.com/mcp",
+            MCP_SERVER_URL_PROPERTY: "https://mcp.example.com:8443/token/private-token/mcp",
         },
     )
 
     attributes = get_function_span_attributes(function, "call-1")
 
     assert attributes[OtelAttr.TOOL_SERVER_NAME] == "weather"
-    assert attributes[OtelAttr.URL_FULL] == "https://mcp.example.com/mcp"
     assert attributes[OtelAttr.TOOL_NAME] == "get_weather"
+    if enable_sensitive_data:
+        assert attributes[OtelAttr.URL_FULL] == "https://mcp.example.com:8443/token/private-token/mcp"
+    else:
+        assert attributes[OtelAttr.URL_FULL] == "https://mcp.example.com:8443"
+        assert "private-token" not in "".join(attributes.values())
 
 
 def test_function_span_attributes_omit_server_identity_for_plain_function():
