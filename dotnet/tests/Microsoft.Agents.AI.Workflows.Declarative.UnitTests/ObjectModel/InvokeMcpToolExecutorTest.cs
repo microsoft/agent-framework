@@ -2069,6 +2069,40 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     }
 
     [Fact]
+    public async Task HostedMcpApprovalCheckpointPreventsReplayAfterDownstreamFailureAsync()
+    {
+        // Arrange
+        const string DownstreamFailureToolName = "downstream_failure";
+        List<(string ServerUrl, string ToolName, IDictionary<string, string>? Headers)> calls = [];
+        Mock<IMcpToolHandler> provider = CreateMetadataHandler(
+            () => """{"name":"test_tool","inputSchema":{"type":"object"}}""",
+            calls,
+            DownstreamFailureToolName);
+        AIAgent agent = CreateHostedMcpAgent(provider.Object, includeFailingDownstreamAction: true);
+        AgentSession session = await agent.CreateSessionAsync();
+        ToolApprovalRequestContent discovery = GetHostedApproval(
+            await agent.RunStreamingAsync("start", session).ToListAsync());
+        ToolApprovalRequestContent toolApproval = GetHostedApproval(await agent.RunStreamingAsync(
+            new ChatMessage(ChatRole.User, [discovery.CreateResponse(approved: true)]), session).ToListAsync());
+        ChatMessage approvalResponse = new(ChatRole.User, [toolApproval.CreateResponse(approved: true)]);
+
+        // Act
+        List<AgentResponseUpdate> failedUpdates = await agent.RunStreamingAsync(approvalResponse, session).ToListAsync();
+        JsonElement failedCheckpoint = await agent.SerializeSessionAsync(session);
+        AIAgent recoveredAgent = CreateHostedMcpAgent(provider.Object, includeFailingDownstreamAction: true);
+        AgentSession recoveredSession = await recoveredAgent.DeserializeSessionAsync(failedCheckpoint);
+        List<AgentResponseUpdate> resumedUpdates = await recoveredAgent.RunStreamingAsync(
+            approvalResponse, recoveredSession).ToListAsync();
+
+        // Assert
+        Assert.Contains(failedUpdates.SelectMany(update => update.Contents).OfType<ErrorContent>(),
+            error => error.Message.Contains("downstream failure", StringComparison.Ordinal));
+        Assert.Contains(resumedUpdates.SelectMany(update => update.Contents).OfType<ErrorContent>(),
+            error => error.Message.Contains("downstream failure", StringComparison.Ordinal));
+        Assert.Single(calls, call => string.Equals(call.ToolName, TestToolName, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void McpApprovalFingerprintKeyRejectsShortKeysAndCopiesKeyMaterial()
     {
         // Arrange
@@ -3244,9 +3278,23 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         });
     }
 
-    private static AIAgent CreateHostedMcpAgent(IMcpToolHandler handler, string? headerValue = null, byte[]? key = null)
+    private static AIAgent CreateHostedMcpAgent(
+        IMcpToolHandler handler,
+        string? headerValue = null,
+        byte[]? key = null,
+        bool includeFailingDownstreamAction = false)
     {
         string headers = headerValue is null ? string.Empty : $"\n      headers:\n        X-Test-Header: {headerValue}";
+        string downstreamAction = includeFailingDownstreamAction
+            ? $$"""
+                    - kind: InvokeMcpTool
+                      id: downstream_failure
+                      serverUrl: {{TestServerUrl}}
+                      serverLabel: {{TestServerLabel}}
+                      toolName: downstream_failure
+                      requireApproval: false
+                """
+            : string.Empty;
         using StringReader yamlReader = new(
             $$"""
                 kind: Workflow
@@ -3263,6 +3311,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
                       output:
                         autoSend: false
                         result: Local.ToolResult
+                {{downstreamAction}}
                 """);
         DeclarativeWorkflowOptions options = new(new MockAgentProvider().Object)
         {
@@ -3284,20 +3333,26 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
     private static Mock<IMcpToolHandler> CreateMetadataHandler(
         Func<string> getDefinition,
-        List<(string ServerUrl, string ToolName, IDictionary<string, string>? Headers)> calls)
+        List<(string ServerUrl, string ToolName, IDictionary<string, string>? Headers)> calls,
+        string? failingToolName = null)
     {
         Mock<IMcpToolHandler> provider = new();
         provider.Setup(handler => handler.InvokeToolAsync(
                 It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(),
                 It.IsAny<IDictionary<string, object?>?>(), It.IsAny<IDictionary<string, string>?>(),
                 It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string serverUrl, string? _, string toolName, IDictionary<string, object?>? _, IDictionary<string, string>? headers, string? _, CancellationToken _) =>
+            .Returns((string serverUrl, string? _, string toolName, IDictionary<string, object?>? _, IDictionary<string, string>? headers, string? _, CancellationToken _) =>
             {
                 calls.Add((serverUrl, toolName, headers));
-                return new McpServerToolResultContent("metadata-call")
+                if (string.Equals(toolName, failingToolName, StringComparison.Ordinal))
+                {
+                    return Task.FromException<McpServerToolResultContent>(new InvalidOperationException("downstream failure"));
+                }
+
+                return Task.FromResult(new McpServerToolResultContent("metadata-call")
                 {
                     Outputs = [new TextContent(string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal) ? $"{{\"tools\":[{getDefinition()}]}}" : "result")]
-                };
+                });
             });
         return provider;
     }

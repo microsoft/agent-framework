@@ -244,7 +244,7 @@ internal sealed class WorkflowSession : AgentSession
         List<ChatMessage> regularMessages = [];
         // Responses are deferred until after regular messages are queued so response handlers
         // can merge buffered regular content in the same continuation turn.
-        List<(ExternalResponse Response, string RequestId)> externalResponses = [];
+        List<(ExternalResponse Response, string RequestId, IReadOnlyList<string> ConsumerExecutorIds)> externalResponses = [];
         bool hasMatchedResponseForStartExecutor = false;
 
         // Tracks content IDs already matched to pending requests within this invocation,
@@ -270,13 +270,19 @@ internal sealed class WorkflowSession : AgentSession
                 {
                     // For intercepted/complex topologies the port may not be registered in the EdgeMap.
                     // Treat unknown port as non-start-executor (conservative): TurnToken will still be sent.
-                    if (run.TryGetResponsePortExecutorId(pendingRequest.PortInfo.PortId, out string? responseExecutorId))
+                    IReadOnlyList<string> consumerExecutorIds = [];
+                    if (run.TryGetResponsePortExecutorId(pendingRequest.PortInfo.PortId, out string? responseExecutorId)
+                        && responseExecutorId is not null)
                     {
                         hasMatchedResponseForStartExecutor |= string.Equals(responseExecutorId, this._workflow.StartExecutorId, StringComparison.Ordinal);
+                        consumerExecutorIds = this.GetResponseConsumerExecutorIds(responseExecutorId);
                     }
 
                     object normalizedResponseContent = this.NormalizeResponseContentForDelivery(content, pendingRequest);
-                    externalResponses.Add((pendingRequest.CreateResponse(normalizedResponseContent), pendingRequest.RequestId));
+                    externalResponses.Add((
+                        pendingRequest.CreateResponse(normalizedResponseContent),
+                        pendingRequest.RequestId,
+                        consumerExecutorIds));
                     (matchedContentIds ??= new(StringComparer.Ordinal)).Add(contentId);
                 }
                 else
@@ -302,19 +308,31 @@ internal sealed class WorkflowSession : AgentSession
 
         // Send external responses after regular messages.
         bool hasMatchedExternalResponses = false;
-        List<string> matchedRequestIds = [];
-        foreach ((ExternalResponse response, string requestId) in externalResponses)
+        List<MatchedExternalResponse> matchedResponses = [];
+        foreach ((ExternalResponse response, string requestId, IReadOnlyList<string> consumerExecutorIds) in externalResponses)
         {
             await run.SendResponseAsync(response).ConfigureAwait(false);
             hasMatchedExternalResponses = true;
-            matchedRequestIds.Add(requestId);
+            matchedResponses.Add(new(requestId, consumerExecutorIds));
         }
 
         return new ResumeDispatchInfo(
             hasRegularMessages,
             hasMatchedExternalResponses,
             hasMatchedResponseForStartExecutor,
-            matchedRequestIds);
+            matchedResponses);
+    }
+
+    private IReadOnlyList<string> GetResponseConsumerExecutorIds(string responseExecutorId)
+    {
+        if (!this._workflow.Edges.TryGetValue(responseExecutorId, out HashSet<Edge>? outgoingEdges))
+        {
+            return [];
+        }
+
+        return [.. outgoingEdges
+            .SelectMany(edge => edge.Data.Connection.SinkIds)
+            .Distinct(StringComparer.Ordinal)];
     }
 
     // Resolves the request payload as an envelope using the request types declared by the
@@ -492,8 +510,12 @@ internal sealed class WorkflowSession : AgentSession
         ResumeDispatchInfo dispatchInfo = resumeResult.DispatchInfo;
         HashSet<(string ExecutorId, string MessageId)> streamedMessageIds = [];
         bool workflowFailed = false;
-        bool hasMatchedExternalResponses = dispatchInfo.MatchedRequestIds is { Count: > 0 };
+        bool hasMatchedExternalResponses = dispatchInfo.MatchedResponses is { Count: > 0 };
+        bool hasCheckpointedMatchedResponses = false;
         CheckpointInfo? checkpointAfterResponse = this.LastCheckpoint;
+        HashSet<string> deliveredResponseIds = new(StringComparer.Ordinal);
+        HashSet<string> matchedConsumerExecutorsInFlight = new(StringComparer.Ordinal);
+        bool matchedResponseConsumerCompletedInStep = false;
 
         // Send a TurnToken to the start executor unless the only activity is an external
         // response directed at the start executor itself (which self-emits a TurnToken via
@@ -544,6 +566,35 @@ internal sealed class WorkflowSession : AgentSession
                     yield return update;
                     break;
 
+                case ExecutorInvokedEvent executorInvoked:
+                    if (dispatchInfo.MatchedResponses is { Count: > 0 } matchedResponseDispatch)
+                    {
+                        if (executorInvoked.Data is ExternalResponse externalResponse &&
+                            matchedResponseDispatch.Any(response =>
+                                string.Equals(response.RequestId, externalResponse.RequestId, StringComparison.Ordinal)))
+                        {
+                            deliveredResponseIds.Add(externalResponse.RequestId);
+                        }
+                        else if (matchedResponseDispatch.Any(response =>
+                                     deliveredResponseIds.Contains(response.RequestId) &&
+                                     response.ConsumerExecutorIds.Contains(executorInvoked.ExecutorId, StringComparer.Ordinal)))
+                        {
+                            matchedConsumerExecutorsInFlight.Add(executorInvoked.ExecutorId);
+                        }
+                    }
+
+                    yield return CreateObservabilityUpdate(evt);
+                    break;
+
+                case ExecutorCompletedEvent executorCompleted:
+                    if (matchedConsumerExecutorsInFlight.Remove(executorCompleted.ExecutorId))
+                    {
+                        matchedResponseConsumerCompletedInStep = true;
+                    }
+
+                    yield return CreateObservabilityUpdate(evt);
+                    break;
+
                 case WorkflowErrorEvent workflowError:
                     workflowFailed = true;
                     Exception? exception = workflowError.Exception;
@@ -590,8 +641,30 @@ internal sealed class WorkflowSession : AgentSession
                     if (hasMatchedExternalResponses)
                     {
                         checkpointAfterResponse = completedCheckpoint;
+                        if (!workflowFailed &&
+                            completedCheckpoint is not null &&
+                            !hasCheckpointedMatchedResponses &&
+                            dispatchInfo.MatchedResponses is { Count: > 0 } matchedResponses &&
+                            matchedResponseConsumerCompletedInStep)
+                        {
+                            // Retire responses only after their downstream executor has checkpointed successfully.
+                            hasCheckpointedMatchedResponses = true;
+                            foreach (MatchedExternalResponse response in matchedResponses)
+                            {
+                                this.RemovePendingRequest(response.RequestId);
+                            }
+                        }
+
+                        if (!workflowFailed && hasCheckpointedMatchedResponses && completedCheckpoint is not null)
+                        {
+                            // Keep successful progress if a later workflow step fails.
+                            this.LastCheckpoint = completedCheckpoint;
+                        }
+
+                        matchedConsumerExecutorsInFlight.Clear();
+                        matchedResponseConsumerCompletedInStep = false;
                     }
-                    else
+                    else if (!hasMatchedExternalResponses)
                     {
                         this.LastCheckpoint = completedCheckpoint;
                     }
@@ -694,12 +767,12 @@ internal sealed class WorkflowSession : AgentSession
             }
         }
 
-        if (!workflowFailed && dispatchInfo.MatchedRequestIds is { Count: > 0 } matchedRequestIds)
+        if (!workflowFailed && dispatchInfo.MatchedResponses is { Count: > 0 } completedResponses)
         {
             this.LastCheckpoint = checkpointAfterResponse;
-            foreach (string requestId in matchedRequestIds)
+            foreach (MatchedExternalResponse response in completedResponses)
             {
-                this.RemovePendingRequest(requestId);
+                this.RemovePendingRequest(response.RequestId);
             }
         }
     }
@@ -739,12 +812,12 @@ internal sealed class WorkflowSession : AgentSession
             bool hasRegularMessages,
             bool hasMatchedExternalResponses,
             bool hasMatchedResponseForStartExecutor,
-            IReadOnlyList<string>? matchedRequestIds = null)
+            IReadOnlyList<MatchedExternalResponse>? matchedResponses = null)
         {
             this.HasRegularMessages = hasRegularMessages;
             this.HasMatchedExternalResponses = hasMatchedExternalResponses;
             this.HasMatchedResponseForStartExecutor = hasMatchedResponseForStartExecutor;
-            this.MatchedRequestIds = matchedRequestIds;
+            this.MatchedResponses = matchedResponses;
         }
 
         public bool HasRegularMessages { get; }
@@ -753,8 +826,10 @@ internal sealed class WorkflowSession : AgentSession
 
         public bool HasMatchedResponseForStartExecutor { get; }
 
-        public IReadOnlyList<string>? MatchedRequestIds { get; }
+        public IReadOnlyList<MatchedExternalResponse>? MatchedResponses { get; }
     }
+
+    private readonly record struct MatchedExternalResponse(string RequestId, IReadOnlyList<string> ConsumerExecutorIds);
 
     /// <summary>
     /// Clones a <see cref="FunctionCallContent"/> with a workflow-facing call ID.
