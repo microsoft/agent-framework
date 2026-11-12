@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import copy
-import pickle
 from pathlib import Path
 from typing import Any
 
@@ -180,15 +178,17 @@ async def test_concurrent_runs_without_a_writable_mount_overlap() -> None:
     assert not any(content.type == "error" for contents in results for content in contents)
 
 
-async def test_tool_stays_copyable_and_usable_after_runs_contended_for_a_writable_mount(tmp_path: Path) -> None:
+async def test_tool_state_leaves_out_the_writable_mount_lock_and_restores_usable(tmp_path: Path) -> None:
     execute_code = MontyExecuteCodeTool(workspace_root=tmp_path)
     await asyncio.gather(execute_code._run_code(code="1"), execute_code._run_code(code="2"))
 
-    copied = copy.deepcopy(execute_code)
-    restored = pickle.loads(pickle.dumps(execute_code))
+    # Use the pickle state hooks directly: copying or pickling the whole tool also depends on global telemetry state.
+    state = execute_code.__getstate__()
+    restored = MontyExecuteCodeTool.__new__(MontyExecuteCodeTool)
+    restored.__setstate__(state)
 
-    for tool in (copied, restored):
-        assert not any(c.type == "error" for c in await tool._run_code(code="print('ok')"))
+    assert "_writable_mount_lock" not in state
+    assert not any(c.type == "error" for c in await restored._run_code(code="print('ok')"))
 
 
 @pytest.mark.parametrize("recording_host_tool", ["positional_or_keyword", "keyword_only"], indirect=True)
