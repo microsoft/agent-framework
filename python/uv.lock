@@ -551,7 +551,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
     { name = "regex", specifier = ">=2024.11.6" },
     { name = "tenacity", marker = "extra == 'all'", specifier = ">=9.1.4,<9.2.0" },
-    { name = "typing-extensions", specifier = ">=4.15.0,<5" },
+    { name = "typing-extensions", specifier = ">=4.16.0,<5" },
 ]
 provides-extras = ["all"]
 

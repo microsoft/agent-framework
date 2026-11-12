@@ -1390,6 +1390,7 @@ def _bound_approval_call_keys(
     *,
     scope: _SecurityScope,
     approval_proofs: _ApprovalReplayProofs | None,
+    replay_state_source_id: str | None = None,
 ) -> set[Any]:
     """Return authoritative call keys bound by approval controls across one replay batch."""
     return {
@@ -1402,7 +1403,10 @@ def _bound_approval_call_keys(
                 content,
                 scope=scope,
                 approval_proofs=approval_proofs,
-                transport_authoritative=_is_replay_state_covered(message),
+                transport_authoritative=(
+                    replay_state_source_id is not None
+                    and _is_replay_state_covered(message, source_id=replay_state_source_id)
+                ),
             )
         )
         is not None
@@ -1437,6 +1441,7 @@ def _replayed_message_label(
     scope: _SecurityScope,
     approval_proofs: _ApprovalReplayProofs | None = None,
     bound_approval_call_keys: set[Any] | None = None,
+    replay_state_source_id: str | None = None,
 ) -> ContentLabel:
     """Return a restriction-only label for caller-replayed or stored history."""
     role = str(message.role)
@@ -1450,6 +1455,7 @@ def _replayed_message_label(
             [message],
             scope=scope,
             approval_proofs=approval_proofs,
+            replay_state_source_id=replay_state_source_id,
         )
     for index, content in enumerate(message.contents):
         if not isinstance(content, Content):
@@ -1466,7 +1472,10 @@ def _replayed_message_label(
             content,
             scope=scope,
             approval_proofs=approval_proofs,
-            transport_authoritative=_is_replay_state_covered(message),
+            transport_authoritative=(
+                replay_state_source_id is not None
+                and _is_replay_state_covered(message, source_id=replay_state_source_id)
+            ),
         )
         is_bound_approval_control = authoritative_approval_call is not None
         has_bound_approval_control = has_bound_approval_control or is_bound_approval_control
@@ -1526,15 +1535,32 @@ def _replayed_message_label(
     return combine_labels(*labels)
 
 
-def _is_replay_state_covered(message: Message) -> bool:
-    """Return whether trusted transport code marked this replay as represented by restored state."""
-    return message.additional_properties.get(_REPLAY_STATE_COVERED_KEY) is _REPLAY_STATE_COVERED_MARKER
+def _is_replay_state_covered(message: Message, *, source_id: str) -> bool:
+    """Return whether restored state for one provider covers this replay."""
+    coverage = message.additional_properties.get(_REPLAY_STATE_COVERED_KEY)
+    if not isinstance(coverage, Mapping):
+        return False
+    return cast(Mapping[str, Any], coverage).get(source_id) is _REPLAY_STATE_COVERED_MARKER
 
 
-def _clear_replay_state_covered_markers(messages: Sequence[Message]) -> None:
-    """Remove private replay provenance before messages reach a chat provider."""
+def _clear_replay_state_covered_markers(
+    messages: Sequence[Message],
+    *,
+    source_id: str | None = None,
+) -> None:
+    """Remove one provider's private replay provenance, or all provenance after a failure."""
     for message in messages:
-        if _is_replay_state_covered(message):
+        coverage = message.additional_properties.get(_REPLAY_STATE_COVERED_KEY)
+        if source_id is None:
+            message.additional_properties.pop(_REPLAY_STATE_COVERED_KEY, None)
+            continue
+        if not isinstance(coverage, MutableMapping):
+            message.additional_properties.pop(_REPLAY_STATE_COVERED_KEY, None)
+            continue
+        mutable_coverage = cast(MutableMapping[str, Any], coverage)
+        if mutable_coverage.get(source_id) is _REPLAY_STATE_COVERED_MARKER:
+            mutable_coverage.pop(source_id, None)
+        if not any(marker is _REPLAY_STATE_COVERED_MARKER for marker in mutable_coverage.values()):
             message.additional_properties.pop(_REPLAY_STATE_COVERED_KEY, None)
 
 
@@ -4437,7 +4463,11 @@ class SecureAgentConfig(ContextProvider):
     def _mark_replay_state_covered_messages(self, messages: Sequence[Message]) -> None:
         """Mark trusted transport-restored messages as already represented by session state."""
         for message in messages:
-            message.additional_properties[_REPLAY_STATE_COVERED_KEY] = _REPLAY_STATE_COVERED_MARKER
+            coverage = message.additional_properties.get(_REPLAY_STATE_COVERED_KEY)
+            if not isinstance(coverage, MutableMapping):
+                coverage = {}
+                message.additional_properties[_REPLAY_STATE_COVERED_KEY] = coverage
+            cast(MutableMapping[str, Any], coverage)[self.source_id] = _REPLAY_STATE_COVERED_MARKER
 
     def _fold_uncovered_replay_messages(
         self,
@@ -4471,6 +4501,7 @@ class SecureAgentConfig(ContextProvider):
             replay_messages,
             scope=scope,
             approval_proofs=approval_proofs,
+            replay_state_source_id=self.source_id,
         )
         replay_labels = [
             _replayed_message_label(
@@ -4479,15 +4510,16 @@ class SecureAgentConfig(ContextProvider):
                 scope=scope,
                 approval_proofs=approval_proofs,
                 bound_approval_call_keys=bound_call_keys,
+                replay_state_source_id=self.source_id,
             )
             for message in replay_messages
-            if not restored_context_label or not _is_replay_state_covered(message)
+            if not restored_context_label or not _is_replay_state_covered(message, source_id=self.source_id)
         ]
         if replay_labels:
             scope.context_label = combine_labels(scope.context_label, *replay_labels)
-        _clear_replay_state_covered_markers(messages)
+        _clear_replay_state_covered_markers(messages, source_id=self.source_id)
         if replay_messages is not messages:
-            _clear_replay_state_covered_markers(replay_messages)
+            _clear_replay_state_covered_markers(replay_messages, source_id=self.source_id)
 
     @staticmethod
     def _capture_core_approval_replay_proofs(
@@ -4599,6 +4631,7 @@ class SecureAgentConfig(ContextProvider):
         session: AgentSession,
         source_ids: set[str],
         approval_proofs: _ApprovalReplayProofs,
+        replay_state_source_id: str,
         message_labeler: Callable[[str, Message], ContentLabel | None] | None = None,
     ) -> None:
         """Fold provider messages into one FIDES scope."""
@@ -4616,6 +4649,7 @@ class SecureAgentConfig(ContextProvider):
                 messages,
                 scope=scope,
                 approval_proofs=approval_proofs,
+                replay_state_source_id=replay_state_source_id,
             )
             for message in messages:
                 authoritative_label = message_labeler(source_id, message) if message_labeler is not None else None
@@ -4628,6 +4662,7 @@ class SecureAgentConfig(ContextProvider):
                         scope=scope,
                         approval_proofs=approval_proofs,
                         bound_approval_call_keys=bound_call_keys,
+                        replay_state_source_id=replay_state_source_id,
                     )
                 )
         if provider_labels:
@@ -4776,6 +4811,7 @@ class SecureAgentConfig(ContextProvider):
                 session=session,
                 source_ids=source_ids,
                 approval_proofs=approval_proofs,
+                replay_state_source_id=self.source_id,
                 message_labeler=classify_provider_message,
             )
 
@@ -4784,14 +4820,17 @@ class SecureAgentConfig(ContextProvider):
             context.input_messages,
             scope=scope,
             approval_proofs=approval_proofs,
+            replay_state_source_id=self.source_id,
         )
         input_labels = [
             _replayed_message_label(
                 message,
-                reconstruct_unstamped=not restored_context_label or not _is_replay_state_covered(message),
+                reconstruct_unstamped=not restored_context_label
+                or not _is_replay_state_covered(message, source_id=self.source_id),
                 scope=scope,
                 approval_proofs=approval_proofs,
                 bound_approval_call_keys=input_bound_call_keys,
+                replay_state_source_id=self.source_id,
             )
             for message in context.input_messages
         ]
@@ -4800,7 +4839,7 @@ class SecureAgentConfig(ContextProvider):
                 scope.context_label,
                 *input_labels,
             )
-        _clear_replay_state_covered_markers(context.input_messages)
+        _clear_replay_state_covered_markers(context.input_messages, source_id=self.source_id)
         middleware: list[MiddlewareTypes] = [*self._middleware_for_scope(scope)]
 
         @function_middleware
@@ -4831,6 +4870,7 @@ class SecureAgentConfig(ContextProvider):
                 session=session,
                 source_ids=history_source_ids,
                 approval_proofs=approval_proofs,
+                replay_state_source_id=self.source_id,
                 message_labeler=cached_provider_label,
             )
             await call_next()
