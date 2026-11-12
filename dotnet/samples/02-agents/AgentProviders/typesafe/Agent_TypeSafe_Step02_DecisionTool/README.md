@@ -2,7 +2,7 @@
 
 This sample gives a Foundry agent a decision as a tool, with the decision API proposed for Microsoft.Extensions.AI
 ([dotnet/extensions#7795](https://github.com/dotnet/extensions/pull/7795) and
-[#7796](https://github.com/dotnet/extensions/pull/7796)), which `Microsoft.Agents.AI.TypeSafe` carries until it ships.
+[#7796](https://github.com/dotnet/extensions/pull/7796)), which `Microsoft.Agents.AI.Abstractions` carries until it ships.
 The agent triages support tickets: it calls the tool with the ticket, and replies from the typed result.
 
 ## How it works

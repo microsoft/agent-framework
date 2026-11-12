@@ -29,8 +29,8 @@ namespace Microsoft.Agents.AI.TypeSafe;
 /// entry of <see cref="DecisionAnswer.AdditionalProperties"/>.
 /// </para>
 /// <para>
-/// <see cref="IDecisionClient"/> is the decision API proposed for Microsoft.Extensions.AI. This package carries a copy
-/// of it until it ships, so this client and the API are experimental.
+/// <see cref="IDecisionClient"/> is the decision API proposed for Microsoft.Extensions.AI. Microsoft.Agents.AI.Abstractions
+/// carries a copy of it until it ships, so this client and the API are experimental.
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AIDecisions, UrlFormat = DiagnosticIds.UrlFormat)]

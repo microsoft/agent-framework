@@ -3,7 +3,7 @@
 This sample routes each request of an agent to a fast model or a reasoning model, and a decision model chooses the
 route. It combines `RoutingChatClient` from Microsoft.Extensions.AI with the decision API proposed for
 Microsoft.Extensions.AI ([dotnet/extensions#7795](https://github.com/dotnet/extensions/pull/7795) and
-[#7796](https://github.com/dotnet/extensions/pull/7796)), which `Microsoft.Agents.AI.TypeSafe` carries until it ships.
+[#7796](https://github.com/dotnet/extensions/pull/7796)), which `Microsoft.Agents.AI.Abstractions` carries until it ships.
 
 ## How it works
 

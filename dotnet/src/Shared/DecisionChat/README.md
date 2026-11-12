@@ -28,10 +28,9 @@ answers in its own result type through `DecisionChatEngineOptions.DescribeAnswer
 </PropertyGroup>
 ```
 
-The project also needs the decision API. Until `Microsoft.Extensions.AI` ships it, the only copy is in
-`Microsoft.Agents.AI.TypeSafe/MEAI`, so that package is the only one that can inject the engine today. It also needs
-package references to `Microsoft.Extensions.AI.Abstractions` and `Microsoft.Extensions.Logging.Abstractions`, and a
-project reference to `Microsoft.Agents.AI.Abstractions`. The code targets .NET 8 and later.
+The project also needs a project reference to `Microsoft.Agents.AI.Abstractions`, which carries the decision API
+until `Microsoft.Extensions.AI` ships it, and package references to `Microsoft.Extensions.AI.Abstractions` and
+`Microsoft.Extensions.Logging.Abstractions`. The code targets .NET 8 and later.
 
 The engine uses only the public surface of the decision API. Keep it that way, so it compiles unchanged once the API
 ships in `Microsoft.Extensions.AI`. At that point the engine can become a public type in an Agent Framework package.

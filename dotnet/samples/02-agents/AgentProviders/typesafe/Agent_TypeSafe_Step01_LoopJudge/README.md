@@ -3,7 +3,7 @@
 This sample uses Jev, the TypeSafe System One model, as the judge of a `LoopAgent`. A Foundry agent writes the
 answer, and Jev decides whether the answer is complete. The judge uses the decision API proposed for
 Microsoft.Extensions.AI ([dotnet/extensions#7795](https://github.com/dotnet/extensions/pull/7795)), which
-`Microsoft.Agents.AI.TypeSafe` carries until it ships: `JevDecisionClient` is an `IDecisionClient`, and the criteria
+`Microsoft.Agents.AI.Abstractions` carries until it ships: `JevDecisionClient` is an `IDecisionClient`, and the criteria
 are a typed `DecisionDefinition<Verdict>`. Any other `IDecisionClient` can be the judge without changing the loop.
 
 A generative judge writes a verdict and a gap analysis. A decision model writes no text, so the sample asks one Binary

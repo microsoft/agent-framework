@@ -4,7 +4,7 @@
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <RootNamespace>Microsoft.Agents.AI.TypeSafe</RootNamespace>
     <VersionSuffix>alpha</VersionSuffix>
-    <!-- The decision API in MEAI/ is a copy of the experimental API proposed for Microsoft.Extensions.AI. -->
+    <!-- The decision API is experimental in Microsoft.Extensions.AI, which Microsoft.Agents.AI.Abstractions carries until it ships. -->
     <NoWarn>$(NoWarn);MEAI001</NoWarn>
   </PropertyGroup>
 
@@ -19,7 +19,7 @@
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework - TypeSafe (Jev) integration</Title>
-    <Description>Provides an IDecisionClient, an IChatClient, and an AIFunction that let agents classify, route, score, and check content with Jev, the TypeSafe System One model. Includes a copy of the decision API proposed for Microsoft.Extensions.AI until it ships.</Description>
+    <Description>Provides an IDecisionClient, an IChatClient, and an AIFunction that let agents classify, route, score, and check content with Jev, the TypeSafe System One model.</Description>
   </PropertyGroup>
 
   <ItemGroup>
