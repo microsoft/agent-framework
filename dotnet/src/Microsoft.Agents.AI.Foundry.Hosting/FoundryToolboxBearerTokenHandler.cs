@@ -28,6 +28,7 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
 
     // Per tools-integration-spec.md §2, every proxy request MUST include the
     // Foundry-Features: Toolboxes=V1Preview opt-in header while the service is in preview.
+    private const string FeaturesHeaderName = "Foundry-Features";
     private const string MandatoryFeatureFlag = "Toolboxes=V1Preview";
 
     private readonly TokenCredential _credential;
@@ -76,15 +77,15 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
 
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
 
-        request.Headers.TryAddWithoutValidation("Foundry-Features", BuildFeaturesHeaderValue(this._additionalFeaturesHeaderValue));
+        request.Headers.TryAddWithoutValidation(FeaturesHeaderName, BuildFeaturesHeaderValue(this._additionalFeaturesHeaderValue));
 
         // Per PlatformContext, forward the platform per-request call id (x-agent-foundry-call-id,
         // container protocol 2.0.0) so the toolbox proxy can resolve the server-side caller context.
         // The value is fixed when the connection is created, never read from ambient state, so the
         // MCP session and every request on it carry the identity of the response that opened it.
-        if (this._callId is { } callId && !request.Headers.Contains("x-agent-foundry-call-id"))
+        if (this._callId is { } callId && !request.Headers.Contains(HostedProtocolCompatibility.CallIdHeaderName))
         {
-            request.Headers.TryAddWithoutValidation("x-agent-foundry-call-id", callId);
+            request.Headers.TryAddWithoutValidation(HostedProtocolCompatibility.CallIdHeaderName, callId);
         }
 
         PropagateTraceContext(request);
