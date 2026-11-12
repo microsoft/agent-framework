@@ -61,8 +61,7 @@ from agent_framework_foundry_hosting import (
     WorkflowTurn,
 )
 from agent_framework_foundry_hosting._invocations_shared import _workflow_output, _WorkflowOutputError
-from agent_framework_foundry_hosting._state_store import FoundryCheckpointStore
-from agent_framework_foundry_hosting._workflow_state import FoundryWorkflowBindingStore, WorkflowHead
+from agent_framework_foundry_hosting._shared import FoundryCheckpointStore, FoundryWorkflowBindingStore, WorkflowHead
 
 
 @dataclass(frozen=True)

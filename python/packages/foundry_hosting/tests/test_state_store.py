@@ -6,19 +6,17 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentSession, Content, WorkflowCheckpoint, WorkflowCheckpointException
+from agent_framework import AgentSession, WorkflowCheckpoint, WorkflowCheckpointException
 from agent_framework._workflows._checkpoint_encoding import encode_checkpoint_value
 from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
-from azure.ai.agentserver.core.storage import FoundryStateStore, FoundryStorageConflictError
+from azure.ai.agentserver.core.storage import FoundryStateStore
 
 from agent_framework_foundry_hosting import ContextScopedStoreProvider, StoreProvider
-from agent_framework_foundry_hosting._state_store import (
+from agent_framework_foundry_hosting._shared import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
     FoundryAgentSessionStore,
     FoundryCheckpointStore,
-    FoundryFunctionApprovalStore,
-    FunctionApprovalStoreProvider,
 )
 
 
@@ -82,7 +80,6 @@ def _platform_context(
 def test_storage_providers_use_public_abstraction() -> None:
     assert issubclass(CheckpointStoreProvider, ContextScopedStoreProvider)
     assert not issubclass(CheckpointStoreProvider, StoreProvider)
-    assert issubclass(FunctionApprovalStoreProvider, StoreProvider)
     assert issubclass(AgentSessionStoreProvider, StoreProvider)
 
 
@@ -91,7 +88,7 @@ async def test_save_uses_context_scoped_store() -> None:
     checkpoint = _checkpoint("checkpoint-1")
 
     with patch(
-        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ) as get_or_create:
         result = await FoundryCheckpointStore("context-1", _platform_context()).save(checkpoint)
@@ -107,7 +104,7 @@ async def test_load_returns_checkpoint() -> None:
     store.get_item = AsyncMock(return_value=SimpleNamespace(value=checkpoint.to_dict()))
 
     with patch(
-        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ):
         result = await FoundryCheckpointStore("context-1", _platform_context()).load("checkpoint-1")
@@ -130,7 +127,7 @@ async def test_load_restricts_checkpoint_deserialization() -> None:
 
     with (
         patch(
-            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
             new=AsyncMock(return_value=store),
         ),
         pytest.raises(WorkflowCheckpointException),
@@ -147,7 +144,7 @@ async def test_load_accepts_a_declared_checkpoint_type() -> None:
     store.get_item = AsyncMock(return_value=SimpleNamespace(value=value))
 
     with patch(
-        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ):
         result = await FoundryCheckpointStore(
@@ -171,7 +168,7 @@ async def test_list_checkpoints_restricts_checkpoint_deserialization() -> None:
 
     with (
         patch(
-            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
             new=AsyncMock(return_value=store),
         ),
         pytest.raises(WorkflowCheckpointException),
@@ -201,7 +198,7 @@ async def test_provider_forwards_allowed_checkpoint_types() -> None:
     )
 
     with patch(
-        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ):
         result = await storage.load("checkpoint-1")
@@ -225,7 +222,7 @@ async def test_provider_restricts_by_default() -> None:
 
     with (
         patch(
-            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
             new=AsyncMock(return_value=store),
         ),
         pytest.raises(WorkflowCheckpointException),
@@ -239,7 +236,7 @@ async def test_load_raises_for_missing_checkpoint() -> None:
 
     with (
         patch(
-            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
             new=AsyncMock(return_value=store),
         ),
         pytest.raises(WorkflowCheckpointException, match="No checkpoint found with ID missing"),
@@ -268,7 +265,7 @@ async def test_list_checkpoints_paginates_and_filters_by_workflow() -> None:
     )
 
     with patch(
-        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ):
         result = await FoundryCheckpointStore("context-1", _platform_context()).list_checkpoints(
@@ -287,7 +284,7 @@ async def test_delete_reports_whether_checkpoint_existed(deleted_id: str | None,
     store.delete_item = AsyncMock(return_value=SimpleNamespace(id=deleted_id))
 
     with patch(
-        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ):
         result = await FoundryCheckpointStore("context-1", _platform_context()).delete("checkpoint-1")
@@ -387,102 +384,13 @@ def test_checkpoint_stores_require_context_id(create_store: Callable[[], Any]) -
         create_store()
 
 
-def _approval_request(approval_request_id: str) -> Content:
-    function_call = Content.from_function_call(
-        "call-1",
-        "delete_file",
-        arguments='{"path": "/foo"}',
-        additional_properties={"server_label": "my_server"},
-    )
-    return Content.from_function_approval_request(approval_request_id, function_call)
-
-
-async def test_save_and_load_function_approval_request() -> None:
-    store = _store()
-    request = _approval_request("approval-1")
-    store.get_item = AsyncMock(return_value=SimpleNamespace(value=request.to_dict()))
-
-    with patch(
-        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
-        new=AsyncMock(return_value=store),
-    ) as get_or_create:
-        storage = FoundryFunctionApprovalStore(_platform_context())
-        await storage.save_approval_request("approval-1", request)
-        loaded = await storage.load_approval_request("approval-1")
-
-    assert get_or_create.await_count == 2
-    get_or_create.assert_awaited_with("function_approvals", user_isolation=True)
-    store.create_item.assert_awaited_once_with("approval-1", request.to_dict(), call_id="call-1")
-    store.get_item.assert_awaited_once_with("approval-1", call_id="call-1")
-    assert loaded == request
-    function_call = loaded.function_call
-    assert function_call is not None
-    assert function_call.name == "delete_file"
-    assert function_call.additional_properties["server_label"] == "my_server"
-
-
-async def test_save_duplicate_function_approval_request_raises() -> None:
-    store = _store()
-    store.create_item = AsyncMock(side_effect=FoundryStorageConflictError("already exists"))
-
-    with (
-        patch(
-            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
-            new=AsyncMock(return_value=store),
-        ),
-        pytest.raises(ValueError, match="Approval request with ID 'approval-1' already exists"),
-    ):
-        await FoundryFunctionApprovalStore(_platform_context()).save_approval_request(
-            "approval-1", _approval_request("approval-1")
-        )
-
-
-async def test_load_missing_function_approval_request_raises() -> None:
-    store = _store()
-    store.get_item = AsyncMock(return_value=None)
-
-    with (
-        patch(
-            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
-            new=AsyncMock(return_value=store),
-        ),
-        pytest.raises(KeyError, match="Approval request with ID 'missing' does not exist"),
-    ):
-        await FoundryFunctionApprovalStore(_platform_context()).load_approval_request("missing")
-
-
-@pytest.mark.parametrize("is_hosted", [True, False])
-def test_function_approval_storage_provider_uses_foundry_store(is_hosted: bool) -> None:
-    provider = FunctionApprovalStoreProvider()
-    config = _config(is_hosted=is_hosted)
-    platform_context = _platform_context()
-
-    storage = provider.get_store(config=config, platform_context=platform_context)
-
-    assert type(storage) is FoundryFunctionApprovalStore
-    assert storage.platform_context is platform_context
-
-
-def test_function_approval_storage_provider_creates_request_scoped_storage() -> None:
-    with patch("agent_framework_foundry_hosting._state_store.FoundryFunctionApprovalStore") as storage_type:
-        provider = FunctionApprovalStoreProvider()
-        config = _config(is_hosted=False)
-        first_context = _platform_context("call-1")
-        second_context = _platform_context("call-2")
-        provider.get_store(config=config, platform_context=first_context)
-        provider.get_store(config=config, platform_context=second_context)
-
-    assert storage_type.call_args_list[0].args == (first_context,)
-    assert storage_type.call_args_list[1].args == (second_context,)
-
-
 async def test_set_agent_session_uses_scoped_store() -> None:
     store = _store()
     session = AgentSession(session_id="agent-session-1")
     session.state["turn_count"] = 2
 
     with patch(
-        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ) as get_or_create:
         await FoundryAgentSessionStore(_platform_context()).set("storage-session-1", session)
@@ -494,7 +402,7 @@ async def test_set_agent_session_uses_scoped_store() -> None:
 async def test_agent_session_provider_selects_a_separate_logical_store() -> None:
     store = _store()
     with patch(
-        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ) as get_or_create:
         provider = AgentSessionStoreProvider(store_name="invocation_sessions")
@@ -551,7 +459,7 @@ async def test_get_agent_session_returns_deserialized_session() -> None:
     store.get_item = AsyncMock(return_value=SimpleNamespace(value=session.to_dict(), etag="etag-1"))
 
     with patch(
-        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ) as get_or_create:
         result = await FoundryAgentSessionStore(_platform_context()).get("storage-session-1")
@@ -568,7 +476,7 @@ async def test_get_missing_agent_session_returns_none() -> None:
     store.get_item = AsyncMock(return_value=None)
 
     with patch(
-        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ):
         result = await FoundryAgentSessionStore(_platform_context()).get("missing")
@@ -580,7 +488,7 @@ async def test_delete_agent_session_is_idempotent() -> None:
     store = _store()
 
     with patch(
-        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ):
         await FoundryAgentSessionStore(_platform_context()).delete("storage-session-1")
@@ -619,7 +527,7 @@ def test_agent_session_storage_provider_uses_foundry_store(is_hosted: bool) -> N
 
 
 def test_agent_session_storage_provider_creates_request_scoped_storage() -> None:
-    with patch("agent_framework_foundry_hosting._state_store.FoundryAgentSessionStore") as storage_type:
+    with patch("agent_framework_foundry_hosting._shared.FoundryAgentSessionStore") as storage_type:
         provider = AgentSessionStoreProvider()
         config = _config(is_hosted=False)
         first_context = _platform_context("call-1")
@@ -631,7 +539,7 @@ def test_agent_session_storage_provider_creates_request_scoped_storage() -> None
     assert storage_type.call_args_list[1].args == (second_context,)
 
 
-@pytest.mark.parametrize("provider", ["agent", "checkpoint", "approval"])
+@pytest.mark.parametrize("provider", ["agent", "checkpoint"])
 @pytest.mark.parametrize(
     ("platform_session_id", "request_session_id", "user_id", "call_id"),
     [
@@ -649,10 +557,8 @@ def test_hosted_store_providers_reject_missing_platform_identity(
     with pytest.raises(RuntimeError, match="FOUNDRY_AGENT_SESSION_ID|does not match|user ID and call ID"):
         if provider == "agent":
             AgentSessionStoreProvider().get_store(config=config, platform_context=context)
-        elif provider == "checkpoint":
-            CheckpointStoreProvider().get_store(config=config, context_id="workflow", platform_context=context)
         else:
-            FunctionApprovalStoreProvider().get_store(config=config, platform_context=context)
+            CheckpointStoreProvider().get_store(config=config, context_id="workflow", platform_context=context)
 
 
 async def test_hosted_store_names_partition_sandbox_and_forward_call_id() -> None:
@@ -669,7 +575,7 @@ async def test_hosted_store_names_partition_sandbox_and_forward_call_id() -> Non
         _platform_context(call_id="call-2", session_id="other-sandbox"),
     ]
 
-    with patch("agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create", new=get_store):
+    with patch("agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create", new=get_store):
         for context in contexts:
             config = _config(is_hosted=True, session_id=context.session_id)
             sessions = AgentSessionStoreProvider().get_store(config=config, platform_context=context)
@@ -678,10 +584,8 @@ async def test_hosted_store_names_partition_sandbox_and_forward_call_id() -> Non
                 config=config, context_id="../../conversation", platform_context=context
             )
             await checkpoints.save(_checkpoint("checkpoint-1"))
-            approvals = FunctionApprovalStoreProvider().get_store(config=config, platform_context=context)
-            await approvals.save_approval_request("approval-1", _approval_request("approval-1"))
 
-    assert len(names) == len(set(names)) == 6
+    assert len(names) == len(set(names)) == 4
     assert all(name.split("/")[1] == "v2" and len(name) <= 128 for name in names)
     assert all("user-1" not in name and "sandbox" not in name and "conversation" not in name for name in names)
     assert {call.kwargs["call_id"] for call in store.create_item.await_args_list} == {"call-1", "call-2"}
@@ -704,38 +608,29 @@ async def test_hosted_scope_does_not_read_existing_unscoped_agent_session() -> N
         assert await legacy.get_item("response-1", call_id=context.call_id) is not None
 
 
-async def test_hosted_scope_does_not_read_existing_unscoped_checkpoint_or_approval() -> None:
+async def test_hosted_scope_does_not_read_existing_unscoped_checkpoint() -> None:
     context = _platform_context()
     legacy_checkpoint = await FoundryStateStore.get_or_create("checkpoints/conversation-1", user_isolation=True)
-    legacy_approval = await FoundryStateStore.get_or_create("function_approvals", user_isolation=True)
     async with legacy_checkpoint:
         await legacy_checkpoint.create_item(
             "checkpoint-1", encode_checkpoint_value(_checkpoint("checkpoint-1").to_dict()), call_id=context.call_id
-        )
-    async with legacy_approval:
-        await legacy_approval.create_item(
-            "approval-1", _approval_request("approval-1").to_dict(), call_id=context.call_id
         )
 
     config = _config(is_hosted=True)
     checkpoints = CheckpointStoreProvider().get_store(
         config=config, context_id="conversation-1", platform_context=context
     )
-    approvals = FunctionApprovalStoreProvider().get_store(config=config, platform_context=context)
     with pytest.raises(WorkflowCheckpointException, match="No checkpoint found"):
         await checkpoints.load("checkpoint-1")
-    with pytest.raises(KeyError, match="does not exist"):
-        await approvals.load_approval_request("approval-1")
 
 
-async def test_hosted_session_checkpoint_and_approval_data_stay_in_one_sandbox() -> None:
+async def test_hosted_session_and_checkpoint_data_stay_in_one_sandbox() -> None:
     config = _config(is_hosted=True)
     first_context = _platform_context(session_id="sandbox-1")
     second_context = _platform_context(session_id="sandbox-2")
     second_config = _config(is_hosted=True, session_id="sandbox-2")
     sessions = AgentSessionStoreProvider()
     checkpoints = CheckpointStoreProvider()
-    approvals = FunctionApprovalStoreProvider()
 
     first_session_store = sessions.get_store(config=config, platform_context=first_context)
     await first_session_store.set("response-1", AgentSession())
@@ -758,15 +653,6 @@ async def test_hosted_session_checkpoint_and_approval_data_stay_in_one_sandbox()
     )
     with pytest.raises(WorkflowCheckpointException, match="No checkpoint found"):
         await second_checkpoint_store.load("checkpoint-1")
-
-    first_approval_store = approvals.get_store(config=config, platform_context=first_context)
-    await first_approval_store.save_approval_request("approval-1", _approval_request("approval-1"))
-    continued_approval_store = approvals.get_store(config=config, platform_context=continued_context)
-    assert await continued_approval_store.load_approval_request("approval-1") == _approval_request("approval-1")
-    second_approval_store = approvals.get_store(config=second_config, platform_context=second_context)
-    with pytest.raises(KeyError, match="does not exist"):
-        await second_approval_store.load_approval_request("approval-1")
-    assert await first_approval_store.load_approval_request("approval-1") == _approval_request("approval-1")
 
 
 async def test_hosted_session_rejects_a_stale_etag_without_overwriting_the_winner() -> None:
@@ -833,7 +719,7 @@ async def test_loaded_session_without_an_etag_fails_closed() -> None:
     )
     with (
         patch(
-            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
             new=AsyncMock(return_value=store),
         ),
         pytest.raises(RuntimeError, match="without an ETag"),

@@ -103,13 +103,13 @@ from agent_framework_foundry_hosting._responses_shared import (
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_items_to_messages,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
+    _PublicResponseFailure,  # pyright: ignore[reportPrivateUsage]
     _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
-from agent_framework_foundry_hosting._state_store import (
+from agent_framework_foundry_hosting._shared import (
     AgentSessionStoreProvider,
     FoundryAgentSessionStore,
-    FunctionApprovalStoreProvider,
 )
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
@@ -129,12 +129,6 @@ def _isolate_agentserver_state_root(tmp_path_factory: pytest.TempPathFactory) ->
             os.environ.pop("AGENTSERVER_STATE_ROOT", None)
         else:
             os.environ["AGENTSERVER_STATE_ROOT"] = previous_root
-
-
-def _function_approval_store(request: Content) -> MagicMock:
-    storage = MagicMock()
-    storage.load_approval_request = AsyncMock(return_value=request)
-    return storage
 
 
 def _make_function_approval_request_content(
@@ -1622,10 +1616,6 @@ class TestResponsesHostServerInit:
             server._session_storage_provider,  # pyright: ignore[reportPrivateUsage]
             AgentSessionStoreProvider,
         )
-        assert isinstance(
-            server._function_approval_storage_provider,  # pyright: ignore[reportPrivateUsage]
-            FunctionApprovalStoreProvider,
-        )
 
     def test_init_rejects_history_provider_with_load_messages(self) -> None:
 
@@ -2214,8 +2204,6 @@ class TestAgentSessionPersistence:
         agent = Agent(client=client, default_options=OpenAIChatOptions(store=True))
         store = SessionStore()
         server = _make_server(agent, session_store=store, history_source=mode)
-        approvals = MagicMock(spec=FunctionApprovalStoreProvider)
-        server._function_approval_storage_provider = approvals  # pyright: ignore[reportPrivateUsage]
 
         response = await _post_json(server, {"input": "one shot", "store": False, "model": "test-model"})
 
@@ -2226,7 +2214,6 @@ class TestAgentSessionPersistence:
         assert agent.default_options["store"] is True
         provider = cast(MagicMock, server._session_storage_provider)  # pyright: ignore[reportPrivateUsage]
         provider.get_store.assert_not_called()
-        approvals.get_store.assert_not_called()
 
     async def test_store_false_rejects_external_history_and_custom_agent(self) -> None:
         history = _PerServiceCallHistoryProvider()
@@ -6256,11 +6243,11 @@ class TestOutputItemToMessage:
         assert msg.contents[1].type == "mcp_server_tool_result"
         assert msg.contents[1].output == "found 10 cats"
 
-    async def test_mcp_approval_request(self) -> None:
+    async def test_mcp_approval_request(self, approval_session: Callable[[Content], AgentSession]) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
 
         saved = _make_function_approval_request_content(request_id="apr-1")
-        storage = _function_approval_store(saved)
+        session = approval_session(saved)
 
         item = OutputItemMcpApprovalRequest({
             "type": "mcp_approval_request",
@@ -6269,15 +6256,15 @@ class TestOutputItemToMessage:
             "name": "dangerous_tool",
             "arguments": "{}",
         })
-        msg = await _output_item_to_message(item, approval_storage=storage)
+        msg = await _output_item_to_message(item, session=session)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_approval_request"
 
-    async def test_mcp_approval_response(self) -> None:
+    async def test_mcp_approval_response(self, approval_session: Callable[[Content], AgentSession]) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalResponseResource
 
         saved = _make_function_approval_request_content(request_id="apr-1")
-        storage = _function_approval_store(saved)
+        session = approval_session(saved)
 
         item = OutputItemMcpApprovalResponseResource({
             "type": "mcp_approval_response",
@@ -6285,7 +6272,7 @@ class TestOutputItemToMessage:
             "approval_request_id": "apr-1",
             "approve": True,
         })
-        msg = await _output_item_to_message(item, approval_storage=storage)
+        msg = await _output_item_to_message(item, session=session)
         assert msg.role == "user"
         assert msg.contents[0].type == "function_approval_response"
         assert msg.contents[0].approved is True
@@ -6888,11 +6875,11 @@ class TestItemToMessage:
         assert msg.contents[1].type == "mcp_server_tool_result"
         assert msg.contents[1].output == "found 10 cats"
 
-    async def test_mcp_approval_request(self) -> None:
+    async def test_mcp_approval_request(self, approval_session: Callable[[Content], AgentSession]) -> None:
         from azure.ai.agentserver.responses.models import ItemMcpApprovalRequest
 
         saved = _make_function_approval_request_content(request_id="apr-1")
-        storage = _function_approval_store(saved)
+        session = approval_session(saved)
 
         item = ItemMcpApprovalRequest({
             "type": "mcp_approval_request",
@@ -6901,23 +6888,23 @@ class TestItemToMessage:
             "name": "dangerous_tool",
             "arguments": "{}",
         })
-        msg = await _item_to_message(item, approval_storage=storage)
+        msg = await _item_to_message(item, session=session)
         assert msg is not None
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_approval_request"
 
-    async def test_mcp_approval_response(self) -> None:
+    async def test_mcp_approval_response(self, approval_session: Callable[[Content], AgentSession]) -> None:
         from azure.ai.agentserver.responses.models import MCPApprovalResponse
 
         saved = _make_function_approval_request_content(request_id="apr-1")
-        storage = _function_approval_store(saved)
+        session = approval_session(saved)
 
         item = MCPApprovalResponse({
             "type": "mcp_approval_response",
             "approval_request_id": "apr-1",
             "approve": True,
         })
-        msg = await _item_to_message(item, approval_storage=storage)
+        msg = await _item_to_message(item, session=session)
         assert msg is not None
         assert msg.role == "user"
         assert msg.contents[0].type == "function_approval_response"
@@ -8243,11 +8230,13 @@ class TestMultiTurnMixedContent:
 class TestFunctionApprovalConversion:
     """Tests for the approval-aware paths in `_item_to_message` / `_output_item_to_message`."""
 
-    async def test_output_item_mcp_approval_request_loads_from_storage(self) -> None:
+    async def test_output_item_mcp_approval_request_uses_native_session(
+        self, approval_session: Callable[[Content], AgentSession]
+    ) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
 
         saved = _make_function_approval_request_content(request_id="apr-1")
-        storage = _function_approval_store(saved)
+        session = approval_session(saved)
 
         item = OutputItemMcpApprovalRequest({
             "type": "mcp_approval_request",
@@ -8256,17 +8245,17 @@ class TestFunctionApprovalConversion:
             "name": "dangerous_tool",
             "arguments": "{}",
         })
-        msg = await _output_item_to_message(item, approval_storage=storage)
+        msg = await _output_item_to_message(item, session=session)
         assert msg.role == "assistant"
         c = msg.contents[0]
         assert c.type == "function_approval_request"
         assert c.id == "apr-1"
-        # The full saved Content (incl. function_call) is restored.
+        # Wire-supplied names and arguments cannot replace the native pending request.
         function_call = c.function_call
         assert function_call is not None
         assert function_call.name == "delete_file"
 
-    async def test_output_item_mcp_approval_request_without_storage_raises(self) -> None:
+    async def test_output_item_mcp_approval_request_without_session_raises(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
 
         item = OutputItemMcpApprovalRequest({
@@ -8276,14 +8265,16 @@ class TestFunctionApprovalConversion:
             "name": "dangerous_tool",
             "arguments": "{}",
         })
-        with pytest.raises(ValueError, match="ApprovalStorage is required"):
+        with pytest.raises(_PublicResponseFailure, match="No native pending approval"):
             await _output_item_to_message(item)
 
-    async def test_output_item_mcp_approval_response_resolves_to_approval_response(self) -> None:
+    async def test_output_item_mcp_approval_response_resolves_to_approval_response(
+        self, approval_session: Callable[[Content], AgentSession]
+    ) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalResponseResource
 
         saved = _make_function_approval_request_content(request_id="apr-1")
-        storage = _function_approval_store(saved)
+        session = approval_session(saved)
 
         item = OutputItemMcpApprovalResponseResource({
             "type": "mcp_approval_response",
@@ -8291,7 +8282,7 @@ class TestFunctionApprovalConversion:
             "approval_request_id": "apr-1",
             "approve": True,
         })
-        msg = await _output_item_to_message(item, approval_storage=storage)
+        msg = await _output_item_to_message(item, session=session)
         assert msg.role == "user"
         c = msg.contents[0]
         assert c.type == "function_approval_response"
@@ -8301,7 +8292,7 @@ class TestFunctionApprovalConversion:
         assert function_call is not None
         assert function_call.name == "delete_file"
 
-    async def test_output_item_mcp_approval_response_without_storage_raises(self) -> None:
+    async def test_output_item_mcp_approval_response_without_session_raises(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalResponseResource
 
         item = OutputItemMcpApprovalResponseResource({
@@ -8310,14 +8301,16 @@ class TestFunctionApprovalConversion:
             "approval_request_id": "apr-1",
             "approve": False,
         })
-        with pytest.raises(ValueError, match="ApprovalStorage is required"):
+        with pytest.raises(_PublicResponseFailure, match="No native pending approval"):
             await _output_item_to_message(item)
 
-    async def test_input_item_mcp_approval_request_loads_from_storage(self) -> None:
+    async def test_input_item_mcp_approval_request_uses_native_session(
+        self, approval_session: Callable[[Content], AgentSession]
+    ) -> None:
         from azure.ai.agentserver.responses.models import ItemMcpApprovalRequest
 
         saved = _make_function_approval_request_content(request_id="apr-1")
-        storage = _function_approval_store(saved)
+        session = approval_session(saved)
 
         item = ItemMcpApprovalRequest({
             "type": "mcp_approval_request",
@@ -8326,27 +8319,51 @@ class TestFunctionApprovalConversion:
             "name": "dangerous_tool",
             "arguments": "{}",
         })
-        msg = await _item_to_message(item, approval_storage=storage)
+        msg = await _item_to_message(item, session=session)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_approval_request"
         assert msg.contents[0].id == "apr-1"
 
-    async def test_input_item_mcp_approval_response_resolves_to_approval_response(self) -> None:
+    async def test_input_item_mcp_approval_response_resolves_to_approval_response(
+        self, approval_session: Callable[[Content], AgentSession]
+    ) -> None:
         from azure.ai.agentserver.responses.models import MCPApprovalResponse
 
         saved = _make_function_approval_request_content(request_id="apr-1")
-        storage = _function_approval_store(saved)
+        session = approval_session(saved)
 
         item = MCPApprovalResponse({
             "type": "mcp_approval_response",
             "approval_request_id": "apr-1",
             "approve": False,
         })
-        msg = await _item_to_message(item, approval_storage=storage)
+        msg = await _item_to_message(item, session=session)
         assert msg.role == "user"
         c = msg.contents[0]
         assert c.type == "function_approval_response"
         assert c.approved is False
+
+    @pytest.mark.parametrize("request_id, hosted", [("replacement-generation", False), ("provider-approval-id", True)])
+    async def test_approval_translation_preserves_native_request_identity(
+        self, request_id: str, hosted: bool, approval_session: Callable[[Content], AgentSession]
+    ) -> None:
+        from agent_framework._tools import _load_pending_approval_requests
+        from azure.ai.agentserver.responses.models import MCPApprovalResponse
+
+        call = Content.from_function_call(
+            "provider-call", "delete_file", id="native-call", arguments={"path": "/safe"}, hosted=hosted
+        )
+        pending = Content.from_function_approval_request(
+            request_id,
+            call,
+            additional_properties={"_replacement_approval_request": True} if not hosted else None,
+        )
+        session = approval_session(pending)
+        item = MCPApprovalResponse(type="mcp_approval_response", approval_request_id=request_id, approve=True)
+        converted = await _item_to_message(item, session=session)
+        assert converted.contents[0].id == request_id
+        assert converted.contents[0].function_call == call
+        assert set(_load_pending_approval_requests(session)) == {request_id}
 
 
 @pytest.mark.xdist_group("session_isolation")
@@ -8355,16 +8372,26 @@ class TestFunctionApprovalRoundTrip:
 
     Turn 1: the agent emits a `function_approval_request` content; the
         server emits an `mcp_approval_request` output item and persists
-        the original Content under the emitted id in approval storage.
+        the native session before publishing it.
     Turn 2: the caller sends an `mcp_approval_response` input item back;
-        the server resolves it (via approval storage) into a
-        `function_approval_response` content delivered to the agent.
+        the server translates its wire ID and delegates binding to Core,
+        without consuming the native pending request.
     """
 
-    async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
+    @pytest.mark.parametrize("raw_agent", [False, True])
+    async def test_non_streaming_emits_mcp_approval_request_and_persists_native_session(
+        self, raw_agent: bool, approval_session: Callable[[Content], AgentSession]
+    ) -> None:
         request_content = _make_function_approval_request_content()
-        agent = _make_agent(response=AgentResponse(messages=[Message(role="assistant", contents=[request_content])]))
-        server = _make_server(agent)
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[request_content])]),
+            raw_agent=raw_agent,
+        )
+        agent.create_session.side_effect = lambda: approval_session(request_content)
+        store = SessionStore()
+        server = _make_server(
+            agent, session_store=store, history_source="host_managed" if raw_agent else "agent_managed"
+        )
 
         resp = await _post(server, stream=False)
 
@@ -8377,16 +8404,17 @@ class TestFunctionApprovalRoundTrip:
         assert approval_items[0]["name"] == "delete_file"
         assert approval_items[0]["server_label"] == "my_server"
 
-        # Storage must contain a saved entry under the emitted request id.
-        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config, platform_context=get_request_context()
-        ).load_approval_request(approval_request_id)
-        assert loaded.type == "function_approval_request"
-        assert loaded.function_call is not None
-        assert loaded.function_call.name == "delete_file"
+        assert approval_request_id != request_content.id
+        assert "internal_metadata" not in approval_items[0]
+        loaded = await store.get(body["id"])
+        assert loaded is not None
+        assert loaded.to_dict()["state"] == approval_session(request_content).to_dict()["state"]
 
     @pytest.mark.parametrize("with_preamble", [False, True])
-    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self, with_preamble: bool) -> None:
+    @pytest.mark.parametrize("raw_agent", [False, True])
+    async def test_streaming_emits_mcp_approval_request_and_persists_native_session(
+        self, with_preamble: bool, raw_agent: bool, approval_session: Callable[[Content], AgentSession]
+    ) -> None:
         request_content = _make_function_approval_request_content(request_id="apr_streaming")
         updates: list[AgentResponseUpdate] = []
         preambles = ("Checking the refund policy.", "The refund requires approval.")
@@ -8412,8 +8440,12 @@ class TestFunctionApprovalRoundTrip:
                         )
                     )
         updates.append(AgentResponseUpdate(contents=[request_content], role="assistant"))
-        agent = _make_agent(stream_updates=updates)
-        server = _make_server(agent)
+        agent = _make_agent(stream_updates=updates, raw_agent=raw_agent)
+        agent.create_session.side_effect = lambda: approval_session(request_content)
+        store = SessionStore()
+        server = _make_server(
+            agent, session_store=store, history_source="host_managed" if raw_agent else "agent_managed"
+        )
 
         resp = await _post(server, stream=True)
 
@@ -8438,12 +8470,14 @@ class TestFunctionApprovalRoundTrip:
                 break
         assert approval_request_id is not None
 
-        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config, platform_context=get_request_context()
-        ).load_approval_request(approval_request_id)
-        assert loaded.type == "function_approval_request"
+        response_id = events[0]["data"]["response"]["id"]
+        loaded = await store.get(response_id)
+        assert loaded is not None
+        assert loaded.to_dict()["state"] == approval_session(request_content).to_dict()["state"]
 
-    async def test_round_trip_approval_response_reaches_agent(self) -> None:
+    async def test_round_trip_approval_response_reaches_agent(
+        self, approval_session: Callable[[Content], AgentSession]
+    ) -> None:
         """Two-turn: turn 1 emits an approval request; turn 2 sends an
         approval response and the agent receives a `function_approval_response`."""
         request_content = _make_function_approval_request_content()
@@ -8454,7 +8488,8 @@ class TestFunctionApprovalRoundTrip:
                 AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])]),
             ]
         )
-        server = _make_server(agent)
+        agent.create_session.side_effect = lambda: approval_session(request_content)
+        server = _make_server(agent, session_store=SessionStore())
 
         first = await _post(server, stream=False)
         assert first.status_code == 200
@@ -8466,6 +8501,7 @@ class TestFunctionApprovalRoundTrip:
         # Send back an approval response that references the saved request id.
         second_payload: dict[str, Any] = {
             "model": "test-model",
+            "previous_response_id": first_body["id"],
             "input": [
                 {
                     "type": "mcp_approval_response",
@@ -8489,7 +8525,9 @@ class TestFunctionApprovalRoundTrip:
         assert approval_responses[0].approved is True
         assert approval_responses[0].function_call.name == "delete_file"
 
-    async def test_round_trip_approval_response_rejected(self) -> None:
+    async def test_round_trip_approval_response_rejected(
+        self, approval_session: Callable[[Content], AgentSession]
+    ) -> None:
         """Same as above but the user rejects the approval; the agent must
         receive `approved=False`."""
         request_content = _make_function_approval_request_content()
@@ -8500,7 +8538,8 @@ class TestFunctionApprovalRoundTrip:
                 AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
             ]
         )
-        server = _make_server(agent)
+        agent.create_session.side_effect = lambda: approval_session(request_content)
+        server = _make_server(agent, session_store=SessionStore())
 
         first = await _post(server, stream=False)
         approval_request_id = next(
@@ -8511,6 +8550,7 @@ class TestFunctionApprovalRoundTrip:
             server,
             {
                 "model": "test-model",
+                "previous_response_id": first.json()["id"],
                 "input": [
                     {
                         "type": "mcp_approval_response",
@@ -8553,7 +8593,7 @@ class TestFunctionApprovalRoundTrip:
                 "stream": False,
             },
         )
-        # The handler converts the underlying KeyError into a terminal
+        # The handler converts the failed native binding into a terminal
         # ``response.failed`` event, so non-streaming callers see HTTP 200
         # with status="failed" and a meaningful error message rather than
         # a generic 5xx response.
@@ -8562,6 +8602,579 @@ class TestFunctionApprovalRoundTrip:
         assert body["status"] == "failed"
         error: dict[str, Any] = body.get("error") or {}
         assert "apr_unknown" in (error.get("message") or "")
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("approved", [False, True])
+    @pytest.mark.parametrize(
+        "history_source, downstream_store",
+        [("host_managed", False), ("inference_service", True), ("agent_managed", True), ("agent_managed", False)],
+    )
+    async def test_hosted_approval_replays_only_with_the_owner_of_history(
+        self,
+        stream: bool,
+        approved: bool,
+        history_source: str,
+        downstream_store: bool,
+        hosted_approval_client: tuple[OpenAIChatClient, list[dict[str, Any]]],
+    ) -> None:
+        client, calls = hosted_approval_client
+        agent = Agent[OpenAIChatOptions](
+            client=client,
+            default_options=OpenAIChatOptions(store=downstream_store),
+            context_providers=[InMemoryHistoryProvider()] if history_source == "agent_managed" else [],
+        )
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            history_source=history_source,
+            **({"max_history_items": 1} if history_source == "host_managed" else {}),
+        )
+        first = await _post(server, stream=stream)
+        first_body = _parse_sse_events(first.text)[-1]["data"]["response"] if stream else first.json()
+        assert first_body["status"] == "completed", first_body
+        wire_id = next(item["id"] for item in first_body["output"] if item["type"] == "mcp_approval_request")
+
+        second = await _post_json(
+            server,
+            {
+                "input": [{"type": "mcp_approval_response", "approval_request_id": wire_id, "approve": approved}],
+                "previous_response_id": first_body["id"],
+                "stream": stream,
+            },
+        )
+        body = _parse_sse_events(second.text)[-1]["data"]["response"] if stream else second.json()
+        assert body["status"] == "completed", body
+        assert len(calls) == 2
+        controls = [
+            item for item in calls[-1]["input"] if item.get("type") in ("mcp_approval_request", "mcp_approval_response")
+        ]
+        expected = (
+            []
+            if downstream_store
+            else [
+                {
+                    "type": "mcp_approval_request",
+                    "id": "provider-approval",
+                    "arguments": '{"path": "/safe"}',
+                    "name": "delete_file",
+                    "server_label": "hosted-tools",
+                }
+            ]
+        )
+        assert controls == [
+            *expected,
+            {"type": "mcp_approval_response", "approval_request_id": "provider-approval", "approve": approved},
+        ]
+        assert calls[-1].get("store", True) is downstream_store
+        assert calls[-1].get("conversation") == ("conv_hosted" if downstream_store else None)
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("history_source", ["host_managed", "agent_managed"])
+    @pytest.mark.parametrize(
+        "arguments, changes",
+        [
+            pytest.param("{}", {"name": "another_tool"}, id="tool"),
+            pytest.param("{}", {"server_name": "another_server"}, id="server"),
+            pytest.param('{"path": "/safe"}', {"arguments": '{"path": "/other"}'}, id="arguments"),
+            pytest.param('{"value": true}', {"arguments": '{"value": 1}'}, id="boolean-to-integer"),
+            pytest.param('{"value": 1}', {"arguments": '{"value": true}'}, id="integer-to-boolean"),
+            pytest.param(
+                '{"value": 1.00000000000000000001}',
+                {"arguments": '{"value": 1.00000000000000000002}'},
+                id="precise-number",
+            ),
+            pytest.param("opaque", {"arguments": "different"}, id="opaque-arguments"),
+        ],
+    )
+    async def test_stale_wire_approval_cannot_bind_to_reused_native_id(
+        self,
+        stream: bool,
+        history_source: str,
+        arguments: str,
+        changes: dict[str, str],
+        approval_session: Callable[[Content], AgentSession],
+    ) -> None:
+        from agent_framework._tools import (
+            _bind_approval_response_to_pending_request,
+            _load_pending_approval_requests,
+            _store_pending_approval_requests,
+        )
+
+        request = _make_function_approval_request_content(arguments=arguments)
+        agent = _make_agent(response=AgentResponse(messages=[Message(role="assistant", contents=[request])]))
+        agent.create_session.side_effect = lambda: approval_session(request)
+        store = SessionStore()
+        server = _make_server(agent, session_store=store, history_source=history_source)
+        first_response = await _post(server, stream=stream)
+        first = _parse_sse_events(first_response.text)[-1]["data"]["response"] if stream else first_response.json()
+        assert first["status"] == "completed", first
+        wire_id = next(item["id"] for item in first["output"] if item["type"] == "mcp_approval_request")
+        session = await store.get(first["id"])
+        assert session is not None
+        consumed = _bind_approval_response_to_pending_request(
+            Content("function_approval_response", id=request.id, approved=True), session, consume=True
+        )
+        assert consumed is not None and not _load_pending_approval_requests(session)
+        replacement = Content.from_dict(request.to_dict())
+        assert replacement.function_call is not None
+        replacement.function_call.id = "new-hosted-occurrence"
+        replacement.function_call.additional_properties.pop("server_label", None)
+        for field, value in changes.items():
+            setattr(replacement.function_call, field, value)
+        _store_pending_approval_requests(session, [replacement])
+        await store.set(first["id"], session)
+
+        response = await _post_json(
+            server,
+            {
+                "input": [{"type": "mcp_approval_response", "approval_request_id": wire_id, "approve": True}],
+                "previous_response_id": first["id"],
+                "stream": stream,
+            },
+        )
+        body = _parse_sse_events(response.text)[-1]["data"]["response"] if stream else response.json()
+        assert body["status"] == "failed", body
+        assert "does not match the current native pending request" in body["error"]["message"]
+        assert agent.run.call_count == 1
+        saved = await store.get(body["id"])
+        assert saved is not None and request.id is not None
+        assert _load_pending_approval_requests(saved)[request.id].to_dict() == replacement.to_dict()
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize(
+        "arguments, restored_arguments",
+        [
+            ('{"a": 1, "b": [true, null]}', {"b": [True, None], "a": 1}),
+            ('{"value": 1.0, "name": "\\u4e2d"}', '{"name": "\u4e2d", "value": 1e0}'),
+            ("opaque", "opaque"),
+        ],
+    )
+    async def test_wire_approval_accepts_equivalent_argument_serialization(
+        self,
+        stream: bool,
+        arguments: str,
+        restored_arguments: Any,
+        approval_session: Callable[[Content], AgentSession],
+    ) -> None:
+        from agent_framework._tools import _load_pending_approval_requests, _store_pending_approval_requests
+
+        request = _make_function_approval_request_content(arguments=arguments)
+        agent = _make_agent(response=AgentResponse(messages=[Message(role="assistant", contents=[request])]))
+        agent.create_session.side_effect = lambda: approval_session(request)
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+        first = (await _post(server)).json()
+        wire_id = next(item["id"] for item in first["output"] if item["type"] == "mcp_approval_request")
+        session = await store.get(first["id"])
+        assert session is not None and request.id is not None
+        restored = _load_pending_approval_requests(session)[request.id]
+        assert restored.function_call is not None
+        restored.function_call.arguments = restored_arguments
+        _store_pending_approval_requests(session, [restored])
+        await store.set(first["id"], session)
+        agent.run.side_effect = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("done")])])
+        ).run.side_effect
+
+        response = await _post_json(
+            server,
+            {
+                "input": [{"type": "mcp_approval_response", "approval_request_id": wire_id, "approve": True}],
+                "previous_response_id": first["id"],
+                "stream": stream,
+            },
+        )
+        body = _parse_sse_events(response.text)[-1]["data"]["response"] if stream else response.json()
+        assert body["status"] == "completed", body
+        assert agent.run.call_count == 2
+        decisions = [
+            content
+            for message in agent.run.call_args.kwargs["messages"]
+            for content in message.contents
+            if content.type == "function_approval_response"
+        ]
+        assert len(decisions) == 1 and decisions[0].function_call is not None
+        assert decisions[0].function_call.arguments == restored_arguments
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("limit", ["count", "bytes"])
+    @pytest.mark.parametrize("overflow", [False, True], ids=["exact-limit", "over-limit"])
+    async def test_deferred_approval_output_has_count_and_byte_limits(
+        self,
+        stream: bool,
+        limit: str,
+        overflow: bool,
+        deferred_approval_agent: Callable[
+            [Sequence[AgentResponseUpdate], bool],
+            tuple[MagicMock, list[AgentResponseUpdate], asyncio.Event],
+        ],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        agent, updates, closed = deferred_approval_agent(
+            [AgentResponseUpdate(role="assistant", contents=[Content.from_text("\u4e2d" * 32)])], False
+        )
+        total_bytes = sum(
+            len(update.to_json(ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8"))
+            for update in updates
+        )
+        monkeypatch.setattr(
+            "agent_framework_foundry_hosting._responses_agent._MAX_DEFERRED_APPROVAL_UPDATES",
+            len(updates) - int(overflow and limit == "count"),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "agent_framework_foundry_hosting._responses_agent._MAX_DEFERRED_APPROVAL_BYTES",
+            total_bytes - int(overflow and limit == "bytes"),
+            raising=False,
+        )
+        response = await _post(
+            _make_server(agent, session_store=SessionStore(), history_source="agent_managed"), stream=stream
+        )
+        events = _parse_sse_events(response.text) if stream else []
+        body = events[-1]["data"]["response"] if stream else response.json()
+        assert body["status"] == ("failed" if overflow else "completed"), body
+        assert closed.is_set()
+        approvals = [item for item in body["output"] if item["type"] == "mcp_approval_request"]
+        if overflow:
+            assert "Deferred approval output exceeds" in body["error"]["message"]
+            assert approvals == []
+            assert not any(event["data"].get("item", {}).get("type") == "mcp_approval_request" for event in events)
+        else:
+            assert len(approvals) == 1
+            assert body["output"][-1]["content"][0]["text"] == "\u4e2d" * 32
+
+    @pytest.mark.parametrize("limit", ["count", "bytes"])
+    @pytest.mark.parametrize("overflow", [False, True], ids=["exact-limit", "over-limit"])
+    async def test_deferred_approval_output_enforces_default_limits(
+        self,
+        limit: str,
+        overflow: bool,
+        deferred_approval_agent: Callable[
+            [Sequence[AgentResponseUpdate], bool],
+            tuple[MagicMock, list[AgentResponseUpdate], asyncio.Event],
+        ],
+    ) -> None:
+        if limit == "count":
+            agent, _, closed = deferred_approval_agent(
+                [AgentResponseUpdate(role="assistant")] * (4095 + int(overflow)), False
+            )
+        else:
+            text = Content.from_text("")
+            agent, updates, closed = deferred_approval_agent(
+                [AgentResponseUpdate(role="assistant", contents=[text])], False
+            )
+            overhead = sum(
+                len(update.to_json(ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8"))
+                for update in updates
+            )
+            text.text = "x" * (4 * 1024 * 1024 - overhead + int(overflow))
+        response = await _post(
+            _make_server(agent, session_store=SessionStore(), history_source="agent_managed"), stream=False
+        )
+        body = response.json()
+        assert body["status"] == ("failed" if overflow else "completed"), body["status"]
+        assert closed.is_set()
+        if overflow:
+            assert "Deferred approval output exceeds" in body["error"]["message"]
+            assert not any(item["type"] == "mcp_approval_request" for item in body["output"])
+        else:
+            assert any(item["type"] == "mcp_approval_request" for item in body["output"])
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_deferred_approval_limit_closes_an_unending_stream(
+        self,
+        stream: bool,
+        deferred_approval_agent: Callable[
+            [Sequence[AgentResponseUpdate], bool],
+            tuple[MagicMock, list[AgentResponseUpdate], asyncio.Event],
+        ],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        agent, _, closed = deferred_approval_agent([], True)
+        monkeypatch.setattr(
+            "agent_framework_foundry_hosting._responses_agent._MAX_DEFERRED_APPROVAL_UPDATES", 2, raising=False
+        )
+        response = await asyncio.wait_for(
+            _post(_make_server(agent, session_store=SessionStore(), history_source="agent_managed"), stream=stream),
+            timeout=5,
+        )
+        events = _parse_sse_events(response.text) if stream else []
+        body = events[-1]["data"]["response"] if stream else response.json()
+        assert body["status"] == "failed", body
+        assert "update-count limit" in body["error"]["message"]
+        assert closed.is_set()
+        assert not any(item["type"] == "mcp_approval_request" for item in body["output"])
+        assert not any(event["data"].get("item", {}).get("type") == "mcp_approval_request" for event in events)
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("pending_state", ["missing", "mismatched"])
+    async def test_custom_agent_cannot_publish_approval_without_matching_native_state(
+        self,
+        stream: bool,
+        pending_state: str,
+        approval_session: Callable[[Content], AgentSession],
+    ) -> None:
+        from agent_framework._tools import _load_pending_approval_requests
+
+        request = _make_function_approval_request_content()
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[request])]), raw_agent=False
+        )
+        if pending_state == "mismatched":
+            recorded = Content.from_dict(request.to_dict())
+            assert recorded.function_call is not None
+            recorded.function_call.arguments = '{"path": "/different"}'
+            agent.create_session.side_effect = lambda: approval_session(recorded)
+        store = SessionStore()
+        server = _make_server(agent, session_store=store, history_source="agent_managed")
+        response = await _post(server, stream=stream)
+        events = _parse_sse_events(response.text) if stream else []
+        body = events[-1]["data"]["response"] if stream else response.json()
+        assert body["status"] == "failed", body
+        assert "matching native pending" in body["error"]["message"]
+        assert not any(item["type"] == "mcp_approval_request" for item in body["output"])
+        assert not any(event["data"].get("item", {}).get("type") == "mcp_approval_request" for event in events)
+        session = await store.get(body["id"])
+        assert session is not None
+        pending = _load_pending_approval_requests(session)
+        assert len(pending) == (1 if pending_state == "mismatched" else 0)
+        if pending_state == "mismatched":
+            assert request.id is not None
+            pending_call = pending[request.id].function_call
+            assert pending_call is not None and pending_call.arguments == '{"path": "/different"}'
+
+    @pytest.mark.parametrize("hosted_approval_client", ["failure_after_approval"], indirect=True)
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_failed_native_finalization_does_not_publish_approval(
+        self, stream: bool, hosted_approval_client: tuple[OpenAIChatClient, list[dict[str, Any]]]
+    ) -> None:
+        from agent_framework._tools import _load_pending_approval_requests
+
+        client, calls = hosted_approval_client
+        store = SessionStore()
+        server = _make_server(Agent(client=client), session_store=store)
+        response = await _post(server, stream=stream)
+        events = _parse_sse_events(response.text) if stream else []
+        body = events[-1]["data"]["response"] if stream else response.json()
+        assert body["status"] == "failed", body
+        assert len(calls) == 1
+        assert not any(item["type"] == "mcp_approval_request" for item in body["output"])
+        assert not any(event["data"].get("item", {}).get("type") == "mcp_approval_request" for event in events)
+        session = await store.get(body["id"])
+        assert session is not None and not _load_pending_approval_requests(session)
+
+    async def test_deferred_approval_preserves_streamed_output_order(
+        self, approval_session: Callable[[Content], AgentSession]
+    ) -> None:
+        request = _make_function_approval_request_content()
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(role="assistant", contents=[Content.from_text("before")]),
+                AgentResponseUpdate(role="assistant", contents=[request]),
+                AgentResponseUpdate(role="assistant", contents=[Content.from_text("after")]),
+            ]
+        )
+        agent.create_session.side_effect = lambda: approval_session(request)
+        response = await _post(_make_server(agent, session_store=SessionStore()), stream=True)
+        events = _parse_sse_events(response.text)
+        assert events[-1]["data"]["response"]["status"] == "completed"
+        ordered_output: list[str] = []
+        for event in events:
+            if event["event"] == "response.output_text.done":
+                ordered_output.append(event["data"]["text"])
+            elif (
+                event["event"] == "response.output_item.added"
+                and event["data"]["item"]["type"] == "mcp_approval_request"
+            ):
+                ordered_output.append("approval")
+        assert ordered_output == ["before", "approval", "after"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("approved", [False, True])
+    @pytest.mark.parametrize(
+        "history_source, history_limit",
+        [("host_managed", None), ("host_managed", 1), ("agent_managed", None)],
+    )
+    async def test_native_agent_consumes_serialized_session_approval(
+        self,
+        stream: bool,
+        approved: bool,
+        history_source: str,
+        history_limit: int | None,
+        native_approval_agent: tuple[Agent, list[str], list[list[Message]]],
+    ) -> None:
+        from agent_framework._tools import _load_pending_approval_requests
+
+        agent, executions, calls = native_approval_agent
+        store = SessionStore()
+        settings = {"max_history_items": history_limit} if history_source == "host_managed" else {}
+        server = _make_server(agent, session_store=store, history_source=history_source, **settings)
+        first = await _post(server, stream=stream)
+        first_body = _parse_sse_events(first.text)[-1]["data"]["response"] if stream else first.json()
+        assert first_body["status"] == "completed", first_body
+        wire_id = next(item["id"] for item in first_body["output"] if item["type"] == "mcp_approval_request")
+        session = await store.get(first_body["id"])
+        assert session is not None
+        assert set(_load_pending_approval_requests(session)) == {"native-call"}
+        assert executions == []
+        await store.set(first_body["id"], AgentSession.from_dict(json.loads(json.dumps(session.to_dict()))))
+
+        decision = {"type": "mcp_approval_response", "approval_request_id": wire_id, "approve": approved}
+        second = await _post_json(
+            server,
+            {"input": [decision], "previous_response_id": first_body["id"], "stream": stream},
+        )
+        second_body = _parse_sse_events(second.text)[-1]["data"]["response"] if stream else second.json()
+        assert second_body["status"] == "completed", second_body
+        assert executions == (["/safe"] if approved else [])
+        assert len(calls) == 2
+        assert any(
+            content.type == "function_result" and content.call_id == "provider-call"
+            for message in calls[-1]
+            for content in message.contents
+        )
+        resumed_calls = [
+            content for message in calls[-1] for content in message.contents if content.type == "function_call"
+        ]
+        resumed_results = [
+            content for message in calls[-1] for content in message.contents if content.type == "function_result"
+        ]
+        assert len(resumed_calls) == len(resumed_results) == 1
+        assert resumed_calls[0].call_id == resumed_results[0].call_id == "provider-call"
+        assert not any(
+            content.type in ("function_approval_request", "function_approval_response")
+            for message in calls[-1]
+            for content in message.contents
+        )
+        saved = await store.get(second_body["id"])
+        assert saved is not None and not _load_pending_approval_requests(saved)
+
+        third = await _post_json(server, {"input": "continue", "previous_response_id": second_body["id"]})
+        assert third.json()["status"] == "completed", third.json()
+        assert executions == (["/safe"] if approved else [])
+        assert len(calls) == 3
+        assert not any(
+            content.type in ("function_approval_request", "function_approval_response")
+            for message in calls[-1]
+            for content in message.contents
+        )
+
+        replay = await _post_json(
+            server, {"input": [decision], "previous_response_id": second_body["id"], "stream": False}
+        )
+        assert replay.json()["status"] == "failed"
+        assert executions == (["/safe"] if approved else [])
+        assert len(calls) == 3
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_wire_correlation_cannot_cross_native_sessions(
+        self, stream: bool, approval_session: Callable[[Content], AgentSession]
+    ) -> None:
+        from agent_framework._tools import _load_pending_approval_requests
+
+        request = _make_function_approval_request_content()
+        agent = _make_agent(response=AgentResponse(messages=[Message(role="assistant", contents=[request])]))
+        agent.create_session.side_effect = lambda: approval_session(request)
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+        first = (await _post(server)).json()
+        other = (await _post(server)).json()
+        wire_id = next(item["id"] for item in first["output"] if item["type"] == "mcp_approval_request")
+        response = await _post_json(
+            server,
+            {
+                "input": [{"type": "mcp_approval_response", "approval_request_id": wire_id, "approve": True}],
+                "previous_response_id": other["id"],
+                "stream": stream,
+            },
+        )
+        body = _parse_sse_events(response.text)[-1]["data"]["response"] if stream else response.json()
+        assert body["status"] == "failed"
+        assert "does not belong" in body["error"]["message"]
+        assert agent.run.call_count == 2
+        session = await store.get(other["id"])
+        assert session is not None
+        assert set(_load_pending_approval_requests(session)) == {request.id}
+
+    @pytest.mark.parametrize("native_approval_agent", [("/safe", "/other")], indirect=True)
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("first_approved", [False, True])
+    async def test_native_approval_batch_waits_for_all_decisions(
+        self,
+        stream: bool,
+        first_approved: bool,
+        native_approval_agent: tuple[Agent, list[str], list[list[Message]]],
+    ) -> None:
+        agent, executions, calls = native_approval_agent
+        server = _make_server(agent, session_store=SessionStore(), max_history_items=1)
+        first = await _post(server, stream=stream)
+        first_body = _parse_sse_events(first.text)[-1]["data"]["response"] if stream else first.json()
+        wire_ids = {
+            json.loads(item["arguments"])["path"]: item["id"]
+            for item in first_body["output"]
+            if item["type"] == "mcp_approval_request"
+        }
+        partial = await _post_json(
+            server,
+            {
+                "input": [
+                    {
+                        "type": "mcp_approval_response",
+                        "approval_request_id": wire_ids["/safe"],
+                        "approve": first_approved,
+                    }
+                ],
+                "previous_response_id": first_body["id"],
+                "stream": stream,
+            },
+        )
+        partial_body = _parse_sse_events(partial.text)[-1]["data"]["response"] if stream else partial.json()
+        assert partial_body["status"] == "completed", partial_body
+        assert executions == []
+        assert len(calls) == 1
+
+        final = await _post_json(
+            server,
+            {
+                "input": [
+                    {
+                        "type": "mcp_approval_response",
+                        "approval_request_id": wire_ids["/other"],
+                        "approve": not first_approved,
+                    }
+                ],
+                "previous_response_id": partial_body["id"],
+                "stream": stream,
+            },
+        )
+        final_body = _parse_sse_events(final.text)[-1]["data"]["response"] if stream else final.json()
+        assert final_body["status"] == "completed", final_body
+        assert executions == (["/safe"] if first_approved else ["/other"])
+        assert len(calls) == 2
+        model_calls = [
+            content.call_id for message in calls[-1] for content in message.contents if content.type == "function_call"
+        ]
+        model_results = [
+            content.call_id
+            for message in calls[-1]
+            for content in message.contents
+            if content.type == "function_result"
+        ]
+        assert model_calls == model_results == ["provider-call", "provider-call-1"]
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_session_save_failure_does_not_publish_resumable_approval(
+        self, stream: bool, native_approval_agent: tuple[Agent, list[str], list[list[Message]]]
+    ) -> None:
+        agent, executions, _ = native_approval_agent
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+        with patch.object(store, "set", side_effect=RuntimeError("storage unavailable")):
+            response = await _post(server, stream=stream)
+        body = _parse_sse_events(response.text)[-1]["data"]["response"] if stream else response.json()
+        assert body["status"] == "failed", body
+        assert not any(item["type"] == "mcp_approval_request" for item in body["output"])
+        assert executions == []
 
 
 # endregion
@@ -9650,8 +10263,14 @@ class TestParallelRequestReads:
 
     @staticmethod
     def _identity_converters(monkeypatch: pytest.MonkeyPatch) -> None:
-        async def _passthrough(items: Any, *, approval_storage: Any = None) -> list[Any]:
-            del approval_storage
+        async def _passthrough(
+            items: Any,
+            *,
+            session: Any = None,
+            approval_ids: Any = None,
+            include_hosted_approval_requests: bool = False,
+        ) -> list[Any]:
+            del session, approval_ids, include_hosted_approval_requests
             return list(items)
 
         monkeypatch.setattr("agent_framework_foundry_hosting._responses_agent._items_to_messages", _passthrough)
@@ -9662,19 +10281,19 @@ class TestParallelRequestReads:
         server = _make_server(_make_agent())
         server._uses_agent_server_history = True  # pyright: ignore[reportPrivateUsage]
 
-        history_msg = Message(role="assistant", contents=[Content.from_text("H")])
-        input_msg = Message(role="user", contents=[Content.from_text("I")])
+        history_msg = cast(OutputItem, {"type": "output_message", "role": "assistant", "content": []})
+        input_msg = cast(Item, {"type": "message", "role": "user", "content": "I"})
 
         input_started = asyncio.Event()
         history_started = asyncio.Event()
         release = asyncio.Event()
 
-        async def get_input_items() -> list[Message]:
+        async def get_input_items() -> list[Item]:
             input_started.set()
             await release.wait()
             return [input_msg]
 
-        async def get_history() -> list[Message]:
+        async def get_history() -> list[OutputItem]:
             history_started.set()
             await release.wait()
             return [history_msg]
@@ -9683,7 +10302,7 @@ class TestParallelRequestReads:
         context.get_input_items = get_input_items
         context.get_history = get_history
 
-        task = asyncio.ensure_future(server._load_request_messages(context, approval_storage=None))  # pyright: ignore[reportPrivateUsage]
+        task = asyncio.ensure_future(server._load_request_messages(context))  # pyright: ignore[reportPrivateUsage]
         try:
             # Both reads must be in-flight before either is allowed to finish — proves they overlap.
             await asyncio.wait_for(input_started.wait(), timeout=1)
@@ -9701,16 +10320,16 @@ class TestParallelRequestReads:
         server = _make_server(_make_agent())
         server._uses_agent_server_history = False  # pyright: ignore[reportPrivateUsage]
 
-        input_msg = Message(role="user", contents=[Content.from_text("I")])
+        input_msg = cast(Item, {"type": "message", "role": "user", "content": "I"})
 
-        async def get_input_items() -> list[Message]:
+        async def get_input_items() -> list[Item]:
             return [input_msg]
 
         context = MagicMock(spec=ResponseContext)
         context.get_input_items = get_input_items
         context.get_history = AsyncMock()
 
-        messages = await server._load_request_messages(context, approval_storage=None)  # pyright: ignore[reportPrivateUsage]
+        messages = await server._load_request_messages(context)  # pyright: ignore[reportPrivateUsage]
 
         assert messages == [input_msg]
         context.get_history.assert_not_awaited()
@@ -9739,7 +10358,7 @@ class TestParallelRequestReads:
 
         with pytest.raises(RuntimeError, match="input read boom"):
             await asyncio.wait_for(
-                server._load_request_messages(context, approval_storage=None),  # pyright: ignore[reportPrivateUsage]
+                server._load_request_messages(context),  # pyright: ignore[reportPrivateUsage]
                 timeout=2,
             )
 

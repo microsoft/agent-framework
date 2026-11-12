@@ -14,6 +14,18 @@ import pytest
 from azure.ai.agentserver.responses import ResponsesServerOptions
 
 
+@pytest.mark.parametrize("host_type", ["ResponsesHostServer"], indirect=True)
+def test_removed_approval_store_keyword_fails_before_sdk_construction(
+    host_type: type[Any], host_constructor: partial[Any]
+) -> None:
+    with (
+        patch.object(host_type.__bases__[0], "__init__") as initialize,
+        pytest.raises(TypeError, match="function_approval_store_provider"),
+    ):
+        host_constructor(function_approval_store_provider=None)
+    initialize.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "settings",
     [

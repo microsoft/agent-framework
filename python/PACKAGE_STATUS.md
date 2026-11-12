@@ -156,7 +156,7 @@ listed below.
 - `agent-framework-core`: `SessionStore` and `FileSessionStore` from
   `agent_framework/_sessions.py`
 - `agent-framework-foundry-hosting`: `FoundryAgentSessionStore` from
-  `agent_framework_foundry_hosting/_state_store.py`
+  `agent_framework_foundry_hosting/_shared.py`
 
 #### `TO_PROMPT_AGENT`
 

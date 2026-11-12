@@ -20,7 +20,7 @@ from starlette.responses import StreamingResponse
 from starlette.types import Receive, Scope, Send
 
 from ._scope import FoundryRequestScope
-from ._workflow_state import WorkflowBlockedError, WorkflowConflictError
+from ._shared import WorkflowBlockedError, WorkflowConflictError
 
 InvocationOptionsHook = Callable[[Request, dict[str, Any]], Mapping[str, Any] | Awaitable[Mapping[str, Any]]]
 

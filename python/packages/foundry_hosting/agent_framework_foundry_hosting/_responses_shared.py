@@ -22,6 +22,7 @@ from collections.abc import (
 )
 from contextlib import suppress
 from dataclasses import asdict, dataclass, is_dataclass
+from decimal import Decimal
 from typing import Any, Generic, Literal, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
@@ -43,6 +44,10 @@ from agent_framework import (
     Annotation as FrameworkAnnotation,
 )
 from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
+from agent_framework._tools import (
+    _bind_approval_response_to_pending_request,  # pyright: ignore[reportPrivateUsage]
+    _load_pending_approval_requests,  # pyright: ignore[reportPrivateUsage]
+)
 from agent_framework._types import _get_annotation_text_span_regions  # pyright: ignore[reportPrivateUsage]
 from agent_framework.observability import OBSERVABILITY_SETTINGS
 from azure.ai.agentserver.responses import (
@@ -73,6 +78,7 @@ from azure.ai.agentserver.responses.models import (
     OutputItem,
     OutputItemComputerToolCall,
     OutputItemComputerToolCallOutput,
+    OutputItemMcpApprovalRequest,
     OutputItemReasoningItem,
     OutputMessageContent,
     ResponseIncompleteReason,
@@ -93,14 +99,12 @@ from azure.ai.agentserver.responses.streaming._builders import (
 )
 from mcp import MCPError
 
-from ._state_store import (
-    FunctionApprovalStore,
-)
-
 logger = logging.getLogger(__name__)
 
 _MODEL_OUTPUT_KIND_KEY = "model_output_kind"
 _MODEL_OUTPUT_REFUSAL = "refusal"
+_NATIVE_APPROVAL_ID_KEY = "agent_framework_approval_id"
+_NATIVE_APPROVAL_SESSION_KEY = "agent_framework_approval_session_id"
 _HOSTED_PROVIDER_STATE_KEY = "_foundry_provider_background"
 _HOSTED_SOURCE_CONVERSATION_KEY = "_foundry_source_conversation"
 _HOSTED_SERVICE_CHILD_KEY = "_foundry_service_child"
@@ -970,8 +974,8 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
         self,
         update: AgentResponseUpdate,
         *,
-        approval_storage: FunctionApprovalStore | None = None,
         complete_message: bool = False,
+        approval_session_id: str | None = None,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Process one agent update: note its finish reason, then handle each of its contents.
 
@@ -985,8 +989,8 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
             async for event in self.handle(
                 content,
                 message_id=update.message_id,
-                approval_storage=approval_storage,
                 start_new_content_part=complete_message,
+                approval_session_id=approval_session_id,
             ):
                 yield event
 
@@ -995,8 +999,8 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
         content: Content,
         message_id: str | None = None,
         *,
-        approval_storage: FunctionApprovalStore | None = None,
         start_new_content_part: bool = False,
+        approval_session_id: str | None = None,
     ) -> AsyncGenerator[ResponseStreamEvent]:
         """Process a content item, yielding its events.
 
@@ -1006,10 +1010,9 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
                 change in ``message_id`` across otherwise same-typed text content marks a new
                 logical message and forces the previous output item closed, rather than being
                 merged into it.
-            approval_storage: Used for content types that fall back to one-shot emission
-                (anything not recognized as a streaming delta type) to save/load approval requests.
             start_new_content_part: Whether text and refusal content start a new independent
                 content part instead of continuing the current streaming occurrence.
+            approval_session_id: Native session identity used only to scope stored wire correlation.
         """
         if _is_refusal_text_content(content) and content.text is not None:
             for event in self._ensure_message_content("refusal", message_id, start_new_part=start_new_content_part):
@@ -1250,33 +1253,24 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
         elif content.type == "function_approval_request":
             for event in self._close():
                 yield event
-            function_call: Content = content.function_call  # type: ignore
+            function_call = content.function_call
+            if not content.id or function_call is None or not function_call.name:
+                raise ValueError("An approval request requires a native request ID and a named function call.")
             server_label = function_call.server_name or "agent_framework"
-            request_saved = False
-            async for event in self._stream.output_item_mcp_approval_request(
-                server_label,
-                function_call.name,  # type: ignore
-                _json_safe_to_str(function_call.arguments),
-            ):
-                if approval_storage is not None and not request_saved:
-                    # Extract the approval request ID generated by the infrastructure when the
-                    # approval request item is added to the stream, and save it to approval
-                    # storage so it can be retrieved later for round trips.
-                    item = event.get("item") if isinstance(event, Mapping) else getattr(event, "item", None)
-                    approval_request_id = (
-                        cast(Mapping[str, Any], item).get("id")
-                        if isinstance(item, Mapping)
-                        else getattr(item, "id", None)
-                    )
-                    if isinstance(approval_request_id, str):
-                        await approval_storage.save_approval_request(approval_request_id, content)
-                        request_saved = True
-                yield event
-            if approval_storage is not None and not request_saved:
-                logger.warning(
-                    "Approval request was not saved to approval storage because the approval request ID "
-                    "could not be extracted from the stream event."
-                )
+            wire_id = IdGenerator.new_mcp_approval_request_item_id(str(self._stream.response["id"]))
+            item = OutputItemMcpApprovalRequest(
+                type="mcp_approval_request",
+                id=wire_id,
+                server_label=server_label,
+                name=function_call.name,
+                arguments=_json_safe_to_str(function_call.arguments),
+            )
+            builder = self._stream.add_output_item(wire_id)
+            builder.internal_metadata[_NATIVE_APPROVAL_ID_KEY] = content.id
+            if approval_session_id is not None:
+                builder.internal_metadata[_NATIVE_APPROVAL_SESSION_KEY] = approval_session_id
+            yield builder.emit_added(item)
+            yield builder.emit_done(item)
 
         elif content.type == "oauth_consent_request":
             for event in self._close():
@@ -1573,21 +1567,40 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
 
 
 async def _items_to_messages(  # pyright: ignore[reportUnusedFunction]
-    input_items: Sequence[Item], *, approval_storage: FunctionApprovalStore | None = None
+    input_items: Sequence[Item],
+    *,
+    session: AgentSession | None = None,
+    approval_ids: Mapping[str, str] | None = None,
+    include_hosted_approval_requests: bool = False,
 ) -> list[Message]:
-    """Converts a sequence of input items to a list of Messages, one per item.
+    """Convert input items and restore native context for current approval decisions.
 
     Args:
         input_items: The input items to convert.
-        approval_storage: An optional ApprovalStorage instance used to look up
-            approval requests when converting MCP approval response items.
+
+    Keyword Args:
+        session: Native session holding the agent's authoritative pending requests.
+        approval_ids: Transport-only mapping from stored wire IDs to native request IDs.
+        include_hosted_approval_requests: Replay hosted requests when hosting owns the stateless
+            model transcript. Agent-managed or service-side history supplies its own context.
 
     Returns:
-        A list of Messages, one per supported input item.
+        Native request context followed by the supported input messages.
     """
     messages: list[Message] = []
+    if any(item["type"] == "mcp_approval_response" for item in input_items):
+        requests = [
+            request
+            for request in _load_pending_approval_requests(session).values()
+            if request.function_call is not None
+            and (include_hosted_approval_requests or not request.function_call.hosted)
+        ]
+        if requests:
+            # Capped wire history may omit calls. Local snapshots let Core restore call/result
+            # pairs; hosted snapshots belong only in the host-managed stateless transcript.
+            messages.append(Message(role="assistant", contents=requests))
     for item in input_items:
-        messages.append(await _item_to_message(item, approval_storage=approval_storage))
+        messages.append(await _item_to_message(item, session=session, approval_ids=approval_ids))
     return messages
 
 
@@ -1679,18 +1692,19 @@ def _shell_command_output_to_content(output: Mapping[str, Any]) -> Content:
     )
 
 
-async def _item_to_message(
+async def _item_to_message(  # ruff: ignore[unused-async] -- Keep the shared async conversion contract.
     item: Item,
     *,
-    approval_storage: FunctionApprovalStore | None = None,
+    session: AgentSession | None = None,
+    approval_ids: Mapping[str, str] | None = None,
     _item_type_name: Literal["Item", "OutputItem"] = "Item",
 ) -> Message:
     """Converts an Item to a Message.
 
     Args:
         item: The Item to convert.
-        approval_storage: An optional ApprovalStorage instance used to look up
-            approval requests when converting MCP approval response items.
+        session: Native session holding the agent's authoritative pending requests.
+        approval_ids: Transport-only mapping from stored wire IDs to native request IDs.
         _item_type_name: The item type name to include in unsupported-type errors.
 
     Returns:
@@ -1774,31 +1788,38 @@ async def _item_to_message(
         )
 
     if item["type"] == "mcp_approval_request":
-        if approval_storage is not None:
-            try:
-                function_approval_request_content = await approval_storage.load_approval_request(item["id"])
-            except (KeyError, ValueError) as exc:
-                raise _PublicResponseFailure(exc) from None
-        else:
-            raise ValueError("ApprovalStorage is required to load approval request.")
+        pending = _load_pending_approval_requests(session)
+        request_id = approval_ids.get(item["id"]) if approval_ids is not None else item["id"]
+        function_approval_request_content = pending.get(request_id) if request_id is not None else None
+        if function_approval_request_content is None:
+            raise _PublicResponseFailure(ValueError(f"No native pending approval matches {item['id']!r}."))
         return Message(
             role="assistant",
             contents=[function_approval_request_content],
         )
 
     if item["type"] == "mcp_approval_response":
-        if approval_storage is not None:
-            try:
-                function_approval_request_content = await approval_storage.load_approval_request(
-                    item["approval_request_id"]
-                )
-            except (KeyError, ValueError) as exc:
-                raise _PublicResponseFailure(exc) from None
-        else:
-            raise ValueError("ApprovalStorage is required to load approval request.")
+        request_id = (
+            approval_ids.get(item["approval_request_id"]) if approval_ids is not None else item["approval_request_id"]
+        )
+        response = Content(
+            "function_approval_response",
+            id=request_id,
+            approved=item["approve"] is True,
+        )
+        bound = (
+            _bind_approval_response_to_pending_request(response, session, consume=False)
+            if session is not None and request_id is not None
+            else None
+        )
+        if bound is None:
+            raise _PublicResponseFailure(
+                ValueError(f"No native pending approval matches {item['approval_request_id']!r}.")
+            )
+        response.function_call = bound.function_call
         return Message(
             role="user",
-            contents=[function_approval_request_content.to_function_approval_response(item["approve"])],
+            contents=[response],
         )
 
     if item["type"] == "code_interpreter_call":
@@ -1985,34 +2006,93 @@ async def _item_to_message(
 
 async def _output_items_to_messages(  # pyright: ignore[reportUnusedFunction]
     history: Sequence[OutputItem],
-    *,
-    approval_storage: FunctionApprovalStore | None = None,
 ) -> list[Message]:
     """Converts a sequence of OutputItem objects to a list of Message objects.
 
+    Historical approval controls are not replayed. Native session state owns
+    pending requests; only current input carries new approval decisions.
+
     Args:
         history (Sequence[OutputItem]): The sequence of OutputItem objects to convert.
-        approval_storage (ApprovalStorage | None, optional): The approval storage to use for
-            resolving MCP approval requests. Defaults to None.
 
     Returns:
         list[Message]: The list of Message objects.
     """
     messages: list[Message] = []
     for item in history:
-        messages.append(await _output_item_to_message(item, approval_storage=approval_storage))
+        if item["type"] in ("mcp_approval_request", "mcp_approval_response"):
+            continue
+        messages.append(await _output_item_to_message(item))
     return messages
 
 
-async def _output_item_to_message(
-    item: OutputItem, *, approval_storage: FunctionApprovalStore | None = None
-) -> Message:
+def _approval_arguments_match(stored: Any, current: Any) -> bool:
+    """Compare wire arguments without coercing JSON value types or rounding numbers."""
+    if not isinstance(stored, str):
+        return False
+    current_text = _json_safe_to_str(current)
+    if stored == current_text:
+        return True
+    try:
+        stored_value = json.loads(stored, parse_float=Decimal)
+        current_value = json.loads(current_text, parse_float=Decimal)
+    except json.JSONDecodeError:
+        return False
+
+    def matches(left: Any, right: Any) -> bool:
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, dict):
+            left_dict = cast(dict[str, Any], left)
+            right_dict = cast(dict[str, Any], right)
+            return left_dict.keys() == right_dict.keys() and all(
+                matches(value, right_dict[key]) for key, value in left_dict.items()
+            )
+        if isinstance(left, list):
+            left_list = cast(list[Any], left)
+            right_list = cast(list[Any], right)
+            return len(left_list) == len(right_list) and all(
+                matches(left_item, right_item) for left_item, right_item in zip(left_list, right_list, strict=True)
+            )
+        return bool(left == right)
+
+    return matches(stored_value, current_value)
+
+
+def _native_approval_id(  # pyright: ignore[reportUnusedFunction]
+    item: Mapping[str, Any], *, session: AgentSession | None = None
+) -> str:
+    """Resolve stored wire correlation without allowing it to redirect native authority."""
+    raw_metadata = item.get("internal_metadata")
+    metadata: Mapping[str, Any] = cast(Mapping[str, Any], raw_metadata) if isinstance(raw_metadata, Mapping) else {}
+    request_id = metadata.get(_NATIVE_APPROVAL_ID_KEY)
+    if not isinstance(request_id, str) or not request_id:
+        raise _PublicResponseFailure(
+            ValueError("The approval uses an unsupported stored format; start a new conversation.")
+        )
+    if session is not None:
+        if metadata.get(_NATIVE_APPROVAL_SESSION_KEY) != session.session_id:
+            raise _PublicResponseFailure(ValueError("The approval does not belong to this native session."))
+        request = _load_pending_approval_requests(session).get(request_id)
+        function_call = request.function_call if request is not None else None
+        if (
+            function_call is None
+            or item.get("server_label") != (function_call.server_name or "agent_framework")
+            or item.get("name") != function_call.name
+            or not _approval_arguments_match(item.get("arguments"), function_call.arguments)
+        ):
+            raise _PublicResponseFailure(
+                ValueError("The stored approval does not match the current native pending request.")
+            )
+    return request_id
+
+
+async def _output_item_to_message(item: OutputItem, *, session: AgentSession | None = None) -> Message:
     """Converts an OutputItem to a Message.
 
     Args:
         item (OutputItem): The OutputItem to convert.
-        approval_storage (ApprovalStorage | None, optional): The approval storage to use for
-            resolving MCP approval requests. Defaults to None.
+        session: Native session holding the agent's authoritative pending requests.
 
     Returns:
         Message: The converted Message.
@@ -2046,7 +2126,7 @@ async def _output_item_to_message(
 
     return await _item_to_message(
         cast(Item, item),
-        approval_storage=approval_storage,
+        session=session,
         _item_type_name="OutputItem",
     )
 

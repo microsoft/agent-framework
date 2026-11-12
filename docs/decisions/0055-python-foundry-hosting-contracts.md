@@ -80,6 +80,12 @@ clients, providers, and mutable tools. A new graph wrapper around shared executo
 Reject known shared execution resources rather than cloning them. This guard cannot prove that arbitrary
 application globals are isolated. Keep workflow names and executor IDs stable for checkpoint restoration.
 
+Construct tool objects inside the workflow factory as the default. Module-level `@tool` decoration
+constructs one shared wrapper with its own lifetime counters and any captured resources. The current
+ownership guard rejects reused function-tool objects without attempting to infer function purity.
+A function may be defined elsewhere and wrapped inside the factory, but developers remain responsible
+for captured or externally shared state. Fresh wrappers do not clone that state or establish isolation.
+
 Close factory-owned context-managed agents for the request, including failure and cancellation cleanup.
 Applications own cleanup of other resources they create; caller-owned shared resources must not be closed.
 State needed across requests belongs in supported stores, not request-owned instance fields.
@@ -144,14 +150,24 @@ or other request-option precedence.
 
 ### Approvals and consent
 
-Use session-backed authority for regular-agent approvals rather than a separate public approval-store API.
-Native workflow pending authority remains checkpoint-owned. Canonical pending state, conditional consumption,
-persistence ordering, custom-store capabilities, and failure semantics require a complete design before
-replacing existing approval storage.
+The native agent owns approval tracking, pending snapshots, policy decisions, binding, consumption,
+and execution in its `AgentSession`. Hosting persists the complete session rather than implementing a
+second approval store or a Foundry-specific approval dictionary in session state.
+Native workflow pending authority remains checkpoint-owned.
 
-Reject incomplete hosted MCP approval sets with HTTP 400 before streaming, response headers,
-`response.created`, or protected dispatch, without consuming pending authority.
-A complete batch may mix approvals and rejections.
+AgentServer's wire IDs differ from native approval IDs. Retain only transport correlation in the
+response item's internal metadata; it is not executable authority. The native session must still
+contain the matching pending request. Save that session before publishing a resumable approval.
+Remove the separate approval-store configuration and exports without silently migrating old pending work.
+
+This migration preserves Core's existing session-level guarantees. Durable single-consumption across
+workers and independently restored old snapshots requires separate native session-store coordination.
+Do not implement that guarantee in a hosting-specific approval manager.
+
+The intended HTTP contract rejects incomplete hosted MCP approval sets before streaming, response headers,
+`response.created`, or protected dispatch, without consuming pending authority. A complete batch may mix
+approvals and rejections. Exact pre-header HTTP 400 behavior remains blocked on a suitable public SDK
+validation hook under #9537; the native approval migration does not claim to implement that requirement.
 
 Represent invocation-time OAuth consent as structured consent with incomplete response status.
 Pair each emitted function call with one terminal result, preserve completed sibling results, and stop

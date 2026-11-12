@@ -1,8 +1,9 @@
 # Custom session storage (Responses protocol)
 
 This sample implements custom **MAF agent-session persistence**, including user
-and sandbox isolation and optimistic concurrency. The outer Responses store and
-function-approval store remain host-managed. This is not a workflow example.
+and sandbox isolation and optimistic concurrency. Native approval state is part
+of the same `AgentSession` snapshot. The outer Responses store remains
+host-managed; there is no separate function-approval store. This is not a workflow example.
 
 ## Identity and storage keys
 

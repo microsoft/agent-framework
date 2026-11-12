@@ -28,10 +28,8 @@ def test_package_import_is_lazy() -> None:
         assert "agent_framework_foundry_hosting._responses_shared" not in sys.modules
         assert "agent_framework_foundry_hosting._responses_workflow" not in sys.modules
         assert "agent_framework_foundry_hosting._scope" not in sys.modules
-        assert "agent_framework_foundry_hosting._state_store" not in sys.modules
         assert "agent_framework_foundry_hosting._toolbox" not in sys.modules
         assert "agent_framework_foundry_hosting._shared" not in sys.modules
-        assert "agent_framework_foundry_hosting._workflow_state" not in sys.modules
         """
     )
     subprocess.run([sys.executable, "-I", "-c", code], check=True)
@@ -62,12 +60,18 @@ def test_protocol_hosts_import_independently_in_either_order(protocol: str, work
     subprocess.run([sys.executable, "-I", "-c", code], check=True)
 
 
-def test_native_workflow_exports_match_runtime_and_typing_namespace() -> None:
+def test_native_workflow_and_storage_exports_match_runtime_and_typing_namespace() -> None:
     import agent_framework.foundry as foundry
 
     import agent_framework_foundry_hosting as hosting
 
     for name in (
+        "AgentSessionStoreProvider",
+        "CheckpointStoreProvider",
+        "ContextScopedStoreProvider",
+        "FoundryAgentSessionStore",
+        "FoundryCheckpointStore",
+        "StoreProvider",
         "WorkflowTurn",
         "WorkflowSource",
         "ResponsesRequest",

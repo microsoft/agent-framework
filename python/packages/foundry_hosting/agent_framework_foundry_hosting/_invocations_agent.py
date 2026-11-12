@@ -40,8 +40,10 @@ from ._invocations_shared import (
 )
 from ._scope import FoundryRequestScope
 from ._shared import (
+    AgentSessionStoreProvider,
     AgentSource,
     InvocationRun,
+    StoreProvider,
     UnsupportedOptions,
     is_agent,
     resolve_agent,
@@ -50,7 +52,6 @@ from ._shared import (
     validate_sse_keep_alive_interval,
     validate_unsupported_options,
 )
-from ._state_store import AgentSessionStoreProvider, StoreProvider
 
 logger = logging.getLogger(__name__)
 

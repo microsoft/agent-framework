@@ -51,7 +51,8 @@ returning a new wrapper around shared executors does not isolate execution state
 
 Workflow hosts expose checkpoint storage, not agent-session storage or agent history/background
 policies. Responses workflows retain `prepare_options`; Invocations workflows use the parser's
-explicit workflow kwargs instead. Agent approval-store APIs are unchanged.
+explicit workflow kwargs instead. Regular-agent approval state belongs to the native
+agent and its `AgentSession`; no separate approval-store API is exposed.
 Agent hosts reject `WorkflowAgent`, whether supplied directly or returned by a factory.
 `checkpoint_store_provider` is available only on workflow hosts.
 No stored state is converted between native workflow and agent execution models.
@@ -241,6 +242,17 @@ The factory must return a freshly built graph and freshly owned executors,
 agents, clients, context providers, and mutable tools; hosting rejects known
 sharing rather than cloning or unwrapping it. Workflow names and executor IDs
 must remain stable so the exact scoped checkpoint can be restored.
+
+Construct tool objects inside the workflow factory as the default. A module-level
+`@tool` decorator constructs one shared `FunctionTool`, including its invocation
+counters and configured lifetime limits. The current ownership guard rejects
+reusing that object across native workflow requests, even if its function is pure.
+
+A plain Python function can be defined outside the factory and wrapped with
+`tool(function)` inside it to create a fresh tool object for each workflow.
+This does not copy state captured by the function, bound objects, wrapped agents,
+or connections. Developers must manage that state and its isolation explicitly;
+moving only the wrapper construction does not make shared mutable resources safe.
 
 Native workflow state is scoped to the trusted platform user plus Foundry
 sandbox. Each outer stored `response.id` is bound to its exact MAF checkpoint,
@@ -483,7 +495,7 @@ conversation or response ID.
 | MAF `AgentSession.session_id` / `service_session_id` | Inner agent state and optional downstream service continuation; neither identifies the Foundry sandbox. |
 | Workflow checkpoint ID | Inner workflow state within a checkpoint context, not a Foundry session ID. |
 
-The default hosted MAF session, checkpoint, and approval stores use a `v2` namespace
+The default hosted MAF session and checkpoint stores use a `v2` namespace
 derived from the hashed platform identity, with `user_isolation=True` and an explicit
 platform `call_id` on each item operation. Checkpoint context IDs are hashed as well.
 The same user in two hosted sandboxes cannot read the other's default MAF state.
@@ -599,9 +611,34 @@ locally. Stored checkpoints are scoped under `checkpoints`.
 
 ### Function approvals
 
-`ResponsesHostServer` persists function approvals durably. By default, it uses the
-`FoundryFunctionApprovalStore`, backed by Foundry storage when hosted and file-based
-storage locally. Stored approvals are scoped under `function_approvals`.
+The native agent tracks pending approvals, validates decisions, and consumes them
+in its `AgentSession`. Hosting persists and restores the complete native session
+through `agent_session_store_provider`; it does not maintain a second approval store.
+An approval reply must continue the issuing session through `previous_response_id`
+or a named conversation. The wire approval ID alone does not establish authority.
+
+Custom agents must establish matching native pending state by the end of a run
+that emits an approval request. Hosting rejects unmatched or unrecorded requests
+before publishing an approval item; it does not register approvals on an agent's behalf.
+
+AgentServer requires its own wire-ID format. The adapter stores only native-ID
+and session-ID correlation in the response item's internal metadata, which the SDK
+removes from client-facing responses. It resolves that metadata through the scoped
+response provider, independently of model-history limits, then delegates binding
+and consumption to Core. Native workflow authority remains in its exact checkpoint.
+
+Remove `function_approval_store_provider` and imports of `FunctionApprovalStore`,
+`FoundryFunctionApprovalStore`, and `FunctionApprovalStoreProvider` when upgrading.
+Old approval-store records are not migrated. Start a fresh conversation rather
+than resuming approvals emitted before this migration.
+
+Approval output waits for native finalization, and the session is saved before
+an approval request is published. This preserves Core's existing session-level
+guarantees, not durable single-consumption across
+concurrent workers or independently restored old snapshots. Stronger session-store
+coordination is separate work. Incomplete hosted MCP batches still need the SDK
+preflight support tracked by #9537 to return HTTP 400 before streaming starts;
+this migration does not claim that behavior.
 
 ## Native Invocations workflows
 
@@ -680,9 +717,9 @@ If a connection drops after commit, retrying the same trusted user/sandbox/call 
 replays that response's complete stored snapshot without executing the workflow or
 replacing its head. A different call ID starts normal turn validation and cannot
 retrieve that snapshot.
-Local callers may pass one built workflow for a one-shot non-pausing run. Any
-workflow that can pause for external input must use a request-aware factory so a
-fresh graph can restore and consume the durable reply on the next request.
+Local callers also use a request-aware factory, including one-shot non-pausing
+runs. Each request receives a fresh graph; a continuation restores and consumes
+its durable reply from the exact scoped checkpoint.
 After a newer Invocations head is durably committed, the host reclaims completed
 ancestor response records and checkpoints oldest-first, retaining only current,
 pending, active or blocked authority. Cleanup failures are logged and retried by

@@ -61,7 +61,7 @@ from starlette.responses import Response, StreamingResponse
 
 from agent_framework_foundry_hosting import InvocationRun, InvocationsHostServer, StoreProvider
 from agent_framework_foundry_hosting._invocations_shared import invocation_partition_key
-from agent_framework_foundry_hosting._state_store import FoundryAgentSessionStore
+from agent_framework_foundry_hosting._shared import FoundryAgentSessionStore
 
 pytestmark = pytest.mark.filterwarnings("ignore:.*SessionStore is experimental.*")
 
@@ -367,7 +367,7 @@ class TestSessionLifecycle:
         identities = [("sandbox-a", "user-1"), ("sandbox-b", "user-1"), ("sandbox-a", "user-2")]
 
         with patch(
-            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            "agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create",
             new=capture_store_name,
         ):
             for round_number in (1, 2):
