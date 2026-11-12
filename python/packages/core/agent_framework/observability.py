@@ -153,7 +153,6 @@ def _use_telemetry_conversation_id(
         _TELEMETRY_CONVERSATION_ID.reset(token)
 
 
-OTEL_METRICS: Final[str] = "__otel_metrics__"
 TOKEN_USAGE_BUCKET_BOUNDARIES: Final[tuple[float, ...]] = (
     1,
     4,

@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import base64
 import inspect
 import json
@@ -9,7 +10,7 @@ import unittest.mock
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -47,9 +48,12 @@ from copilot.session_events import (
     ToolExecutionCompleteResult,
 )
 from copilot.tools import ToolInvocation, ToolResult
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions, RawGitHubCopilotAgent
 from agent_framework_github_copilot._feature_usage import FeatureIndex
+
+SUPPORTED_CLI_VERSION = "1.0.106"
 
 
 def copilot_options(options: GitHubCopilotOptions) -> GitHubCopilotOptions:
@@ -126,7 +130,9 @@ def mock_session() -> MagicMock:
     """Create a mock CopilotSession."""
     session = MagicMock()
     session.session_id = "test-session-id"
-    session.send = AsyncMock(return_value="test-message-id")
+    # No request ID, like a legacy runtime, so streaming accepts every event. Tests of request
+    # correlation set a request ID and emit the matching user message event.
+    session.send = AsyncMock(return_value=None)
     session.send_and_wait = AsyncMock()
     session.destroy = AsyncMock()
     session.on = MagicMock(return_value=lambda: None)
@@ -160,6 +166,7 @@ def mock_client(mock_session: MagicMock) -> MagicMock:
 
     client = MagicMock()
     client.start = AsyncMock()
+    client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
     client.stop = AsyncMock(return_value=[])
     client.create_session = _validating("create_session")
     client.resume_session = _validating("resume_session")
@@ -344,6 +351,7 @@ class TestGitHubCopilotAgentLifecycle:
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
@@ -392,6 +400,7 @@ class TestGitHubCopilotAgentLifecycle:
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             mock_client.stop = AsyncMock()
             MockClient.return_value = mock_client
 
@@ -401,11 +410,98 @@ class TestGitHubCopilotAgentLifecycle:
 
             mock_client.stop.assert_called_once()
 
+    @pytest.mark.parametrize("version", ["1.0.85", "1.0.85-3", "1.0.90-0.unstable.abc", "2.0.0"])
+    async def test_start_accepts_supported_cli_version(self, mock_client: MagicMock, version: str) -> None:
+        """Test that start succeeds when the CLI reports the minimum version or newer."""
+        mock_client.get_status = AsyncMock(return_value=MagicMock(version=version))
+        agent = GitHubCopilotAgent(client=mock_client)
+
+        await agent.start()
+
+        assert agent._started is True  # type: ignore
+
+    @pytest.mark.parametrize("version", ["1.0.64", "1.0.84", "0.9.999", "dev", "", None])
+    async def test_start_rejects_old_or_unreadable_cli_version(self, mock_client: MagicMock, version: Any) -> None:
+        """Test that start fails when the CLI is too old or its version can't be read."""
+        mock_client.get_status = AsyncMock(return_value=MagicMock(version=version))
+        agent = GitHubCopilotAgent(client=mock_client)
+
+        with pytest.raises(AgentException, match=r"version 1\.0\.85 or higher is required"):
+            await agent.start()
+
+        assert agent._started is False  # type: ignore
+        mock_client.stop.assert_not_called()
+
+    async def test_start_rejects_when_cli_status_fails(self, mock_client: MagicMock) -> None:
+        """Test that start fails when the CLI version can't be queried."""
+        mock_client.get_status = AsyncMock(side_effect=RuntimeError("status.get not supported"))
+        agent = GitHubCopilotAgent(client=mock_client)
+
+        with pytest.raises(AgentException, match="could not be determined"):
+            await agent.start()
+
+        assert agent._started is False  # type: ignore
+
+    async def test_start_stops_owned_client_on_unsupported_cli_version(self) -> None:
+        """Test that an agent-owned client is stopped when the CLI version is unsupported."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            mock_client.stop = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version="1.0.64"))
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            with pytest.raises(AgentException):
+                await agent.start()
+
+            mock_client.stop.assert_called_once()
+
+    async def test_start_stops_owned_client_when_cancelled_during_version_check(self) -> None:
+        """Test that an agent-owned client is stopped when start is cancelled during the version check."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            mock_client.stop = AsyncMock()
+            mock_client.get_status = AsyncMock(side_effect=asyncio.CancelledError())
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            with pytest.raises(asyncio.CancelledError):
+                await agent.start()
+
+            mock_client.stop.assert_called_once()
+            assert agent._started is False  # type: ignore
+
+    async def test_start_concurrent_calls_check_version_once(self) -> None:
+        """Test that concurrent start calls start the client and check the CLI version only once."""
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            mock_client.stop = AsyncMock()
+
+            async def get_status() -> MagicMock:
+                await asyncio.sleep(0)
+                return MagicMock(version=SUPPORTED_CLI_VERSION)
+
+            mock_client.get_status = AsyncMock(side_effect=get_status)
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await asyncio.gather(agent.start(), agent.start())
+
+            MockClient.assert_called_once()
+            mock_client.start.assert_called_once()
+            mock_client.get_status.assert_called_once()
+            mock_client.stop.assert_not_called()
+            assert agent._started is True  # type: ignore
+
     async def test_start_creates_client_with_options(self) -> None:
         """Test that start creates client with cli_path and log_level from settings."""
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent(
@@ -422,6 +518,7 @@ class TestGitHubCopilotAgentLifecycle:
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent(default_options=copilot_options({"base_directory": "/custom/copilot/home"}))
@@ -441,6 +538,7 @@ class TestGitHubCopilotAgentLifecycle:
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent(
@@ -463,6 +561,7 @@ class TestGitHubCopilotAgentLifecycle:
         ):
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
@@ -478,6 +577,7 @@ class TestGitHubCopilotAgentLifecycle:
         ):
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
@@ -493,6 +593,7 @@ class TestGitHubCopilotAgentLifecycle:
         ):
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
@@ -505,6 +606,7 @@ class TestGitHubCopilotAgentLifecycle:
         with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
@@ -521,6 +623,7 @@ class TestGitHubCopilotAgentLifecycle:
         ):
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
+            mock_client.get_status = AsyncMock(return_value=MagicMock(version=SUPPORTED_CLI_VERSION))
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
@@ -1248,6 +1351,362 @@ class TestGitHubCopilotAgentRunStreaming:
         assert responses[2].contents[0].type == "function_result"
         assert responses[3].role == "assistant"
         assert responses[3].contents[0].type == "text"
+
+
+class TestGitHubCopilotAgentStructuredOutput:
+    """Test cases for response_format (structured output) support."""
+
+    class Answer(BaseModel):
+        value: int
+
+    async def test_run_passes_response_format_as_response_schema(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """response_format is forwarded to send_and_wait and parsed into AgentResponse.value."""
+        mock_session.send_and_wait.return_value = create_session_event(
+            SessionEventType.ASSISTANT_MESSAGE, content='{"value": 42}', message_id="msg-1"
+        )
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run("What is 19 + 23?", options=cast(Any, {"response_format": self.Answer}))
+
+        assert mock_session.send_and_wait.call_args.kwargs["response_schema"] is self.Answer
+        assert response.value == self.Answer(value=42)
+
+    async def test_run_uses_default_options_response_format(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """response_format from default_options is used and not leaked into create_session."""
+        mock_session.send_and_wait.return_value = create_session_event(
+            SessionEventType.ASSISTANT_MESSAGE, content='{"value": 7}', message_id="msg-1"
+        )
+
+        agent = GitHubCopilotAgent(client=mock_client, default_options=cast(Any, {"response_format": self.Answer}))
+        response = await agent.run("Hi")
+
+        assert mock_session.send_and_wait.call_args.kwargs["response_schema"] is self.Answer
+        assert "response_format" not in mock_client.create_session.call_args.kwargs
+        assert response.value == self.Answer(value=7)
+
+    async def test_run_accepts_json_schema_mapping(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """A JSON Schema mapping is forwarded unchanged."""
+        schema = {"type": "object", "properties": {"value": {"type": "integer"}}, "required": ["value"]}
+        mock_session.send_and_wait.return_value = create_session_event(
+            SessionEventType.ASSISTANT_MESSAGE, content='{"value": 1}', message_id="msg-1"
+        )
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run("Hi", options=cast(Any, {"response_format": schema}))
+
+        assert mock_session.send_and_wait.call_args.kwargs["response_schema"] == schema
+        assert response.value == {"value": 1}
+
+    async def test_run_without_response_format_sends_no_schema(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """No schema is sent when response_format is not set."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.run("Hi")
+
+        assert mock_session.send_and_wait.call_args.kwargs["response_schema"] is None
+
+    async def test_run_converts_mapping_schema_to_plain_dict(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Non-dict mappings are converted to plain dicts so the SDK can serialize them."""
+        schema = MappingProxyType({
+            "type": "object",
+            "properties": MappingProxyType({"value": MappingProxyType({"type": "integer"})}),
+        })
+        mock_session.send_and_wait.return_value = create_session_event(
+            SessionEventType.ASSISTANT_MESSAGE, content='{"value": 1}', message_id="msg-1"
+        )
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.run("Hi", options=cast(Any, {"response_format": schema}))
+
+        sent = mock_session.send_and_wait.call_args.kwargs["response_schema"]
+        assert type(sent) is dict
+        assert type(sent["properties"]["value"]) is dict
+        json.dumps(sent)
+
+    async def test_run_parses_aliased_model_by_alias(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Aliased models are validated by alias only, matching the schema sent to the SDK."""
+
+        class Aliased(BaseModel):
+            model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
+            item_count: int = Field(alias="itemCount")
+
+        mock_session.send_and_wait.return_value = create_session_event(
+            SessionEventType.ASSISTANT_MESSAGE, content='{"itemCount": 3}', message_id="msg-1"
+        )
+        # Core validation with the model's own settings would fail here.
+        with pytest.raises(ValidationError):
+            Aliased.model_validate_json('{"itemCount": 3}')
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run("Hi", options=cast(Any, {"response_format": Aliased}))
+
+        assert response.value is not None
+        assert response.value.item_count == 3
+
+    class Defaulted(BaseModel):
+        model_config = ConfigDict(validate_by_alias=False, validate_by_name=True)
+        item_count: int = Field(default=0, alias="itemCount")
+
+    async def test_run_keeps_provider_value_for_defaulted_aliased_field(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """An alias-keyed value is not lost to the field default (non-streaming)."""
+        mock_session.send_and_wait.return_value = create_session_event(
+            SessionEventType.ASSISTANT_MESSAGE, content='{"itemCount": 3}', message_id="msg-1"
+        )
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        response = await agent.run("Hi", options=cast(Any, {"response_format": self.Defaulted}))
+
+        assert response.value is not None
+        assert response.value.item_count == 3
+
+    async def test_streaming_keeps_provider_value_for_defaulted_aliased_field(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """An alias-keyed value is not lost to the field default (streaming)."""
+        events = [
+            create_session_event(
+                SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content='{"itemCount": 3}', message_id="root"
+            ),
+            create_session_event(SessionEventType.SESSION_IDLE),
+        ]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        stream = agent.run("Hi", stream=True, options=cast(Any, {"response_format": self.Defaulted}))
+        async for _ in stream:
+            pass
+        response = await stream.get_final_response()
+
+        assert response.value is not None
+        assert response.value.item_count == 3
+
+    async def test_streaming_value_ignores_trailing_subagent_text(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """A sub-agent delta after the root answer does not replace the structured value."""
+        child = create_session_event(
+            SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content="child chatter", message_id="child"
+        )
+        child.agent_id = "sub-agent"
+        events = [
+            create_session_event(
+                SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content='{"value": 9}', message_id="root"
+            ),
+            child,
+            create_session_event(SessionEventType.SESSION_IDLE),
+        ]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        stream = agent.run("Hi", stream=True, options=cast(Any, {"response_format": self.Answer}))
+        texts = [u.text async for u in stream]
+        response = await stream.get_final_response()
+
+        assert "child chatter" in "".join(texts)
+        assert response.value == self.Answer(value=9)
+
+    async def test_streaming_ignores_subagent_idle_before_root_answer(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """A sub-agent idle event does not end the stream or drop the root structured answer."""
+        child_idle = create_session_event(SessionEventType.SESSION_IDLE)
+        child_idle.agent_id = "sub-agent"
+        events = [
+            create_session_event(SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content="preamble", message_id="pre"),
+            child_idle,
+            create_session_event(
+                SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content='{"value": 11}', message_id="root"
+            ),
+            create_session_event(SessionEventType.SESSION_IDLE),
+        ]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        stream = agent.run("Hi", stream=True, options=cast(Any, {"response_format": self.Answer}))
+        texts = [u.text async for u in stream]
+        response = await stream.get_final_response()
+
+        assert '{"value": 11}' in "".join(texts)
+        assert response.value is not None
+        assert response.value.value == 11
+
+    @staticmethod
+    def _replay(mock_session: MagicMock, events: list[SessionEvent]) -> None:
+        mock_session.send.return_value = "req-1"
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+    async def _stream_value(self, mock_client: MagicMock) -> tuple[list[str], Any]:
+        agent = GitHubCopilotAgent(client=mock_client)
+        stream = agent.run("Hi", stream=True, options=cast(Any, {"response_format": self.Answer}))
+        texts = [u.text async for u in stream]
+        return texts, await stream.get_final_response()
+
+    async def test_streaming_ignores_events_from_an_earlier_request(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """An earlier request's root answer and idle must not supply or end this run."""
+        self._replay(
+            mock_session,
+            [
+                create_session_event(
+                    SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content='{"value": 1}', message_id="old"
+                ),
+                create_session_event(SessionEventType.SESSION_IDLE),
+                create_session_event(SessionEventType.USER_MESSAGE, message_id="req-1"),
+                create_session_event(
+                    SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content='{"value": 2}', message_id="new"
+                ),
+                create_session_event(SessionEventType.SESSION_IDLE),
+            ],
+        )
+
+        texts, response = await self._stream_value(mock_client)
+
+        assert "".join(texts) == '{"value": 2}'
+        assert response.value is not None
+        assert response.value.value == 2
+
+    async def test_streaming_rejects_aborted_root_idle(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """An aborted idle is an error, not a successful structured result."""
+        aborted_idle = create_session_event(SessionEventType.SESSION_IDLE)
+        aborted_data: Any = aborted_idle.data
+        aborted_data.aborted = True
+        self._replay(
+            mock_session,
+            [
+                create_session_event(SessionEventType.USER_MESSAGE, message_id="req-1"),
+                create_session_event(
+                    SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content='{"value": 1}', message_id="m1"
+                ),
+                aborted_idle,
+            ],
+        )
+
+        with pytest.raises(AgentException, match="aborted"):
+            await self._stream_value(mock_client)
+
+    async def test_streaming_ignores_autopilot_idle_until_final_response(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """An autopilot idle does not end the stream; the later final root response is used."""
+        autopilot_idle = create_session_event(SessionEventType.SESSION_IDLE)
+        autopilot_data: Any = autopilot_idle.data
+        autopilot_data.mode = "autopilot"
+        self._replay(
+            mock_session,
+            [
+                create_session_event(SessionEventType.USER_MESSAGE, message_id="req-1"),
+                create_session_event(
+                    SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content='{"value": 1}', message_id="m1"
+                ),
+                autopilot_idle,
+                create_session_event(
+                    SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content='{"value": 2}', message_id="m2"
+                ),
+                create_session_event(SessionEventType.SESSION_IDLE),
+            ],
+        )
+
+        _, response = await self._stream_value(mock_client)
+
+        assert response.value is not None
+        assert response.value.value == 2
+
+    async def test_streaming_passes_response_format_and_parses_value(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Streaming forwards the schema to send and parses the final value after the stream."""
+        events = [
+            create_session_event(SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content='{"value": ', message_id="m"),
+            create_session_event(SessionEventType.ASSISTANT_MESSAGE_DELTA, delta_content="5}", message_id="m"),
+            create_session_event(SessionEventType.SESSION_IDLE),
+        ]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        stream = agent.run("Hi", stream=True, options=cast(Any, {"response_format": self.Answer}))
+        async for _ in stream:
+            pass
+        response = await stream.get_final_response()
+
+        assert mock_session.send.call_args.kwargs["response_schema"] is self.Answer
+        assert response.value == self.Answer(value=5)
 
 
 class TestGitHubCopilotAgentSessionManagement:

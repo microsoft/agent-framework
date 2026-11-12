@@ -38,6 +38,39 @@ Initialization, snapshot restore, and execution failures follow the same policy.
 Failed sandbox entries are retired; cancellation and system-exit signals still
 propagate without becoming ordinary execution errors.
 
+## Execution limits
+
+Guest execution has a finite 30-second budget by default. Both
+`HyperlightCodeActProvider` and `HyperlightExecuteCodeTool` accept the host-side
+`execution_timeout_seconds` option, which must be a positive finite number.
+Applications that intentionally run longer must configure a larger budget.
+The option is captured in provider run snapshots and serialized state; it is
+not a model-controlled `execute_code` argument.
+
+Reaching the budget returns an error content with
+`Code execution exceeded its time limit.` Caller task cancellation interrupts
+guest execution and propagates `asyncio.CancelledError`. Cancellation waits for
+native execution and its interruption thread to finish, even if the caller
+cancels again. Queued cancellation does not interrupt another invocation.
+The next invocation restores the warm snapshot before reusing the sandbox.
+
+The budget starts on the sandbox's owning worker, not while waiting for that
+worker. Initialization and warm-up share the invocation's budget, but runtime
+initialization and host tool callbacks cannot be interrupted. Host tools must
+enforce their own cancellation and time limits. Completed results and unrelated
+execution failures are not replaced with a timeout that arrives late.
+
+This behavior uses the cross-thread `Sandbox.interrupt_handle()` API included
+in the required Hyperlight SDK 0.9.0 or later.
+
+To run the native regressions on a KVM host with the required SDK and both
+backends installed:
+
+```bash
+HYPERLIGHT_RUN_GUEST_TESTS=true uv run --directory python/packages/hyperlight pytest \
+  tests/hyperlight/test_execution_limits.py -m integration
+```
+
 ## Installation
 
 ```bash

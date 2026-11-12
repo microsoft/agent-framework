@@ -14,19 +14,17 @@ services:
             dependencyResolution: remote_build
             entryPoint: HostedWorkflowHandoff.dll
             runtime: dotnet_10
-        # ASPNETCORE_URLS pins the readiness port (8088). AZURE_OPENAI_* point the sample at the
-        # Azure OpenAI resource it uses for the triage/specialist agents; they are read from the
-        # active azd environment.
+        # ASPNETCORE_URLS pins the readiness port (8088). The platform injects the Foundry project
+        # endpoint, while the selected project model deployment comes from the active azd environment.
         env:
             ASPNETCORE_URLS: http://+:8088
-            AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
-            AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT}
+            AZURE_AI_MODEL_DEPLOYMENT_NAME: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
         container:
             resources:
                 cpu: "0.5"
                 memory: 1Gi
         description: |
-            A hosted triage handoff workflow routing to specialist agents, with client-side and server-side MCP tools, backed by Azure OpenAI.
+            A hosted triage handoff workflow routing to specialist agents, with client-side and server-side MCP tools, backed by a Foundry project model.
         kind: hosted
         metadata:
             tags:

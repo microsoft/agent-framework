@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -14,8 +13,6 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 // The terminal stream events are named the same in two namespaces this file pulls in, and the short
@@ -34,8 +31,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// with agent-framework <see cref="AIAgent"/> instances, enabling agent-framework agents and workflows
 /// to be hosted as Azure Foundry Hosted Agents.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public partial class AgentFrameworkResponseHandler : ResponseHandler
+internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
 {
     private const string LatestWorkflowCheckpointIdMetadataKey = "_last_checkpoint_id";
     private const string UserPartitionName = "user";
@@ -43,20 +39,8 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
 
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<AgentFrameworkResponseHandler> _logger;
+    private readonly FoundryResponsesServerOptions _options;
     private readonly FoundryToolboxService? _toolboxService;
-
-    /// <summary>
-    /// Whether the host was configured for durable long-running (resilient) background responses
-    /// (<see cref="FoundryResponsesOptions.ResilientBackground"/>). When <see langword="false"/> the
-    /// handler never does mid-turn session saves or recovery exit and behaves exactly as a non-resilient host.
-    /// </summary>
-    private readonly bool _resilientBackground;
-
-    /// <summary>
-    /// Cached fallback used when no <see cref="HostedSessionIsolationKeyProvider"/> is registered in DI.
-    /// Avoids a per-request allocation on the request hot path.
-    /// </summary>
-    private static readonly HostedSessionIsolationKeyProvider s_defaultIsolationKeyProvider = new PlatformHostedSessionIsolationKeyProvider();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFrameworkResponseHandler"/> class
@@ -64,16 +48,13 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
     /// </summary>
     /// <param name="serviceProvider">The service provider for resolving agents.</param>
     /// <param name="logger">The logger instance.</param>
-    /// <param name="toolboxService">Optional Foundry Toolbox service providing MCP tools.</param>
     public AgentFrameworkResponseHandler(
         IServiceProvider serviceProvider,
-        ILogger<AgentFrameworkResponseHandler> logger,
-        FoundryToolboxService? toolboxService = null)
+        ILogger<AgentFrameworkResponseHandler> logger)
         : this(
             serviceProvider,
             logger,
-            Options.Create(new FoundryResponsesOptions()),
-            toolboxService)
+            new FoundryResponsesServerOptions())
     {
     }
 
@@ -87,11 +68,10 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
     /// Hosting options, used to read whether resilient background responses are enabled.
     /// </param>
     /// <param name="toolboxService">Optional Foundry Toolbox service providing MCP tools.</param>
-    [ActivatorUtilitiesConstructor]
     public AgentFrameworkResponseHandler(
         IServiceProvider serviceProvider,
         ILogger<AgentFrameworkResponseHandler> logger,
-        IOptions<FoundryResponsesOptions> foundryResponsesOptions,
+        FoundryResponsesServerOptions foundryResponsesOptions,
         FoundryToolboxService? toolboxService = null)
     {
         _ = Throw.IfNull(serviceProvider);
@@ -100,8 +80,8 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
 
         this._serviceProvider = serviceProvider;
         this._logger = logger;
+        this._options = foundryResponsesOptions;
         this._toolboxService = toolboxService;
-        this._resilientBackground = foundryResponsesOptions.Value.ResilientBackground;
     }
 
     /// <inheritdoc/>
@@ -114,32 +94,32 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
         var agent = this.ResolveAgent(request);
         var sessionStore = this.ResolveSessionStore(request);
 
-        // 2. Resolve the per-request hosted session identity context, so the session can be
+        // 2. Resolve the per-request hosted user identity, so the session can be
         // loaded from a per-user partition. Fresh sessions are tagged once; resumed sessions are
         // validated against the live request to detect cross-user session leaks and in-process tampering.
-        var isolationKeyProvider = this._serviceProvider.GetService<HostedSessionIsolationKeyProvider>()
-            ?? s_defaultIsolationKeyProvider;
-        var resolvedHostedContext = await isolationKeyProvider.GetKeysAsync(context, request, cancellationToken).ConfigureAwait(false);
-        if (resolvedHostedContext is null && FoundryEnvironment.IsHosted)
+        string? resolvedUserId = context.PlatformContext?.UserIdKey;
+        if (string.IsNullOrWhiteSpace(resolvedUserId))
+        {
+            resolvedUserId = null;
+        }
+
+        if (resolvedUserId is null && FoundryEnvironment.IsHosted)
         {
             // Hosted by Foundry yet the provider produced no user identity. The endpoint filter
             // already rejected protocol 1.0.0, so this is the unexpected case of a 2.0.0
-            // request that carried a call id but no x-agent-user-id, or a custom provider that returned
-            // null in production. Reject rather than silently persist an unscoped, cross-user session.
+            // request that carried a call id but no x-agent-user-id. Reject rather than silently persist
+            // an unscoped, cross-user session.
             throw new InvalidOperationException(
-                $"The registered {nameof(HostedSessionIsolationKeyProvider)} returned null for the current request. " +
-                "Ensure the Foundry platform is providing the x-agent-user-id header, " +
-                "or register a custom provider that supplies fallback values for local development.");
+                "The Foundry platform did not provide a user identity for the current request. " +
+                "Ensure the x-agent-user-id header is present.");
         }
 
-        // When resolvedHostedContext is null here the container is NOT hosted by Foundry (local
+        // When resolvedUserId is null here the container is NOT hosted by Foundry (local
         // development: docker run / dotnet run outside the platform, so no x-agent-user-id header).
         // Per-user isolation simply does not apply in that case: no user partition is added to the
         // session key and no hosted context is stamped or
         // validated. This lets contributors run the image locally without registering a fallback
         // provider, while production stays strict because FoundryEnvironment.IsHosted is true there.
-        var resolvedUserId = resolvedHostedContext?.UserId;
-
         // 3. Load or create a new session from the interaction.
         // Map the request to a stable MAF AgentSession key: conversation_id when present, else the
         // partition embedded in previous_response_id (chains converge), else the minted response id
@@ -160,8 +140,6 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
         }
 
         var agentOptions = agent.GetService<ChatClientAgentOptions>();
-        var hostingOptions = this._serviceProvider.GetService<IOptions<FoundryResponsesOptions>>()?.Value;
-        var allowStoredOutputEnabled = hostingOptions?.AllowStoredOutputEnabled ?? false;
 
         // Load the session for this conversation, or start a new one. The store returns null when
         // nothing is persisted for the key, so a fresh conversation and a resumed one both end up with
@@ -196,23 +174,23 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
 
         // Stamp/validate the hosted identity only when one was resolved. Locally (non-hosted) there is
         // no user identity, so there is nothing to partition or tamper-check and the session is shared.
-        if (session is not null && resolvedHostedContext is not null)
+        if (session is not null && resolvedUserId is not null)
         {
-            var existingHostedContext = session.GetHostedContext();
-            if (existingHostedContext is null)
+            string? existingUserId = session.GetFoundryHostedUserId();
+            if (existingUserId is null)
             {
                 // Fresh path: the session has no hosted context yet (either freshly created here,
                 // or freshly loaded for a conversation_id that the platform supplied without any
                 // prior hosted-agent request having stamped a context). Stamp it now.
-                session.SetHostedContext(resolvedHostedContext);
+                session.SetHostedUserId(resolvedUserId);
             }
-            else if (!string.Equals(existingHostedContext.UserId, resolvedHostedContext.UserId, StringComparison.Ordinal))
+            else if (!string.Equals(existingUserId, resolvedUserId, StringComparison.Ordinal))
             {
                 // Resume path: the persisted identity must match the live request. A mismatch
                 // signals either a cross-user session leak or in-process tampering of the
                 // persisted identity. Reject the request hard.
                 throw new ResponsesApiException(
-                    new Error("hosted_session_identity_mismatch", "Hosted session identity context mismatch"),
+                    new Error("hosted_user_identity_mismatch", "Hosted user identity mismatch"),
                     403);
             }
         }
@@ -274,11 +252,10 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
         var chatOptions = InputConverter.ConvertToChatOptions(
             request,
             agentOptions?.ChatOptions?.RawRepresentationFactory,
-            hostingOptions);
+            this._options);
         chatOptions.Instructions = request.Instructions;
 
-        // Inject Foundry Toolbox tools when the toolbox service is available. ResolveToolboxToolsAsync
-        // describes the toolbox sources and returns the tools, the outstanding consents, or an error.
+        // Inject pre-registered Foundry Toolbox tools when the toolbox service is available.
         if (this._toolboxService is not null)
         {
             // Re-apply the call id: the EmitCreated/EmitInProgress yields above reverted the ambient
@@ -288,15 +265,7 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
 
             var toolboxResolution = await this.ResolveToolboxToolsAsync(
                 this._toolboxService,
-                request,
-                context.ResponseId,
                 cancellationToken).ConfigureAwait(false);
-
-            if (toolboxResolution.Error is not null)
-            {
-                yield return stream.EmitFailed(ResponseErrorCode.ServerError, toolboxResolution.Error);
-                yield break;
-            }
 
             // A toolbox that still needs OAuth consent stops this turn instead of silently running
             // without its tools: the user completes consent out of band, then re-sends the request.
@@ -319,7 +288,7 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
             }
         }
 
-        if (allowStoredOutputEnabled &&
+        if (this._options.InferenceStoredOutputAllowed &&
             agent.GetService<FunctionInvokingChatClient>() is { } functionInvokingClient)
         {
             // The FICC instance is shared, so install one AsyncLocal-aware gate rather than
@@ -335,7 +304,7 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
         // state. For workflows, that includes the workflow checkpoint reference.
         var useVolatileChatHistoryProvider =
             shouldInjectRequestInput
-            && !allowStoredOutputEnabled
+            && !this._options.InferenceStoredOutputAllowed
             && agent.GetService<ChatClientAgent>() is not null
             && agentOptions?.ChatHistoryProvider is null;
 
@@ -361,9 +330,8 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
         var consentState = new RequestConsentState
         {
             CancellationSource = consentCts,
-            ReconcileDownstreamHistory = allowStoredOutputEnabled,
-            InterruptedToolResult = hostingOptions?.OAuthConsentInterruptedToolResult
-                ?? McpConsentResults.NotExecuted,
+            ReconcileDownstreamHistory = this._options.InferenceStoredOutputAllowed,
+            InterruptedToolResult = this._options.OAuthConsentInterruptedToolResult,
         };
 
         // 7. Run the agent and convert output
@@ -700,7 +668,7 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
         // A per-service-call history provider uses a local marker in ConversationId to keep
         // function invocation working; only a real service conversation indicates stored output.
         bool CheckNotAllowedStoreUsage() =>
-            !allowStoredOutputEnabled
+            !this._options.InferenceStoredOutputAllowed
             && session is ChatClientAgentSession { ConversationId: not null } chatSession
             && !string.Equals(
                 chatSession.ConversationId,
@@ -724,8 +692,8 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
     /// <param name="serverLabel">The tool source / server label that requires consent.</param>
     /// <param name="consentUrl">The OAuth consent URL the user must visit.</param>
     /// <param name="consentLinkPolicy">
-    /// The consent link policy to enforce. When <see langword="null"/>, <see cref="OAuthConsentLinkPolicy.AnySafeOrigin"/>
-    /// is used, so the link must still be a safe absolute HTTPS URL.
+    /// The consent link policy to enforce. When <see langword="null"/>, <see cref="OAuthConsentLinkPolicy.UnrestrictedOrigin"/>
+    /// is used, so the link must still pass absolute HTTPS URL validation.
     /// </param>
     /// <returns>An enumerable of events: <c>output_item.added</c> → <c>output_item.done</c>.</returns>
     /// <exception cref="InvalidOperationException">The consent link does not satisfy the policy.</exception>
@@ -737,7 +705,7 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
     {
         // Callers validate first so they can fail the response cleanly; this is the last line of
         // defense and never skips validation, even when no policy is supplied.
-        if (!(consentLinkPolicy ?? OAuthConsentLinkPolicy.AnySafeOrigin).IsAllowed(consentUrl))
+        if (!(consentLinkPolicy ?? OAuthConsentLinkPolicy.UnrestrictedOrigin).IsAllowed(consentUrl))
         {
             throw new InvalidOperationException(ConsentLinkRejectedMessage);
         }
@@ -749,26 +717,15 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
     }
 
     /// <summary>
-    /// Resolves the Foundry toolbox tools to add to this request, or the reason the turn must stop.
+    /// Resolves the pre-registered Foundry toolbox tools to add to this request.
     /// </summary>
     /// <returns>
-    /// The tools to add, the OAuth consents still outstanding, or the error that fails the request.
+    /// The tools to add, or the OAuth consents still outstanding.
     /// </returns>
     private async ValueTask<ToolboxRequestResolution> ResolveToolboxToolsAsync(
         FoundryToolboxService toolboxService,
-        CreateResponse request,
-        string responseId,
         CancellationToken cancellationToken)
     {
-        // Two sources are considered:
-        //   1. Pre-registered toolboxes (via AddFoundryToolboxes) — always appended.
-        //   2. Per-request markers embedded in request.Tools (HostedMcpToolboxAITool)
-        //      whose ServerAddress scheme is "foundry-toolbox://". Strict mode rejects
-        //      unknown names; otherwise a lazy MCP client is opened and cached.
-        //
-        // Each toolbox's tools are only appended once per request, even if it appears
-        // in both the pre-registered list and the per-request markers.
-
         // Retry any pre-registered toolbox that was deferred at startup because it could not be
         // enumerated without a per-user context (non-consent failure). The request's egress now
         // carries the platform-injected per-user isolation key, so a delegated tool source can
@@ -782,66 +739,17 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
         // (CONSENT_REQUIRED at tools/list time). If consent is still outstanding, surface it to
         // the caller as an oauth_consent_request and stop: the user completes consent out of band,
         // then re-sends the request, at which point enumeration succeeds and the tools appear.
-        // Markers are not resolved in that case, matching a turn that stops before running.
         var pendingConsents = await toolboxService
             .ResolvePendingConsentsAsync(cancellationToken)
             .ConfigureAwait(false);
         if (pendingConsents.Count > 0)
         {
-            return new(Tools: [], Consents: pendingConsents, Error: null);
+            return new(Tools: [], Consents: pendingConsents);
         }
 
-        List<AITool> toolsToAdd = [.. toolboxService.Tools, .. toolboxService.GetCurrentRequestTools()];
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        List<McpConsentInfo>? markerConsents = null;
-
-        foreach (var (name, version) in InputConverter.ReadMcpToolboxMarkers(request))
-        {
-            if (!seen.Add(name))
-            {
-                continue;
-            }
-
-            FoundryToolboxService.ToolboxResolution resolution;
-            try
-            {
-                resolution = await toolboxService
-                    .GetToolboxToolsAsync(name, version, cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            catch (InvalidOperationException ex)
-            {
-                LogToolboxResolutionFailed(this._logger, name, responseId, ex);
-
-                // A resolution error fails the request even when earlier markers collected consents.
-                return new(Tools: [], Consents: [], Error: ex.Message);
-            }
-
-            // The marker hit CONSENT_REQUIRED: collect its consent requirement (request-scoped)
-            // and keep resolving the other markers so we can surface every outstanding consent at
-            // once. This toolbox contributes no tools to this turn.
-            if (resolution.Consents.Count > 0)
-            {
-                (markerConsents ??= []).AddRange(resolution.Consents);
-                continue;
-            }
-
-            foreach (var t in resolution.Tools)
-            {
-                if (!toolsToAdd.Contains(t))
-                {
-                    toolsToAdd.Add(t);
-                }
-            }
-        }
-
-        // A lazy / per-request marker that needs OAuth consent is surfaced as an
-        // oauth_consent_request and stops this turn, instead of silently running without that
-        // toolbox. The consent is scoped to this request (it was returned by GetToolboxToolsAsync,
-        // not recorded globally), so it cannot leak onto a request that did not reference the marker.
-        return markerConsents is { Count: > 0 }
-            ? new(Tools: [], Consents: markerConsents, Error: null)
-            : new(Tools: toolsToAdd, Consents: [], Error: null);
+        return new(
+            Tools: [.. toolboxService.Tools, .. toolboxService.GetCurrentRequestTools()],
+            Consents: []);
     }
 
     /// <summary>
@@ -927,7 +835,7 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
     /// </summary>
     private bool AreConsentLinksAllowed(IEnumerable<McpConsentInfo> consents, string responseId)
     {
-        var policy = this._toolboxService?.ConsentLinkPolicy ?? OAuthConsentLinkPolicy.AnySafeOrigin;
+        var policy = this._toolboxService?.ConsentLinkPolicy ?? OAuthConsentLinkPolicy.UnrestrictedOrigin;
         foreach (var consent in consents)
         {
             if (!policy.IsAllowed(consent.ConsentUrl))
@@ -965,7 +873,7 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
     /// host (the recovery path is gated separately on <c>ResponseContext.IsRecovery</c>).
     /// </summary>
     private bool ShouldPersistForResilience(CreateResponse request)
-        => this._resilientBackground && request.Background == true && request.Store != false;
+        => this._options.ResilientBackground && request.Background == true && request.Store != false;
 
     /// <summary>
     /// Resolves an <see cref="AIAgent"/> from the request.
@@ -1011,14 +919,14 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
 
     private AIAgent PrepareResolvedAgent(AIAgent agent, string sessionStorageIdentity)
     {
-        FoundryHostingExtensions.TryApplyUserAgent(agent);
+        ServiceCollectionExtensions.TryApplyUserAgent(agent);
 
-        AIAgent prepared = FoundryHostingExtensions.ApplyWorkflowCheckpointing(
+        AIAgent prepared = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(
             agent,
             this._serviceProvider.GetService<ILoggerFactory>());
         prepared = new FoundryHostingAgent(prepared, sessionStorageIdentity);
 
-        return FoundryHostingExtensions.ApplyOpenTelemetry(prepared);
+        return ServiceCollectionExtensions.ApplyOpenTelemetry(prepared);
     }
 
     /// <summary>
@@ -1076,14 +984,12 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
     }
 
     /// <summary>
-    /// The toolbox outcome for one request. When <see cref="Error"/> is set, the request fails.
-    /// Otherwise, a non-empty <see cref="Consents"/> stops the turn for OAuth consent, and
+    /// The toolbox outcome for one request. A non-empty <see cref="Consents"/> stops the turn for OAuth consent, and
     /// <see cref="Tools"/> holds the toolbox tools to add to the run.
     /// </summary>
     private readonly record struct ToolboxRequestResolution(
         IReadOnlyList<AITool> Tools,
-        IReadOnlyList<McpConsentInfo> Consents,
-        string? Error);
+        IReadOnlyList<McpConsentInfo> Consents);
 
     [LoggerMessage(
         EventId = 0,
@@ -1119,13 +1025,6 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
         string responseId,
         Exception exception);
 
-    [LoggerMessage(LogLevel.Warning, "Foundry toolbox '{ToolboxName}' could not be resolved for response {ResponseId}.", EventId = 0)]
-    private static partial void LogToolboxResolutionFailed(
-        ILogger logger,
-        string toolboxName,
-        string responseId,
-        Exception exception);
-
     [LoggerMessage(LogLevel.Warning, "OAuth consent request for tool '{ToolName}' in toolbox '{ToolboxName}' was rejected by the consent link policy for response {ResponseId}.", EventId = 0)]
     private static partial void LogConsentLinkRejected(
         ILogger logger,
@@ -1135,7 +1034,6 @@ public partial class AgentFrameworkResponseHandler : ResponseHandler
 
     [LoggerMessage(LogLevel.Warning, "Agent '{AgentName}' not found in keyed services. Attempting default resolution.", EventId = 0)]
     private static partial void LogKeyedAgentNotFound(ILogger logger, string agentName);
-
     [LoggerMessage(LogLevel.Warning, "SessionStore for agent '{AgentName}' not found in keyed services. Attempting default resolution.", EventId = 0)]
     private static partial void LogKeyedSessionStoreNotFound(ILogger logger, string agentName);
 }

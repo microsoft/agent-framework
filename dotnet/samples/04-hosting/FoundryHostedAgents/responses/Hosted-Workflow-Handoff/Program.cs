@@ -9,14 +9,14 @@
 //   /workflow-demo - Triage workflow routing to specialist agents
 //
 // Prerequisites:
-//   - Azure OpenAI resource with a deployed model
+//   - Foundry project with a deployed model
 //
 // Environment variables:
-//   - AZURE_OPENAI_ENDPOINT   - your Azure OpenAI endpoint
-//   - AZURE_OPENAI_DEPLOYMENT - the model deployment name (default: "gpt-4o")
+//   - FOUNDRY_PROJECT_ENDPOINT - your Foundry project endpoint
+//   - FOUNDRY_MODEL            - the model deployment name (default: "gpt-4o")
 
-using System.ClientModel.Primitives;
 using System.ComponentModel;
+using Azure.AI.Projects;
 using Azure.Identity;
 using DotNetEnv;
 using Microsoft.Agents.AI;
@@ -25,7 +25,6 @@ using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
-using OpenAI;
 
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
@@ -33,20 +32,22 @@ Env.TraversePath().Load();
 var builder = WebApplication.CreateBuilder(args);
 
 // ---------------------------------------------------------------------------
-// 1. Create the shared Azure OpenAI chat client
+// 1. Create the shared Foundry project chat client
 // ---------------------------------------------------------------------------
-Uri endpoint = AzureOpenAIEndpoint.From(
-    Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT"))
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4o";
+var projectEndpoint = new Uri(Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set."));
+var deployment = FirstNonBlank(
+    Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+    "gpt-4o");
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-var azureClient = new OpenAIClient(
-    new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
-    new OpenAIClientOptions { Endpoint = endpoint });
-IChatClient chatClient = azureClient.GetResponsesClient().AsIChatClient(deployment);
+IChatClient chatClient = new AIProjectClient(projectEndpoint, new DefaultAzureCredential())
+    .GetProjectOpenAIClient()
+    .GetChatClient(deployment)
+    .AsIChatClient();
 
 // ---------------------------------------------------------------------------
 // 2. DEMO 1: Tool Agent — local tools + Microsoft Learn MCP
@@ -124,7 +125,7 @@ builder.Services.AddSingleton(sp =>
 // ---------------------------------------------------------------------------
 // 4. Wire up the agent-framework handler and Responses Server SDK
 // ---------------------------------------------------------------------------
-builder.Services.AddFoundryResponses();
+builder.AddFoundryResponses();
 
 var app = builder.Build();
 
@@ -158,15 +159,11 @@ app.MapPost("/api/validate", (HostedWorkflowHandoff.CapturedSseStream captured) 
 
 app.Run();
 
-// ---------------------------------------------------------------------------
-// Local tool definitions
-// ---------------------------------------------------------------------------
+static string FirstNonBlank(params string?[] candidates) =>
+    Array.Find(candidates, candidate => !string.IsNullOrWhiteSpace(candidate))!;
 
 // ---------------------------------------------------------------------------
-// Dev-only credential: reads a pre-fetched bearer token from AZURE_BEARER_TOKEN.
-// When the value is missing or set to "DefaultAzureCredential", this credential
-// throws CredentialUnavailableException so the ChainedTokenCredential falls
-// through to DefaultAzureCredential.
+// Local tool definitions
 // ---------------------------------------------------------------------------
 
 [Description("Gets the current date and time in the specified timezone.")]

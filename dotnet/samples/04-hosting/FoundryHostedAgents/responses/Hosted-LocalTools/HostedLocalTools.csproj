@@ -37,7 +37,7 @@
     <RootNamespace>HostedLocalTools</RootNamespace>
     <AssemblyName>HostedLocalTools</AssemblyName>
     <UserSecretsId>682a0481-5544-45e7-ad2b-88e335985c64</UserSecretsId>
-    <AgentFrameworkVersion>1.22.0-preview.260918.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.27.0-preview.261030.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>
