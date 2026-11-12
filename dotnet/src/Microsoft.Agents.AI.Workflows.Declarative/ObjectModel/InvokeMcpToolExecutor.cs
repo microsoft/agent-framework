@@ -194,6 +194,7 @@ internal sealed class InvokeMcpToolExecutor(
             // Restored snapshots keep only fingerprints, so reuse the approval only if the host key and headers still match.
             if (snapshot.HeaderFingerprint is null && snapshot.HeaderFingerprintKeyId is null)
             {
+                // Legacy checkpoints have no fingerprint, so obtain fresh consent instead of trusting their headers.
                 await this.RequestApprovalAsync(context, snapshot.AutoSend, cancellationToken).ConfigureAwait(false);
                 return;
             }
@@ -207,14 +208,15 @@ internal sealed class InvokeMcpToolExecutor(
             byte[] currentKeyId = this.ComputeHeaderFingerprint(approvalResponse.RequestId, headers: null, keyIdentifier: true);
             if (!FixedTimeEquals(snapshot.HeaderFingerprintKeyId, currentKeyId))
             {
+                // Do not continue when the original key cannot authenticate this checkpoint.
                 throw this.Exception("The MCP approval header fingerprint key is missing or has changed. Restore the original key to resume the approval.");
             }
 
             headers = this.GetHeaders();
-            // Changed transport credentials invalidate the consent captured with the original approval.
             byte[] currentFingerprint = this.ComputeHeaderFingerprint(approvalResponse.RequestId, headers, keyIdentifier: false);
             if (!FixedTimeEquals(snapshot.HeaderFingerprint, currentFingerprint))
             {
+                // Changed transport credentials invalidate the old consent, so request approval again.
                 await this.RequestApprovalAsync(context, snapshot.AutoSend, cancellationToken).ConfigureAwait(false);
                 return;
             }
@@ -224,11 +226,11 @@ internal sealed class InvokeMcpToolExecutor(
             headers = null;
         }
 
-        // Older checkpoints may lack the separate consent that must precede an approval-gated tool invocation.
         if (!snapshot.IsDiscoveryApproval &&
             !snapshot.DiscoveryApproved &&
             !string.Equals(snapshot.ToolName, ListToolsToolName, StringComparison.Ordinal))
         {
+            // Older checkpoints may lack discovery consent, so request it before revalidating the tool.
             string reapprovalNotice = snapshot.ToolDefinitionFingerprint is null
                 ? "The previous approval did not include the MCP tool definition. Review the request before approving."
                 : "The previous approval did not include separate MCP tool discovery consent. Review the request before approving.";
@@ -249,7 +251,6 @@ internal sealed class InvokeMcpToolExecutor(
         string? conversationId = this.GetConversationId();
         if (!string.Equals(snapshot.ToolName, ListToolsToolName, StringComparison.Ordinal))
         {
-            // Revalidate the discovered definition before invoking a tool; discovery consent alone is not tool consent.
             string currentToolDefinitionFingerprint = await this.GetToolDefinitionFingerprintAsync(
                 snapshot.ServerUrl,
                 snapshot.ServerLabel,
@@ -260,6 +261,7 @@ internal sealed class InvokeMcpToolExecutor(
             if (snapshot.IsDiscoveryApproval ||
                 !string.Equals(snapshot.ToolDefinitionFingerprint, currentToolDefinitionFingerprint, StringComparison.Ordinal))
             {
+                // Discovery consent or changed metadata requires a separate approval for this exact definition.
                 string? reapprovalNotice = snapshot.IsDiscoveryApproval
                     ? null
                     : snapshot.ToolDefinitionFingerprint is null
@@ -417,6 +419,7 @@ internal sealed class InvokeMcpToolExecutor(
                 discoveryNotice += $" This does not approve invoking '{toolName}'; a separate tool approval will follow discovery.";
             }
 
+            // Keep discovery context alongside the approval request for hosts that present the complete message.
             reapprovalNotice = reapprovalNotice is null ? discoveryNotice : $"{reapprovalNotice} {discoveryNotice}";
         }
 
@@ -539,13 +542,13 @@ internal sealed class InvokeMcpToolExecutor(
                         throw this.Exception($"The MCP server returned multiple definitions for tool '{toolName}'.");
                     }
 
-                    // Fail closed rather than fingerprinting an incomplete definition that cannot detect schema changes.
                     if (!tool.TryGetProperty("inputSchema", out JsonElement inputSchema) ||
                         inputSchema.ValueKind != JsonValueKind.Object ||
                         !inputSchema.TryGetProperty("type", out JsonElement schemaType) ||
                         schemaType.ValueKind != JsonValueKind.String ||
                         !string.Equals(schemaType.GetString(), "object", StringComparison.Ordinal))
                     {
+                        // Fail closed rather than fingerprinting an incomplete definition that cannot detect schema changes.
                         throw this.Exception($"The MCP server returned an invalid input schema for tool '{toolName}'.");
                     }
 
