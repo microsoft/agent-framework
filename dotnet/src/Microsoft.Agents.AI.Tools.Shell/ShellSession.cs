@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -201,6 +202,8 @@ internal sealed class ShellSession : IAsyncDisposable
                     }
                 }
             }
+
+            EnvironmentSanitizer.RestrictExecutableSearch(startInfo.Environment);
 
             this._stdoutBuf.Clear();
             this._stderrBuf.Clear();
@@ -700,7 +703,7 @@ internal sealed class ShellSession : IAsyncDisposable
         await Task.CompletedTask.ConfigureAwait(false);
     }
 
-    private static bool TryFindSetsid(out string fullPath)
+    private static bool TryFindSetsid([NotNullWhen(true)] out string? fullPath)
     {
         // Check well-known locations first to avoid PATH-based lookups when possible.
         foreach (var c in new[] { "/usr/bin/setsid", "/bin/setsid", "/usr/local/bin/setsid" })
@@ -712,33 +715,7 @@ internal sealed class ShellSession : IAsyncDisposable
             }
         }
         // Fall back to PATH.
-        return TryFindOnPath(Environment.GetEnvironmentVariable("PATH"), "setsid", out fullPath);
-    }
-
-    /// <summary>
-    /// Searches the fully qualified directories in <paramref name="pathEnv"/> for <paramref name="fileName"/>.
-    /// Empty and relative entries are skipped so the result never depends on the current directory.
-    /// </summary>
-    internal static bool TryFindOnPath(string? pathEnv, string fileName, out string fullPath)
-    {
-        if (!string.IsNullOrEmpty(pathEnv))
-        {
-            foreach (var dir in pathEnv!.Split(Path.PathSeparator))
-            {
-                if (!PathValidation.IsFullyQualifiedPath(dir))
-                {
-                    continue;
-                }
-                var candidate = Path.Combine(dir, fileName);
-                if (File.Exists(candidate))
-                {
-                    fullPath = candidate;
-                    return true;
-                }
-            }
-        }
-        fullPath = string.Empty;
-        return false;
+        return PathValidation.TryFindOnPath(Environment.GetEnvironmentVariable("PATH"), "setsid", out fullPath);
     }
 
     private static class NativeMethods

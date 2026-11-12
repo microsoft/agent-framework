@@ -84,6 +84,10 @@ public sealed class LocalShellExecutor : ShellExecutor
     /// Initializes a new instance of the <see cref="LocalShellExecutor"/> class.
     /// </summary>
     /// <param name="options">Configuration. <see langword="null"/> selects defaults.</param>
+    /// <exception cref="ArgumentException">
+    /// The shell from <see cref="LocalShellExecutorOptions.Shell"/>, <see cref="LocalShellExecutorOptions.ShellArgv"/>,
+    /// or the <c>AGENT_FRAMEWORK_SHELL</c> environment variable is not a fully qualified path, or on Windows has no file extension.
+    /// </exception>
     public LocalShellExecutor(LocalShellExecutorOptions options)
     {
         options ??= new LocalShellExecutorOptions();
@@ -99,7 +103,9 @@ public sealed class LocalShellExecutor : ShellExecutor
 
         this._mode = options.Mode;
         this._policy = options.Policy ?? new ShellPolicy();
-        this._shell = options.ShellArgv is not null ? ShellResolver.ResolveArgv(options.ShellArgv) : ShellResolver.Resolve(options.Shell);
+        this._shell = options.ShellArgv is not null
+            ? ShellResolver.ResolveArgv(options.ShellArgv, $"{nameof(options)}.{nameof(options.ShellArgv)}")
+            : ShellResolver.Resolve(options.Shell, $"{nameof(options)}.{nameof(options.Shell)}");
         this._timeout = options.Timeout;
         this._maxOutputBytes = options.MaxOutputBytes;
         this._workingDirectory = options.WorkingDirectory;
@@ -224,6 +230,8 @@ public sealed class LocalShellExecutor : ShellExecutor
                 }
             }
         }
+
+        EnvironmentSanitizer.RestrictExecutableSearch(startInfo.Environment);
 
         // PowerShell defaults to non-UTF8 output redirection; force UTF-8 to avoid mojibake.
         if (this._shell.Kind == ShellKind.PowerShell)

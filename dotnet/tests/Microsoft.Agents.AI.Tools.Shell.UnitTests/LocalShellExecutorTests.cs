@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -266,7 +268,7 @@ public sealed class LocalShellExecutorTests
             return;
         }
         _ = Assert.Throws<NotSupportedException>(() =>
-            new LocalShellExecutor(new() { Mode = ShellMode.Persistent, Shell = "cmd.exe" }));
+            new LocalShellExecutor(new() { Mode = ShellMode.Persistent, Shell = Path.Combine(Environment.SystemDirectory, "cmd.exe") }));
     }
 
     [Fact]
@@ -290,8 +292,8 @@ public sealed class LocalShellExecutorTests
         var second = await shell.RunAsync(pwdCmd);
         Assert.Equal(0, second.ExitCode);
         Assert.False(string.IsNullOrWhiteSpace(second.Stdout), $"pwd produced no output. stderr='{second.Stderr}'");
-        var tmp = System.IO.Path.GetTempPath().TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
-        Assert.Contains(System.IO.Path.GetFileName(tmp), second.Stdout, StringComparison.OrdinalIgnoreCase);
+        var tmp = Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        Assert.Contains(Path.GetFileName(tmp), second.Stdout, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -325,7 +327,7 @@ public sealed class LocalShellExecutorTests
         await using var shell = new LocalShellExecutor(new()
         {
             Mode = ShellMode.Persistent,
-            Shell = "powershell.exe",
+            Shell = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe"),
             Timeout = TimeSpan.FromSeconds(20),
         });
 
@@ -416,9 +418,9 @@ public sealed class LocalShellExecutorTests
     [Fact]
     public async Task Persistent_ConfineWorkdir_ReanchorsAfterCdAwayAsync()
     {
-        var rootDir = System.IO.Path.GetTempPath();
-        var subDir = System.IO.Path.Combine(rootDir, "af-shell-confine-" + Guid.NewGuid().ToString("N")[..8]);
-        System.IO.Directory.CreateDirectory(subDir);
+        var rootDir = Path.GetTempPath();
+        var subDir = Path.Combine(rootDir, "af-shell-confine-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(subDir);
         try
         {
             await using var shell = new LocalShellExecutor(new()
@@ -439,22 +441,22 @@ public sealed class LocalShellExecutorTests
             var pwdCmd = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "(Get-Location).Path" : "pwd";
             var result = await shell.RunAsync(pwdCmd);
             Assert.Equal(0, result.ExitCode);
-            var rootName = System.IO.Path.GetFileName(rootDir.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
+            var rootName = Path.GetFileName(rootDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
             Assert.Contains(rootName, result.Stdout, StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain(System.IO.Path.GetFileName(subDir), result.Stdout, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(Path.GetFileName(subDir), result.Stdout, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
-            try { System.IO.Directory.Delete(subDir, recursive: true); } catch { }
+            try { Directory.Delete(subDir, recursive: true); } catch { }
         }
     }
 
     [Fact]
     public async Task Persistent_ConfineDisabled_AllowsCdToLeakAsync()
     {
-        var rootDir = System.IO.Path.GetTempPath();
-        var subDir = System.IO.Path.Combine(rootDir, "af-shell-noconfine-" + Guid.NewGuid().ToString("N")[..8]);
-        System.IO.Directory.CreateDirectory(subDir);
+        var rootDir = Path.GetTempPath();
+        var subDir = Path.Combine(rootDir, "af-shell-noconfine-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(subDir);
         try
         {
             await using var shell = new LocalShellExecutor(new()
@@ -473,11 +475,11 @@ public sealed class LocalShellExecutorTests
             var pwdCmd = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "(Get-Location).Path" : "pwd";
             var result = await shell.RunAsync(pwdCmd);
             Assert.Equal(0, result.ExitCode);
-            Assert.Contains(System.IO.Path.GetFileName(subDir), result.Stdout, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(Path.GetFileName(subDir), result.Stdout, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
-            try { System.IO.Directory.Delete(subDir, recursive: true); } catch { }
+            try { Directory.Delete(subDir, recursive: true); } catch { }
         }
     }
 
@@ -498,6 +500,48 @@ public sealed class LocalShellExecutorTests
         finally
         {
             Environment.SetEnvironmentVariable("AF_SHELL_PARENT_VAR", null);
+        }
+    }
+
+    [Theory]
+    [InlineData(ShellMode.Stateless)]
+    [InlineData(ShellMode.Persistent)]
+    public async Task RelativePathEntries_AreNotSearchedByShellAsync(ShellMode mode)
+    {
+        // Arrange
+        var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        var workDir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "af-shell-planted-" + Guid.NewGuid().ToString("N"))).FullName;
+        var toolName = "af-planted-" + Guid.NewGuid().ToString("N")[..8];
+        var toolPath = Path.Combine(workDir, isWindows ? toolName + ".cmd" : toolName);
+        File.WriteAllText(toolPath, isWindows ? "@echo PLANTED_TOOL_RAN\r\n" : "#!/bin/sh\necho PLANTED_TOOL_RAN\n");
+        if (!isWindows)
+        {
+            File.SetUnixFileMode(toolPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        // A PATH with a "." entry and an empty entry, both of which mean "the current directory".
+        var path = string.Join(Path.PathSeparator, ".", string.Empty, Environment.GetEnvironmentVariable("PATH"));
+
+        try
+        {
+            await using var shell = new LocalShellExecutor(new()
+            {
+                Mode = mode,
+                WorkingDirectory = workDir,
+                Environment = new Dictionary<string, string?> { ["PATH"] = path },
+                Timeout = TimeSpan.FromSeconds(20),
+            });
+
+            // Act
+            var result = await shell.RunAsync(toolName);
+
+            // Assert
+            Assert.DoesNotContain("PLANTED_TOOL_RAN", result.Stdout, StringComparison.Ordinal);
+            Assert.NotEqual(0, result.ExitCode);
+        }
+        finally
+        {
+            try { Directory.Delete(workDir, recursive: true); } catch { }
         }
     }
 

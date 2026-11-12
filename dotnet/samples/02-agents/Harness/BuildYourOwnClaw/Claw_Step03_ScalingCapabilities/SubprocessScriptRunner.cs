@@ -77,7 +77,14 @@ internal sealed class SubprocessScriptRunner
 
         if (interpreter is not null)
         {
-            startInfo.FileName = interpreter;
+            string? interpreterPath = FindOnPath(interpreter);
+            if (interpreterPath is null)
+            {
+                this._logger.LogError("Interpreter '{Interpreter}' for script '{ScriptName}' was not found on PATH.", interpreter, script.Name);
+                return $"Error: Could not find '{interpreter}' on PATH to run script '{script.Name}'.";
+            }
+
+            startInfo.FileName = interpreterPath;
             startInfo.ArgumentList.Add(script.FullPath);
         }
         else
@@ -187,5 +194,34 @@ internal sealed class SubprocessScriptRunner
         {
             process?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Finds a program in the fully qualified directories of PATH.
+    /// </summary>
+    /// <remarks>
+    /// Starting a program by name alone can run a file from the current directory instead.
+    /// Empty and relative PATH entries are skipped so the result never depends on the current directory.
+    /// </remarks>
+    private static string? FindOnPath(string name)
+    {
+        string fileName = OperatingSystem.IsWindows() ? name + ".exe" : name;
+        string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+
+        foreach (string directory in pathEnv.Split(Path.PathSeparator))
+        {
+            if (!Path.IsPathFullyQualified(directory))
+            {
+                continue;
+            }
+
+            string candidate = Path.Combine(directory, fileName);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 }

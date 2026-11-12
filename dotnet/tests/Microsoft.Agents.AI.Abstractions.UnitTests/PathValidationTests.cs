@@ -227,4 +227,79 @@ public sealed class PathValidationTests
             File.Delete(file);
         }
     }
+
+    [Fact]
+    public void TryFindOnPath_SkipsRelativeEntries()
+    {
+        // Arrange
+        // Create the folders under the current directory so the planted entry stays relative on any drive layout.
+        var rootName = "af-path-search-" + Guid.NewGuid().ToString("N");
+        var root = Path.Combine(Directory.GetCurrentDirectory(), rootName);
+        var plantedDir = Directory.CreateDirectory(Path.Combine(root, "planted")).FullName;
+        var trustedDir = Directory.CreateDirectory(Path.Combine(root, "trusted")).FullName;
+        File.WriteAllText(Path.Combine(plantedDir, "tool.exe"), string.Empty);
+        File.WriteAllText(Path.Combine(trustedDir, "tool.exe"), string.Empty);
+        var relativePlantedDir = Path.Combine(rootName, "planted");
+
+        try
+        {
+            // Act
+            var foundWithTrusted = PathValidation.TryFindOnPath(
+                string.Join(Path.PathSeparator.ToString(), relativePlantedDir, ".", string.Empty, trustedDir), "tool.exe", out var fullPath);
+            var foundRelativeOnly = PathValidation.TryFindOnPath(relativePlantedDir, "tool.exe", out var relativeOnlyPath);
+
+            // Assert
+            Assert.True(File.Exists(Path.Combine(relativePlantedDir, "tool.exe")));
+            Assert.True(foundWithTrusted);
+            Assert.Equal(Path.Combine(trustedDir, "tool.exe"), fullPath);
+            Assert.False(foundRelativeOnly);
+            Assert.Null(relativeOnlyPath);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void TryFindOnPath_EmptyPath_ReturnsFalse(string? pathEnv)
+    {
+        // Act
+        var found = PathValidation.TryFindOnPath(pathEnv, "tool.exe", out var fullPath);
+
+        // Assert
+        Assert.False(found);
+        Assert.Null(fullPath);
+    }
+
+    [Fact]
+    public void RemoveRelativePathEntries_KeepsOnlyFullPathsInOrder()
+    {
+        // Arrange
+        var first = Path.Combine(Path.GetTempPath(), "first");
+        var second = Path.Combine(Path.GetTempPath(), "second");
+        var separator = Path.PathSeparator.ToString();
+        var pathEnv = string.Join(separator, ".", first, string.Empty, "relative", Path.Combine("..", "up"), second, " ");
+
+        // Act
+        var result = PathValidation.RemoveRelativePathEntries(pathEnv);
+
+        // Assert
+        Assert.Equal(first + separator + second, result);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(".")]
+    public void RemoveRelativePathEntries_NoFullPaths_ReturnsEmpty(string? pathEnv)
+    {
+        // Act
+        var result = PathValidation.RemoveRelativePathEntries(pathEnv);
+
+        // Assert
+        Assert.Equal(string.Empty, result);
+    }
 }

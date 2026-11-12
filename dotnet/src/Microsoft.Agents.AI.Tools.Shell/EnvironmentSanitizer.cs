@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Tools.Shell;
 
@@ -9,10 +11,17 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// Helpers shared by <see cref="LocalShellExecutor"/> and <see cref="ShellSession"/> for
 /// the <c>cleanEnvironment</c> mode where the spawned shell does not inherit the parent
 /// process environment — except for a small allowlist of variables that the shell needs
-/// to locate itself and basic tools.
+/// to locate itself and basic tools — and for limiting where the spawned shell
+/// looks for the programs it runs.
 /// </summary>
 internal static class EnvironmentSanitizer
 {
+    /// <summary>
+    /// Windows environment variable that stops <c>cmd.exe</c> (and anything else that honors
+    /// <c>NeedCurrentDirectoryForExePath</c>) from searching the current directory for programs.
+    /// </summary>
+    public const string NoDefaultCurrentDirectoryInExePath = "NoDefaultCurrentDirectoryInExePath";
+
     /// <summary>
     /// Variables propagated from the host environment when <c>cleanEnvironment</c> is true.
     /// Add new entries here only — both the stateless and persistent code paths consume this list.
@@ -28,6 +37,50 @@ internal static class EnvironmentSanitizer
         "TEMP",
         "TMP",
     };
+
+    /// <summary>
+    /// Limit where the spawned shell looks for programs named without a path, such as <c>git</c>,
+    /// so the lookup never depends on the shell's working directory.
+    /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item><description>Empty and relative entries are removed from <c>PATH</c>.</description></item>
+    /// <item><description>On Windows, <c>NoDefaultCurrentDirectoryInExePath</c> is set so <c>cmd.exe</c>
+    /// does not look in the current directory before <c>PATH</c>.</description></item>
+    /// </list>
+    /// Call this after all other changes to <paramref name="environment"/> have been applied.
+    /// </remarks>
+    /// <param name="environment">The environment dictionary to update in-place.</param>
+    public static void RestrictExecutableSearch(IDictionary<string, string?> environment)
+    {
+        if (environment is null)
+        {
+            return;
+        }
+
+        var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+        // Environment variable names are case-insensitive on Windows (PATH is usually spelled "Path").
+        var nameComparison = isWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var pathNames = new List<string>();
+        foreach (var name in environment.Keys)
+        {
+            if (string.Equals(name, "PATH", nameComparison))
+            {
+                pathNames.Add(name);
+            }
+        }
+
+        foreach (var name in pathNames)
+        {
+            environment[name] = PathValidation.RemoveRelativePathEntries(environment[name]);
+        }
+
+        if (isWindows)
+        {
+            environment[NoDefaultCurrentDirectoryInExePath] = "1";
+        }
+    }
 
     /// <summary>
     /// Strip everything from <paramref name="environment"/> except the entries named by
