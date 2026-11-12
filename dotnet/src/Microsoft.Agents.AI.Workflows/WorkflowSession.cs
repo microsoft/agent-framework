@@ -664,7 +664,7 @@ internal sealed class WorkflowSession : AgentSession
                         matchedConsumerExecutorsInFlight.Clear();
                         matchedResponseConsumerCompletedInStep = false;
                     }
-                    else if (!hasMatchedExternalResponses)
+                    else
                     {
                         this.LastCheckpoint = completedCheckpoint;
                     }
