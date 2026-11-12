@@ -4533,7 +4533,9 @@ class SecureAgentConfig(ContextProvider):
         if configured_labeler is not None:
             raw_providers = getattr(agent, "context_providers", None)
             if not isinstance(raw_providers, Sequence):
-                raise ValueError("SecureAgentConfig with message_labeler requires an ordered context provider sequence.")
+                raise ValueError(
+                    "SecureAgentConfig with message_labeler requires an ordered context provider sequence."
+                )
             providers = cast(Sequence[Any], raw_providers)
             try:
                 config_index = next(index for index, provider in enumerate(providers) if provider is self)
@@ -4542,7 +4544,9 @@ class SecureAgentConfig(ContextProvider):
                     "SecureAgentConfig with message_labeler must be registered as a context provider."
                 ) from exc
             if any(not isinstance(provider, HistoryProvider) for provider in providers[config_index + 1 :]):
-                raise ValueError("SecureAgentConfig with message_labeler must follow every non-history context provider.")
+                raise ValueError(
+                    "SecureAgentConfig with message_labeler must follow every non-history context provider."
+                )
             provider_source_ids = set(context.context_messages)
         message_labels: dict[int, tuple[Message, ContentLabel]] = {}
 
