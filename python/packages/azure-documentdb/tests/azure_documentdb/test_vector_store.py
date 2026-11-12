@@ -12,6 +12,7 @@ import pytest
 from agent_framework import Filter, FilterGroup, VectorStoreCollectionDefinition
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
 from bson import ObjectId
+from bson.int64 import Int64
 from pymongo.errors import OperationFailure, PyMongoError
 
 from agent_framework_azure_documentdb import AzureDocumentDBCollection, AzureDocumentDBStore
@@ -122,6 +123,34 @@ async def test_keys_are_strict_before_io(collection, pymongo_objects, record_fac
         await collection.get([cast(Any, key)])
     pymongo_objects[2].bulk_write.assert_not_awaited()
     pymongo_objects[2].find.assert_not_called()
+
+
+async def test_get_returns_plain_ints_for_bson_int64_values(definition_factory, pymongo_objects):
+    """PyMongo returns integers that need 64 bits as bson Int64; they come back as int and can be written again."""
+    collection = AzureDocumentDBCollection(
+        dict, definition=definition_factory(key_type="int"), collection=pymongo_objects[2]
+    )
+    big = 2**40
+    pymongo_objects[2].find.return_value = AsyncCursor([
+        {
+            "_id": Int64(big),
+            "body": "x",
+            "category": "db",
+            "number": Int64(big),
+            "ratio": 1.0,
+            "flag": True,
+            "tags": [Int64(big)],
+            "contentVector": [1.0, 0.0, 0.0],
+        }
+    ])
+
+    records = await collection.get([big], include_vectors=True)
+
+    assert type(records[0]["id"]) is int and records[0]["id"] == big
+    assert type(records[0]["number"]) is int
+    assert type(records[0]["tags"][0]) is int
+    await collection.upsert(records, generate_vectors=False)
+    pymongo_objects[2].bulk_write.assert_awaited_once()
 
 
 def test_object_id_response_is_not_implicitly_encoded(collection):
