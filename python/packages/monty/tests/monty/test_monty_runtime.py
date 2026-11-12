@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
+import pickle
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,7 @@ _READ_MOUNT_FILE = "from pathlib import Path\nPath('/input/value.txt').read_text
 _READ_MOUNT_FILE_IGNORING_ERRORS = (
     "from pathlib import Path\ntry:\n    Path('/input/value.txt').read_text()\nexcept Exception:\n    pass\n"
 )
+_WRITE_FILE_THEN_PAUSE = "from pathlib import Path\nPath('/input/{name}.txt').write_text('{name}')\nawait pause()\n"
 
 
 @pytest.mark.parametrize(
@@ -138,6 +141,54 @@ async def test_timeout_around_running_guest_code_returns_promptly_and_later_runs
     assert run.cancelled()
     assert asyncio.get_running_loop().time() - started < 1.5
     assert (await InlineCodeBridge({}).run("1 + 1"))["output"] == 2
+
+
+async def test_concurrent_runs_sharing_a_writable_mount_capture_only_their_own_files(tmp_path: Path) -> None:
+    async def pause() -> None:
+        await asyncio.sleep(0.05)
+
+    execute_code = MontyExecuteCodeTool(tools=[FunctionTool(name="pause", func=pause)], workspace_root=tmp_path)
+
+    first, second = await asyncio.gather(
+        execute_code._run_code(code=_WRITE_FILE_THEN_PAUSE.format(name="first")),
+        execute_code._run_code(code=_WRITE_FILE_THEN_PAUSE.format(name="second")),
+    )
+
+    assert [(c.additional_properties or {}).get("path") for c in first if c.type == "data"] == ["/input/first.txt"]
+    assert [(c.additional_properties or {}).get("path") for c in second if c.type == "data"] == ["/input/second.txt"]
+
+
+async def test_concurrent_runs_without_a_writable_mount_overlap() -> None:
+    arrivals = 0
+    both_arrived = asyncio.Event()
+
+    async def rendezvous() -> None:
+        nonlocal arrivals
+        arrivals += 1
+        if arrivals == 2:
+            both_arrived.set()
+        # Serialized runs would never meet here, so this wait would time out.
+        await asyncio.wait_for(both_arrived.wait(), timeout=10)
+
+    execute_code = MontyExecuteCodeTool(tools=[FunctionTool(name="rendezvous", func=rendezvous)])
+
+    results = await asyncio.gather(
+        execute_code._run_code(code="await rendezvous()"),
+        execute_code._run_code(code="await rendezvous()"),
+    )
+
+    assert not any(content.type == "error" for contents in results for content in contents)
+
+
+async def test_tool_stays_copyable_and_usable_after_runs_contended_for_a_writable_mount(tmp_path: Path) -> None:
+    execute_code = MontyExecuteCodeTool(workspace_root=tmp_path)
+    await asyncio.gather(execute_code._run_code(code="1"), execute_code._run_code(code="2"))
+
+    copied = copy.deepcopy(execute_code)
+    restored = pickle.loads(pickle.dumps(execute_code))
+
+    for tool in (copied, restored):
+        assert not any(c.type == "error" for c in await tool._run_code(code="print('ok')"))
 
 
 @pytest.mark.parametrize("recording_host_tool", ["positional_or_keyword", "keyword_only"], indirect=True)

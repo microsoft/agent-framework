@@ -74,7 +74,9 @@ Tool-management methods on both classes: `add_tools`, `get_tools`,
 - **`_execute_code_tool.py`** — `MontyExecuteCodeTool` plus tool / mount
   normalization, approval helpers, dynamic `description`/`instructions`
   builders, and the post-execution file-capture flow that surfaces files
-  written to `read-write` mounts as `Content.from_data` items.
+  written to `read-write` mounts as `Content.from_data` items. Runs on a tool
+  with a `read-write` mount hold a lock for the whole run, because captured
+  files are attributed by comparing the mount before and after.
 - **`_monty_bridge.py`** — `InlineCodeBridge` and `generate_type_stubs`,
   adapted from the reference Monty CodeAct repo. Runs guest code through the
   async pool (`AsyncMonty`) so it never blocks the event loop, and awaits every

@@ -239,8 +239,10 @@ codeact = MontyCodeActProvider(
   `resource_limits` sets neither `max_feed_duration_secs` nor `max_duration_secs`,
   a **30-second** `max_feed_duration_secs` applies. Set it to another value, or to
   `None` (`resource_limits={"max_feed_duration_secs": None}`), to change or remove
-  the limit. Concurrent `execute_code` calls overlap, so calls that share a
-  `read-write` mount can capture each other's written files.
+  the limit. Concurrent `execute_code` calls overlap and each starts its own
+  worker process, so bound concurrency in your application when serving many
+  callers. Calls on a tool with a `read-write` mount (including `workspace_root`)
+  run one at a time, so captured files stay attributed to the right call.
 
 ## DSL inside `execute_code`
 
