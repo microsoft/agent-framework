@@ -115,6 +115,7 @@ _WHOLE_VAR_REF_RE = re.compile(rf"\s*(?:\[\s*(?P<bracketed>{_BRACKETED_VAR_ID})\
 _BARE_REFERENCE_WARNING = "Expanded a bare variable reference in a tool argument; models should use [var_<id>] instead."
 _UNRESOLVED = object()
 _AUTHORITATIVE_SECURITY_LABEL = "_security_label_authoritative"
+_VALIDATED_SECURITY_LABEL_PRINCIPALS = "_security_label_validated_principals"
 _INSPECT_VARIABLE_ERROR = "_inspect_variable_error"
 _INTERNAL_RESULT_MARKER = object()
 _MAX_VARIABLE_REFERENCE_DEPTH = 16
@@ -2087,6 +2088,11 @@ _current_context: ContextVar[FunctionInvocationContext | None] = ContextVar(
     default=None,
 )
 
+_current_function: ContextVar[FunctionTool | None] = ContextVar(
+    "agent_framework_current_security_function",
+    default=None,
+)
+
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
 class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding):
@@ -2806,6 +2812,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         scope_token = self._activate_security_scope(context)
         middleware_token = _current_middleware.set(self)
         context_token = _current_context.set(context)
+        function_token = _current_function.set(context.function)
         materialization_token: Token[tuple[Any, Callable[[Any], None], asyncio.Task[Any] | None] | None] | None = None
         try:
             function_name = context.function.name
@@ -2910,6 +2917,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         finally:
             if materialization_token is not None:
                 _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.reset(materialization_token)
+            _current_function.reset(function_token)
             _current_context.reset(context_token)
             _current_middleware.reset(middleware_token)
             self._active_security_scope.reset(scope_token)
@@ -3204,9 +3212,11 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         """
         additional_props = _get_additional_properties(item)
         authoritative_marker = additional_props.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
+        validated_principals_marker = additional_props.pop(_VALIDATED_SECURITY_LABEL_PRINCIPALS, None)
         additional_props.pop(_LEGACY_AUTHORITATIVE_CONFIDENTIALITY, None)
         inspect_error_marker = additional_props.pop(_INSPECT_VARIABLE_ERROR, None)
         authoritative_label = authoritative_marker is _INTERNAL_RESULT_MARKER
+        validated_principals = validated_principals_marker is _INTERNAL_RESULT_MARKER
         inspect_error = function_name == "inspect_variable" and inspect_error_marker is _INTERNAL_RESULT_MARKER
 
         label_data = additional_props.get("security_label")
@@ -3216,13 +3226,14 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 embedded_label = _parse_content_label(
                     label_map,
                     source="embedded",
-                    allow_principals=authoritative_label,
+                    allow_principals=authoritative_label or validated_principals,
                 )
                 if authoritative_label:
                     return embedded_label
                 combined_label = combine_labels(fallback_label, embedded_label)
                 if (
-                    combined_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+                    not validated_principals
+                    and combined_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
                     and fallback_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
                 ):
                     try:
@@ -4711,9 +4722,7 @@ class SecureAgentConfig(ContextProvider):
             return
         bound_identity = self._service_continuation_identity(state)
         state_is_authoritative = (
-            continuation_identity is not None
-            and restored_context_label
-            and bound_identity == continuation_identity
+            continuation_identity is not None and restored_context_label and bound_identity == continuation_identity
         )
         verified_sources = (
             self._verified_service_history_sources(agent, session, context, continuation_identity)
@@ -4774,9 +4783,7 @@ class SecureAgentConfig(ContextProvider):
                     "SecureAgentConfig with message_labeler must be registered as a context provider."
                 ) from exc
             if providers[config_index + 1 :]:
-                raise ValueError(
-                    "SecureAgentConfig must be the last context provider when message_labeler is set."
-                )
+                raise ValueError("SecureAgentConfig must be the last context provider when message_labeler is set.")
             provider_source_ids = {
                 provider.source_id
                 for provider in providers[:config_index]
@@ -5927,6 +5934,7 @@ def _stamp_mcp_content_labels(
             continue
         props = item.additional_properties or {}
         props.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
+        props.pop(_VALIDATED_SECURITY_LABEL_PRINCIPALS, None)
         props.pop(_LEGACY_AUTHORITATIVE_CONFIDENTIALITY, None)
         security_meta = props.pop(_MCP_RESULT_SECURITY_META_KEY, None)
         server_meta = props.pop(_MCP_RESULT_META_KEY, None)
@@ -5963,6 +5971,11 @@ def _stamp_mcp_content_labels(
             props[_AUTHORITATIVE_SECURITY_LABEL] = _INTERNAL_RESULT_MARKER
         else:
             label = combine_labels(local_label, dynamic)
+            if (
+                dynamic.confidentiality == ConfidentialityLabel.USER_IDENTITY
+                and PRINCIPAL_METADATA_KEY in label.metadata
+            ):
+                props[_VALIDATED_SECURITY_LABEL_PRINCIPALS] = _INTERNAL_RESULT_MARKER
         props["security_label"] = label.to_dict()
         item.additional_properties = props
     return contents_list
@@ -5975,6 +5988,7 @@ def _strip_mcp_authority_markers(contents: str | list[Content]) -> str | list[Co
     for item in contents:
         props = item.additional_properties or {}
         props.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
+        props.pop(_VALIDATED_SECURITY_LABEL_PRINCIPALS, None)
         props.pop(_LEGACY_AUTHORITATIVE_CONFIDENTIALITY, None)
         item.additional_properties = props
     return contents
@@ -6001,6 +6015,7 @@ def _stamp_parsed_mcp_content_labels(
         props.pop(_MCP_RESULT_META_KEY, None)
         props.pop(_MCP_RESULT_SECURITY_META_KEY, None)
         props.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
+        props.pop(_VALIDATED_SECURITY_LABEL_PRINCIPALS, None)
         props.pop(_LEGACY_AUTHORITATIVE_CONFIDENTIALITY, None)
         if security_meta is not None:
             props[_MCP_RESULT_SECURITY_META_KEY] = security_meta
@@ -6050,6 +6065,7 @@ def _stamp_mcp_error_carrier_label(
     stamped_item = stamped[0]
     stamped_properties = dict(stamped_item.additional_properties)
     stamped_properties.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
+    stamped_properties.pop(_VALIDATED_SECURITY_LABEL_PRINCIPALS, None)
     stamped_properties.pop(_LEGACY_AUTHORITATIVE_CONFIDENTIALITY, None)
     raw_carrier.item_additional_properties = {
         **raw_carrier.item_additional_properties,
@@ -6072,7 +6088,15 @@ def _current_mcp_local_label(func_tool: FunctionTool, default_integrity: Integri
         confidentiality = ConfidentialityLabel(props.get("confidentiality", ConfidentialityLabel.PUBLIC.value))
     except (TypeError, ValueError):
         confidentiality = ConfidentialityLabel.PRIVATE
-    return ContentLabel(integrity=integrity, confidentiality=confidentiality)
+    metadata: dict[str, Any] | None = None
+    if confidentiality == ConfidentialityLabel.USER_IDENTITY:
+        try:
+            principals = _canonical_principals(props.get(PRINCIPAL_METADATA_KEY), source="local MCP policy")
+        except ValueError:
+            pass
+        else:
+            metadata = {PRINCIPAL_METADATA_KEY: _principal_list(principals)}
+    return ContentLabel(integrity=integrity, confidentiality=confidentiality, metadata=metadata)
 
 
 def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: IntegrityLabel) -> None:
@@ -6100,8 +6124,18 @@ def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: Integ
             None,
         )
 
+        def has_matching_tracker() -> bool:
+            active_context = _current_context.get()
+            return (
+                _current_middleware.get() is not None
+                and active_context is not None
+                and _current_function.get() is func_tool
+                and (invocation_context is None or active_context is invocation_context)
+            )
+
         def prepare_error_label() -> None:
-            if invocation_context is None:
+            active_middleware = _current_middleware.get()
+            if invocation_context is None or active_middleware is None or not has_matching_tracker():
                 return
             active_context = invocation_context
             raw_fallback_label = active_context.metadata.get(_SECURITY_RESULT_FALLBACK_LABEL_CONTEXT_KEY)
@@ -6112,8 +6146,7 @@ def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: Integ
                 fallback_label,
                 trust_server_ifc=trust_server_ifc,
             )
-            active_middleware = _current_middleware.get()
-            if error_label is None or active_middleware is None or _current_context.get() is not active_context:
+            if error_label is None:
                 return
             raw_carrier = active_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
             if not isinstance(raw_carrier, _FunctionResultCarrier):
@@ -6137,7 +6170,7 @@ def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: Integ
             prepare_error_label()
             raise
 
-        retain_authority = _current_middleware.get() is not None
+        retain_authority = has_matching_tracker()
         if invocation_context is not None:
             raw_carrier = invocation_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
             if isinstance(raw_carrier, _FunctionResultCarrier):

@@ -398,6 +398,7 @@ class _MCPHostPayloadCapture:
                 "_meta",
                 "_security_label_authoritative",
                 "_security_label_authoritative_confidentiality",
+                "_security_label_validated_principals",
                 _MCP_TOOL_RESULT_SECURITY_META_KEY,
             }),
             result_already_parsed=True,
