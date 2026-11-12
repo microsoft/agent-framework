@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -75,7 +76,7 @@ public sealed class ApprovalPropagationTests
     {
         // Arrange
         using var provider = new LocalCodeActProvider(
-            "/usr/bin/python3",
+            Environment.ProcessPath!,
             new LocalCodeActProviderOptions
             {
                 ValidationDisabled = true,
@@ -96,7 +97,7 @@ public sealed class ApprovalPropagationTests
     {
         // Arrange
         using var provider = new LocalCodeActProvider(
-            "/usr/bin/python3",
+            Environment.ProcessPath!,
             new LocalCodeActProviderOptions { ValidationDisabled = true });
         provider.AddTools(GatedTool());
 
@@ -112,7 +113,7 @@ public sealed class ApprovalPropagationTests
     {
         // Arrange
         using var provider = new LocalCodeActProvider(
-            "/usr/bin/python3",
+            Environment.ProcessPath!,
             new LocalCodeActProviderOptions
             {
                 ValidationDisabled = true,
@@ -131,7 +132,7 @@ public sealed class ApprovalPropagationTests
     {
         // Arrange
         using var provider = new LocalCodeActProvider(
-            "/usr/bin/python3",
+            Environment.ProcessPath!,
             new LocalCodeActProviderOptions
             {
                 ValidationDisabled = true,
@@ -152,7 +153,7 @@ public sealed class ApprovalPropagationTests
     {
         // Arrange
         var function = new LocalExecuteCodeFunction(
-            "/usr/bin/python3",
+            Environment.ProcessPath!,
             new LocalCodeActProviderOptions
             {
                 ValidationDisabled = true,
@@ -173,7 +174,7 @@ public sealed class ApprovalPropagationTests
     {
         // Arrange
         var function = new LocalExecuteCodeFunction(
-            "/usr/bin/python3",
+            Environment.ProcessPath!,
             new LocalCodeActProviderOptions
             {
                 ValidationDisabled = true,
@@ -189,7 +190,7 @@ public sealed class ApprovalPropagationTests
     {
         // Arrange
         var function = new LocalExecuteCodeFunction(
-            "/usr/bin/python3",
+            Environment.ProcessPath!,
             new LocalCodeActProviderOptions
             {
                 ValidationDisabled = true,
@@ -205,7 +206,7 @@ public sealed class ApprovalPropagationTests
     {
         // Arrange
         var function = new LocalExecuteCodeFunction(
-            "/usr/bin/python3",
+            Environment.ProcessPath!,
             new LocalCodeActProviderOptions
             {
                 ValidationDisabled = true,
