@@ -8129,10 +8129,10 @@ async def test_endpoint_fides_replacement_rotates_lifecycle_generation(
     assert executed == ["guarded"]
 
 
-async def test_endpoint_fides_approval_without_replay_provenance_fails_closed(
+async def test_endpoint_fides_approval_uses_backend_snapshot_provenance(
     streaming_chat_client_stub: Any,
 ) -> None:
-    """AG-UI snapshot replay requires explicit provenance before FIDES can reuse one approval."""
+    """AG-UI snapshot provenance lets FIDES authenticate a restored approval turn."""
     client, snapshot_store, security, executed, wrapped_agent = _build_fides_policy_approval_endpoint(
         streaming_chat_client_stub
     )
@@ -8160,16 +8160,15 @@ async def test_endpoint_fides_approval_without_replay_provenance_fails_closed(
 
     assert approved.status_code == 200
     results = [event for event in _decode_sse_events(approved) if event.get("type") == "TOOL_CALL_RESULT"]
-    assert results == []
-    assert executed == []
+    assert [(event["toolCallId"], event["content"]) for event in results] == [
+        ("call-guarded", "guarded result")
+    ]
+    assert executed == ["guarded"]
     finished = [event for event in _decode_sse_events(approved) if event.get("type") == "RUN_FINISHED"]
-    replacement_interrupts = _run_finished_interrupts(finished[-1])
-    assert len(replacement_interrupts) == 1
-    assert replacement_interrupts[0]["id"] != approval_id
-    assert replacement_interrupts[0]["toolCallId"] == "call-guarded"
+    assert "outcome" not in finished[-1]
     snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
     assert snapshot is not None and snapshot.session_state is not None
-    assert snapshot.session_state[security.source_id]["pending_policy_approvals"]
+    assert not snapshot.session_state[security.source_id]["pending_policy_approvals"]
 
 
 async def test_endpoint_agent_approval_resume_persists_replayable_tool_results(streaming_chat_client_stub):
