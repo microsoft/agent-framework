@@ -919,7 +919,7 @@ class TestStateTypeRegistry:
 
         register_state_type(AliasChoiceState, type_id="alias_choices_state_test")
         session = AgentSession(session_id="alias-choices")
-        session.state["value"] = AliasChoiceState(note_text="ok")
+        session.state["value"] = AliasChoiceState.model_validate({"note_text": "ok"})
 
         restored = AgentSession.from_dict(session.to_dict())
 
