@@ -3919,8 +3919,7 @@ class FileSkillsSource(SkillsSource):
 
         try:
             # compose() keeps duplicate keys, unlike safe_load(), which silently keeps only the last value.
-            # The Pyright ignores are needed because PyYAML's type definitions do not fully describe compose().
-            root = yaml.compose(match.group(1), Loader=yaml.SafeLoader)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            root = yaml.compose(match.group(1), Loader=yaml.SafeLoader)
         except (yaml.YAMLError, RecursionError, ValueError, OverflowError) as exc:
             # PyYAML raises ValueError or OverflowError for Unicode escapes outside the valid code-point range.
             logger.error("SKILL.md at '%s' contains invalid YAML frontmatter: %s", skill_file_path, exc)

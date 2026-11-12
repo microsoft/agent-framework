@@ -1,0 +1,119 @@
+{
+  "tag": "python-1.26.0",
+  "packages": {
+    "agent-framework": "1.26.0",
+    "agent-framework-a2a": "1.0.0b261112",
+    "agent-framework-ag-ui": "1.8.1",
+    "agent-framework-anthropic": "1.0.0b261112",
+    "agent-framework-azure-cosmos": "1.0.0b261112",
+    "agent-framework-azure-documentdb": "1.0.0a261112",
+    "agent-framework-bedrock": "1.0.0b261112",
+    "agent-framework-claude": "1.0.0b261112",
+    "agent-framework-core": "1.26.0",
+    "agent-framework-declarative": "1.5.1",
+    "agent-framework-devui": "1.0.0b261112",
+    "agent-framework-duckdb": "1.0.0a261112",
+    "agent-framework-foundry": "1.16.2",
+    "agent-framework-foundry-hosting": "1.0.0b261112",
+    "agent-framework-gemini": "1.0.0b261112",
+    "agent-framework-github-copilot": "2.2.0",
+    "agent-framework-hosting-responses": "1.0.0a261112",
+    "agent-framework-hyperlight": "1.0.0b261112",
+    "agent-framework-mem0": "1.0.0b261112",
+    "agent-framework-mistral": "1.0.0b261112",
+    "agent-framework-monty": "1.0.0b261112",
+    "agent-framework-ollama": "1.0.0b261112",
+    "agent-framework-openai": "1.18.2",
+    "agent-framework-oracle": "1.0.0a261112",
+    "agent-framework-postgres": "1.0.0a261112",
+    "agent-framework-purview": "1.0.0b261112",
+    "agent-framework-redis": "1.0.0b261112",
+    "agent-framework-tools": "1.0.0b261112"
+  },
+  "smoke_imports": {
+    "agent-framework": [
+      "agent_framework:Agent"
+    ],
+    "agent-framework-a2a": [
+      "agent_framework.a2a:A2AAgent"
+    ],
+    "agent-framework-ag-ui": [
+      "agent_framework.ag_ui:AgentFrameworkAgent"
+    ],
+    "agent-framework-anthropic": [
+      "agent_framework.anthropic:AnthropicClient"
+    ],
+    "agent-framework-azure-cosmos": [
+      "agent_framework.azure:CosmosStore"
+    ],
+    "agent-framework-azure-documentdb": [
+      "agent_framework_azure_documentdb:AzureDocumentDBStore"
+    ],
+    "agent-framework-bedrock": [
+      "agent_framework.amazon:BedrockChatClient"
+    ],
+    "agent-framework-claude": [
+      "agent_framework.anthropic:ClaudeAgent"
+    ],
+    "agent-framework-core": [
+      "agent_framework:Message"
+    ],
+    "agent-framework-declarative": [
+      "agent_framework.declarative:AgentFactory"
+    ],
+    "agent-framework-devui": [
+      "agent_framework.devui:serve"
+    ],
+    "agent-framework-duckdb": [
+      "agent_framework_duckdb:DuckDBStore"
+    ],
+    "agent-framework-foundry": [
+      "agent_framework.foundry:FoundryAgent"
+    ],
+    "agent-framework-foundry-hosting": [
+      "agent_framework.foundry:FoundryAgentSessionStore"
+    ],
+    "agent-framework-gemini": [
+      "agent_framework.gemini:GeminiEmbeddingClient"
+    ],
+    "agent-framework-github-copilot": [
+      "agent_framework.github:GitHubCopilotAgent"
+    ],
+    "agent-framework-hosting-responses": [
+      "agent_framework_hosting_responses:responses_from_run"
+    ],
+    "agent-framework-hyperlight": [
+      "agent_framework.hyperlight:HyperlightCodeActProvider"
+    ],
+    "agent-framework-mem0": [
+      "agent_framework.mem0:Mem0ContextProvider"
+    ],
+    "agent-framework-mistral": [
+      "agent_framework.mistral:MistralChatClient"
+    ],
+    "agent-framework-monty": [
+      "agent_framework.monty:MontyCodeActProvider"
+    ],
+    "agent-framework-ollama": [
+      "agent_framework.ollama:OllamaChatClient"
+    ],
+    "agent-framework-openai": [
+      "agent_framework.openai:OpenAIChatClient"
+    ],
+    "agent-framework-oracle": [
+      "agent_framework_oracle:OracleStore"
+    ],
+    "agent-framework-postgres": [
+      "agent_framework_postgres:PostgresStore"
+    ],
+    "agent-framework-purview": [
+      "agent_framework.microsoft:PurviewPolicyMiddleware"
+    ],
+    "agent-framework-redis": [
+      "agent_framework.redis:RedisStore"
+    ],
+    "agent-framework-tools": [
+      "agent_framework.tools:LocalShellTool"
+    ]
+  }
+}

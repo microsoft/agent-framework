@@ -2,25 +2,28 @@
 
 """Unit tests for WorkflowFactory."""
 
+import os
+import warnings
 from collections import UserDict
 from collections.abc import Iterator, ValuesView
 from copy import deepcopy
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 from agent_framework import Message
+from agent_framework._feature_stage import ExperimentalWarning
 
+from agent_framework_declarative import AgentFactory, WorkflowFactory
 from agent_framework_declarative._feature_usage import FeatureIndex
 from agent_framework_declarative._workflows._declarative_base import (
     DeclarativeActionExecutor,
     discover_env_references,
 )
 from agent_framework_declarative._workflows._errors import DeclarativeWorkflowError
-from agent_framework_declarative._workflows._factory import WorkflowFactory
 
 try:
     import powerfx  # noqa: F401
@@ -1331,6 +1334,96 @@ trigger:
 
 class TestWorkflowFactoryAgentCreation:
     """Tests for agent creation from definitions."""
+
+    @pytest.mark.usefixtures("fresh_feature_warnings")
+    @pytest.mark.parametrize("registration", ["none", "constructor", "register_agent"])
+    @pytest.mark.parametrize("use_env_file", [False, pytest.param(True, marks=_requires_powerfx)])
+    async def test_workflow_without_agent_loading_emits_no_experimental_warning(
+        self, registration: str, use_env_file: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_file = None
+        if use_env_file:
+            monkeypatch.setenv("DECLARATIVE_TEST_ENV", "original")
+            monkeypatch.delenv("DECLARATIVE_TEST_ENV")
+            env_file = tmp_path / ".env"
+            env_file.write_text("DECLARATIVE_TEST_ENV=loaded\n")
+        agent = MagicMock()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ExperimentalWarning)
+            factory = WorkflowFactory(
+                agents={"TestAgent": agent} if registration == "constructor" else None,
+                env_file=str(env_file) if env_file else None,
+                restrict_env_to_configuration=False,
+            )
+            if registration == "register_agent":
+                factory.register_agent("TestAgent", agent)
+            definition: dict[str, Any] = {
+                "name": "hello-workflow",
+                "actions": [
+                    {
+                        "kind": "SendActivity",
+                        "activity": {"text": "=Env.DECLARATIVE_TEST_ENV" if use_env_file else "Hello"},
+                    }
+                ],
+            }
+            if registration != "none":
+                definition["agents"] = {"TestAgent": {"kind": "Prompt", "name": "OverrideAttempt"}}
+            workflow = factory.create_workflow_from_yaml(yaml.safe_dump(definition))
+            result = await workflow.run({})
+
+        assert result.get_outputs() == ["loaded" if use_env_file else "Hello"]
+        if registration != "none":
+            assert cast(Any, workflow)._declarative_agents["TestAgent"] is agent
+
+    @pytest.mark.usefixtures("fresh_feature_warnings")
+    @pytest.mark.parametrize("source", ["inline", "file"])
+    def test_agent_loading_warns_and_reuses_factory(
+        self, source: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DECLARATIVE_TEST_ENV", "original")
+        monkeypatch.delenv("DECLARATIVE_TEST_ENV")
+        env_file = tmp_path / ".env"
+        env_file.write_text("DECLARATIVE_TEST_ENV=loaded\n")
+        agent_def: dict[str, Any] = {"kind": "Prompt", "name": "TestAgent", "instructions": "Be helpful."}
+        if source == "file":
+            (tmp_path / "agent.yaml").write_text(yaml.safe_dump(agent_def))
+            agent_def = {"file": "agent.yaml"}
+        definition = {
+            "agents": {"TestAgent": agent_def},
+            "actions": [{"kind": "SendActivity", "activity": "Hello"}],
+        }
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ExperimentalWarning)
+            factory = WorkflowFactory(env_file=str(env_file))
+        assert os.environ["DECLARATIVE_TEST_ENV"] == "loaded"
+
+        with patch.object(AgentFactory, "_get_client", return_value=MagicMock()):
+            with pytest.warns(ExperimentalWarning, match=r"\[DECLARATIVE_AGENTS\] AgentFactory"):
+                workflow = factory.create_workflow_from_definition(definition, base_path=tmp_path)
+            assert cast(Any, workflow)._declarative_agents["TestAgent"].name == "TestAgent"
+            assert os.environ["DECLARATIVE_TEST_ENV"] == "loaded"
+
+            # Loading the env file again would restore the deleted value.
+            monkeypatch.delenv("DECLARATIVE_TEST_ENV")
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", ExperimentalWarning)
+                factory.create_workflow_from_definition(definition, base_path=tmp_path)
+            assert "DECLARATIVE_TEST_ENV" not in os.environ
+
+    @pytest.mark.usefixtures("fresh_feature_warnings")
+    def test_explicit_agent_factory_emits_experimental_warning(self) -> None:
+        with pytest.warns(ExperimentalWarning, match=r"\[DECLARATIVE_AGENTS\] AgentFactory"):
+            agent_factory = AgentFactory(client=MagicMock())
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ExperimentalWarning)
+            factory = WorkflowFactory(agent_factory=agent_factory)
+            workflow = factory.create_workflow_from_definition({
+                "agents": {"TestAgent": {"kind": "Prompt", "name": "TestAgent"}},
+                "actions": [{"kind": "SendActivity", "activity": "Hello"}],
+            })
+        assert cast(Any, workflow)._declarative_agents["TestAgent"].client is agent_factory.client
 
     def test_agent_creation_with_file_reference(self, tmp_path):
         """Test creating agent from file reference."""

@@ -54,6 +54,7 @@ from agent_framework._types import (
 )
 from agent_framework.exceptions import AgentException, ContentError, MiddlewareException
 from agent_framework.observability import AgentTelemetryLayer
+from pydantic import BaseModel
 
 from ._feature_usage import FeatureIndex
 
@@ -218,6 +219,25 @@ async def _ensure_supported_cli_version(client: CopilotClient) -> None:
         raise AgentException(
             f"GitHub Copilot CLI version {minimum} or higher is required, but version '{version}' was detected."
         )
+
+
+def _to_response_schema(response_format: Any) -> Any:
+    """Return a value the Copilot SDK can JSON-serialize as ``response_schema``.
+
+    Pydantic model classes are passed through unchanged. Any other mapping (for example a
+    ``MappingProxyType`` or ``UserDict``) is converted, recursively, to plain ``dict``/``list`` objects.
+    """
+    if response_format is None or isinstance(response_format, type):
+        return response_format
+
+    def _plain(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {key: _plain(item) for key, item in cast(Mapping[Any, Any], value).items()}
+        if isinstance(value, (list, tuple)):
+            return [_plain(item) for item in cast(Sequence[Any], value)]
+        return value
+
+    return _plain(response_format)
 
 
 def _provider_service_session_state_keys(agent: object, client: object | None) -> frozenset[str]:
@@ -564,6 +584,13 @@ class GitHubCopilotOptions(TypedDict, total=False):
 
     telemetry: TelemetryConfig
     """OpenTelemetry configuration for the Copilot CLI process."""
+
+    response_format: type[BaseModel] | Mapping[str, Any]
+    """Structured output format for the run: a Pydantic model type or a JSON Schema mapping.
+
+    Forwarded to the Copilot SDK as ``response_schema`` so the provider constrains the
+    final answer to the schema, and the parsed result is exposed on ``AgentResponse.value``.
+    Streaming still yields text; the value is parsed once the stream completes."""
 
     on_pre_tool_use: PreToolUseHandler
     """Pre-tool-use hook handler for the Copilot SDK.
@@ -924,7 +951,14 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                         logger.exception("Error running after_run providers in streaming result hook")
 
             def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
-                return AgentResponse.from_updates(updates)
+                response_format: Any = cast(Mapping[str, Any], options or {}).get(
+                    "response_format"
+                ) or self._default_options.get("response_format")
+                if response_format is not None:
+                    # The structured value comes from the root agent's answer, so sub-agent updates
+                    # (which still stream to the caller) are left out of the final response.
+                    updates = [update for update in updates if not getattr(update.raw_representation, "agent_id", None)]
+                return AgentResponse.from_updates(updates, output_format_type=response_format)
 
             return ResponseStream(
                 self._stream_updates(
@@ -994,6 +1028,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 "together with on_permission_request instead."
             )
         timeout = opts.get("timeout") or self._settings.get("timeout") or DEFAULT_TIMEOUT_SECONDS
+        response_format = opts.get("response_format") or self._default_options.get("response_format")
+        response_schema = _to_response_schema(response_format)
 
         input_messages = normalize_messages(messages)
 
@@ -1046,7 +1082,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             unsubscribe = copilot_session.on(usage_event_handler)
             try:
                 mark_feature_used(FeatureIndex.GITHUB_COPILOT)
-                response_event = await copilot_session.send_and_wait(prompt, attachments=attachments, timeout=timeout)
+                response_event = await copilot_session.send_and_wait(
+                    prompt,
+                    attachments=attachments,
+                    response_schema=response_schema,
+                    timeout=timeout,
+                )
             except Exception as ex:
                 raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
             finally:
@@ -1078,6 +1119,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             finish_reason=cast(Any, finish_reason),
             usage_details=usage_details,
             additional_properties={"model": model} if model else None,
+            response_format=response_format,
         )
         session_context._response = response  # type: ignore[assignment]
         await self._run_after_providers(session=session, context=session_context)
@@ -1131,6 +1173,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 "(set via default_options). Remove on_function_approval and use on_pre_tool_use "
                 "together with on_permission_request instead."
             )
+        response_format = opts.get("response_format") or self._default_options.get("response_format")
+        response_schema = _to_response_schema(response_format)
 
         input_messages = normalize_messages(messages)
 
@@ -1150,7 +1194,15 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         queue: asyncio.Queue[AgentResponseUpdate | Exception | None] = asyncio.Queue()
 
-        def event_handler(event: SessionEvent) -> None:
+        # The request submitted by ``send``. Events are only acted on once this request has started, so
+        # the tail of an earlier request (for example one that timed out) cannot supply this run's answer
+        # or end it. Without a request ID (legacy runtimes) every event is accepted, as in the SDK waiter.
+        request_id: str | None = None
+        request_sent = False
+        started = False
+        pending_events: list[SessionEvent] = []
+
+        def handle_event(event: SessionEvent) -> None:
             if event.type == SessionEventType.ASSISTANT_MESSAGE_DELTA:
                 data: Any = event.data
                 if data.delta_content:
@@ -1228,11 +1280,59 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 )
                 queue.put_nowait(update)
             elif event.type == SessionEventType.SESSION_IDLE:
+                # Only the root agent's final idle ends the run: not a sub-agent's, and not an autopilot
+                # idle, which the session leaves before it reaches its actual final state.
+                if getattr(event, "agent_id", None):
+                    return
+                idle_data: Any = event.data
+                mode = getattr(idle_data, "mode", None)
+                if str(getattr(mode, "value", mode)) == "autopilot":
+                    return
+                if getattr(idle_data, "aborted", False):
+                    queue.put_nowait(AgentException("GitHub Copilot session aborted before response completed"))
+                    return
                 queue.put_nowait(None)
+            elif event.type == getattr(SessionEventType, "SESSION_AUTOPILOT_STOPPED", None):
+                stopped_data: Any = event.data
+                if not request_id or getattr(stopped_data, "request_id", None) != request_id:
+                    return
+                reason = getattr(stopped_data, "reason", None)
+                if reason == "error":
+                    queue.put_nowait(AgentException("GitHub Copilot autopilot request failed"))
+                elif reason == "aborted":
+                    queue.put_nowait(AgentException("GitHub Copilot session aborted before response completed"))
+                else:
+                    queue.put_nowait(None)
             elif event.type == SessionEventType.SESSION_ERROR:
                 error_data: Any = event.data
                 error_msg = error_data.message or "Unknown error"
                 queue.put_nowait(AgentException(f"GitHub Copilot session error: {error_msg}"))
+
+        def dispatch_event(event: SessionEvent) -> None:
+            nonlocal started
+            if not started:
+                data: Any = event.data
+                if not request_id:
+                    started = True
+                elif not getattr(event, "agent_id", None):
+                    if event.type == SessionEventType.USER_MESSAGE:
+                        started = getattr(data, "message_id", None) == request_id
+                    elif event.type == SessionEventType.ASSISTANT_MESSAGE:
+                        started = getattr(data, "originating_message_id", None) == request_id
+                    elif event.type == SessionEventType.SESSION_ERROR:
+                        # An error attributed to this request ends it even if it never started.
+                        if getattr(data, "originating_message_id", None) != request_id:
+                            return
+                        started = True
+                if not started:
+                    return
+            handle_event(event)
+
+        def event_handler(event: SessionEvent) -> None:
+            if request_sent:
+                dispatch_event(event)
+            else:
+                pending_events.append(event)
 
         async with self._session_run_scope(
             session,
@@ -1248,7 +1348,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
             try:
                 mark_feature_used(FeatureIndex.GITHUB_COPILOT)
-                await copilot_session.send(prompt, attachments=attachments)
+                sent_id = await copilot_session.send(prompt, attachments=attachments, response_schema=response_schema)
+                request_id = sent_id if isinstance(sent_id, str) and sent_id else None
+                request_sent = True
+                for pending_event in pending_events:
+                    dispatch_event(pending_event)
+                pending_events.clear()
 
                 while (item := await queue.get()) is not None:
                     if isinstance(item, Exception):
@@ -1818,6 +1923,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             "on_pre_tool_use",
             "on_function_approval",
             "timeout",
+            "response_format",
             "cli_path",
             "log_level",
             "base_directory",

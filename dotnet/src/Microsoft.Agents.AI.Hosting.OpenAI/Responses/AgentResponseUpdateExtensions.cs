@@ -20,6 +20,8 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 /// </summary>
 internal static class AgentResponseUpdateExtensions
 {
+    private const string GenericWorkflowErrorMessage = "An error occurred while executing the workflow.";
+
     /// <summary>
     /// Converts a stream of <see cref="AgentResponseUpdate"/> to stream of <see cref="StreamingResponseEvent"/>.
     /// </summary>
@@ -128,7 +130,7 @@ internal static class AgentResponseUpdateExtensions
                         Id = itemId,
                         ExecutorId = failedEvent.ExecutorId,
                         Status = "failed",
-                        Error = failedEvent.Data?.ToString(),
+                        Error = GetClientErrorMessage(update),
                         CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                     };
 
@@ -142,7 +144,7 @@ internal static class AgentResponseUpdateExtensions
                 else
                 {
                     // For other workflow events (not executor-specific), keep the old format as fallback
-                    yield return CreateWorkflowEventResponse(workflowEvent, seq.Increment(), outputIndex);
+                    yield return CreateWorkflowEventResponse(workflowEvent, update, seq.Increment(), outputIndex);
                 }
                 continue;
             }
@@ -312,7 +314,19 @@ internal static class AgentResponseUpdateExtensions
             !value1.HasValue || !value2.HasValue || value1.Value == value2.Value;
     }
 
-    private static StreamingWorkflowEventComplete CreateWorkflowEventResponse(WorkflowEvent workflowEvent, int sequenceNumber, int outputIndex)
+    /// <summary>
+    /// Gets the error text to send to the client for a failed workflow update.
+    /// </summary>
+    /// <remarks>
+    /// The workflow host places client-facing error text in <see cref="ErrorContent"/> according to its
+    /// exception detail setting. The exception carried by the workflow event is never sent to the client.
+    /// </remarks>
+    private static string GetClientErrorMessage(AgentResponseUpdate update) =>
+        update.Contents.OfType<ErrorContent>().FirstOrDefault()?.Message is { Length: > 0 } message
+            ? message
+            : GenericWorkflowErrorMessage;
+
+    private static StreamingWorkflowEventComplete CreateWorkflowEventResponse(WorkflowEvent workflowEvent, AgentResponseUpdate update, int sequenceNumber, int outputIndex)
     {
         // Extract executor_id if this is an ExecutorEvent
         string? executorId = null;
@@ -324,6 +338,13 @@ internal static class AgentResponseUpdateExtensions
         if (JsonSerializer.IsReflectionEnabledByDefault)
         {
             JsonElement? dataElement = null;
+            if (workflowEvent.Data is Exception exception)
+            {
+                // A workflow event carrying an exception ends the response as failed. Report only the error
+                // text selected by the workflow host; the exception itself is never sent to the client.
+                throw new InvalidOperationException(GetClientErrorMessage(update), exception);
+            }
+
             if (workflowEvent.Data is not null)
             {
                 dataElement = JsonSerializer.SerializeToElement(workflowEvent.Data, OpenAIHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object)));

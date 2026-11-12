@@ -5,7 +5,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,16 +22,14 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public sealed class FoundryToolboxResponseScopeTests
 {
     private static readonly string s_sharedResponseId = "resp_" + new string('7', 46);
+    private static readonly string[] s_callIds = ["call-a", "call-b"];
+    private static readonly string[] s_toolNames = ["tool_for_call_a", "tool_for_call_b"];
 
     [Fact]
-    public async Task CreateAsync_ToolboxClientsAreIsolatedReusedAndDisposedPerResponseAsync()
+    public async Task CreateAsync_ToolboxClientsAreIsolatedAndDisposedPerResponseAsync()
     {
         // Arrange
-        HostedCallContext.CallId = null;
-        SetToolboxCacheScopeId(null);
-
-        var openScopes = new ConcurrentBag<string>();
-        var agentScopes = new ConcurrentBag<string>();
+        var openCallIds = new ConcurrentBag<string>();
         var observedTools = new ConcurrentBag<AITool>();
         var handlers = new ConcurrentBag<TrackingHttpMessageHandler>();
         var bothConcurrentOpensEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -51,13 +48,10 @@ public sealed class FoundryToolboxResponseScopeTests
             options,
             Mock.Of<TokenCredential>())
         {
-            ToolboxOpener = async (_, cancellationToken) =>
+            ToolboxOpener = async (_, requestCallId, cancellationToken) =>
             {
-                var scopeId = GetToolboxCacheScopeId();
-                if (scopeId is null)
-                {
-                    throw new InvalidOperationException("Startup has no response scope.");
-                }
+                var callId = requestCallId
+                    ?? throw new InvalidOperationException("A toolbox must be opened with the response's call id.");
 
                 if (Interlocked.Increment(ref concurrentOpenCount) == 2)
                 {
@@ -66,13 +60,13 @@ public sealed class FoundryToolboxResponseScopeTests
 
                 await bothConcurrentOpensEntered.Task
                     .WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
-                openScopes.Add(scopeId);
+                openCallIds.Add(callId);
                 var openNumber = Interlocked.Increment(ref openCount);
                 var handler = new TrackingHttpMessageHandler(throwOnDispose: openNumber == 1);
                 handlers.Add(handler);
-                AITool tool = AIFunctionFactory.Create(() => scopeId, name: $"scoped_tool_{openNumber}");
+                AITool tool = AIFunctionFactory.Create(() => callId, name: "tool_for_" + callId.Replace('-', '_'));
                 return new FoundryToolboxService.ToolboxOpenResult(
-                    new FoundryToolboxService.CachedToolbox(
+                    new FoundryToolboxService.ToolboxConnection(
                         Client: null,
                         new HttpClient(handler),
                         [tool]),
@@ -89,7 +83,6 @@ public sealed class FoundryToolboxResponseScopeTests
                 It.IsAny<CancellationToken>()))
             .Returns((IEnumerable<ChatMessage> _, ChatOptions? chatOptions, CancellationToken cancellationToken) =>
             {
-                agentScopes.Add(GetToolboxCacheScopeId() ?? string.Empty);
                 observedTools.Add(Assert.Single(chatOptions?.Tools ?? []));
 
                 var callNumber = Interlocked.Increment(ref chatCallCount);
@@ -113,24 +106,19 @@ public sealed class FoundryToolboxResponseScopeTests
             new FoundryResponsesServerOptions(),
             toolboxService);
 
-        // Act: two responses deliberately share the same public response id. Their internally
-        // generated cache scopes must still be independent while each response resolves its
-        // deferred pre-registered toolbox.
+        // Act: two responses deliberately share the same public response id. Each must still open its
+        // own toolbox connection under its own call id.
         var first = RunAsync(handler, CreateRequest(), CreateContext(callId: "call-a"));
         var second = RunAsync(handler, CreateRequest(), CreateContext(callId: "call-b"));
         await Task.WhenAll(first, second);
 
-        // Assert: both responses opened independently, carried the same opaque scope across the
-        // handler's initial lifecycle yields, and disposed their response-owned clients.
+        // Assert: each response opened its own connection with its own call id, its agent saw only the tool
+        // opened for that call id, and every response-owned client was disposed, even when one disposal failed.
         Assert.Equal(2, openCount);
-        Assert.Equal(2, openScopes.Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal(
-            openScopes.OrderBy(static value => value, StringComparer.Ordinal),
-            agentScopes.OrderBy(static value => value, StringComparer.Ordinal));
-        Assert.Equal(2, observedTools.Distinct().Count());
+        Assert.Equal(s_callIds, openCallIds.Order(StringComparer.Ordinal));
+        Assert.Equal(s_toolNames, observedTools.Select(static tool => tool.Name).Order(StringComparer.Ordinal));
         Assert.Equal(2, handlers.Count);
         Assert.All(handlers, static item => Assert.True(item.IsDisposed));
-        Assert.Equal(0, GetActiveRequestScopeCount(toolboxService));
 
         // Act: an agent failure is an early terminal path. The handler may translate the exception
         // to a failed response or propagate it, but the response-owned toolbox client must be released.
@@ -148,7 +136,6 @@ public sealed class FoundryToolboxResponseScopeTests
         Assert.Equal(3, openCount);
         Assert.Equal(3, handlers.Count);
         Assert.All(handlers, static item => Assert.True(item.IsDisposed));
-        Assert.Equal(0, GetActiveRequestScopeCount(toolboxService));
     }
 
     private static CreateResponse CreateRequest()
@@ -191,26 +178,6 @@ public sealed class FoundryToolboxResponseScopeTests
         }
 
         return events;
-    }
-
-    private static string? GetToolboxCacheScopeId() =>
-        typeof(HostedCallContext)
-            .GetProperty("ToolboxCacheScopeId", BindingFlags.Public | BindingFlags.Static)?
-            .GetValue(null) as string;
-
-    private static void SetToolboxCacheScopeId(string? value) =>
-        typeof(HostedCallContext)
-            .GetProperty("ToolboxCacheScopeId", BindingFlags.Public | BindingFlags.Static)?
-            .SetValue(null, value);
-
-    private static int GetActiveRequestScopeCount(FoundryToolboxService service)
-    {
-        var scopes = typeof(FoundryToolboxService)
-            .GetField("_requestToolboxes", BindingFlags.Instance | BindingFlags.NonPublic)?
-            .GetValue(service);
-        return scopes is null
-            ? -1
-            : (int)scopes.GetType().GetProperty("Count")!.GetValue(scopes)!;
     }
 
     private static async IAsyncEnumerable<ChatResponseUpdate> YieldAfterAsync(
