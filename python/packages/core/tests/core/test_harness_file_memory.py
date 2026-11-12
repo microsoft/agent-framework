@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import warnings
 
 import pytest
 import regex
@@ -53,6 +54,14 @@ async def _prepare(
     await provider.before_run(agent=None, session=session, context=context, state={})
     tools: dict[str, FunctionTool] = {tool.name: tool for tool in context.tools}
     return context, tools
+
+
+def test_file_memory_provider_does_not_emit_deprecation_warning() -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        FileMemoryProvider(store=InMemoryAgentFileStore())
+
+    assert not [item for item in caught if issubclass(item.category, DeprecationWarning)]
 
 
 def test_description_file_name_replaces_extension() -> None:
