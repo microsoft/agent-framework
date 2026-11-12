@@ -315,9 +315,11 @@ FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
 def _forbid_additional_properties(node: Any) -> None:
     """Set ``additionalProperties: false`` on every object schema in ``node``, in place.
 
-    Anthropic structured outputs reject any object schema without it, including nested
-    models in ``$defs``. Maps of names to schemas (``properties``, ``$defs``) are walked
-    as maps, so a field named ``properties`` or ``type`` is not mistaken for a schema.
+    Anthropic structured outputs only support ``additionalProperties: false``, including on
+    nested models in ``$defs``, so a missing, ``true`` or schema-valued one (a map such as
+    ``dict[str, str]``) is replaced, as the Anthropic SDK's ``transform_schema`` does. Maps of
+    names to schemas (``properties``, ``$defs``) are walked as maps, so a field named
+    ``properties`` or ``type`` is not mistaken for a schema.
     """
     if isinstance(node, list):
         for item in cast(list[Any], node):
@@ -329,9 +331,7 @@ def _forbid_additional_properties(node: Any) -> None:
     schema_type = schema.get("type")
     is_object = schema_type == "object" or (isinstance(schema_type, list) and "object" in schema_type)
     if is_object or "properties" in schema:
-        additional = schema.get("additionalProperties")
-        if additional is None or additional is True:
-            schema["additionalProperties"] = False
+        schema["additionalProperties"] = False
     for key, value in schema.items():
         if key in ("properties", "$defs", "definitions", "patternProperties"):
             if isinstance(value, dict):

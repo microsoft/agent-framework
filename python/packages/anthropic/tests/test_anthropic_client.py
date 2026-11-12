@@ -4817,6 +4817,18 @@ def test_prepare_response_format_nested_dict_schema(mock_anthropic_client: Magic
     assert "additionalProperties" not in schema["properties"]["properties"]
 
 
+def test_prepare_response_format_nested_map_schema(mock_anthropic_client: MagicMock) -> None:
+    """A map field (dict[str, str]) gets additionalProperties: false, the only value Anthropic supports."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    class Labels(BaseModel):
+        values: dict[str, str]
+
+    result = client._prepare_response_format(Labels)
+
+    assert result["schema"]["properties"]["values"]["additionalProperties"] is False
+
+
 @pytest.mark.parametrize("extra", [{}, {"additionalProperties": True}])
 def test_prepare_response_format_nullable_nested_object(
     mock_anthropic_client: MagicMock, extra: dict[str, Any]
