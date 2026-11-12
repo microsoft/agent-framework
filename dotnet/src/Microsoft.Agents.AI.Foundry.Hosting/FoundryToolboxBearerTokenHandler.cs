@@ -37,6 +37,29 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
     private readonly Uri _pinnedEndpoint;
     private readonly string? _callId;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FoundryToolboxBearerTokenHandler"/> class.
+    /// </summary>
+    /// <param name="credential">The credential that issues the bearer token sent to the toolbox proxy.</param>
+    /// <param name="tokenScope">The scope of that token, for example <c>https://ai.azure.com/.default</c>.</param>
+    /// <param name="additionalFeaturesHeaderValue">
+    /// Feature flags to send in <c>Foundry-Features</c> besides the mandatory <c>Toolboxes=V1Preview</c>, taken from
+    /// <c>FOUNDRY_AGENT_TOOLSET_FEATURES</c>, or <see langword="null"/> for none.
+    /// </param>
+    /// <param name="pinnedEndpoint">
+    /// The absolute toolbox endpoint. Only requests to its origin (scheme, host and port) receive the token, the
+    /// Foundry headers and trace context; a request to any other origin is passed on unchanged.
+    /// </param>
+    /// <param name="callId">
+    /// The platform call id of the response that opened this connection, sent as <c>x-agent-foundry-call-id</c> on
+    /// every request to the pinned origin. When <see langword="null"/> or whitespace, no call id is sent.
+    /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="credential"/>, <paramref name="tokenScope"/> or <paramref name="pinnedEndpoint"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="tokenScope"/> is empty or whitespace, or <paramref name="pinnedEndpoint"/> is not absolute.
+    /// </exception>
     internal FoundryToolboxBearerTokenHandler(
         TokenCredential credential,
         string tokenScope,
