@@ -148,7 +148,7 @@ internal static class SubprocessScriptRunner
     /// </remarks>
     private static string? FindOnPath(string name)
     {
-        string fileName = OperatingSystem.IsWindows() ? name + ".exe" : name;
+        string fileName = OperatingSystem.IsWindows() && !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name + ".exe" : name;
         string pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
 
         foreach (string directory in pathEnv.Split(Path.PathSeparator))
