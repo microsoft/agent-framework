@@ -3826,13 +3826,7 @@ class TestSecureAgentSessionIsolation:
 
     async def test_history_loaded_after_security_is_folded_before_tool_execution(self) -> None:
         """A private FIDES preflight classifies history loaded by a later provider."""
-        labeled_sources: list[str] = []
-
-        def label_message(source_id: str, _message: Message) -> ContentLabel:
-            labeled_sources.append(source_id)
-            return ContentLabel(IntegrityLabel.TRUSTED)
-
-        config = SecureAgentConfig(message_labeler=label_message)
+        config = SecureAgentConfig()
         history = InMemoryHistoryProvider(source_id="later-history")
         session = AgentSession(session_id="later-loaded-history")
         context = SessionContext(session_id=session.session_id, input_messages=[])
@@ -3872,7 +3866,6 @@ class TestSecureAgentSessionIsolation:
             )
 
         label = tracker.get_context_label()
-        assert labeled_sources == []
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
 
@@ -3967,14 +3960,22 @@ class TestSecureAgentSessionIsolation:
         assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
         assert tracker.get_context_label().confidentiality == ConfidentialityLabel.PUBLIC
 
-    async def test_message_labeler_requires_config_after_non_history_providers(self) -> None:
-        """Provider messages must exist before SecureAgentConfig classifies them."""
+    @pytest.mark.parametrize("later_provider_kind", ["context", "history"])
+    async def test_message_labeler_requires_config_as_last_context_provider(
+        self,
+        later_provider_kind: str,
+    ) -> None:
+        """Customized provider labeling requires SecureAgentConfig to run last."""
         config = SecureAgentConfig(message_labeler=lambda _source_id, _message: ContentLabel())
-        later_provider = SimpleNamespace(source_id="later-provider")
+        later_provider = (
+            SimpleNamespace(source_id="later-provider")
+            if later_provider_kind == "context"
+            else InMemoryHistoryProvider(source_id="later-history")
+        )
         session = AgentSession(session_id="invalid-message-labeler-order")
         context = SessionContext(session_id=session.session_id, input_messages=[])
 
-        with pytest.raises(ValueError, match="must follow every non-history context provider"):
+        with pytest.raises(ValueError, match="must be the last context provider"):
             await config.before_run(
                 agent=SimpleNamespace(context_providers=[config, later_provider]),
                 session=session,

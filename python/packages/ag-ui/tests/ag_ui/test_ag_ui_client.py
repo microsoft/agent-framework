@@ -6,7 +6,7 @@ import asyncio
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, MutableSequence
 from contextlib import AbstractContextManager, nullcontext
-from typing import Any, cast
+from typing import Any
 
 import httpx
 import pytest

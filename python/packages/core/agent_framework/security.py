@@ -50,10 +50,14 @@ from ._middleware import (
 )
 from ._serialization import SerializationMixin
 from ._sessions import (
+    _SERVICE_HISTORY_VERIFIED_SOURCES_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentSession,
     ContextProvider,
     HistoryProvider,
     SessionContext,
+    _get_initial_service_continuation,  # pyright: ignore[reportPrivateUsage]
+    _get_service_continuation,  # pyright: ignore[reportPrivateUsage]
+    _history_provider_covers_service_continuation,  # pyright: ignore[reportPrivateUsage]
 )
 from ._tools import (
     _APPROVAL_REQUEST_ID_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -1526,7 +1530,10 @@ _STATE_VARIABLES = "variables"
 _STATE_VARIABLE_METADATA = "variable_metadata"
 _STATE_AUDIT_LOG = "audit_log"
 _STATE_PENDING_APPROVALS = "pending_policy_approvals"
+_STATE_HISTORY_RECONSTRUCTION_COVERAGE = "history_reconstruction_coverage"
+_STATE_SERVICE_CONTINUATION_IDENTITY = "service_continuation_identity"
 _STANDALONE_SESSION_STATE_KEY = "__agent_framework_fides_security__"
+_RESTORED_CONTEXT_LABEL_METADATA_KEY = "_agent_framework_fides_restored_context_label"
 
 
 def _strict_json_value(
@@ -4331,8 +4338,7 @@ class SecureAgentConfig(ContextProvider):
                 The synchronous callback receives the authoritative ``source_id`` from the
                 ``SessionContext.context_messages`` bucket and the message in that bucket. It must return the
                 authoritative ``ContentLabel`` for that exact message. FIDES caches the result for the run without
-                mutating or stamping the message. Register ``SecureAgentConfig`` after every non-history provider
-                whose messages it should classify.
+                mutating or stamping the message. Register ``SecureAgentConfig`` as the last context provider.
             max_pending_approvals: Maximum pending policy approvals retained per session.
             pending_approval_ttl: Maximum age of an unconsumed approval. ``None`` disables expiry.
         """
@@ -4465,6 +4471,54 @@ class SecureAgentConfig(ContextProvider):
         }
 
     @staticmethod
+    def _history_providers(agent: Any) -> list[HistoryProvider]:
+        """Return loadable history providers visible on an agent."""
+        return [
+            provider
+            for provider in getattr(agent, "context_providers", ())
+            if isinstance(provider, HistoryProvider) and provider.load_messages
+        ]
+
+    @staticmethod
+    def _service_continuation_identity(state: Mapping[str, Any]) -> str | None:
+        """Return the continuation identity bound to restored FIDES state."""
+        raw_identity = state.get(_STATE_SERVICE_CONTINUATION_IDENTITY)
+        if raw_identity is None:
+            return None
+        try:
+            identity = _decode_durable_state(raw_identity, path="service continuation identity")
+        except ValueError:
+            return None
+        return identity if isinstance(identity, str) else None
+
+    @staticmethod
+    def _store_service_continuation_identity(state: dict[str, Any], identity: str) -> None:
+        """Bind authoritative FIDES state to one normalized continuation identity."""
+        state[_STATE_SERVICE_CONTINUATION_IDENTITY] = _encode_durable_state(
+            identity,
+            path="service continuation identity",
+        )
+
+    @staticmethod
+    def _verified_service_history_sources(
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        continuation_identity: str,
+    ) -> set[str]:
+        """Return providers whose loaded snapshot exactly covers the continuation."""
+        return {
+            provider.source_id
+            for provider in SecureAgentConfig._history_providers(agent)
+            if _history_provider_covers_service_continuation(
+                provider,
+                context=context,
+                state=session.state.get(provider.source_id, {}),
+                continuation_identity=continuation_identity,
+            )
+        }
+
+    @staticmethod
     def _fold_provider_message_map(
         scope: _SecurityScope,
         provider_messages: Mapping[str, Sequence[Message]],
@@ -4506,6 +4560,60 @@ class SecureAgentConfig(ContextProvider):
         if provider_labels:
             scope.context_label = combine_labels(scope.context_label, *provider_labels)
 
+    async def after_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Bind completed FIDES state to the continuation used by the run."""
+        del agent, session
+        continuation_present, continuation_identity = _get_service_continuation(context)
+        if continuation_present and continuation_identity is not None and _STATE_CONTEXT_LABEL in state:
+            self._store_service_continuation_identity(state, continuation_identity)
+        elif not continuation_present:
+            state.pop(_STATE_SERVICE_CONTINUATION_IDENTITY, None)
+
+    def _validate_service_continuation(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        """Validate service continuation authority against restored state or loaded history."""
+        restored_context_label = context.metadata.get(_RESTORED_CONTEXT_LABEL_METADATA_KEY) is True
+        continuation_present, continuation_identity = _get_initial_service_continuation(context)
+        if not continuation_present:
+            return
+        bound_identity = self._service_continuation_identity(state)
+        state_is_authoritative = (
+            continuation_identity is not None
+            and restored_context_label
+            and bound_identity == continuation_identity
+        )
+        verified_sources = (
+            self._verified_service_history_sources(agent, session, context, continuation_identity)
+            if continuation_identity is not None
+            else set[str]()
+        )
+        context.metadata[_SERVICE_HISTORY_VERIFIED_SOURCES_CONTEXT_KEY] = verified_sources
+        if (
+            continuation_identity is None
+            or (restored_context_label and not state_is_authoritative)
+            or (not restored_context_label and not verified_sources)
+        ):
+            state.pop(_STATE_SERVICE_CONTINUATION_IDENTITY, None)
+            state.pop(_STATE_HISTORY_RECONSTRUCTION_COVERAGE, None)
+            raise RuntimeError(
+                "Cannot reconstruct service-managed history without an authoritative FIDES context label."
+            )
+
+        self._store_service_continuation_identity(state, continuation_identity)
+
     async def before_run(
         self,
         *,
@@ -4526,6 +4634,7 @@ class SecureAgentConfig(ContextProvider):
             context: The invocation context - tools, instructions, and middleware are added here.
             state: The provider-scoped mutable state dict.
         """
+        context.metadata[_RESTORED_CONTEXT_LABEL_METADATA_KEY] = _STATE_CONTEXT_LABEL in state
         scope = _SecurityScope(state, scope_id=session.session_id)
         history_source_ids = self._history_source_ids(agent)
         configured_labeler = self._message_labeler
@@ -4543,11 +4652,15 @@ class SecureAgentConfig(ContextProvider):
                 raise ValueError(
                     "SecureAgentConfig with message_labeler must be registered as a context provider."
                 ) from exc
-            if any(not isinstance(provider, HistoryProvider) for provider in providers[config_index + 1 :]):
+            if providers[config_index + 1 :]:
                 raise ValueError(
-                    "SecureAgentConfig with message_labeler must follow every non-history context provider."
+                    "SecureAgentConfig must be the last context provider when message_labeler is set."
                 )
-            provider_source_ids = set(context.context_messages)
+            provider_source_ids = {
+                provider.source_id
+                for provider in providers[:config_index]
+                if isinstance(getattr(provider, "source_id", None), str)
+            }
         message_labels: dict[int, tuple[Message, ContentLabel]] = {}
 
         def cached_provider_label(_: str, message: Message) -> ContentLabel | None:
@@ -4572,7 +4685,14 @@ class SecureAgentConfig(ContextProvider):
             context.input_messages,
         )
 
-        def fold_run_context() -> None:
+        def fold_run_context(*, validate_continuation: bool) -> None:
+            if validate_continuation:
+                self._validate_service_continuation(
+                    agent=agent,
+                    session=session,
+                    context=context,
+                    state=state,
+                )
             source_ids = provider_source_ids | history_source_ids
             if not source_ids:
                 return
@@ -4585,18 +4705,7 @@ class SecureAgentConfig(ContextProvider):
                 message_labeler=classify_provider_message,
             )
 
-        fold_run_context()
-        # Per-service persistence loads history inside chat middleware, after inbound
-        # approvals may already execute. Without authority at this boundary, fail closed.
-        if bool(getattr(agent, "require_per_service_call_history_persistence", False)) and history_source_ids:
-            scope.context_label = combine_labels(
-                scope.context_label,
-                ContentLabel(
-                    integrity=IntegrityLabel.UNTRUSTED,
-                    confidentiality=ConfidentialityLabel.PRIVATE,
-                    metadata={"source": "unclassified_per_service_history"},
-                ),
-            )
+        fold_run_context(validate_continuation=False)
         input_bound_call_keys = _bound_approval_call_keys(
             context.input_messages,
             scope=scope,
@@ -4624,7 +4733,7 @@ class SecureAgentConfig(ContextProvider):
             _: FunctionInvocationContext,
             call_next: Callable[[], Awaitable[None]],
         ) -> None:
-            fold_run_context()
+            fold_run_context(validate_continuation=True)
             await call_next()
 
         @chat_middleware
@@ -4632,7 +4741,7 @@ class SecureAgentConfig(ContextProvider):
             chat_context: ChatContext,
             call_next: Callable[[], Awaitable[None]],
         ) -> None:
-            fold_run_context()
+            fold_run_context(validate_continuation=True)
             history_messages: dict[str, list[Message]] = {}
             for message in chat_context.messages:
                 attribution = message.additional_properties.get("_attribution")
@@ -4651,7 +4760,8 @@ class SecureAgentConfig(ContextProvider):
             )
             await call_next()
 
-        if history_source_ids:
+        continuation_present, _ = _get_service_continuation(context)
+        if history_source_ids or continuation_present:
             middleware.insert(0, fold_loaded_provider_context)
             middleware.append(fold_replayed_history)
         self._provider_state_used = True
