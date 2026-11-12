@@ -2764,9 +2764,9 @@ async def test_hidden_builtin_mcp_result_replays_without_tainting_context() -> N
         context=second_context,
         state=restored.state.setdefault(security.source_id, {}),
     )
-    second_tracker, second_policy, _ = second_context.get_middleware()
-    assert isinstance(second_tracker, LabelTrackingFunctionMiddleware)
-    assert isinstance(second_policy, PolicyEnforcementFunctionMiddleware)
+    second_middleware = second_context.get_middleware()
+    second_tracker = next(item for item in second_middleware if isinstance(item, LabelTrackingFunctionMiddleware))
+    second_policy = next(item for item in second_middleware if isinstance(item, PolicyEnforcementFunctionMiddleware))
     restored_label = second_tracker.get_context_label()
     assert restored_label.integrity.value == "trusted"
     assert restored_label.confidentiality.value == "private"
