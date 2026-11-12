@@ -42,7 +42,7 @@ internal sealed class WorkflowSession : AgentSession
     /// <remarks>
     /// <para>
     /// Entries are added when a <see cref="RequestInfoEvent"/> is received during workflow execution,
-    /// and removed when a matching response is delivered via <see cref="SendMessagesWithResponseConversionAsync"/>.
+    /// and removed after a matching response is processed successfully by the workflow.
     /// </para>
     /// <para>
     /// The number of entries is bounded by the number of outstanding external requests in a single workflow run.
@@ -302,17 +302,19 @@ internal sealed class WorkflowSession : AgentSession
 
         // Send external responses after regular messages.
         bool hasMatchedExternalResponses = false;
+        List<string> matchedRequestIds = [];
         foreach ((ExternalResponse response, string requestId) in externalResponses)
         {
             await run.SendResponseAsync(response).ConfigureAwait(false);
             hasMatchedExternalResponses = true;
-            this.RemovePendingRequest(requestId);
+            matchedRequestIds.Add(requestId);
         }
 
         return new ResumeDispatchInfo(
             hasRegularMessages,
             hasMatchedExternalResponses,
-            hasMatchedResponseForStartExecutor);
+            hasMatchedResponseForStartExecutor,
+            matchedRequestIds);
     }
 
     // Resolves the request payload as an envelope using the request types declared by the
@@ -489,6 +491,9 @@ internal sealed class WorkflowSession : AgentSession
 
         ResumeDispatchInfo dispatchInfo = resumeResult.DispatchInfo;
         HashSet<(string ExecutorId, string MessageId)> streamedMessageIds = [];
+        bool workflowFailed = false;
+        bool hasMatchedExternalResponses = dispatchInfo.MatchedRequestIds is { Count: > 0 };
+        CheckpointInfo? checkpointAfterResponse = this.LastCheckpoint;
 
         // Send a TurnToken to the start executor unless the only activity is an external
         // response directed at the start executor itself (which self-emits a TurnToken via
@@ -540,6 +545,7 @@ internal sealed class WorkflowSession : AgentSession
                     break;
 
                 case WorkflowErrorEvent workflowError:
+                    workflowFailed = true;
                     Exception? exception = workflowError.Exception;
                     if (exception is TargetInvocationException tie && tie.InnerException != null)
                     {
@@ -559,6 +565,7 @@ internal sealed class WorkflowSession : AgentSession
                     break;
 
                 case ExecutorFailedEvent executorFailed:
+                    workflowFailed = true;
                     // Mirror WorkflowErrorEvent: never expose internal workflow graph
                     // identifiers (executor ID) to the client. Surface the exception
                     // message only when the host opts in via _includeExceptionDetails.
@@ -579,7 +586,15 @@ internal sealed class WorkflowSession : AgentSession
                     break;
 
                 case SuperStepCompletedEvent stepCompleted:
-                    this.LastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
+                    CheckpointInfo? completedCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
+                    if (hasMatchedExternalResponses)
+                    {
+                        checkpointAfterResponse = completedCheckpoint;
+                    }
+                    else
+                    {
+                        this.LastCheckpoint = completedCheckpoint;
+                    }
                     yield return CreateObservabilityUpdate(evt);
                     break;
 
@@ -678,6 +693,15 @@ internal sealed class WorkflowSession : AgentSession
                     break;
             }
         }
+
+        if (!workflowFailed && dispatchInfo.MatchedRequestIds is { Count: > 0 } matchedRequestIds)
+        {
+            this.LastCheckpoint = checkpointAfterResponse;
+            foreach (string requestId in matchedRequestIds)
+            {
+                this.RemovePendingRequest(requestId);
+            }
+        }
     }
 
     public string? LastResponseId { get; set; }
@@ -711,11 +735,16 @@ internal sealed class WorkflowSession : AgentSession
     /// </summary>
     private readonly struct ResumeDispatchInfo
     {
-        public ResumeDispatchInfo(bool hasRegularMessages, bool hasMatchedExternalResponses, bool hasMatchedResponseForStartExecutor)
+        public ResumeDispatchInfo(
+            bool hasRegularMessages,
+            bool hasMatchedExternalResponses,
+            bool hasMatchedResponseForStartExecutor,
+            IReadOnlyList<string>? matchedRequestIds = null)
         {
             this.HasRegularMessages = hasRegularMessages;
             this.HasMatchedExternalResponses = hasMatchedExternalResponses;
             this.HasMatchedResponseForStartExecutor = hasMatchedResponseForStartExecutor;
+            this.MatchedRequestIds = matchedRequestIds;
         }
 
         public bool HasRegularMessages { get; }
@@ -723,6 +752,8 @@ internal sealed class WorkflowSession : AgentSession
         public bool HasMatchedExternalResponses { get; }
 
         public bool HasMatchedResponseForStartExecutor { get; }
+
+        public IReadOnlyList<string>? MatchedRequestIds { get; }
     }
 
     /// <summary>

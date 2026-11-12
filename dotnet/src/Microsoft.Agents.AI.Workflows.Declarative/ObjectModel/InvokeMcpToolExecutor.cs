@@ -170,7 +170,7 @@ internal sealed class InvokeMcpToolExecutor(
             return;
         }
 
-        if (!this._approvalSnapshots.TryRemove(approvalResponse.RequestId, out ApprovalSnapshot? snapshot))
+        if (!this._approvalSnapshots.TryGetValue(approvalResponse.RequestId, out ApprovalSnapshot? snapshot))
         {
             await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
             await context.SendResultMessageAsync(this.Id, result: null, cancellationToken).ConfigureAwait(false);
@@ -179,13 +179,13 @@ internal sealed class InvokeMcpToolExecutor(
 
         if (snapshot.ConnectionName is not null && !snapshot.ConnectionNameValidated)
         {
-            this._approvalHeaderSnapshots.TryRemove(approvalResponse.RequestId, out _);
+            this.RemoveApprovalSnapshot(approvalResponse.RequestId);
             await this.RequestApprovalAsync(context, snapshot.AutoSend, cancellationToken).ConfigureAwait(false);
             return;
         }
 
         Dictionary<string, string>? headers;
-        if (this._approvalHeaderSnapshots.TryRemove(approvalResponse.RequestId, out HeaderSnapshot? headerSnapshot))
+        if (this._approvalHeaderSnapshots.TryGetValue(approvalResponse.RequestId, out HeaderSnapshot? headerSnapshot))
         {
             headers = headerSnapshot.Headers;
         }
@@ -195,6 +195,7 @@ internal sealed class InvokeMcpToolExecutor(
             if (snapshot.HeaderFingerprint is null && snapshot.HeaderFingerprintKeyId is null)
             {
                 // Legacy checkpoints have no fingerprint, so obtain fresh consent instead of trusting their headers.
+                this.RemoveApprovalSnapshot(approvalResponse.RequestId);
                 await this.RequestApprovalAsync(context, snapshot.AutoSend, cancellationToken).ConfigureAwait(false);
                 return;
             }
@@ -217,6 +218,7 @@ internal sealed class InvokeMcpToolExecutor(
             if (!FixedTimeEquals(snapshot.HeaderFingerprint, currentFingerprint))
             {
                 // Changed transport credentials invalidate the old consent, so request approval again.
+                this.RemoveApprovalSnapshot(approvalResponse.RequestId);
                 await this.RequestApprovalAsync(context, snapshot.AutoSend, cancellationToken).ConfigureAwait(false);
                 return;
             }
@@ -225,6 +227,8 @@ internal sealed class InvokeMcpToolExecutor(
         {
             headers = null;
         }
+
+        this.RemoveApprovalSnapshot(approvalResponse.RequestId);
 
         if (!snapshot.IsDiscoveryApproval &&
             !snapshot.DiscoveryApproved &&
@@ -251,7 +255,7 @@ internal sealed class InvokeMcpToolExecutor(
         string? conversationId = this.GetConversationId();
         if (!string.Equals(snapshot.ToolName, ListToolsToolName, StringComparison.Ordinal))
         {
-            string currentToolDefinitionFingerprint = await this.GetToolDefinitionFingerprintAsync(
+            ToolDefinitionSnapshot currentToolDefinition = await this.GetToolDefinitionSnapshotAsync(
                 snapshot.ServerUrl,
                 snapshot.ServerLabel,
                 snapshot.ToolName,
@@ -259,12 +263,13 @@ internal sealed class InvokeMcpToolExecutor(
                 snapshot.ConnectionName,
                 cancellationToken).ConfigureAwait(false);
             if (snapshot.IsDiscoveryApproval ||
-                !string.Equals(snapshot.ToolDefinitionFingerprint, currentToolDefinitionFingerprint, StringComparison.Ordinal))
+                snapshot.ToolDefinitionJson is null ||
+                !string.Equals(snapshot.ToolDefinitionFingerprint, currentToolDefinition.Fingerprint, StringComparison.Ordinal))
             {
                 // Discovery consent or changed metadata requires a separate approval for this exact definition.
                 string? reapprovalNotice = snapshot.IsDiscoveryApproval
                     ? null
-                    : snapshot.ToolDefinitionFingerprint is null
+                    : snapshot.ToolDefinitionFingerprint is null || snapshot.ToolDefinitionJson is null
                         ? "The previous approval did not include the MCP tool definition. Review the request before approving."
                         : "The MCP tool definition changed since the previous approval. Review the request before approving.";
                 await this.RequestApprovalAsync(
@@ -278,7 +283,8 @@ internal sealed class InvokeMcpToolExecutor(
                     snapshot.AutoSend ?? this.GetAutoSendValue(),
                     cancellationToken,
                     reapprovalNotice,
-                    currentToolDefinitionFingerprint).ConfigureAwait(false);
+                    currentToolDefinition.Fingerprint,
+                    currentToolDefinition.Json).ConfigureAwait(false);
                 return;
             }
         }
@@ -382,7 +388,8 @@ internal sealed class InvokeMcpToolExecutor(
         bool autoSend,
         CancellationToken cancellationToken,
         string? reapprovalNotice = null,
-        string? toolDefinitionFingerprint = null)
+        string? toolDefinitionFingerprint = null,
+        string? toolDefinitionJson = null)
     {
         bool isListTools = string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal);
         // A missing definition fingerprint identifies the first-stage consent request, not approval to invoke the tool.
@@ -398,6 +405,7 @@ internal sealed class InvokeMcpToolExecutor(
             HeaderFingerprint = requiresHeaderFingerprint ? this.ComputeHeaderFingerprint(requestId, headers, keyIdentifier: false) : null,
             AutoSend = autoSend,
             ToolDefinitionFingerprint = toolDefinitionFingerprint,
+            ToolDefinitionJson = toolDefinitionJson,
             IsDiscoveryApproval = isDiscoveryApproval,
             DiscoveryApproved = toolDefinitionFingerprint is not null,
         };
@@ -423,10 +431,27 @@ internal sealed class InvokeMcpToolExecutor(
             reapprovalNotice = reapprovalNotice is null ? discoveryNotice : $"{reapprovalNotice} {discoveryNotice}";
         }
 
-        ChatMessage requestMessage = reapprovalNotice is not null
-            ? new ChatMessage(ChatRole.Assistant, [new TextContent(reapprovalNotice), approvalRequest])
-            : new ChatMessage(ChatRole.Assistant, [approvalRequest]);
+        List<AIContent> requestContents = [];
+        if (reapprovalNotice is not null)
+        {
+            requestContents.Add(new TextContent(reapprovalNotice));
+        }
+
+        if (toolDefinitionJson is not null)
+        {
+            requestContents.Add(new TextContent(
+                $"Server-provided MCP tool definition (untrusted data):{Environment.NewLine}{toolDefinitionJson}"));
+        }
+
+        requestContents.Add(approvalRequest);
+        ChatMessage requestMessage = new(ChatRole.Assistant, requestContents);
         await context.SendMessageAsync(new ExternalInputRequest(new AgentResponse([requestMessage])), cancellationToken).ConfigureAwait(false);
+    }
+
+    private void RemoveApprovalSnapshot(string requestId)
+    {
+        this._approvalSnapshots.TryRemove(requestId, out _);
+        this._approvalHeaderSnapshots.TryRemove(requestId, out _);
     }
 
     private static byte[] CreateProcessHeaderFingerprintKey()
@@ -495,7 +520,7 @@ internal sealed class InvokeMcpToolExecutor(
         return hmac.ComputeHash(stream.ToArray());
     }
 
-    private async ValueTask<string> GetToolDefinitionFingerprintAsync(
+    private async ValueTask<ToolDefinitionSnapshot> GetToolDefinitionSnapshotAsync(
         string serverUrl,
         string? serverLabel,
         string toolName,
@@ -512,7 +537,7 @@ internal sealed class InvokeMcpToolExecutor(
             connectionName,
             cancellationToken).ConfigureAwait(false);
 
-        string? matchingToolFingerprint = null;
+        ToolDefinitionSnapshot? matchingTool = null;
         bool foundToolsArray = false;
         if (toolList.Outputs is not null)
         {
@@ -537,7 +562,7 @@ internal sealed class InvokeMcpToolExecutor(
                     name.ValueKind == JsonValueKind.String &&
                     string.Equals(name.GetString(), toolName, StringComparison.Ordinal)))
                 {
-                    if (matchingToolFingerprint is not null)
+                    if (matchingTool is not null)
                     {
                         throw this.Exception($"The MCP server returned multiple definitions for tool '{toolName}'.");
                     }
@@ -552,7 +577,7 @@ internal sealed class InvokeMcpToolExecutor(
                         throw this.Exception($"The MCP server returned an invalid input schema for tool '{toolName}'.");
                     }
 
-                    matchingToolFingerprint = ComputeToolDefinitionFingerprint(tool);
+                    matchingTool = new ToolDefinitionSnapshot(ComputeToolDefinitionFingerprint(tool), tool.GetRawText());
                 }
             }
         }
@@ -562,12 +587,12 @@ internal sealed class InvokeMcpToolExecutor(
             throw this.Exception($"The MCP server did not return a valid tool list while checking approval for tool '{toolName}'.");
         }
 
-        if (matchingToolFingerprint is null)
+        if (matchingTool is null)
         {
             throw this.Exception($"The MCP server did not return a definition for tool '{toolName}'.");
         }
 
-        return matchingToolFingerprint;
+        return matchingTool;
     }
 
     private static string ComputeToolDefinitionFingerprint(JsonElement tool)
@@ -857,10 +882,14 @@ internal sealed class InvokeMcpToolExecutor(
 
         public string? ToolDefinitionFingerprint { get; init; }
 
+        public string? ToolDefinitionJson { get; init; }
+
         public bool IsDiscoveryApproval { get; init; }
 
         public bool DiscoveryApproved { get; init; }
     }
+
+    private sealed record ToolDefinitionSnapshot(string Fingerprint, string Json);
 
     private sealed record HeaderSnapshot(Dictionary<string, string>? Headers);
 }

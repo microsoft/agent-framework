@@ -2028,6 +2028,47 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     }
 
     [Fact]
+    public async Task HostedMcpApprovalCanRecoverAfterWrongKeyFailureAsync()
+    {
+        // Arrange
+        byte[] key = [.. Enumerable.Range(0, 32).Select(value => (byte)value)];
+        byte[] wrongKey = [.. key];
+        wrongKey[0] ^= 0xFF;
+        const string HeaderValue = "private-transport-header";
+        List<(string ServerUrl, string ToolName, IDictionary<string, string>? Headers)> calls = [];
+        Mock<IMcpToolHandler> provider = CreateMetadataHandler(
+            () => """{"name":"test_tool","inputSchema":{"type":"object"}}""", calls);
+        AIAgent agent = CreateHostedMcpAgent(provider.Object, HeaderValue, key);
+        AgentSession session = await agent.CreateSessionAsync();
+        ToolApprovalRequestContent discovery = GetHostedApproval(
+            await agent.RunStreamingAsync("start", session).ToListAsync());
+        JsonElement initialCheckpoint = await agent.SerializeSessionAsync(session);
+
+        AIAgent wrongKeyAgent = CreateHostedMcpAgent(provider.Object, HeaderValue, wrongKey);
+        AgentSession failedSession = await wrongKeyAgent.DeserializeSessionAsync(initialCheckpoint);
+        ChatMessage approvalResponse = new(ChatRole.User, [discovery.CreateResponse(approved: true)]);
+
+        // Act - fail with the wrong key, then retry from that serialized session using the original key.
+        List<AgentResponseUpdate> failedUpdates = await wrongKeyAgent.RunStreamingAsync(
+            approvalResponse, failedSession).ToListAsync();
+        JsonElement failedCheckpoint = await wrongKeyAgent.SerializeSessionAsync(failedSession);
+        AIAgent recoveredAgent = CreateHostedMcpAgent(provider.Object, HeaderValue, key);
+        AgentSession recoveredSession = await recoveredAgent.DeserializeSessionAsync(failedCheckpoint);
+        List<AgentResponseUpdate> resumedUpdates = await recoveredAgent.RunStreamingAsync(
+            approvalResponse, recoveredSession).ToListAsync();
+        ToolApprovalRequestContent toolApproval = GetHostedApproval(resumedUpdates);
+        List<AgentResponseUpdate> completedUpdates = await recoveredAgent.RunStreamingAsync(
+            new ChatMessage(ChatRole.User, [toolApproval.CreateResponse(approved: true)]), recoveredSession).ToListAsync();
+
+        // Assert
+        Assert.Contains(failedUpdates.SelectMany(update => update.Contents).OfType<ErrorContent>(),
+            error => error.Message.Contains("fingerprint key", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(TestToolName, Assert.IsType<McpServerToolCallContent>(toolApproval.ToolCall).Name);
+        Assert.DoesNotContain(completedUpdates.SelectMany(update => update.Contents), content => content is ErrorContent);
+        Assert.Single(calls, call => string.Equals(call.ToolName, TestToolName, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void McpApprovalFingerprintKeyRejectsShortKeysAndCopiesKeyMaterial()
     {
         // Arrange
@@ -2078,15 +2119,18 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
     public async Task HostedMcpChangedDefinitionApprovalIncludesNoticeAsync()
     {
         // Arrange
+        const string HeaderValue = "private-transport-header";
         string definition = """{"name":"test_tool","description":"before","inputSchema":{"type":"object"}}""";
         List<(string ServerUrl, string ToolName, IDictionary<string, string>? Headers)> calls = [];
         Mock<IMcpToolHandler> provider = CreateMetadataHandler(() => definition, calls);
-        AIAgent agent = CreateHostedMcpAgent(provider.Object);
+        AIAgent agent = CreateHostedMcpAgent(provider.Object, HeaderValue);
         AgentSession session = await agent.CreateSessionAsync();
         ToolApprovalRequestContent discovery = GetHostedApproval(
             await agent.RunStreamingAsync("start", session).ToListAsync());
-        ToolApprovalRequestContent original = GetHostedApproval(await agent.RunStreamingAsync(
-            new ChatMessage(ChatRole.User, [discovery.CreateResponse(approved: true)]), session).ToListAsync());
+        List<AgentResponseUpdate> initialApprovalUpdates = await agent.RunStreamingAsync(
+            new ChatMessage(ChatRole.User, [discovery.CreateResponse(approved: true)]), session).ToListAsync();
+        ToolApprovalRequestContent original = GetHostedApproval(initialApprovalUpdates);
+        AgentResponseUpdate initialApprovalUpdate = GetHostedApprovalUpdate(initialApprovalUpdates);
         definition = """{"name":"test_tool","description":"after","inputSchema":{"type":"object"}}""";
 
         // Act
@@ -2099,6 +2143,14 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
         Assert.NotEqual(original.RequestId, replacement.RequestId);
         Assert.Contains(request.Contents.OfType<TextContent>(),
             text => text.Text.Contains("definition changed", StringComparison.Ordinal));
+        Assert.Contains(initialApprovalUpdate.Contents.OfType<TextContent>(),
+            text => text.Text.Contains("Server-provided MCP tool definition", StringComparison.Ordinal)
+                && text.Text.Contains("""{"name":"test_tool","description":"before","inputSchema":{"type":"object"}}""", StringComparison.Ordinal));
+        Assert.Contains(request.Contents.OfType<TextContent>(),
+            text => text.Text.Contains("Server-provided MCP tool definition", StringComparison.Ordinal)
+                && text.Text.Contains(definition, StringComparison.Ordinal));
+        Assert.DoesNotContain(HeaderValue, JsonSerializer.Serialize(initialApprovalUpdate.Contents));
+        Assert.DoesNotContain(HeaderValue, JsonSerializer.Serialize(request.Contents));
         Assert.DoesNotContain(calls, call => string.Equals(call.ToolName, TestToolName, StringComparison.Ordinal));
         List<AgentResponseUpdate> completed = await agent.RunStreamingAsync(
             new ChatMessage(ChatRole.User, [replacement.CreateResponse(approved: true)]), session).ToListAsync();
