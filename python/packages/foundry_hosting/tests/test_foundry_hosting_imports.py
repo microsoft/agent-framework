@@ -30,7 +30,6 @@ def test_package_import_is_lazy() -> None:
         assert "agent_framework_foundry_hosting._scope" not in sys.modules
         assert "agent_framework_foundry_hosting._toolbox" not in sys.modules
         assert "agent_framework_foundry_hosting._shared" not in sys.modules
-        assert "agent_framework_foundry_hosting._workflow_state" not in sys.modules
         """
     )
     subprocess.run([sys.executable, "-I", "-c", code], check=True)

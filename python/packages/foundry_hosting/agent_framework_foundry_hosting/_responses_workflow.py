@@ -60,8 +60,10 @@ from ._scope import FoundryRequestScope
 from ._shared import (
     CheckpointStoreProvider,
     ContextScopedStoreProvider,
+    HostedWorkflowRun,
     OptionsHook,
     ResponsesRequest,
+    WorkflowConflictError,
     WorkflowResolver,
     WorkflowSource,
     WorkflowTurn,
@@ -73,7 +75,6 @@ from ._shared import (
     validate_workflow_source,
     workflow_agents,
 )
-from ._workflow_state import HostedWorkflowRun, WorkflowConflictError
 
 logger = logging.getLogger(__name__)
 

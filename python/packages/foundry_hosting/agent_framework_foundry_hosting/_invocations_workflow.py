@@ -45,13 +45,13 @@ from ._scope import FoundryRequestScope
 from ._shared import (
     CheckpointStoreProvider,
     ContextScopedStoreProvider,
+    HostedWorkflowRun,
     WorkflowResolver,
     WorkflowSource,
     WorkflowTurn,
     validate_sse_keep_alive_interval,
     workflow_agents,
 )
-from ._workflow_state import HostedWorkflowRun
 
 logger = logging.getLogger(__name__)
 

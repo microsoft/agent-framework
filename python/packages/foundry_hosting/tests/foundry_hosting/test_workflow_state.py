@@ -35,13 +35,14 @@ from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
 from azure.ai.agentserver.core.storage import FoundryStorageConflictError, FoundryStoragePreconditionError
 
 from agent_framework_foundry_hosting import CheckpointStoreProvider, FoundryRequestScope, WorkflowTurn
-from agent_framework_foundry_hosting._shared import WorkflowResolver, prepare_workflow_kwargs
-from agent_framework_foundry_hosting._workflow_state import (
+from agent_framework_foundry_hosting._shared import (
     FoundryWorkflowBindingStore,
     HostedWorkflowRun,
     WorkflowBlockedError,
     WorkflowConflictError,
     WorkflowHead,
+    WorkflowResolver,
+    prepare_workflow_kwargs,
 )
 
 
@@ -451,7 +452,7 @@ async def test_completed_response_replay_is_explicit_and_does_not_advance_the_he
 async def test_default_store_integrity_hashes_the_persisted_encoding_without_repickling() -> None:
     first = await _prepare("one", workflow=_workflow(_Approval()))
     with patch(
-        "agent_framework_foundry_hosting._workflow_state._checkpoint_hash",
+        "agent_framework_foundry_hosting._shared._checkpoint_hash",
         side_effect=AssertionError("default storage must not re-pickle checkpoints for integrity"),
     ):
         await _finish(first, WorkflowTurn(input="/safe"))
@@ -571,13 +572,13 @@ async def test_both_sdk_cas_errors_are_visible_and_private(error: type[Exception
 
 
 async def test_store_false_writes_nothing_and_rejects_resumption() -> None:
-    with patch("agent_framework_foundry_hosting._workflow_state.FoundryStateStore.get_or_create") as get_store:
+    with patch("agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create") as get_store:
         run = await _prepare("one", stored=False)
         assert await _finish(run, WorkflowTurn(input=3)) == [3]
         get_store.assert_not_called()
     with pytest.raises(ValueError, match="one-shot"):
         await _prepare("two", stored=False, previous_response_id="one")
-    with patch("agent_framework_foundry_hosting._workflow_state.FoundryStateStore.get_or_create") as get_store:
+    with patch("agent_framework_foundry_hosting._shared.FoundryStateStore.get_or_create") as get_store:
         run = await _prepare("pause", workflow=_workflow(_Review()), stored=False)
         turn = run.validate_turn(WorkflowTurn(input="review"))
         await run.claim()
