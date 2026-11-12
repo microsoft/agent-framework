@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = [
 #     "agent-framework-core",
 #     "agent-framework-foundry",
@@ -51,7 +51,7 @@ def get_weather(
 def create_agent() -> Agent:
     """Let incoming telemetry context parent each freshly constructed agent."""
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     credential = (
         ManagedIdentityCredential(client_id=os.environ.get("FOUNDRY_AGENT_INSTANCE_CLIENT_ID"))
         if AgentConfig.from_env().is_hosted

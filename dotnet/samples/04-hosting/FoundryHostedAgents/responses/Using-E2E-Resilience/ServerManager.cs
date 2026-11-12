@@ -8,7 +8,6 @@ using System.Text;
 using Azure.AI.Projects;
 using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 
 internal sealed class ServerManager(ServerManager.InterruptionKind interruptionKind) : IAsyncDisposable
 {
@@ -267,7 +266,7 @@ internal sealed class ServerManager(ServerManager.InterruptionKind interruptionK
             Port = baseAddress.Port,
         }.Uri;
 
-        var transportClient = new HttpClient(new LocalHttpSchemeRewriteHandler(baseAddress));
+        var transportClient = new HttpClient(new LocalHostedAgentTransportHandler(baseAddress));
         var clientOptions = new AIProjectClientOptions
         {
             Transport = new HttpClientPipelineTransport(transportClient),

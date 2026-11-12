@@ -3,19 +3,19 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
-from typing import Any, cast
+from typing import Any, Self, cast
 from unittest.mock import Mock, patch
 
 import pytest
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
-from typing_extensions import Self
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Agent,
     AgentResponse,
     BaseChatClient,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -42,6 +42,12 @@ from agent_framework.observability import (
     _to_otel_input_events_v1_36,
     get_function_span,
 )
+
+
+def _span_attributes(span: Any) -> dict[str, Any]:
+    attributes = span.attributes
+    return dict(attributes) if attributes is not None else {}
+
 
 # region Test constants
 
@@ -958,13 +964,17 @@ async def test_agent_streaming_sync_setup_span_is_parented_to_agent_span(
     )
 
 
-async def test_function_call_with_error_handling(span_exporter: InMemorySpanExporter):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_function_call_with_error_handling(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
     """Test that function call errors are properly captured in telemetry."""
+    private_error_detail = "founder-secret-token"
 
     # Create a function that raises an error using the decorator
     @tool(name="failing_function", description="A function that fails")
     async def failing_function(param: str) -> str:
-        raise ValueError("Function execution failed")
+        raise ValueError(f"Function execution failed: {private_error_detail}")
 
     span_exporter.clear()
 
@@ -986,21 +996,20 @@ async def test_function_call_with_error_handling(span_exporter: InMemorySpanExpo
 
     # Verify error status was set
     assert span.status.status_code == StatusCode.ERROR
-    assert span.status.description is not None
-    assert "Function execution failed" in span.status.description
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
 
     # Verify error type attribute was set
     assert span.attributes[OtelAttr.ERROR_TYPE] == "ValueError"
 
-    # Verify exception event was recorded
-    assert len(span.events) > 0
-    exception_event = next((e for e in span.events if e.name == "exception"), None)
-    assert exception_event is not None
-    assert exception_event.attributes is not None
-    assert exception_event.attributes["exception.type"] == "ValueError"
-    exception_message = exception_event.attributes["exception.message"]
-    assert isinstance(exception_message, str)
-    assert "Function execution failed" in exception_message
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_event = exception_events[0]
+        assert exception_event.attributes is not None
+        assert exception_event.attributes["exception.type"] == "ValueError"
+        exception_message = exception_event.attributes["exception.message"]
+        assert isinstance(exception_message, str)
+        assert private_error_detail in exception_message
 
 
 # region Test OTEL environment variable parsing
@@ -1473,6 +1482,39 @@ def test_get_exporters_from_env_env_only_headers_unaffected_by_origin_guard(monk
 
 
 # region Test create_resource
+
+
+def test_create_resource_includes_agent_framework_attribute(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resources include the Agent Framework marker as a string, not a boolean."""
+    from agent_framework.observability import create_resource
+
+    monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
+
+    resource = create_resource()
+
+    assert resource.attributes["microsoft.agent-framework"] == "True"
+    assert "microsoft.foundry" not in resource.attributes
+
+
+def test_create_resource_agent_framework_attribute_preserves_override_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default marker follows existing environment and explicit attribute precedence."""
+    from agent_framework.observability import create_resource
+
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "microsoft.agent-framework=environment")
+
+    assert create_resource().attributes["microsoft.agent-framework"] == "environment"
+    assert (
+        create_resource(attributes={"microsoft.agent-framework": "explicit"}).attributes["microsoft.agent-framework"]
+        == "explicit"
+    )
+    assert (
+        create_resource(
+            attributes={"microsoft.agent-framework": "explicit"}, **{"microsoft.agent-framework": "keyword"}
+        ).attributes["microsoft.agent-framework"]
+        == "keyword"
+    )
 
 
 def test_create_resource_from_env(monkeypatch):
@@ -2040,7 +2082,8 @@ async def test_enable_instrumentation_controls_message_event_emission(
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     assert (OtelAttr.INPUT_MESSAGES in attributes) is (enable_sensitive_data and bool(semconv))
     assert (OtelAttr.OUTPUT_MESSAGES in attributes) is (enable_sensitive_data and bool(semconv))
 
@@ -2525,7 +2568,8 @@ async def test_chat_client_observability_provider_name_under_baseline_semconv(
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     assert OtelAttr.SYSTEM in attributes
     assert OtelAttr.PROVIDER_NAME not in attributes
 
@@ -2808,6 +2852,72 @@ def test_make_json_safe_callable_method_type_error_falls_through():
     assert result == {"value": "fallback"}
 
 
+def test_make_json_safe_plain_enum_uses_its_value():
+    """Test make_json_safe serializes plain Enum members as their values instead of walking the enum class."""
+    import json
+    from enum import Enum
+
+    from agent_framework._serialization import make_json_safe
+
+    class Color(Enum):
+        RED = 1
+        LABEL = "label"
+
+    result = make_json_safe({"color": Color.RED, "label": Color.LABEL, "nested": [Color.RED]})
+
+    assert result == {"color": 1, "label": "label", "nested": [1]}
+    assert json.loads(json.dumps(result)) == result
+
+
+def test_make_json_safe_enum_with_serializer_hook_keeps_it():
+    """Test make_json_safe uses an enum's own to_dict/model_dump/dict hook instead of its raw value."""
+    from enum import Enum
+
+    from agent_framework._serialization import make_json_safe
+
+    class Shape(Enum):
+        SQUARE = 4
+
+        def to_dict(self):
+            return {"name": self.name, "sides": self.value}
+
+    class Mode(Enum):
+        FAST = "fast"
+
+        def model_dump(self):
+            return {"mode": self.value, "label": "Fast"}
+
+    class Unit(Enum):
+        METRE = "m"
+
+        def dict(self):
+            return {"symbol": self.value}
+
+    assert make_json_safe({"shape": Shape.SQUARE}) == {"shape": {"name": "SQUARE", "sides": 4}}
+    assert make_json_safe(Mode.FAST) == {"mode": "fast", "label": "Fast"}
+    assert make_json_safe([Unit.METRE]) == [{"symbol": "m"}]
+
+
+def test_make_json_safe_mixin_enums_are_unchanged():
+    """Test make_json_safe keeps str and int mixin enums as the scalars they already are."""
+    import json
+    from enum import Enum, IntEnum
+
+    from agent_framework._serialization import make_json_safe
+
+    class Level(str, Enum):
+        HIGH = "high"
+
+    class Priority(IntEnum):
+        LOW = 1
+
+    result = make_json_safe({"level": Level.HIGH, "priority": Priority.LOW})
+
+    assert result["level"] is Level.HIGH
+    assert result["priority"] is Priority.LOW
+    assert json.dumps(result) == '{"level": "high", "priority": 1}'
+
+
 def test_make_json_safe_dict_with_non_string_keys():
     """Test make_json_safe converts non-primitive dict keys to strings."""
     import json
@@ -2963,31 +3073,44 @@ def test_start_workflow_span_does_not_attach_as_current(span_exporter: InMemoryS
     assert spans[0].attributes["key"] == "value"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
-def test_create_workflow_span_uses_scoped_conversation_id(span_exporter: InMemorySpanExporter) -> None:
-    """An ambient conversation id is applied only within its workflow execution scope."""
+@pytest.mark.parametrize("workflow_name", [None, "", "customer_support_pipeline"])
+@pytest.mark.parametrize("unattached", [False, True])
+def test_workflow_span_uses_scoped_conversation_id(
+    span_exporter: InMemorySpanExporter, workflow_name: str | None, unattached: bool
+) -> None:
+    """Named and unnamed workflow spans retain scoped conversation ids with either span factory."""
     from agent_framework.observability import (
         OtelAttr,
         _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
         create_workflow_span,
+        start_workflow_span,
     )
 
+    span_factory = start_workflow_span if unattached else create_workflow_span
+    attributes: dict[str, str | int] = {OtelAttr.WORKFLOW_NAME: workflow_name} if workflow_name is not None else {}
     span_exporter.clear()  # type: ignore[attr-defined]
     with _use_telemetry_conversation_id("application-thread"):
-        with create_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN):
+        with span_factory(OtelAttr.WORKFLOW_RUN_SPAN, attributes=attributes):
             pass
-        with create_workflow_span(
+        with span_factory(
             OtelAttr.WORKFLOW_RUN_SPAN,
-            attributes={OtelAttr.CONVERSATION_ID: "explicit-thread"},
+            attributes={**attributes, OtelAttr.CONVERSATION_ID: "explicit-thread"},
         ):
             pass
-        with create_workflow_span(OtelAttr.MESSAGE_SEND_SPAN):
+        with span_factory(OtelAttr.MESSAGE_SEND_SPAN, attributes=attributes):
             pass
-    with create_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN):
+    with span_factory(OtelAttr.WORKFLOW_RUN_SPAN, attributes=attributes):
         pass
 
     spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
-    workflow_spans = [span for span in spans if span.name == OtelAttr.WORKFLOW_RUN_SPAN]
+    workflow_spans = [
+        span
+        for span in spans
+        if span.attributes is not None and span.attributes.get(OtelAttr.OPERATION) == "invoke_workflow"
+    ]
     assert len(workflow_spans) == 3
+    expected_name = f"invoke_workflow {workflow_name}" if workflow_name else "invoke_workflow"
+    assert all(span.name == expected_name for span in workflow_spans)
     ambient_attributes = workflow_spans[0].attributes
     explicit_attributes = workflow_spans[1].attributes
     unscoped_attributes = workflow_spans[2].attributes
@@ -3001,6 +3124,9 @@ def test_create_workflow_span_uses_scoped_conversation_id(span_exporter: InMemor
     message_send_attributes = message_send_span.attributes
     assert message_send_attributes is not None
     assert OtelAttr.CONVERSATION_ID not in message_send_attributes
+    assert OtelAttr.OPERATION not in message_send_attributes
+    assert OtelAttr.CONVERSATION_ID not in attributes
+    assert OtelAttr.OPERATION not in attributes
 
 
 def test_create_processing_span(span_exporter):
@@ -3091,13 +3217,16 @@ def test_create_otlp_exporters_no_endpoints():
 # region Test exception handling in chat client traces
 
 
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_chat_client_observability_exception(mock_chat_client, span_exporter: InMemorySpanExporter):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_chat_client_observability_exception(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
     """Test that exceptions are captured in spans."""
+    private_error_detail = "founder-secret-token"
 
     class FailingChatClient(mock_chat_client):
         async def _inner_get_response(self, *, messages, options, **kwargs):
-            raise ValueError("Test error")
+            raise ValueError(f"Test error: {private_error_detail}")
 
     client = FailingChatClient()
     messages = [Message(role="user", contents=["Test"])]
@@ -3110,6 +3239,15 @@ async def test_chat_client_observability_exception(mock_chat_client, span_export
     assert len(spans) == 1
     span = spans[0]
     assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes is not None
+    assert span.attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -3716,9 +3854,12 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
     assert mock_emit.call_count == 0
 
 
-@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_agent_observability_with_exception(span_exporter: InMemorySpanExporter, enable_sensitive_data):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_agent_observability_with_exception(
+    span_exporter: InMemorySpanExporter, enable_sensitive_data: bool
+) -> None:
     """Test agent instrumentation captures exceptions."""
+    private_error_detail = "founder-secret-token"
 
     class _FailingAgent:
         AGENT_PROVIDER_NAME = "test_provider"
@@ -3746,7 +3887,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
             return self._default_options
 
         async def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
-            raise RuntimeError("Agent failed")
+            raise RuntimeError(f"Agent failed: {private_error_detail}")
 
     class FailingAgent(AgentTelemetryLayer, _FailingAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]  # ty: ignore[invalid-method-override]
         pass
@@ -3759,7 +3900,17 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    assert spans[0].status.status_code == StatusCode.ERROR
+    span = spans[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes is not None
+    assert span.attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert (private_error_detail in (span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
 
 # region Test agent streaming observability
@@ -3932,7 +4083,8 @@ def test_capture_messages_baseline_semconv_emits_events_only(span_exporter: InMe
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     assert OtelAttr.INPUT_MESSAGES not in attributes
     mock_emit.assert_called_once()
     assert mock_emit.call_args.kwargs["event_name"] == "gen_ai.user.message"
@@ -3967,7 +4119,8 @@ def test_capture_messages_latest_experimental_emits_span_attribute_only_when_eve
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     input_messages = json.loads(cast(str, attributes[OtelAttr.INPUT_MESSAGES]))
     assert [msg.get("role") for msg in input_messages] == ["user"]
     assert mock_emit.call_count == 0
@@ -4000,7 +4153,8 @@ def test_capture_messages_defaults_emit_both_events_and_span_attribute(span_expo
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     input_messages = json.loads(cast(str, attributes[OtelAttr.INPUT_MESSAGES]))
     assert [msg.get("role") for msg in input_messages] == ["user"]
     mock_emit.assert_called_once()
@@ -4068,7 +4222,8 @@ def test_capture_messages_preserves_custom_finish_reason(span_exporter: InMemory
 
     assert mock_emit.call_args.kwargs["body"]["finish_reason"] == "guardrail"
     spans = span_exporter.get_finished_spans()
-    attributes = spans[0].attributes or {}
+    attributes = spans[0].attributes
+    assert attributes is not None
     output_messages = json.loads(cast(str, attributes[OtelAttr.OUTPUT_MESSAGES]))
     assert output_messages[-1]["finish_reason"] == "guardrail"
 
@@ -4105,7 +4260,9 @@ def test_capture_messages_exports_native_otel_event(span_exporter: InMemorySpanE
     record = readable_record.log_record
     assert record.event_name == "gen_ai.user.message"
     assert record.body == {"content": "Test"}
-    assert dict(record.attributes or {}) == {"gen_ai.system": "test_provider"}
+    record_attributes = record.attributes
+    assert record_attributes is not None
+    assert dict(record_attributes) == {"gen_ai.system": "test_provider"}
     assert record.trace_id == span_context.trace_id
     assert record.span_id == span_context.span_id
 
@@ -4324,6 +4481,60 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
 # region Test _configure_providers
 
 
+def test_configure_providers_share_agent_framework_resource() -> None:
+    """Exported logs, spans, and metrics carry the same marked resource."""
+    from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader, MetricExporter
+
+    from agent_framework.observability import ObservabilitySettings
+
+    span_exporter = InMemorySpanExporter()
+    log_exporter = InMemoryLogRecordExporter()
+    metric_reader = InMemoryMetricReader()
+    metric_exporter = Mock(spec=MetricExporter)
+    settings = ObservabilitySettings(
+        service_name="foundry-test",
+        resource_attributes={"deployment.environment": "test"},
+    )
+
+    with (
+        patch("opentelemetry.trace.set_tracer_provider") as set_tracer,
+        patch("opentelemetry._logs.set_logger_provider") as set_logger,
+        patch("opentelemetry.metrics.set_meter_provider") as set_meter,
+        patch("opentelemetry.sdk.metrics.export.PeriodicExportingMetricReader", return_value=metric_reader),
+        patch("agent_framework.observability.logger.addHandler"),
+    ):
+        settings._configure_providers([span_exporter, log_exporter, metric_exporter])
+
+    tracer_provider = set_tracer.call_args.args[0]
+    logger_provider = set_logger.call_args.args[0]
+    meter_provider = set_meter.call_args.args[0]
+    try:
+        with tracer_provider.get_tracer("test").start_as_current_span("test"):
+            pass
+        logger_provider.get_logger("test").emit(body="test log")
+        meter_provider.get_meter("test").create_counter("test_counter").add(1)
+        tracer_provider.force_flush()
+        logger_provider.force_flush()
+
+        metrics_data = metric_reader.get_metrics_data()
+        assert metrics_data is not None
+        resources = [
+            span_exporter.get_finished_spans()[0].resource,
+            log_exporter.get_finished_logs()[0].resource,
+            metrics_data.resource_metrics[0].resource,
+        ]
+        for resource in resources:
+            assert resource is resources[0]
+            assert resource.attributes["microsoft.agent-framework"] == "True"
+            assert resource.attributes["service.name"] == "foundry-test"
+            assert resource.attributes["deployment.environment"] == "test"
+    finally:
+        tracer_provider.shutdown()
+        logger_provider.shutdown()
+        meter_provider.shutdown()
+
+
 def test_configure_providers_with_span_exporters(monkeypatch):
     """Test _configure_providers correctly handles span exporters."""
     from unittest.mock import Mock, patch
@@ -4374,7 +4585,8 @@ def test_get_token_usage_histogram():
 # region Test capture_exception
 
 
-def test_capture_exception(span_exporter: InMemorySpanExporter):
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+def test_capture_exception(span_exporter: InMemorySpanExporter, enable_sensitive_data: bool) -> None:
     """Test capture_exception adds exception info to span."""
     from time import time_ns
 
@@ -4382,18 +4594,27 @@ def test_capture_exception(span_exporter: InMemorySpanExporter):
 
     from agent_framework.observability import capture_exception, get_tracer
 
+    private_error_detail = "founder-secret-token"
     span_exporter.clear()
     tracer = get_tracer()
 
     with tracer.start_as_current_span("test_span") as span:
-        exception = ValueError("Test error")
+        exception = ValueError(f"Test error: {private_error_detail}")
         capture_exception(span=span, exception=exception, timestamp=time_ns())
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    assert spans[0].status.status_code == StatusCode.ERROR
-    # Verify exception was recorded
-    assert len(spans[0].events) > 0
+    exported_span = spans[0]
+    assert exported_span.status.status_code == StatusCode.ERROR
+    assert exported_span.attributes is not None
+    assert exported_span.attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert (private_error_detail in (exported_span.status.description or "")) is enable_sensitive_data
+    exception_events = [event for event in exported_span.events if event.name == "exception"]
+    assert bool(exception_events) is enable_sensitive_data
+    if enable_sensitive_data:
+        exception_attributes = exception_events[0].attributes
+        assert exception_attributes is not None
+        assert private_error_detail in str(exception_attributes.get("exception.message"))
 
 
 # region Test _get_span
@@ -5039,12 +5260,12 @@ async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
 
             return _get()
 
-    agent = Agent(
+    agent = Agent[ChatOptions](
         client=NestedTelemetryChatClient(),  # ty: ignore[invalid-argument-type]
         id="nested_agent_id",
         name="nested_agent",
         description="Nested telemetry agent",
-        default_options={"model": "NestedModel"},  # pyrefly: ignore[bad-argument-type]
+        default_options={"model": "NestedModel"},
     )
 
     span_exporter.clear()
@@ -5645,7 +5866,7 @@ async def test_agent_instructions_include_context_provider_extensions(
     agent_spans = [
         span
         for span in spans
-        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
+        if _span_attributes(span).get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
     ]
     assert len(agent_spans) == 1
 
@@ -5709,13 +5930,13 @@ async def test_agent_instructions_not_overwritten_by_unrelated_nested_chat(
     agent_spans = [
         span
         for span in spans
-        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
+        if _span_attributes(span).get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION
     ]
     assert len(agent_spans) == 1
     chat_spans = [
         span
         for span in spans
-        if span.attributes and span.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION
+        if _span_attributes(span).get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION
     ]
     assert len(chat_spans) == 2
 
@@ -6574,11 +6795,11 @@ async def test_chat_span_nested_under_agent_span(span_exporter: InMemorySpanExpo
 
             return _get()
 
-    agent = Agent(
+    agent = Agent[ChatOptions](
         client=NestedChatClient(),  # ty: ignore[invalid-argument-type]
         id="nested_agent_id",
         name="nested_agent",
-        default_options={"model": "NestedModel"},  # pyrefly: ignore[bad-argument-type]
+        default_options={"model": "NestedModel"},
     )
 
     span_exporter.clear()
@@ -6692,11 +6913,11 @@ async def test_function_call_spans_nested_under_agent_span(span_exporter: InMemo
 
             return _get()
 
-    agent = Agent(
+    agent = Agent[ChatOptions](
         client=NestedToolChatClient(),  # ty: ignore[invalid-argument-type]
         id="tool_agent_id",
         name="tool_agent",
-        default_options={"model": "ToolModel", "tools": [get_weather], "tool_choice": "auto"},  # pyrefly: ignore[bad-argument-type]
+        default_options={"model": "ToolModel", "tools": [get_weather], "tool_choice": "auto"},
     )
 
     span_exporter.clear()
@@ -6796,11 +7017,11 @@ async def test_parallel_function_call_spans_nested_under_agent_span(span_exporte
 
             return _get_final()
 
-    agent = Agent(
+    agent = Agent[ChatOptions](
         client=ParallelToolChatClient(),  # ty: ignore[invalid-argument-type]
         id="parallel_tool_agent_id",
         name="parallel_tool_agent",
-        default_options={"model": "ToolModel", "tools": [first_tool, second_tool], "tool_choice": "auto"},  # pyrefly: ignore[bad-argument-type]
+        default_options={"model": "ToolModel", "tools": [first_tool, second_tool], "tool_choice": "auto"},
     )
 
     span_exporter.clear()

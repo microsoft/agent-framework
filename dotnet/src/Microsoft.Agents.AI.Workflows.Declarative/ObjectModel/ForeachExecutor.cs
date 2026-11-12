@@ -49,13 +49,14 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
         this._index = 0;
 
         EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Items);
-        if (expressionResult.Value is TableDataValue tableValue)
+        DataValue items = this.GetNonSensitiveValue(expressionResult, "loop items");
+        if (items is TableDataValue tableValue)
         {
             this._values = [.. tableValue.Values.Select(ToLoopValue)];
         }
         else
         {
-            this._values = [expressionResult.Value.ToFormula()];
+            this._values = [items.ToFormula()];
         }
         this._sensitivity = expressionResult.Sensitivity;
 
@@ -156,9 +157,12 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
             return;
         }
 
-        this._values = [.. savedValues.Select(value => value.ToFormula())];
+        SensitivityLevel sensitivity =
+            await context.ReadStateAsync<SensitivityLevel>(SensitivityStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+        this._values = [.. this.GetNonSensitiveValue(new EvaluationResult<PortableValue[]>(savedValues, sensitivity), "loop items")
+            .Select(value => value.ToFormula())];
         this._index = await context.ReadStateAsync<int>(IndexStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
         this.HasValue = await context.ReadStateAsync<bool>(HasValueStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
-        this._sensitivity = await context.ReadStateAsync<SensitivityLevel>(SensitivityStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+        this._sensitivity = sensitivity;
     }
 }

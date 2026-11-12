@@ -36,6 +36,10 @@ constructs.
 content-level metadata, while applications own A2A message and artifact
 boundaries plus message-level metadata.
 
+Inbound A2A message metadata is stored canonically under
+`Message.additional_properties["a2a"]` and dual-written to the legacy
+`a2a_metadata` key for compatibility.
+
 Card builders return native A2A protobuf values; do not create a parallel card
 model or subclass. `AgentA2AAdapter` infers built-in Agent Framework skills from
 the resolved agent's `SkillsProvider` instances by default; `infer_skills=False`

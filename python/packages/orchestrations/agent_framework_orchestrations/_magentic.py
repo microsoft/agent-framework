@@ -10,7 +10,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import partial
-from typing import Any, ClassVar, Literal, TypeVar, cast
+from typing import Any, ClassVar, Literal, Never, TypeVar, cast
 
 from agent_framework import (
     AgentResponse,
@@ -27,7 +27,7 @@ from agent_framework._workflows._model_utils import DictConvertible, encode_valu
 from agent_framework._workflows._request_info_mixin import response_handler
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
-from typing_extensions import Never, Sentinel
+from typing_extensions import Sentinel
 
 from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,
@@ -427,8 +427,20 @@ def _extract_json(text: str) -> dict[str, Any]:
             raise ValueError("No JSON object found.")
         depth = 0
         end = None
+        in_string = False
+        escaped = False
         for i, ch in enumerate(text[start:], start=start):
-            if ch == "{":
+            # Braces inside string values, such as code in an instruction, do not count.
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+            elif ch == '"':
+                in_string = True
+            elif ch == "{":
                 depth += 1
             elif ch == "}":
                 depth -= 1
@@ -517,7 +529,7 @@ class MagenticManagerBase(ABC):
 
 
 class StandardMagenticManager(MagenticManagerBase):
-    """Standard Magentic manager that performs real LLM calls via a Agent.
+    """Standard Magentic manager that performs real LLM calls via an Agent.
 
     The manager constructs prompts that mirror the original Magentic One orchestration:
     - Facts gathering
@@ -724,21 +736,37 @@ class StandardMagenticManager(MagenticManagerBase):
         # Include full context to help the model decide current stage, with small retry loop
         attempts = 0
         last_error: Exception | None = None
+        unknown_speaker_ledger: MagenticProgressLedger | None = None
         while attempts < self.progress_ledger_retry_count:
             raw = await self._complete([*magentic_context.chat_history, user_message])
             try:
                 ledger_dict = _extract_json(raw.text)
-                return _coerce_model(MagenticProgressLedger, ledger_dict)
+                ledger = _coerce_model(MagenticProgressLedger, ledger_dict)
             except Exception as ex:
                 last_error = ex
-                attempts += 1
-                logger.warning(
-                    f"Progress ledger JSON parse failed (attempt {attempts}/{self.progress_ledger_retry_count}): {ex}"
-                )
-                if attempts < self.progress_ledger_retry_count:
-                    # brief backoff before next try
-                    await asyncio.sleep(0.25 * attempts)
+                unknown_speaker_ledger = None
+            else:
+                next_speaker = ledger.next_speaker.answer
+                if (
+                    ledger.is_request_satisfied.answer
+                    or not isinstance(next_speaker, str)
+                    or next_speaker in agent_names
+                ):
+                    return ledger
+                # Retry an unknown name, but keep the ledger so running out of attempts ends the run
+                # through the orchestrator's invalid speaker handling instead of another reset.
+                unknown_speaker_ledger = ledger
+                last_error = ValueError(f"Unknown next speaker '{next_speaker}'. Valid names: {names_csv}.")
+            attempts += 1
+            logger.warning(
+                f"Progress ledger attempt failed ({attempts}/{self.progress_ledger_retry_count}): {last_error}"
+            )
+            if attempts < self.progress_ledger_retry_count:
+                # brief backoff before next try
+                await asyncio.sleep(0.25 * attempts)
 
+        if unknown_speaker_ledger is not None:
+            return unknown_speaker_ledger
         raise RuntimeError(
             f"Progress ledger parse failed after {self.progress_ledger_retry_count} attempt(s): {last_error}"
         )
@@ -914,7 +942,10 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
 
         # Termination related state
         self._terminated: bool = False
-        self._max_rounds = manager.max_round_count
+        # The base group chat contract coerces a max round count below 1 up to 1; this
+        # value is assigned after super().__init__, so apply the same rule here instead
+        # of ending the workflow before any round can run.
+        self._max_rounds = max(1, manager.max_round_count) if manager.max_round_count is not None else None
 
     @override
     async def _handle_messages(
@@ -1374,8 +1405,9 @@ class MagenticAgentExecutor(AgentExecutor):
         # Request into related
         self._pending_agent_requests.clear()
         self._pending_responses_to_agent.clear()
+        self._pending_request_order.clear()
         # Reset sessions
-        self._agent_thread = self._agent.create_session()
+        self._session = self._agent.create_session()
 
 
 #  endregion Magentic Agent Executor

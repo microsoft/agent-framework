@@ -78,8 +78,8 @@ File scripts are executed as **local Python subprocesses** via the
 Set environment variables (or create a `.env` file):
 
 ```
-FOUNDRY_PROJECT_ENDPOINT=https://your-project.openai.azure.com/
-AZURE_OPENAI_MODEL=gpt-4o-mini
+FOUNDRY_PROJECT_ENDPOINT=https://your-account.services.ai.azure.com/api/projects/your-project
+FOUNDRY_MODEL=gpt-4o-mini
 ```
 
 Authenticate with Azure CLI:

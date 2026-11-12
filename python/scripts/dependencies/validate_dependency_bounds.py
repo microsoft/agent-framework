@@ -182,7 +182,7 @@ def _run_package_tasks(
             command.extend(["--extra", extra_name])
         for editable_path in plan.internal_editables:
             command.extend(["--with-editable", str(editable_path)])
-        extend_command_with_task(command, task_name, workspace_root=workspace_root)
+        extend_command_with_task(command, task_name)
 
         if dry_run:
             print(f"[cyan]DRY RUN[/cyan] {' '.join(command)}")

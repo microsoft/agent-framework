@@ -12,14 +12,21 @@ export default tseslint.config([
     extends: [
       js.configs.recommended,
       tseslint.configs.recommended,
-      reactHooks.configs['recommended-latest'],
       reactRefresh.configs.vite,
     ],
+    plugins: {
+      'react-hooks': reactHooks,
+    },
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.browser,
     },
     rules: {
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
+      // Preserve the existing lint policy while moving the ESLint toolchain to v10.
+      'no-useless-assignment': 'off',
+      'preserve-caught-error': 'off',
       // Allow exporting constants alongside components in specific patterns
       // This is common for shadcn/ui components (buttonVariants) and form utilities
       'react-refresh/only-export-components': [

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -46,6 +47,117 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
         var combined = GetResultText(result);
         Assert.Contains("hello world", combined);
         Assert.Contains("3", combined);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ExecuteCode_HostErrorsRespectDetailedPolicyAsync(bool includeDetailedErrors, bool isAsync)
+    {
+        // Arrange
+        SkipIfNoPython();
+        const string Detail = "synthetic backend diagnostic";
+        const string InnerDetail = "synthetic inner diagnostic";
+        static string Fail() => throw new InvalidOperationException(Detail, new ArgumentException(InnerDetail));
+        static async Task<string> FailAsync()
+        {
+            await Task.Yield();
+            throw new InvalidOperationException(Detail, new ArgumentException(InnerDetail));
+        }
+
+        var tool = isAsync
+            ? AIFunctionFactory.Create(FailAsync, name: "failing_tool")
+            : AIFunctionFactory.Create(Fail, name: "failing_tool");
+        var function = new LocalExecuteCodeFunction(s_python!, new LocalCodeActProviderOptions
+        {
+            Tools = [tool],
+            IncludeDetailedErrors = includeDetailedErrors,
+        });
+        var args = new AIFunctionArguments
+        {
+            ["code"] = """
+                try:
+                    await failing_tool()
+                except Exception as exc:
+                    print(str(exc))
+                try:
+                    await call_tool('failing_tool')
+                except Exception as exc:
+                    print(str(exc))
+                """,
+        };
+
+        // Act
+        var result = await function.InvokeAsync(args, CancellationToken.None);
+
+        // Assert
+        var text = GetResultText(result);
+        Assert.Contains(includeDetailedErrors ? Detail : "Host tool execution failed.", text, StringComparison.Ordinal);
+        Assert.Equal(includeDetailedErrors, text.Contains(Detail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, text.Contains(InnerDetail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, text.Contains("   at ", StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, text.Contains(isAsync ? nameof(FailAsync) : nameof(Fail), StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteCode_UncaughtHostErrorsPreserveFailureAsync(bool includeDetailedErrors)
+    {
+        // Arrange
+        SkipIfNoPython();
+        const string Detail = "synthetic backend diagnostic";
+        const string InnerDetail = "synthetic inner diagnostic";
+        var tool = AIFunctionFactory.Create(
+            (Func<string>)(() => throw new InvalidOperationException(Detail, new ArgumentException(InnerDetail))), name: "failing_tool");
+        var function = new LocalExecuteCodeFunction(s_python!, new LocalCodeActProviderOptions
+        {
+            Tools = [tool],
+            IncludeDetailedErrors = includeDetailedErrors,
+        });
+
+        // Act
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await function.InvokeAsync(new AIFunctionArguments { ["code"] = "await failing_tool()" }));
+
+        // Assert
+        Assert.Contains(includeDetailedErrors ? Detail : "Host tool execution failed.", error.Message, StringComparison.Ordinal);
+        Assert.Equal(includeDetailedErrors, error.Message.Contains(Detail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, error.Message.Contains(InnerDetail, StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, error.Message.Contains("   at ", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Provider_HostErrorPolicyIsCapturedAtConstructionAsync(bool includeDetailedErrors)
+    {
+        // Arrange
+        SkipIfNoPython();
+        const string Detail = "synthetic backend diagnostic";
+        var tool = AIFunctionFactory.Create(
+            (Func<string>)(() => throw new InvalidOperationException(Detail)), name: "failing_tool");
+        var options = new LocalCodeActProviderOptions
+        {
+            Tools = [tool],
+            IncludeDetailedErrors = includeDetailedErrors,
+        };
+        using var provider = new LocalCodeActProvider(s_python!, options);
+        options.IncludeDetailedErrors = !includeDetailedErrors;
+        var context = await provider.InvokingAsync(
+            new AIContextProvider.InvokingContext(new Moq.Mock<AIAgent>().Object, session: null, new AIContext()));
+        var function = Assert.IsAssignableFrom<AIFunction>(Assert.Single(context.Tools!));
+
+        // Act
+        var result = await function.InvokeAsync(new AIFunctionArguments
+        {
+            ["code"] = "try:\n    await failing_tool()\nexcept Exception as exc:\n    print(str(exc))",
+        });
+
+        // Assert
+        Assert.Equal(includeDetailedErrors, GetResultText(result).Contains(Detail, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -115,6 +227,255 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
         SkipIfNoPython();
 
         await AssertValidationBlocksBeforeRunnerStartsAsync(code);
+    }
+
+    [Theory]
+    [InlineData("import typing\nreference = typing.ForwardRef('int')\nreference._evaluate({}, {}, set())", "_evaluate")]
+    [InlineData("from typing import ForwardRef\nresolve = ForwardRef('int')._evaluate", "_evaluate")]
+    [InlineData("import typing as t\nresolvers = [t.ForwardRef('int').evaluate]", "evaluate")]
+    [InlineData("from collections import namedtuple\nvalue = namedtuple('Value', ['evaluate'])(1)\nvalue.evaluate", "evaluate")]
+    [InlineData("import typing\ntyping.get_type_hints(lambda: 1)", "get_type_hints")]
+    [InlineData("from typing import get_type_hints as resolve\nresolve(lambda: 1)", "get_type_hints")]
+    [InlineData("import typing\nresolvers = {'resolve': typing.get_type_hints}\nresolvers['resolve'](lambda: 1)", "get_type_hints")]
+    [InlineData("import typing\ntyping._eval_type(int, {}, {})", "_eval_type")]
+    [InlineData("from typing import _eval_type as resolve\nresolve(int, {}, {})", "_eval_type")]
+    [InlineData("import typing\ntyping.evaluate_forward_ref(typing.ForwardRef('int'))", "evaluate_forward_ref")]
+    [InlineData("from typing import evaluate_forward_ref as resolve", "evaluate_forward_ref")]
+    [InlineData("import typing\ntyping.get_annotations(lambda: 1, eval_str=False)", "get_annotations")]
+    [InlineData("from typing import get_annotations as annotations", "get_annotations")]
+    [InlineData(
+        "import functools\n@functools.singledispatch\ndef dispatch(value):\n    return value\n" +
+        "@dispatch.register\ndef handle(value: 'int'):\n    return value",
+        "singledispatch")]
+    [InlineData(
+        "from functools import singledispatch as dispatch\n@dispatch\ndef identity(value):\n    return value\n" +
+        "@identity.register(int)\ndef handle(value):\n    return value",
+        "singledispatch")]
+    [InlineData("import functools as f\nfactories = [f.singledispatch]", "singledispatch")]
+    [InlineData("import functools\nmethod = functools.singledispatchmethod(lambda value: value)", "singledispatchmethod")]
+    [InlineData("from functools import singledispatchmethod as method", "singledispatchmethod")]
+    public async Task ExecuteCode_ValidationBlocksRuntimeEvaluationBeforeRunnerStartsAsync(string code, string capability)
+    {
+        SkipIfNoPython();
+
+        // Act
+        var exception = await AssertValidationBlocksBeforeRunnerStartsAsync(code);
+
+        // Assert
+        Assert.Contains("capability", exception.Message, StringComparison.Ordinal);
+        Assert.Contains($"'{capability}'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("generator = (value for value in [1])\ngenerator.gi_frame", "gi_frame")]
+    [InlineData("generator = (value for value in [1])\nframe = generator.gi_frame", "gi_frame")]
+    [InlineData("generators = [(value for value in [1])]\nframes = [generators[0].gi_frame]", "gi_frame")]
+    [InlineData("async def value():\n    return 1\ncoroutine = value()\ncoroutine.cr_frame", "cr_frame")]
+    [InlineData("async def value():\n    return 1\ncoroutines = [value()]\nframe = coroutines[0].cr_frame", "cr_frame")]
+    [InlineData("iterator = []\ngenerator = (value async for value in iterator)\ngenerator.ag_frame", "ag_frame")]
+    [InlineData(
+        "iterator = []\ngenerators = [(value async for value in iterator)]\nframe = generators[0].ag_frame",
+        "ag_frame")]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1]\nframe.f_builtins", "f_builtins")]
+    [InlineData("import asyncio\nframes = asyncio.current_task().get_stack()\nglobals_map = frames[-1].f_globals", "f_globals")]
+    [InlineData(
+        "import asyncio\npayloads = [asyncio.current_task().get_stack()[-1].f_locals]",
+        "f_locals")]
+    public async Task ExecuteCode_ValidationBlocksFrameAccessBeforeRunnerStartsAsync(string code, string capability)
+    {
+        SkipIfNoPython();
+
+        // Act
+        var exception = await AssertValidationBlocksBeforeRunnerStartsAsync(code);
+
+        // Assert
+        Assert.Contains("capability", exception.Message, StringComparison.Ordinal);
+        Assert.Contains($"'{capability}'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("import asyncio\nfactory = asyncio.get_running_loop()._make_subprocess_transport", "_make_subprocess_transport")]
+    [InlineData("import asyncio as a\nfactories = [a.get_event_loop()._make_subprocess_transport]", "_make_subprocess_transport")]
+    [InlineData("def use(loop):\n    return loop._make_subprocess_transport", "_make_subprocess_transport")]
+    [InlineData("import asyncio.unix_events as events\nfactory = events._UnixSubprocessTransport", "_UnixSubprocessTransport")]
+    [InlineData("from asyncio import unix_events\nfactory = unix_events._UnixSubprocessTransport", "_UnixSubprocessTransport")]
+    [InlineData("from asyncio.unix_events import _UnixSubprocessTransport as factory", "_UnixSubprocessTransport")]
+    [InlineData("import asyncio.windows_events as events\nfactory = events._WindowsSubprocessTransport", "_WindowsSubprocessTransport")]
+    [InlineData("from asyncio import windows_events\nfactory = windows_events._WindowsSubprocessTransport", "_WindowsSubprocessTransport")]
+    [InlineData("from asyncio.windows_events import _WindowsSubprocessTransport as factory", "_WindowsSubprocessTransport")]
+    [InlineData("import asyncio.windows_utils as helpers\nfactory = helpers.Popen", "Popen")]
+    [InlineData("from asyncio.windows_utils import Popen as factory", "Popen")]
+    [InlineData("import asyncio.windows_events as events\napi = events._winapi", "_winapi")]
+    [InlineData("from asyncio.windows_events import _winapi as api", "_winapi")]
+    public async Task ExecuteCode_ValidationBlocksPrivateProcessCapabilitiesBeforeRunnerStartsAsync(
+        string code, string capability)
+    {
+        // Arrange
+        SkipIfNoPython();
+
+        // Act
+        var exception = await AssertValidationBlocksBeforeRunnerStartsAsync(code);
+
+        // Assert
+        Assert.Contains("capability", exception.Message, StringComparison.Ordinal);
+        Assert.Contains($"'{capability}'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("import typing\nresolve = typing.get_type_hints", "get_type_hints", true)]
+    [InlineData("import typing\nresolve = typing.get_type_hints", "get_type_hints", false)]
+    [InlineData("import functools\nfactory = functools.singledispatch", "singledispatch", true)]
+    [InlineData("import functools\nfactory = functools.singledispatch", "singledispatch", false)]
+    [InlineData("frame = (value for value in [1]).gi_frame", "gi_frame", true)]
+    [InlineData("frame = (value for value in [1]).gi_frame", "gi_frame", false)]
+    [InlineData("async def value():\n    return 1\nframe = value().cr_frame", "cr_frame", true)]
+    [InlineData("async def value():\n    return 1\nframe = value().cr_frame", "cr_frame", false)]
+    [InlineData("iterator = []\nframe = (value async for value in iterator).ag_frame", "ag_frame", true)]
+    [InlineData("iterator = []\nframe = (value async for value in iterator).ag_frame", "ag_frame", false)]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1].f_builtins", "f_builtins", true)]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1].f_builtins", "f_builtins", false)]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1].f_globals", "f_globals", true)]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1].f_globals", "f_globals", false)]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1].f_locals", "f_locals", true)]
+    [InlineData("import asyncio\nframe = asyncio.current_task().get_stack()[-1].f_locals", "f_locals", false)]
+    [InlineData("from typing import get_type_hints as resolve", "get_type_hints", false)]
+    [InlineData("from functools import singledispatch as dispatch", "singledispatch", false)]
+    [InlineData("import asyncio\nfactory = asyncio.get_event_loop()._make_subprocess_transport", "_make_subprocess_transport", true)]
+    [InlineData("import asyncio\nfactory = asyncio.get_event_loop()._make_subprocess_transport", "_make_subprocess_transport", false)]
+    [InlineData("import asyncio.unix_events as events\nfactory = events._UnixSubprocessTransport", "_UnixSubprocessTransport", true)]
+    [InlineData("import asyncio.unix_events as events\nfactory = events._UnixSubprocessTransport", "_UnixSubprocessTransport", false)]
+    [InlineData("import asyncio.windows_events as events\nfactory = events._WindowsSubprocessTransport", "_WindowsSubprocessTransport", true)]
+    [InlineData("import asyncio.windows_events as events\nfactory = events._WindowsSubprocessTransport", "_WindowsSubprocessTransport", false)]
+    [InlineData("import asyncio.windows_utils as helpers\nfactory = helpers.Popen", "Popen", true)]
+    [InlineData("import asyncio.windows_utils as helpers\nfactory = helpers.Popen", "Popen", false)]
+    [InlineData("import asyncio.windows_events as events\napi = events._winapi", "_winapi", true)]
+    [InlineData("import asyncio.windows_events as events\napi = events._winapi", "_winapi", false)]
+    [InlineData("from injected import _make_subprocess_transport as factory", "_make_subprocess_transport", false)]
+    [InlineData("from injected import _UnixSubprocessTransport as factory", "_UnixSubprocessTransport", false)]
+    [InlineData("from injected import _WindowsSubprocessTransport as factory", "_WindowsSubprocessTransport", false)]
+    [InlineData("from injected import Popen as factory", "Popen", false)]
+    [InlineData("from injected import _winapi as api", "_winapi", false)]
+    public async Task ExecuteCode_ValidationCapabilityRestrictionsSurviveCustomListsAsync(
+        string code, string capability, bool emptyLists)
+    {
+        SkipIfNoPython();
+
+        // Arrange
+        var options = new LocalCodeActProviderOptions
+        {
+            AllowedImports = emptyLists ? Array.Empty<string>() : new[] { "typing", "functools", "asyncio", "injected" },
+            BlockedImports = Array.Empty<string>(),
+            AllowedBuiltins = emptyLists ? Array.Empty<string>() : new[] { "int" },
+            BlockedBuiltins = Array.Empty<string>(),
+        };
+
+        // Act
+        var exception = await AssertValidationBlocksBeforeRunnerStartsAsync(code, options);
+
+        // Assert
+        Assert.Contains("capability", exception.Message, StringComparison.Ordinal);
+        Assert.Contains($"'{capability}'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("def values():\n    yield 1", "Yield")]
+    [InlineData("def values():\n    yield from [1]", "YieldFrom")]
+    public async Task ExecuteCode_ValidationBlocksExplicitYieldBeforeRunnerStartsAsync(string code, string nodeType)
+    {
+        SkipIfNoPython();
+
+        // Act
+        var exception = await AssertValidationBlocksBeforeRunnerStartsAsync(code);
+
+        // Assert
+        Assert.Contains($"AST node type '{nodeType}'", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(
+        "from typing import ForwardRef, List, Optional, TypeVar, Union\n" +
+        "T = TypeVar('T')\nAlias = Union[int, str]\nvalues: List[int] = [1, 2, 3]\n" +
+        "optional: Optional[str] = None\nreference = ForwardRef('int')\n" +
+        "def identity(value: 'T') -> 'T':\n    return value\nprint(reference)\nsum(identity(values))",
+        "6")]
+    [InlineData(
+        "from functools import lru_cache, partial\n" +
+        "@lru_cache(maxsize=8)\ndef add(a, b):\n    return a + b\nincrement = partial(add, 1)\nincrement(2)",
+        "3")]
+    [InlineData(
+        "async def add(a, b):\n    return a + b\nsum(value * 2 for value in [1, 2, 3]) + await add(1, 1)",
+        "14")]
+    [InlineData("import asyncio\nprint(len(asyncio.current_task().get_stack()) > 0)", "True")]
+    [InlineData("import asyncio\nprint(asyncio.get_running_loop().is_running())", "True")]
+    [InlineData("from collections.abc import MutableMapping\nprint(MutableMapping.register(dict) is dict)", "True")]
+    [InlineData("def evaluate(value):\n    return value\nevaluate(5)", "5")]
+    public async Task ExecuteCode_AllowsNonEvaluatingTypingAndHelpersAsync(string code, string expected)
+    {
+        SkipIfNoPython();
+
+        // Arrange
+        var function = new LocalExecuteCodeFunction(s_python!);
+        var args = new AIFunctionArguments { ["code"] = code };
+
+        // Act
+        var result = await function.InvokeAsync(args, CancellationToken.None);
+
+        // Assert
+        Assert.Contains(expected, GetResultText(result), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("AllowedImports", true, "import math", false)]
+    [InlineData("AllowedImports", false, "import math", false)]
+    [InlineData("AllowedImports", false, "import collections\nprint('ok')", true)]
+    [InlineData("BlockedImports", true, "import sys\nprint('ok')", true)]
+    [InlineData("BlockedImports", false, "import math", false)]
+    [InlineData("BlockedImports", false, "import sys\nprint('ok')", true)]
+    [InlineData("AllowedBuiltins", true, "print('ok')", false)]
+    [InlineData("AllowedBuiltins", false, "print('ok')", false)]
+    [InlineData("AllowedBuiltins", false, "str(1)", true)]
+    [InlineData("BlockedBuiltins", true, "__loader__ is not None", true)]
+    [InlineData("BlockedBuiltins", false, "print('ok')", false)]
+    [InlineData("BlockedBuiltins", false, "__loader__ is not None", true)]
+    public async Task ExecuteCode_ValidationListsReplaceDefaultsAsync(
+        string setting, bool emptyList, string code, bool allowed)
+    {
+        SkipIfNoPython();
+
+        // Arrange
+        var options = new LocalCodeActProviderOptions();
+        switch (setting)
+        {
+            case nameof(LocalCodeActProviderOptions.AllowedImports):
+                options.AllowedImports = emptyList ? Array.Empty<string>() : new[] { "collections" };
+                break;
+            case nameof(LocalCodeActProviderOptions.BlockedImports):
+                options.AllowedImports = new[] { "math", "sys" };
+                options.BlockedImports = emptyList ? Array.Empty<string>() : new[] { "math" };
+                break;
+            case nameof(LocalCodeActProviderOptions.AllowedBuiltins):
+                options.AllowedBuiltins = emptyList ? Array.Empty<string>() : new[] { "str" };
+                break;
+            case nameof(LocalCodeActProviderOptions.BlockedBuiltins):
+                options.BlockedBuiltins = emptyList ? Array.Empty<string>() : new[] { "print" };
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(setting), setting, "Unknown validation list.");
+        }
+
+        var function = new LocalExecuteCodeFunction(s_python!, options);
+        var args = new AIFunctionArguments { ["code"] = code };
+
+        // Act & Assert
+        if (allowed)
+        {
+            Assert.NotNull(await function.InvokeAsync(args, CancellationToken.None));
+        }
+        else
+        {
+            await Assert.ThrowsAsync<CodeValidationException>(
+                async () => await function.InvokeAsync(args, CancellationToken.None));
+        }
     }
 
     [Fact]
@@ -199,7 +560,231 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
         await AssertValidationBlocksBeforeRunnerStartsAsync(code);
     }
 
-    private static async Task AssertValidationBlocksBeforeRunnerStartsAsync(string code)
+    [Theory]
+    [InlineData("import os\ndef use():\n    cap.popen()\ncap = os\nuse()")]
+    [InlineData("import os\nasync def use():\n    cap.popen()\ncap = os\nawait use()")]
+    [InlineData("import os\nuse = lambda: cap.popen()\ncap = os\nuse()")]
+    [InlineData("import os\ndef outer():\n    def use():\n        cap.popen()\n    cap = os\n    use()\nouter()")]
+    [InlineData("def use():\n    cap.popen()\nimport os as cap\nuse()")]
+    [InlineData("import os\ndef use():\n    cap.popen()\ncap: object = os\nuse()")]
+    [InlineData("import os\ndef use():\n    cap.popen()\ncap = other = os\nuse()")]
+    [InlineData("import os\ndef use():\n    cap.popen()\ncap, _ = (os, 0)\nuse()")]
+    [InlineData("import os\ndef use():\n    cap.popen()\n[cap, _] = [os, 0]\nuse()")]
+    [InlineData("import os\ndef use():\n    caps[0].popen()\n_, *caps = (0, os)\nuse()")]
+    [InlineData("import os\nfor iteration in range(2):\n    if iteration:\n        cap.popen()\n    cap = os")]
+    [InlineData("import os\niteration = 0\nwhile iteration < 2:\n    if iteration:\n        cap.popen()\n    cap = os\n    iteration += 1")]
+    [InlineData("import os\ndef use():\n    for cap in values:\n        cap.popen()\nvalues = [os]\nuse()")]
+    [InlineData("import os\nasync def use():\n    async for cap in values:\n        cap.popen()\nvalues = [os]")]
+    [InlineData("import os\ndef use():\n    caps[0].popen()\ncaps = [os]\nuse()")]
+    [InlineData("import os\ndef use():\n    caps['module'].popen()\ncaps = {'module': os}\nuse()")]
+    [InlineData("import os\ndef use():\n    caps[0]['module'].popen()\nvalues = [{'module': os}]\ncaps = values\nuse()")]
+    [InlineData("import os\ndef use():\n    return cap\ncap = os\nuse()")]
+    [InlineData("import os\nuse = lambda: cap\ncap = os\nuse()")]
+    [InlineData("import os\ndef use():\n    def inner(value=cap):\n        return 1\n    return inner()\ncap = os\nuse()")]
+    [InlineData("import os\ndef identity(value):\n    return value\ndef use():\n    identity(cap)\ncap = os\nuse()")]
+    [InlineData("import os\ndef use(target):\n    target.value = cap\ncap = os")]
+    [InlineData("import os\ndef use(target):\n    target[0] = cap\ncap = os")]
+    [InlineData("import os\ndef use():\n    env['KEY'] = 'value'\nenv = os.environ\nuse()")]
+    [InlineData("import os\ndef use():\n    caps = []\n    caps += [cap]\ncap = os\nuse()")]
+    [InlineData("import os\ndef use():\n    return [value for value in caps]\ncaps = [os]\nuse()")]
+    [InlineData("import os\ndef use():\n    match cap:\n        case value:\n            print(value)\ncap = os\nuse()")]
+    [InlineData("import os\ndef use():\n    print(cap.path.exists('file'))\ncap = os\nuse()")]
+    [InlineData("def use(cap):\n    cap.popen()\ndef other():\n    import os as cap")]
+    public async Task ExecuteCode_ValidationBlocksLateBoundOsAccessBeforeRunnerStartsAsync(string code)
+    {
+        // Arrange
+        SkipIfNoPython();
+
+        // Act
+        var exception = await AssertValidationBlocksBeforeRunnerStartsAsync(code);
+
+        // Assert
+        Assert.DoesNotContain("finite bound", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(8)]
+    [InlineData(64)]
+    public async Task ExecuteCode_ValidationBlocksLongLoopCarriedAliasesBeforeRunnerStartsAsync(int aliasCount)
+    {
+        SkipIfNoPython();
+
+        // Arrange
+        var code = new StringBuilder("import os\n");
+        for (var index = 0; index < aliasCount; index++)
+        {
+            code.Append($"cap{index} = None\n");
+        }
+
+        code.Append($"cap{aliasCount} = os\nfor iteration in range({aliasCount + 1}):\n");
+        code.Append($"    if iteration == {aliasCount}:\n        cap0.popen()\n");
+        for (var index = 0; index < aliasCount; index++)
+        {
+            code.Append($"    cap{index} = cap{index + 1}\n");
+        }
+
+        // Act
+        var exception = await AssertValidationBlocksBeforeRunnerStartsAsync(code.ToString());
+
+        // Assert
+        Assert.DoesNotContain("finite bound", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(250)]
+    [InlineData(2000)]
+    public async Task Validator_ProvenanceVisitsScaleWithAliasChainLengthAsync(int aliasCount)
+    {
+        SkipIfNoPython();
+
+        // Arrange
+        var tempDir = Directory.CreateTempSubdirectory("localcodeact-validator-worklist-").FullName;
+        try
+        {
+            var scriptPath = Path.Combine(tempDir, "probe_validator.py");
+            File.WriteAllText(
+                scriptPath,
+                $$"""
+                import runpy
+                import sys
+
+                sys.stdin.read()
+                namespace = runpy.run_path({{JsonSerializer.Serialize(Internal.EmbeddedScripts.GetValidatorScriptPath())}})
+
+                class CountingValidator(namespace["_CodeValidator"]):
+                    def __init__(self):
+                        super().__init__()
+                        self.propagations = 0
+
+                    def _track_os_provenance(self, target, value):
+                        if self._collecting_provenance:
+                            self.propagations += 1
+                        super()._track_os_provenance(target, value)
+
+                alias_count = {{aliasCount}}
+                code = "import os\nif False:\n"
+                code += "".join(f"    cap{index} = cap{index + 1}\n" for index in range(alias_count))
+                code += f"    cap{alias_count} = os\n"
+                validator = CountingValidator()
+                validator.validate(code)
+                assert validator._os_aliases["cap0"] == {("os",)}
+                assert validator.propagations <= 2 * (alias_count + 1), validator.propagations
+                """);
+            var validator = new Internal.CodeValidator(
+                s_python!,
+                scriptPath,
+                TimeSpan.FromSeconds(10),
+                allowedImports: null,
+                blockedImports: null,
+                allowedBuiltins: null,
+                blockedBuiltins: null);
+
+            // Act & Assert
+            await validator.ValidateAsync("print('safe')", CancellationToken.None);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("first = second\nsecond = first", true)]
+    [InlineData("first = [second]\nsecond = [first]", true)]
+    [InlineData("import os\nfirst = os\nsecond = first\nfirst = second\nfirst.popen()", false)]
+    [InlineData("import os\nvalues = [os]\nvalues = [values]\nvalues[0][0].popen()", false)]
+    [InlineData("import os\ncap = os\ncap = cap.path", false)]
+    [InlineData("import os\nfirst = os\nsecond = first.path\nfirst = second.path", false)]
+    public async Task Validator_ProvenanceCyclesConvergeAsync(string code, bool allowed)
+    {
+        SkipIfNoPython();
+
+        // Arrange
+        var validator = new Internal.CodeValidator(
+            s_python!,
+            Internal.EmbeddedScripts.GetValidatorScriptPath(),
+            TimeSpan.FromSeconds(10),
+            allowedImports: null,
+            blockedImports: null,
+            allowedBuiltins: null,
+            blockedBuiltins: null);
+
+        // Act & Assert
+        if (allowed)
+        {
+            await validator.ValidateAsync(code, CancellationToken.None);
+        }
+        else
+        {
+            var exception = await Assert.ThrowsAsync<CodeValidationException>(
+                async () => await validator.ValidateAsync(code, CancellationToken.None));
+            Assert.Contains("not allowed", exception.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("finite bound", exception.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("exceeded", exception.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task Validator_ResetsProvenanceAndPreservesOsPolicyOverridesAsync()
+    {
+        SkipIfNoPython();
+
+        // Arrange
+        var tempDir = Directory.CreateTempSubdirectory("localcodeact-validator-policy-").FullName;
+        try
+        {
+            var scriptPath = Path.Combine(tempDir, "probe_validator.py");
+            File.WriteAllText(
+                scriptPath,
+                $$"""
+                import runpy
+                import sys
+
+                sys.stdin.read()
+                namespace = runpy.run_path({{JsonSerializer.Serialize(Internal.EmbeddedScripts.GetValidatorScriptPath())}})
+                validator_type = namespace["_CodeValidator"]
+                validation_error = namespace["CodeValidationError"]
+
+                def assert_rejected(validator, code):
+                    try:
+                        validator.validate(code)
+                    except validation_error:
+                        return
+                    raise AssertionError("Expected OS policy rejection")
+
+                validator = validator_type()
+                validator.validate("import os\ncap = os")
+                validator.validate("cap.popen()")
+                assert_rejected(validator, "import os\nos.popen()")
+                validator.validate("print('safe')")
+
+                assert_rejected(validator_type(allowed_os_attrs=set()), "import os\nos.path")
+                custom = validator_type(allowed_os_attrs={"getpid"})
+                custom.validate("def use():\n    return cap.getpid()\nimport os\ncap = os\nuse()")
+                assert_rejected(custom, "import os\nos.getpid.unknown")
+                assert_rejected(custom, "import os\nos.path")
+                """);
+            var validator = new Internal.CodeValidator(
+                s_python!,
+                scriptPath,
+                TimeSpan.FromSeconds(10),
+                allowedImports: null,
+                blockedImports: null,
+                allowedBuiltins: null,
+                blockedBuiltins: null);
+
+            // Act & Assert
+            await validator.ValidateAsync("print('safe')", CancellationToken.None);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static async Task<CodeValidationException> AssertValidationBlocksBeforeRunnerStartsAsync(
+        string code, LocalCodeActProviderOptions? options = null)
     {
         // Arrange
         var tempDir = Directory.CreateTempSubdirectory("localcodeact-runner-marker-").FullName;
@@ -211,9 +796,9 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
                 runnerPath,
                 $"from pathlib import Path\nPath({JsonSerializer.Serialize(markerPath)}).touch()\n");
 
-            var function = new LocalExecuteCodeFunction(
-                s_python!,
-                new LocalCodeActProviderOptions { RunnerScriptPath = runnerPath });
+            options ??= new LocalCodeActProviderOptions();
+            options.RunnerScriptPath = runnerPath;
+            var function = new LocalExecuteCodeFunction(s_python!, options);
             var args = new AIFunctionArguments
             {
                 ["code"] = code,
@@ -227,6 +812,7 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
             Assert.False(File.Exists(markerPath), "The runner started before validation completed.");
             var validationException = Assert.IsType<CodeValidationException>(exception);
             Assert.Contains("not allowed", validationException.Message, StringComparison.Ordinal);
+            return validationException;
         }
         finally
         {
@@ -244,6 +830,14 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     [InlineData("import os\np = os.path\nprint(p.normpath('a/../b'))")]
     [InlineData("import os\np, env = (os.path, os.environ)\nprint(p.join('a', 'b'))\nprint(env.get('PATH'))")]
     [InlineData("import os\njoin = os.path.join\nprint(join('a', 'b'))")]
+    [InlineData("import os\ndef use():\n    print(path.join('a', 'b'))\npath = os.path\nuse()")]
+    [InlineData("import os\nasync def use():\n    print(path.basename('a/b'))\npath = os.path\nawait use()")]
+    [InlineData("def use():\n    print(path.join('a', 'b'))\nfrom os import path\nuse()")]
+    [InlineData("def use():\n    print(path.join('a', 'b'))\nimport os.path as path\nuse()")]
+    [InlineData("import os\nuse = lambda: join('a', 'b')\njoin = os.path.join\nprint(use())")]
+    [InlineData("import os\ndef use():\n    print(path.join('a', 'b'))\n    print(env.get('PATH'))\npath, env = (os.path, os.environ)\nuse()")]
+    [InlineData("import os\ndef use():\n    print(env.copy())\n    print(list(env))\nenv = os.environ\nuse()")]
+    [InlineData("import os\ndef use():\n    for key in env:\n        print(key)\nenv = os.environ\nuse()")]
     public async Task ExecuteCode_AllowsPermittedOsAccessAsync(string code)
     {
         SkipIfNoPython();
@@ -400,8 +994,10 @@ except Exception as exc:
         Assert.DoesNotContain("NO_ERROR", combined);
     }
 
-    [Fact]
-    public async Task ExecuteCode_ToolThrowingExceptionPropagatesToGeneratedCodeAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteCode_ToolThrowingExceptionPropagatesToGeneratedCodeAsync(bool includeDetailedErrors)
     {
         SkipIfNoPython();
 
@@ -413,6 +1009,7 @@ except Exception as exc:
         var options = new LocalCodeActProviderOptions
         {
             Tools = new[] { faultyTool },
+            IncludeDetailedErrors = includeDetailedErrors,
         };
         var function = new LocalExecuteCodeFunction(s_python!, options);
 
@@ -429,8 +1026,9 @@ except Exception as exc:
         var result = await function.InvokeAsync(args, CancellationToken.None);
         var combined = GetResultText(result);
         Assert.Contains("GOT_ERROR", combined);
-        Assert.Contains("InvalidOperationException", combined);
-        Assert.Contains("intentional: boom", combined);
+        Assert.Contains(includeDetailedErrors ? "intentional: boom" : "Host tool execution failed.", combined);
+        Assert.Equal(includeDetailedErrors, combined.Contains("InvalidOperationException", StringComparison.Ordinal));
+        Assert.Equal(includeDetailedErrors, combined.Contains("intentional: boom", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -488,7 +1086,9 @@ except Exception as exc:
     private static string? FindPython()
     {
         var configured = Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON");
-        if (!string.IsNullOrWhiteSpace(configured) && IsUsablePython(configured))
+        if (!string.IsNullOrWhiteSpace(configured)
+            && Path.IsPathFullyQualified(configured)
+            && IsUsablePython(configured))
         {
             return configured;
         }
@@ -502,7 +1102,7 @@ except Exception as exc:
             var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
             foreach (var dir in path.Split(Path.PathSeparator))
             {
-                if (string.IsNullOrWhiteSpace(dir))
+                if (string.IsNullOrWhiteSpace(dir) || !Path.IsPathFullyQualified(dir))
                 {
                     continue;
                 }

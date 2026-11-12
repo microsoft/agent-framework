@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import copy
-from typing import TYPE_CHECKING, Any, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, Union, cast
 
+from agent_framework import get_namespaced_value
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
 from agent_framework.exceptions import SettingNotFoundError
@@ -19,11 +19,6 @@ from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 
 from ._feature_usage import create_feature_usage_http_client
-
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework import Content
@@ -55,9 +50,39 @@ AzureTokenProvider = Callable[[], str | Awaitable[str]]
 
 
 PROMPT_CACHE_BREAKPOINT_KEY = "prompt_cache_breakpoint"
+OPENAI_ADDITIONAL_PROPS_NAMESPACE = "openai"
+_MISSING = object()
 
 
 MP3_MEDIA_TYPES = frozenset({"audio/mp3", "audio/mpeg", "audio/x-mpeg", "audio/mpeg3", "audio/x-mpeg-3"})
+
+
+def _get_openai_metadata(  # pyright: ignore[reportUnusedFunction]
+    additional_properties: Mapping[str, Any] | None,
+    key: str,
+    *legacy_keys: str,
+    default: Any = None,
+) -> Any:
+    """Read OpenAI metadata from its namespace, then legacy flat keys."""
+    value = get_namespaced_value(additional_properties, OPENAI_ADDITIONAL_PROPS_NAMESPACE, key, _MISSING)
+    if value is not _MISSING:
+        return value
+    for legacy_key in legacy_keys:
+        if additional_properties and legacy_key in additional_properties:
+            return additional_properties[legacy_key]
+    return default
+
+
+def _openai_additional_properties(  # pyright: ignore[reportUnusedFunction]
+    values: Mapping[str, Any],
+    *,
+    legacy: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build namespaced OpenAI metadata with optional legacy compatibility keys."""
+    return {
+        OPENAI_ADDITIONAL_PROPS_NAMESPACE: dict(values),
+        **dict(legacy or {}),
+    }
 
 
 def _is_mp3_media_type(  # pyright: ignore[reportUnusedFunction]
@@ -87,10 +112,16 @@ def _attach_prompt_cache_breakpoint(  # pyright: ignore[reportUnusedFunction]
 
     GPT-5.6 and later models accept an explicit cache breakpoint on supported content
     blocks; users opt in per part via
-    ``Content.additional_properties["prompt_cache_breakpoint"]``.
+    ``Content.additional_properties["core"]["prompt_cache_breakpoint"]``.
+    The legacy top-level key remains readable.
     """
     props = content.additional_properties
-    breakpoint_value = props.get(PROMPT_CACHE_BREAKPOINT_KEY) if props else None
+    breakpoint_value = get_namespaced_value(
+        props,
+        "core",
+        PROMPT_CACHE_BREAKPOINT_KEY,
+        props.get(PROMPT_CACHE_BREAKPOINT_KEY) if props else None,
+    )
     if isinstance(breakpoint_value, Mapping):
         part[PROMPT_CACHE_BREAKPOINT_KEY] = dict(cast("Mapping[str, Any]", breakpoint_value))
     return part
@@ -187,6 +218,16 @@ def _resolve_named_setting(
     return None
 
 
+def _injected_azure_deployment(client: AsyncOpenAI | None) -> str | None:
+    """Return the deployment configured on an injected Azure client, if any."""
+    if not isinstance(client, AsyncAzureOpenAI):
+        return None
+    azure_deployment = getattr(client, "_azure_deployment", None)
+    if isinstance(azure_deployment, str) and azure_deployment:
+        return azure_deployment
+    return None
+
+
 def _join_env_names(env_names: Sequence[str]) -> str:
     """Format env var names for user-facing error messages."""
     return ", ".join(f"'{env_name}'" for env_name in env_names)
@@ -237,6 +278,12 @@ def load_openai_service_settings(
     environment variables are used only when an explicit Azure signal is present
     (``endpoint`` or ``credential``) or when no explicit
     OpenAI API key is available.
+
+    Model precedence on the Azure path is an explicit ``model`` argument, then the
+    deployment configured on an injected ``AsyncAzureOpenAI`` client, then
+    ``AZURE_OPENAI_*`` model aliases. An injected ``AsyncOpenAI`` client has no
+    deployment metadata, so it still resolves the model from the explicit argument
+    or the OpenAI environment variables.
     """
     # Merge APP_INFO into the headers
     merged_headers = dict(copy(default_headers)) if default_headers else {}
@@ -297,18 +344,26 @@ def load_openai_service_settings(
         api_key=api_key_str,
         endpoint=endpoint,
         base_url=base_url,
-        api_version=api_version or default_azure_api_version,
+        api_version=api_version,
         env_file_path=env_file_path,
         env_file_encoding=env_file_encoding,
     )
+    # Apply the client default only after load_settings: an explicit value passed to it always
+    # wins, so passing the default there would hide AZURE_OPENAI_API_VERSION and the .env file.
+    if not azure_settings.get("api_version"):
+        azure_settings["api_version"] = default_azure_api_version
     if model is not None:
         azure_settings[azure_model_fields[0]] = model
     client_args = {}
-    resolved_azure_model = _resolve_named_setting(azure_settings, azure_model_fields)
-    if resolved_azure_model is None and client:
-        azure_deployment = getattr(client, "_azure_deployment", None)
-        if isinstance(azure_deployment, str) and azure_deployment:
-            resolved_azure_model = azure_deployment
+    # An explicit model wins. Otherwise keep the wrapper on the deployment the
+    # caller already configured on the injected client, ahead of ambient aliases.
+    explicit_model = model if isinstance(model, str) and model else None
+    injected_deployment = _injected_azure_deployment(client) if explicit_model is None else None
+    if injected_deployment is not None:
+        azure_settings[azure_model_fields[0]] = injected_deployment
+    resolved_azure_model = (
+        explicit_model or injected_deployment or _resolve_named_setting(azure_settings, azure_model_fields)
+    )
     if resolved_azure_model:
         azure_settings["model"] = resolved_azure_model
         client_args["azure_deployment"] = resolved_azure_model

@@ -74,8 +74,8 @@ From this directory, with the venv activated and `az login` done:
 
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"
-export AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME="text-embedding-3-small"
+export FOUNDRY_MODEL="gpt-4.1-mini"
+export FOUNDRY_EMBEDDING_MODEL="text-embedding-3-small"
 export MEMORY_STORE_NAME="agent_framework_memory"
 python provision_memory_store.py
 ```
@@ -84,11 +84,14 @@ Or in PowerShell:
 
 ```powershell
 $env:FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"
-$env:AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME="text-embedding-3-small"
+$env:FOUNDRY_MODEL="gpt-4.1-mini"
+$env:FOUNDRY_EMBEDDING_MODEL="text-embedding-3-small"
 $env:MEMORY_STORE_NAME="agent_framework_memory"
 python provision_memory_store.py
 ```
+
+Existing configurations can continue using `AZURE_AI_MODEL_DEPLOYMENT_NAME` and
+`AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME` as compatibility fallbacks.
 
 Expected output (first run):
 

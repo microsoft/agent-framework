@@ -50,10 +50,16 @@ while (approvalRequests.Count > 0)
         .ConvertAll(functionApprovalRequest =>
         {
             Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {((FunctionCallContent)functionApprovalRequest.ToolCall).Name}");
-            return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
+            bool approved = Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false;
+
+            // When rejecting, tell the model not to retry the call.
+            return new ChatMessage(ChatRole.User, [approved
+                ? functionApprovalRequest.CreateResponse(approved: true)
+                : functionApprovalRequest.CreateResponse(approved: false, reason: "The user rejected this tool call. Do not retry it.")]);
         });
 
     // Pass the user input responses back to the agent for further processing.
+    // With the default approval checks, requests left unanswered on the next run are rejected automatically.
     response = await agent.RunAsync(userInputResponses, session);
 
     approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();

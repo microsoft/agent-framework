@@ -89,9 +89,7 @@ public class TestRunContext : IRunnerContext
             => runnerContext.SendMessageAsync(executorId, message, targetId, cancellationToken);
 
         public ValueTask<T> ReadOrInitStateAsync<T>(string key, Func<T> initialStateFactory, string? scopeName = null, CancellationToken cancellationToken = default)
-        {
-            return new(initialStateFactory());
-        }
+            => runnerContext.StateManager.ReadOrInitStateAsync(new ScopeId(executorId, scopeName), key, initialStateFactory);
 
         public IReadOnlyDictionary<string, string>? TraceContext => traceContext;
 

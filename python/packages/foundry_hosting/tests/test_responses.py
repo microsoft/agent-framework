@@ -23,7 +23,7 @@ from contextlib import aclosing, asynccontextmanager, suppress
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Literal, cast, overload
+from typing import Any, Literal, cast, overload
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -34,8 +34,10 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
+    Annotation,
     BaseChatClient,
     ChatMiddlewareLayer,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     ComputerSafetyCheck,
@@ -58,7 +60,9 @@ from agent_framework import (
     executor,
     tool,
 )
+from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY  # pyright: ignore[reportPrivateUsage]
 from agent_framework.ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+from agent_framework.observability import OBSERVABILITY_SETTINGS
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions, OpenAIContinuationToken
 from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
 from azure.ai.agentserver.responses import (
@@ -73,18 +77,18 @@ from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.models import (
     CreateResponse,
     Item,
+    Metadata,
     OutputItem,
     ResponseIncompleteReason,
     ResponseObject,
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
-from mcp import McpError
-from mcp.types import ErrorData
+from mcp import MCPError
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+from openai.types.responses import ResponseTextDeltaEvent, ResponseTextDoneEvent
 from openai.types.responses.response_input_item_param import ResponseInputItemParam
 from openai.types.responses.response_usage import ResponseUsage as OpenAIResponseUsage
 from pydantic import TypeAdapter
-from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
@@ -93,7 +97,11 @@ from agent_framework_foundry_hosting._responses import (
     CONSENT_ERROR_CODE,
     ConsentError,
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
+    _annotations_to_output_text,  # pyright: ignore[reportPrivateUsage]
     _await_before_signal,  # pyright: ignore[reportPrivateUsage]
+    _container_file_citations_from_function_result,  # pyright: ignore[reportPrivateUsage]
+    _create_response_event_stream,  # pyright: ignore[reportPrivateUsage]
+    _hosted_internal_metadata,  # pyright: ignore[reportPrivateUsage]
     _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
@@ -114,6 +122,7 @@ from agent_framework_foundry_hosting._state_store import (
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 _PRIVATE_ERROR_DETAIL = "test-token-value at /srv/private/tool.py"
+_SESSION_STORAGE_ERROR_DETAIL = "session-storage-secret at C:\\sensitive\\session_store.py"
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -146,9 +155,359 @@ def _make_function_approval_request_content(
 ) -> Content:
     """Build a function_approval_request Content with an embedded function_call."""
     function_call = Content.from_function_call(
-        call_id, name, arguments=arguments, additional_properties={"server_label": server_label}
+        call_id,
+        name,
+        arguments=arguments,
+        hosted=True,
+        server_name=server_label,
+        additional_properties={"server_label": server_label},
     )
     return Content.from_function_approval_request(request_id, function_call)
+
+
+def _mcp_function_result(call_id: str, *, item_meta: Mapping[str, Any]) -> Content:
+    return Content.from_function_result(
+        call_id,
+        result="Created the requested file.",
+        additional_properties={
+            _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Created the requested file.",
+                        "_meta": dict(item_meta),
+                    }
+                ],
+                "isError": False,
+            }
+        },
+    )
+
+
+def _container_file_result(
+    call_id: str,
+    *,
+    container_id: str = "cntr_123",
+    file_id: str = "cfile_123",
+    filename: str = "result.txt",
+) -> Content:
+    return _mcp_function_result(
+        call_id,
+        item_meta={
+            "container_id": container_id,
+            "container_file_citations": json.dumps([
+                {
+                    "file_id": file_id,
+                    "filename": filename,
+                }
+            ]),
+        },
+    )
+
+
+def _container_file_citation_updates() -> list[AgentResponseUpdate]:
+    return [
+        AgentResponseUpdate(
+            contents=[Content.from_function_call("call_1", "code_interpreter", arguments={})],
+            role="assistant",
+            message_id="msg_call",
+        ),
+        AgentResponseUpdate(
+            contents=[_container_file_result("call_1")],
+            role="tool",
+            message_id="msg_result",
+        ),
+        AgentResponseUpdate(
+            contents=[Content.from_text("Preparing the download.")],
+            role="assistant",
+            message_id="msg_preparing",
+        ),
+        AgentResponseUpdate(
+            contents=[Content.from_text("Download result.txt")],
+            role="assistant",
+            message_id="msg_final",
+        ),
+    ]
+
+
+def _expected_container_file_citation(
+    *,
+    container_id: str = "cntr_123",
+    file_id: str = "cfile_123",
+    filename: str = "result.txt",
+    start_index: int = 9,
+) -> dict[str, Any]:
+    return {
+        "type": "container_file_citation",
+        "container_id": container_id,
+        "file_id": file_id,
+        "filename": filename,
+        "start_index": start_index,
+        "end_index": start_index + len(filename),
+    }
+
+
+def _url_citation(
+    *,
+    url: str = "https://www.python.org/downloads/release/python-31315/",
+    title: str = "Python 3.13.15",
+    start_index: int = 0,
+    end_index: int = 6,
+) -> Annotation:
+    return Annotation(
+        type="citation",
+        url=url,
+        title=title,
+        annotated_regions=[{"type": "text_span", "start_index": start_index, "end_index": end_index}],
+    )
+
+
+def _expected_url_citation(
+    *,
+    url: str = "https://www.python.org/downloads/release/python-31315/",
+    title: str = "Python 3.13.15",
+    start_index: int = 0,
+    end_index: int = 6,
+) -> dict[str, Any]:
+    return {
+        "type": "url_citation",
+        "url": url,
+        "title": title,
+        "start_index": start_index,
+        "end_index": end_index,
+    }
+
+
+def _file_citation(
+    *,
+    file_id: str = "file_123",
+    filename: str = "brambleglass-kestrel-st731.txt",
+    index: int = 0,
+) -> Annotation:
+    return Annotation(
+        type="citation",
+        file_id=file_id,
+        url=filename,
+        additional_properties={"index": index},
+    )
+
+
+def _expected_file_citation(
+    *,
+    file_id: str = "file_123",
+    filename: str = "brambleglass-kestrel-st731.txt",
+    index: int = 0,
+) -> dict[str, Any]:
+    return {
+        "type": "file_citation",
+        "file_id": file_id,
+        "filename": filename,
+        "index": index,
+    }
+
+
+@pytest.mark.parametrize(
+    "raw_citations",
+    [
+        "not-json",
+        [{"file_id": "cfile_123"}],
+        123,
+    ],
+)
+def test_container_file_citations_ignore_malformed_metadata(raw_citations: Any) -> None:
+    function_result = _mcp_function_result(
+        "call_1",
+        item_meta={
+            "container_id": "cntr_123",
+            "container_file_citations": raw_citations,
+        },
+    )
+
+    assert _container_file_citations_from_function_result(function_result) == []
+
+
+def test_container_file_citations_ignore_recursive_json() -> None:
+    function_result = _mcp_function_result(
+        "call_1",
+        item_meta={
+            "container_id": "cntr_123",
+            "container_file_citations": "[]",
+        },
+    )
+
+    with patch("agent_framework_foundry_hosting._responses.json.loads", side_effect=RecursionError):
+        assert _container_file_citations_from_function_result(function_result) == []
+
+
+def test_framework_annotations_convert_all_responses_citation_variants() -> None:
+    annotations = [
+        Annotation(
+            type="citation",
+            title="Source",
+            url="https://example.com/source",
+            annotated_regions=[
+                {"type": "text_span", "start_index": 0, "end_index": 6},
+                {"type": "text_span", "start_index": 12, "end_index": 18},
+            ],
+        ),
+        _file_citation(),
+        Annotation(
+            type="citation",
+            file_id="file_path_123",
+            additional_properties={"index": 7},
+        ),
+        Annotation(
+            type="citation",
+            file_id="container_file_123",
+            url="report.csv",
+            annotated_regions=[{"type": "text_span", "start_index": 20, "end_index": 30}],
+            additional_properties={"container_id": "container_123"},
+        ),
+    ]
+
+    assert _annotations_to_output_text(annotations) == [
+        {
+            "type": "url_citation",
+            "url": "https://example.com/source",
+            "title": "Source",
+            "start_index": 0,
+            "end_index": 6,
+        },
+        {
+            "type": "url_citation",
+            "url": "https://example.com/source",
+            "title": "Source",
+            "start_index": 12,
+            "end_index": 18,
+        },
+        _expected_file_citation(),
+        {
+            "type": "file_path",
+            "file_id": "file_path_123",
+            "index": 7,
+        },
+        {
+            "type": "container_file_citation",
+            "container_id": "container_123",
+            "file_id": "container_file_123",
+            "filename": "report.csv",
+            "start_index": 20,
+            "end_index": 30,
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("coordinate_space", "expected"),
+    [
+        pytest.param(None, [_expected_url_citation()], id="unmarked"),
+        pytest.param("content", [_expected_url_citation()], id="content"),
+        pytest.param("source", [], id="source"),
+    ],
+)
+def test_framework_annotations_respect_coordinate_space_without_raw_representation(
+    coordinate_space: Literal["content", "source"] | None, expected: list[dict[str, Any]]
+) -> None:
+    annotation = _url_citation()
+    if coordinate_space is not None:
+        annotation["annotated_regions_coordinate_space"] = coordinate_space
+    annotations = json.loads(json.dumps([annotation]))
+    original_annotations = copy.deepcopy(annotations)
+
+    assert _annotations_to_output_text(annotations) == expected
+    assert annotations == original_annotations
+
+
+def test_framework_annotations_preserve_file_citations_with_source_regions() -> None:
+    annotation = _file_citation()
+    annotation["annotated_regions"] = [{"type": "text_span", "start_index": 1, "end_index": 3}]
+    annotation["annotated_regions_coordinate_space"] = "source"
+    original_annotation = copy.deepcopy(annotation)
+
+    assert _annotations_to_output_text([annotation]) == [_expected_file_citation()]
+    assert annotation == original_annotation
+
+
+def test_framework_annotations_ignore_malformed_runtime_shapes() -> None:
+    annotations = cast(
+        Any,
+        [
+            None,
+            "not-an-annotation",
+            {
+                "type": "citation",
+                "url": "https://example.com/mixed",
+                "title": "Mixed",
+                "additional_properties": "not-a-mapping",
+                "annotated_regions": [
+                    None,
+                    "not-a-region",
+                    {"type": "source_block", "start_index": 0, "end_index": 5},
+                    {"type": "text_span", "start_index": True, "end_index": 5},
+                    {"type": "text_span", "start_index": -1, "end_index": 5},
+                    {"type": "text_span", "start_index": 8, "end_index": 7},
+                    {"type": "text_span", "start_index": 2, "end_index": 7},
+                ],
+            },
+            {
+                "type": "citation",
+                "url": "https://example.com/non-string-title",
+                "title": 42,
+                "annotated_regions": [{"type": "text_span", "start_index": 8, "end_index": 9}],
+            },
+            {
+                "type": "citation",
+                "url": "https://example.com/string-regions",
+                "annotated_regions": "not-a-sequence-of-regions",
+            },
+        ],
+    )
+
+    assert _annotations_to_output_text(annotations) == [
+        _expected_url_citation(
+            url="https://example.com/mixed",
+            title="Mixed",
+            start_index=2,
+            end_index=7,
+        ),
+        _expected_url_citation(
+            url="https://example.com/non-string-title",
+            title="",
+            start_index=8,
+            end_index=9,
+        ),
+    ]
+    assert _annotations_to_output_text(cast(Any, "not-an-annotation-sequence")) == []
+
+
+@pytest.mark.parametrize(
+    "annotations",
+    [
+        pytest.param(42, id="integer"),
+        pytest.param(True, id="boolean"),
+        pytest.param(object(), id="object"),
+    ],
+)
+def test_framework_annotations_ignore_non_sequence_inputs(annotations: Any) -> None:
+    assert _annotations_to_output_text(annotations) == []
+
+
+def test_framework_annotations_ignore_unsupported_or_incomplete_values() -> None:
+    annotations = [
+        Annotation(type="citation", url="https://example.com/no-span"),
+        Annotation(
+            type="citation",
+            url="https://example.com/invalid-span",
+            annotated_regions=[{"type": "text_span", "start_index": 0}],
+        ),
+        Annotation(type="citation", file_id="file-without-index"),
+        Annotation(type="citation", file_id="file-without-index", url="document.txt"),
+        cast(Annotation, {"type": "citation", "file_id": "file-1", "additional_properties": {"index": True}}),
+        cast(Annotation, {"type": "citation", "file_id": "file-1", "additional_properties": {"index": -1}}),
+        cast(Annotation, {"type": "other", "url": "https://example.com/unsupported"}),
+    ]
+
+    assert _annotations_to_output_text(annotations) == []
 
 
 # region Helpers
@@ -446,7 +805,7 @@ class _FailingSessionStore(SessionStore):
     async def set(self, session_id: str, session: AgentSession) -> None:
         del session_id, session
         self.set_attempts += 1
-        raise OSError("session storage is full")
+        raise OSError(_SESSION_STORAGE_ERROR_DETAIL)
 
 
 class _ConflictingConversationStore(SessionStore):
@@ -499,6 +858,82 @@ async def test_output_item_tracker_emits_native_refusal_events_for_marked_text()
         "response.content_part.done",
         "response.output_item.done",
     ]
+
+
+@pytest.mark.parametrize(
+    ("outputs", "expected"),
+    [
+        (Content.from_uri("data:image/png;base64,iVBORw0KGgo="), "iVBORw0KGgo="),
+        ([Content.from_uri("data:image/png;base64,iVBORw0KGgo=")], "iVBORw0KGgo="),
+        ((Content.from_uri("data:image/png;base64,iVBORw0KGgo="),), "iVBORw0KGgo="),
+        ([Content.from_text("caption"), Content.from_uri("data:image/png;base64,iVBORw0KGgo=")], "iVBORw0KGgo="),
+        (["caption", Content.from_uri("data:image/png;base64,iVBORw0KGgo=")], "iVBORw0KGgo="),
+        ("iVBORw0KGgo=", "iVBORw0KGgo="),
+        (Content.from_uri("data:image/png;name=cat.png;base64,iVBORw0KGgo="), "iVBORw0KGgo="),
+        (
+            [
+                Content.from_uri("data:image/png;base64,not-base64!"),
+                Content.from_uri("data:image/png;base64,iVBORw0KGgo="),
+            ],
+            "iVBORw0KGgo=",
+        ),
+        (Content.from_uri("https://example.com/cat.png", media_type="image/png"), ""),
+        (Content.from_uri("data:image/svg+xml,%3Csvg%3E%3C/svg%3E"), ""),
+        (Content.from_uri("data:image/png;base64,not-base64!"), ""),
+        (Content.from_uri("data:image/png;base64,iVBORw0KGgo"), ""),
+        (Content.from_uri("data:image/png;base64,iVBOR\nw0KGgo="), ""),
+        (Content.from_uri("data:image/png;base64,"), ""),
+        (Content.from_uri("data:text/plain,x;base64,iVBORw0KGgo="), ""),
+        (Content.from_hosted_file("file_1"), ""),
+        ("https://example.com/cat.png", ""),
+        ("not-base64!", ""),
+        ("", ""),
+        (b"\x89PNG\r\n\x1a\n", ""),
+        ({"result": "iVBORw0KGgo="}, ""),
+    ],
+    ids=[
+        "data-uri-content",
+        "content-list",
+        "content-tuple",
+        "image-after-text",
+        "image-after-string",
+        "base64-string",
+        "data-uri-with-parameter",
+        "image-after-malformed-payload",
+        "https-uri-is-not-base64",
+        "data-uri-without-base64",
+        "data-uri-malformed-payload",
+        "data-uri-missing-padding",
+        "data-uri-whitespace-in-payload",
+        "data-uri-empty-payload",
+        "base64-marker-inside-payload",
+        "hosted-file",
+        "url-string-is-not-base64",
+        "malformed-string",
+        "empty-string",
+        "bytes",
+        "mapping",
+    ],
+)
+async def test_output_item_tracker_emits_image_generation_result_as_base64(
+    outputs: Any, expected: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    stream = ResponseEventStream(response_id="resp_image")
+    stream.emit_created()
+    stream.emit_in_progress()
+    tracker = _OutputItemTracker(stream)
+    events: list[Any] = []
+
+    with caplog.at_level(logging.WARNING):
+        async for event in tracker.handle(Content.from_image_generation_tool_result(image_id="ig_1", outputs=outputs)):
+            events.append(event)
+    events.extend(tracker.close())
+
+    done = [e for e in events if (e.get("type") if isinstance(e, Mapping) else e.type) == "response.output_item.done"]
+    assert len(done) == 1
+    assert done[0]["item"]["type"] == "image_generation_call"
+    assert done[0]["item"]["result"] == expected
+    assert ("has no base64 image" in caplog.text) is (expected == "")
 
 
 async def test_output_item_tracker_keeps_mixed_text_and_refusal_in_one_message() -> None:
@@ -558,7 +993,10 @@ async def test_item_to_message_marks_refusal_text() -> None:
 
     assert message.contents[0].type == "text"
     assert message.contents[0].text == "I cannot help."
-    assert message.contents[0].additional_properties == {"model_output_kind": "refusal"}
+    assert message.contents[0].additional_properties == {
+        "core": {"model_output_kind": "refusal"},
+        "model_output_kind": "refusal",
+    }
 
 
 class _CapturingASGITransport:
@@ -586,6 +1024,8 @@ async def _post(
     parallel_tool_calls: bool | None = None,
     previous_response_id: str | None = None,
     conversation_id: str | None = None,
+    metadata: Mapping[str, str] | None = None,
+    store: bool | None = None,
 ) -> httpx.Response:
     """Send a POST /responses request through the ASGI transport."""
     payload: dict[str, Any] = {"model": model, "input": input_text, "stream": stream}
@@ -601,10 +1041,21 @@ async def _post(
         payload["previous_response_id"] = previous_response_id
     if conversation_id is not None:
         payload["conversation"] = conversation_id
+    if metadata is not None:
+        payload["metadata"] = dict(metadata)
+    if store is not None:
+        payload["store"] = store
 
     transport = httpx.ASGITransport(app=server)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         return await client.post("/responses", json=payload)
+
+
+async def _get_response(server: ResponsesHostServer, response_id: str) -> httpx.Response:
+    """GET one stored response through the ASGI transport."""
+    transport = httpx.ASGITransport(app=server)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.get(f"/responses/{response_id}")
 
 
 def _parse_sse_events(body: str) -> list[dict[str, Any]]:
@@ -902,6 +1353,195 @@ def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
 # region Serialization Helpers
 
 
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("metadata", [None, {}, {"foo": "bar", "view": "concise"}])
+async def test_request_metadata_is_returned_and_stored(stream: bool, metadata: dict[str, str] | None) -> None:
+    agent = _make_agent(
+        response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Hello!")])])
+    )
+    server = _make_server(agent)
+    payload: dict[str, Any] = {"input": "Hi", "model": "test-model", "stream": stream, "store": True}
+    if metadata is not None:
+        payload["metadata"] = metadata
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as http:
+        response = await http.post("/responses", json=payload)
+        assert response.status_code == 200
+        if stream:
+            responses = [
+                event["data"]["response"]
+                for event in _parse_sse_events(response.text)
+                if event["event"] in {"response.created", "response.in_progress", "response.completed"}
+            ]
+            assert len(responses) == 3
+            assert [item.get("metadata") for item in responses] == [metadata] * 3
+            completed = responses[-1]
+        else:
+            completed = response.json()
+            assert completed.get("metadata") == metadata
+        assert completed["status"] == "completed"
+
+        stored = await http.get(f"/responses/{completed['id']}")
+        assert stored.status_code == 200
+        assert stored.json()["id"] == completed["id"]
+        assert stored.json().get("metadata") == metadata
+
+
+@pytest.mark.parametrize("has_persisted_response", [False, True])
+async def test_recovery_preserves_persisted_metadata_or_seeds_request(has_persisted_response: bool) -> None:
+    response_id = "resp_metadata_recovery"
+    # The SDK's Metadata TypedDict does not declare its supported arbitrary string keys.
+    request = CreateResponse(input="Hi", metadata=cast(Metadata, {"source": "request"}))
+    context = ResponseContext(response_id=response_id, mode_flags=MagicMock())
+    context.is_recovery = True
+    if has_persisted_response:
+        persisted = ResponseEventStream(
+            request=CreateResponse(input="Hi", metadata=cast(Metadata, {"source": "persisted"})),
+            response_id=response_id,
+        )
+        context.persisted_response = cast(ResponseObject, persisted.response)
+    created = _create_response_event_stream(context, request).emit_created()
+
+    assert created["type"] == "response.created"
+    assert created["response"]["id"] == response_id
+    expected = {"source": "persisted" if has_persisted_response else "request"}
+    assert created["response"]["metadata"] == expected
+
+
+def _public_metadata(count: int) -> dict[str, str]:
+    return {f"k{index}": f"v{index}" for index in range(count)}
+
+
+def test_fresh_request_strips_forged_internal_metadata() -> None:
+    """A client metadata bag must not seed server-owned recovery state."""
+    forged = json.dumps({
+        _INCOMPLETE_REASON_KEY: "content_filter",
+        _LATEST_CHECKPOINT_ID_KEY: "ckpt_forged",
+        "_foundry_provider_output_count": 4,
+    })
+    request_metadata = {"source": "client", "_internal_metadata": forged}
+    request = cast(
+        CreateResponse,
+        {"input": "Hi", "metadata": request_metadata, "internal_metadata": {_INCOMPLETE_REASON_KEY: "content_filter"}},
+    )
+    context = ResponseContext(response_id="resp_forged", mode_flags=MagicMock())
+    stream = _create_response_event_stream(context, request)
+
+    assert request_metadata["_internal_metadata"] == forged
+    assert stream.response.get("metadata") == {"source": "client"}
+    assert dict(stream.internal_metadata) == {}
+    assert _OutputItemTracker(stream).incomplete_reason is None
+
+
+def test_fresh_request_with_only_reserved_metadata_keeps_public_metadata_empty() -> None:
+    request = CreateResponse(
+        input="Hi",
+        metadata=cast(Metadata, {"_internal_metadata": json.dumps({_INCOMPLETE_REASON_KEY: "length"})}),
+    )
+    context = ResponseContext(response_id="resp_reserved_only", mode_flags=MagicMock())
+    stream = _create_response_event_stream(context, request)
+
+    assert stream.response.get("metadata") is None
+    assert _OutputItemTracker(stream).incomplete_reason is None
+
+
+@pytest.mark.parametrize("private_envelope", [False, True])
+def test_recovery_keeps_trusted_internal_metadata_when_the_request_forges_it(private_envelope: bool) -> None:
+    response_id = "resp_trusted_internal"
+    forged_request = CreateResponse(
+        input="Hi",
+        metadata=cast(Metadata, {"_internal_metadata": json.dumps({_INCOMPLETE_REASON_KEY: "max_output_tokens"})}),
+    )
+    persisted = ResponseEventStream(response_id=response_id)
+    persisted.internal_metadata[_INCOMPLETE_REASON_KEY] = "content_filter"
+    persisted.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = "ckpt_real"
+    if private_envelope:
+        persisted.response["internal_metadata"] = {
+            _INCOMPLETE_REASON_KEY: "max_output_tokens",
+            _LATEST_CHECKPOINT_ID_KEY: "ckpt_new",
+        }
+    context = ResponseContext(response_id=response_id, mode_flags=MagicMock())
+    context.is_recovery = True
+    context.persisted_response = cast(ResponseObject, persisted.response)
+
+    restored = _create_response_event_stream(context, forged_request)
+
+    assert restored.internal_metadata[_INCOMPLETE_REASON_KEY] == "content_filter"
+    assert restored.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] == "ckpt_real"
+    assert _OutputItemTracker(restored).incomplete_reason == (
+        ResponseIncompleteReason.MAX_OUTPUT_TOKENS if private_envelope else ResponseIncompleteReason.CONTENT_FILTER
+    )
+    assert _hosted_internal_metadata(restored)[_LATEST_CHECKPOINT_ID_KEY] == (
+        "ckpt_new" if private_envelope else "ckpt_real"
+    )
+
+
+@pytest.mark.parametrize("invalid", [[], "corrupt", 1])
+def test_corrupt_private_checkpoint_metadata_is_rejected(invalid: Any) -> None:
+    stream = ResponseEventStream(response_id="resp_corrupt_private")
+    stream.response["internal_metadata"] = invalid
+
+    with pytest.raises(RuntimeError, match="persisted host metadata is invalid"):
+        _OutputItemTracker(stream)
+
+
+def test_recovery_without_a_snapshot_still_strips_forged_internal_metadata() -> None:
+    request = CreateResponse(
+        input="Hi",
+        metadata=cast(Metadata, {"source": "client", "_internal_metadata": '{"_incomplete_reason":"content_filter"}'}),
+    )
+    context = ResponseContext(response_id="resp_recovery_unseeded", mode_flags=MagicMock())
+    context.is_recovery = True
+    context.persisted_response = None
+
+    stream = _create_response_event_stream(context, request)
+
+    assert stream.response.get("metadata") == {"source": "client"}
+    assert _OutputItemTracker(stream).incomplete_reason is None
+
+
+def test_reserved_metadata_key_does_not_consume_the_host_incomplete_reason_slot() -> None:
+    """Fifteen public entries plus a forged reserved key still leave room for the host reason."""
+    metadata = _public_metadata(15)
+    metadata["_internal_metadata"] = json.dumps({_INCOMPLETE_REASON_KEY: "max_output_tokens"})
+    request = CreateResponse(input="Hi", metadata=cast(Metadata, metadata))
+    context = ResponseContext(response_id="resp_freed_slot", mode_flags=MagicMock())
+    stream = _create_response_event_stream(context, request)
+    tracker = _OutputItemTracker(stream)
+
+    tracker.record_finish_reason("content_filter")
+
+    assert tracker.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+    stored = stream.response["internal_metadata"]
+    assert stored[_INCOMPLETE_REASON_KEY] == "content_filter"
+    assert all(stream.response["metadata"][key] == value for key, value in _public_metadata(15).items())
+
+
+def test_full_public_metadata_records_incomplete_reason_outside_the_quota() -> None:
+    metadata = _public_metadata(16)
+    request = CreateResponse(input="Hi", metadata=cast(Metadata, metadata))
+    context = ResponseContext(response_id="resp_full_metadata", mode_flags=MagicMock())
+    stream = _create_response_event_stream(context, request)
+    tracker = _OutputItemTracker(stream)
+
+    tracker.record_finish_reason("length")
+    tracker.record_finish_reason("content_filter")
+    _hosted_internal_metadata(stream)[_LATEST_CHECKPOINT_ID_KEY] = "ckpt_saved"
+
+    assert tracker.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+    assert stream.response["metadata"] == metadata
+    assert "_internal_metadata" not in stream.response["metadata"]
+    assert stream.response["internal_metadata"][_LATEST_CHECKPOINT_ID_KEY] == "ckpt_saved"
+    assert stream.response["internal_metadata"][_INCOMPLETE_REASON_KEY] == "content_filter"
+
+    recovered = _OutputItemTracker(
+        ResponseEventStream(response=cast(ResponseObject, stream.response), response_id="resp_full_metadata")
+    )
+    assert recovered.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+    recovered.record_finish_reason("stop")
+    assert recovered.incomplete_reason == ResponseIncompleteReason.CONTENT_FILTER
+
+
 class TestSerializationHelpers:
     def test_json_safe_to_str_preserves_structured_conversion_and_falls_back_to_string(self) -> None:
         @dataclass
@@ -1049,9 +1689,9 @@ class TestResponsesHostServerInit:
             ResponsesHostServer(agent)
 
     def test_init_allows_default_conversation_id_for_agent_history(self) -> None:
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=_ServiceStorageRecordingClient(),
-            default_options={"conversation_id": "service-thread"},  # pyrefly: ignore[bad-argument-type]
+            default_options={"conversation_id": "service-thread"},
         )
 
         ResponsesHostServer(agent, history_source="agent")
@@ -1068,9 +1708,9 @@ class TestResponsesHostServerInit:
             ResponsesHostServer(agent)
 
     def test_failed_init_does_not_mutate_agent(self) -> None:
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=_RecordingHistoryClient(),
-            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": True},
         )
 
         with pytest.raises(RuntimeError, match="resilient_background"):
@@ -1337,10 +1977,10 @@ class TestAgentSessionPersistence:
 
     async def test_agent_server_history_disables_service_storage(self) -> None:
         client = _ServiceStorageRecordingClient()
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=client,
             name="Service Storage Agent",
-            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": True},
         )
         store = SessionStore()
         server = _make_server(agent, session_store=store)
@@ -1362,10 +2002,10 @@ class TestAgentSessionPersistence:
 
     async def test_host_history_rejects_storing_default_without_mutating_it(self) -> None:
         client = _RecordingHistoryClient()
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=client,
             name="Non-Storing Agent",
-            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": True},
         )
         with pytest.raises(RuntimeError, match="Remove that developer-owned default"):
             _make_server(agent, session_store=SessionStore())
@@ -1374,9 +2014,9 @@ class TestAgentSessionPersistence:
 
     async def test_host_history_preserves_non_storing_client_default(self) -> None:
         client = _RecordingHistoryClient()
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=client,
-            default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": False},
         )
         server = _make_server(agent)
         response = await _post(server)
@@ -1638,6 +2278,31 @@ class TestAgentSessionPersistence:
         assert "host-controlled" in response.json()["error"]["message"]
         agent.run.assert_not_called()
 
+    async def test_prepare_options_failure_is_sanitized(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        private_error_detail = "prepare-options-secret at C:\\sensitive\\prepare_options.py"
+
+        def prepare_options(_request: Any, _options: dict[str, Any]) -> dict[str, Any]:
+            raise RuntimeError(private_error_detail)
+
+        agent = _make_agent()
+        server = _make_server(agent, prepare_options=prepare_options)
+
+        with caplog.at_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses"):
+            response = await _post_json(server, {"input": "one shot", "store": False})
+
+        body = response.json()
+        assert body["status"] == "failed"
+        assert body["error"]["message"] == "An internal server error occurred."
+        assert private_error_detail not in response.text
+        assert private_error_detail not in caplog.text
+        assert "phase=request preparation" in caplog.text
+        assert f"response_id={body['id']}" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
+        agent.run.assert_not_called()
+
     async def test_nested_extra_body_cannot_override_unstored_openai_request(self) -> None:
         outbound: list[dict[str, Any]] = []
 
@@ -1788,6 +2453,69 @@ class TestAgentSessionPersistence:
         assert len(updates) == 1
         assert updates[0].contents == []
         assert updates[0].finish_reason == "content_filter"
+
+    @pytest.mark.parametrize("annotate_prefix", [False, True])
+    async def test_provider_background_preserves_completed_text_part_citation_offsets(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, annotate_prefix: bool
+    ) -> None:
+        response = AgentResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_text(
+                            "See ", annotations=[_url_citation(end_index=3)] if annotate_prefix else None
+                        ),
+                        Content.from_text("Python", annotations=[_url_citation()]),
+                    ],
+                )
+            ],
+            finish_reason="stop",
+        )
+        original_response = copy.deepcopy(response.to_dict())
+        agent = Agent(client=_ServiceStorageRecordingClient())
+
+        async def run(messages: Any = None, *, session: AgentSession, **kwargs: Any) -> AgentResponse:
+            del messages, kwargs
+            session.service_session_id = "private-service-conversation"
+            return response
+
+        monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            history_source="service",
+            background_source="provider",
+            options=ResponsesServerOptions(resilient_background=True),
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [
+                event
+                async for event in server._handle_response(request, context, asyncio.Event())
+                if isinstance(event, Mapping)
+            ]
+
+        completed = next(event["response"] for event in events if event["type"] == "response.completed")
+        message = next(item for item in completed["output"] if item["type"] == "message")
+        parts = [part for part in message["content"] if part["type"] == "output_text"]
+        assert len(parts) == len(message["content"])
+        assert [part["text"] for part in parts] == ["See ", "Python"]
+        assert parts[0]["annotations"] == ([_expected_url_citation(end_index=3)] if annotate_prefix else [])
+        assert parts[1]["annotations"] == [_expected_url_citation()]
+        annotation_events = [event for event in events if event["type"] == "response.output_text.annotation.added"]
+        assert [event["content_index"] for event in annotation_events] == ([0, 1] if annotate_prefix else [1])
+        assert annotation_events[-1]["annotation"] == _expected_url_citation()
+        content_done = next(
+            event for event in events if event["type"] == "response.content_part.done" and event["content_index"] == 1
+        )
+        assert content_done["part"] == parts[1]
+        output_done = next(event for event in events if event["type"] == "response.output_item.done")
+        assert output_done["item"] == message
+        assert response.to_dict() == original_response
 
     async def test_provider_background_keeps_private_token_under_outer_response(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2546,6 +3274,128 @@ class TestAgentSessionPersistence:
         assert completed is False and result is None
         operation.assert_not_called()
 
+    @pytest.mark.parametrize("metadata_count", [15, 16])
+    @pytest.mark.parametrize("crash_stage", ["before-checkpoint", "after-checkpoint"])
+    @pytest.mark.parametrize("finish_reason", ["stop", "length", "content_filter"])
+    async def test_provider_recovery_keeps_checkpointed_output_once(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        metadata_count: int,
+        crash_stage: str,
+        finish_reason: FinishReasonLiteral,
+    ) -> None:
+        response_id = IdGenerator.new_response_id()
+        metadata = _public_metadata(metadata_count)
+        calls: list[dict[str, Any]] = []
+
+        async def run(
+            messages: Any = None,
+            *,
+            session: AgentSession,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> AgentResponse:
+            del messages, kwargs
+            calls.append(dict(options))
+            if "continuation_token" not in options:
+                return AgentResponse(
+                    messages=[], continuation_token=OpenAIContinuationToken(response_id="private-cursor-token")
+                )
+            session.service_session_id = "private-cursor-conversation"
+            return AgentResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text("done")])],
+                usage_details={"input_token_count": 3, "output_token_count": 2, "total_token_count": 5},
+                finish_reason=FinishReason(finish_reason),
+            )
+
+        def make_host() -> ResponsesHostServer:
+            agent = Agent(client=_ServiceStorageRecordingClient())
+            monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
+            return _make_server(
+                agent,
+                history_source="service",
+                background_source="provider",
+                options=ResponsesServerOptions(resilient_background=True),
+                response_store=FileResponseStore(storage_dir=tmp_path),
+            )
+
+        request = CreateResponse(input="hello", store=True, background=True, metadata=cast(Metadata, metadata))
+        server = make_host()
+        context = ResponseContext(response_id=response_id, mode_flags=MagicMock())
+        response_store = FileResponseStore(storage_dir=tmp_path)
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch("agent_framework_foundry_hosting._responses.asyncio.sleep", new=AsyncMock()),
+        ):
+            handler = cast(AsyncGenerator[Any, None], server._handle_response(request, context, asyncio.Event()))
+            crashed = False
+            try:
+                async for event in handler:
+                    if isinstance(event, ResponseCheckpointEvent):
+                        await response_store.update_response(copy.deepcopy(event.response))
+                        if crash_stage == "after-checkpoint":
+                            crashed = True
+                            break
+                    elif isinstance(event, Mapping):
+                        if event.get("type") == "response.created":
+                            await response_store.create_response(copy.deepcopy(event["response"]), [], [])
+                        elif crash_stage == "before-checkpoint" and event.get("type") == "response.output_item.done":
+                            crashed = True
+                            break
+            finally:
+                await handler.aclose()
+            assert crashed
+            checkpoint = await FileResponseStore(storage_dir=tmp_path).get_response(response_id)
+            assert checkpoint is not None
+            session_store = AgentSessionStoreProvider().get_store(
+                config=server.config, platform_context=get_request_context()
+            )
+            saved = await session_store.get(response_id)
+            assert saved is not None
+            private_checkpoint = saved.to_dict()
+
+            for _ in range(2):
+                # Restart independently from the same paired durable checkpoint.
+                restore_store = AgentSessionStoreProvider().get_store(
+                    config=server.config, platform_context=get_request_context()
+                )
+                await restore_store.get(response_id)
+                await restore_store.set(response_id, AgentSession.from_dict(copy.deepcopy(private_checkpoint)))
+                await FileResponseStore(storage_dir=tmp_path).update_response(copy.deepcopy(checkpoint))
+                recovered = ResponseContext(response_id=response_id, mode_flags=MagicMock())
+                recovered.is_recovery = True
+                recovered.persisted_response = await FileResponseStore(storage_dir=tmp_path).get_response(response_id)
+                restarted = make_host()
+                events = [event async for event in restarted._handle_response(request, recovered, asyncio.Event())]
+                terminal = events[-1]
+                assert isinstance(terminal, Mapping)
+                if finish_reason == "stop":
+                    assert terminal["type"] == "response.completed"
+                else:
+                    assert terminal["type"] == "response.incomplete"
+                response = terminal["response"]
+                assert len(response["output"]) == 1
+                message = response["output"][0]
+                assert message["type"] == "message"
+                assert len(message["content"]) == 1
+                content = message["content"][0]
+                assert content["type"] == "output_text"
+                assert content["text"] == "done"
+                assert response["usage"]["total_tokens"] == 5
+                if finish_reason != "stop":
+                    expected_reason = "max_output_tokens" if finish_reason == "length" else "content_filter"
+                    assert response["incomplete_details"] == {"reason": expected_reason}
+                await response_store.update_response(response)
+                fetched = await _get_response(restarted, response_id)
+                assert fetched.status_code == 200, fetched.text
+                public = fetched.json()
+                assert public["metadata"] == metadata
+                assert "internal_metadata" not in public
+                assert "_internal_metadata" not in public["metadata"]
+                assert "private-cursor-token" not in str(public)
+                assert len(calls) == 2
+
     async def test_final_provider_poll_keeps_token_for_crash_recovery(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2669,7 +3519,7 @@ class TestAgentSessionPersistence:
         assert "private-provider-token" not in str(events)
         assert "private-provider-token" not in caplog.text
         for record in caplog.records:
-            if record.name == "agent_framework_foundry_hosting._responses" and record.exc_info is not None:
+            if record.name == "agent_framework_foundry_hosting._responses" and record.exc_info:
                 exception = record.exc_info[1]
                 assert exception is not None and exception.__cause__ is None and exception.__context__ is None
 
@@ -2847,7 +3697,7 @@ class TestAgentSessionPersistence:
             failed = await collect("failed-dispatch")
             blocked = await collect("retry-after-failure")
 
-        assert "provider timed out" in _failure_message(failed)
+        assert _failure_message(failed) == "An internal server error occurred."
         assert "in-flight turn" in _failure_message(blocked)
         agent.run.assert_called_once()
         head = await store.get(conversation_id)
@@ -3033,11 +3883,11 @@ class TestAgentSessionPersistence:
     async def test_agent_history_uses_in_memory_history_from_session_store(self) -> None:
         client = _RecordingHistoryClient()
         history = InMemoryHistoryProvider()
-        agent = Agent(
+        agent = Agent[ChatOptions](
             client=client,
             name="Agent Managed In-Memory History",
             context_providers=[history],
-            default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+            default_options={"store": False},
         )
         store = SessionStore()
         server = _make_server(agent, session_store=store, history_source="agent")
@@ -3067,7 +3917,10 @@ class TestAgentSessionPersistence:
             response = await _post(server, input_text="first")
 
         assert response.json()["status"] == "failed"
-        assert "stored this turn server-side" in caplog.text
+        assert "stored this turn server-side" not in caplog.text
+        assert "phase=stored output validation" in caplog.text
+        assert f"response_id={response.json()['id']}" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
         assert await store.get(response.json()["id"]) is None
 
     async def test_per_service_call_persistence_preserves_function_loop_history(self) -> None:
@@ -3207,9 +4060,11 @@ class TestAgentSessionPersistence:
         assert event_types.count("response.failed") == 1
         assert "response.completed" not in event_types
         error = failed_events[0]["data"]["response"]["error"]
-        assert "agent failed" in error["message"]
-        assert "session storage is full" in error["message"]
-        assert "Failed to produce response for agent" in caplog.text
+        assert error["message"] == "An internal server error occurred."
+        assert "agent failed" not in str(failed_events)
+        assert _SESSION_STORAGE_ERROR_DETAIL not in str(failed_events)
+        assert _SESSION_STORAGE_ERROR_DETAIL not in caplog.text
+        assert "phase=agent execution" in caplog.text
         assert "Failed to persist the Agent Framework session after an agent failure" in caplog.text
 
     async def test_cancellation_is_preserved_when_best_effort_save_fails(
@@ -3529,6 +4384,7 @@ class TestHealthCheck:
 # region Non-streaming
 
 
+@pytest.mark.xdist_group("session_isolation")
 class TestNonStreaming:
     """
     Non-streaming here means that the client requested a non-streaming response, instead of
@@ -3587,6 +4443,180 @@ class TestNonStreaming:
         assert "function_call" in types
         assert "function_call_output" in types
         assert "message" in types
+
+    async def test_function_result_container_file_citation_is_added_to_output_text(self) -> None:
+        resp = await _post(_make_server(_make_agent(stream_updates=_container_file_citation_updates())), stream=False)
+
+        assert resp.status_code == 200
+        messages = [item for item in resp.json()["output"] if item["type"] == "message"]
+        preparing = next(
+            part for message in messages for part in message["content"] if part.get("text") == "Preparing the download."
+        )
+        final = next(
+            part for message in messages for part in message["content"] if part.get("text") == "Download result.txt"
+        )
+        assert preparing["annotations"] == []
+        assert final["annotations"] == [_expected_container_file_citation()]
+
+    async def test_framework_url_and_file_citations_are_added_to_output_text(self) -> None:
+        source_citation = _url_citation(start_index=0, end_index=1)
+        source_citation["annotated_regions_coordinate_space"] = "source"
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_text(
+                            "Python sources",
+                            annotations=[source_citation, _url_citation(), _file_citation()],
+                        )
+                    ],
+                    role="assistant",
+                    message_id="msg_citations",
+                )
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        assert resp.status_code == 200
+        message = next(item for item in resp.json()["output"] if item["type"] == "message")
+        assert message["content"][0]["annotations"] == [
+            _expected_url_citation(),
+            _expected_file_citation(),
+        ]
+
+    async def test_latest_pending_container_file_citation_replaces_same_filename(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_1", "code_interpreter", arguments={})],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[_container_file_result("call_1", container_id="cntr_old", file_id="cfile_old")],
+                    role="tool",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Still working.")],
+                    role="assistant",
+                    message_id="msg_working",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_2", "code_interpreter", arguments={})],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[_container_file_result("call_2", container_id="cntr_new", file_id="cfile_new")],
+                    role="tool",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Download result.txt")],
+                    role="assistant",
+                    message_id="msg_final",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        final_message = next(
+            item
+            for item in resp.json()["output"]
+            if item["type"] == "message" and item["content"][0].get("text") == "Download result.txt"
+        )
+        assert final_message["content"][0]["annotations"] == [
+            _expected_container_file_citation(container_id="cntr_new", file_id="cfile_new")
+        ]
+
+    async def test_container_file_citations_require_complete_non_overlapping_filename_matches(self) -> None:
+        updates: list[AgentResponseUpdate] = []
+        for suffix, filename in [
+            ("a", "a"),
+            ("data", "data.csv"),
+            ("metadata", "metadata.csv"),
+            ("report", "report.txt"),
+            ("my_report", "my report.txt"),
+        ]:
+            updates.extend([
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call(f"call_{suffix}", "code_interpreter", arguments={})],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        _container_file_result(
+                            f"call_{suffix}",
+                            container_id=f"cntr_{suffix}",
+                            file_id=f"cfile_{suffix}",
+                            filename=filename,
+                        )
+                    ],
+                    role="tool",
+                ),
+            ])
+        for suffix, text in [
+            ("preparing", "Preparing the download."),
+            ("metadata", "Download metadata.csv"),
+            ("data", "Download data.csv"),
+            ("a", "Download a"),
+            ("my_report", "Download my report.txt"),
+            ("report", "Download report.txt"),
+        ]:
+            updates.append(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text)],
+                    role="assistant",
+                    message_id=f"msg_{suffix}",
+                )
+            )
+
+        agent = _make_agent(stream_updates=updates)
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        parts_by_text = {
+            part["text"]: part
+            for item in resp.json()["output"]
+            if item["type"] == "message"
+            for part in item["content"]
+            if part["type"] == "output_text"
+        }
+        assert parts_by_text["Preparing the download."]["annotations"] == []
+        assert parts_by_text["Download metadata.csv"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_metadata",
+                file_id="cfile_metadata",
+                filename="metadata.csv",
+            )
+        ]
+        assert parts_by_text["Download data.csv"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_data",
+                file_id="cfile_data",
+                filename="data.csv",
+            )
+        ]
+        assert parts_by_text["Download a"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_a",
+                file_id="cfile_a",
+                filename="a",
+            )
+        ]
+        assert parts_by_text["Download my report.txt"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_my_report",
+                file_id="cfile_my_report",
+                filename="my report.txt",
+            )
+        ]
+        assert parts_by_text["Download report.txt"]["annotations"] == [
+            _expected_container_file_citation(
+                container_id="cntr_report",
+                file_id="cfile_report",
+                filename="report.txt",
+            )
+        ]
 
     async def test_native_computer_call_and_result(self) -> None:
         item_id = IdGenerator.new_computer_call_item_id()
@@ -4183,6 +5213,186 @@ class TestStreaming:
         assert len(done_events) == 1
         assert done_events[0]["data"]["text"] == "Hello world!"
 
+    async def test_text_snapshot_emits_only_missing_delta(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello ", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello world", merge_mode="replace")],
+                    role="assistant",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        events = _parse_sse_events(resp.text)
+        deltas = [event["data"]["delta"] for event in events if event["event"] == "response.output_text.delta"]
+        done = next(event for event in events if event["event"] == "response.output_text.done")
+
+        assert deltas == ["Hello ", "world"]
+        assert done["data"]["text"] == "Hello world"
+
+    @pytest.mark.parametrize("replacement", ["Goodbye", "Hello"])
+    async def test_divergent_or_shrinking_text_snapshot_fails_stream(self, replacement: str) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Hello world", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text(replacement, merge_mode="replace")],
+                    role="assistant",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        events = _parse_sse_events(resp.text)
+        deltas = [event["data"]["delta"] for event in events if event["event"] == "response.output_text.delta"]
+        done = next(event for event in events if event["event"] == "response.output_text.done")
+
+        assert deltas == ["Hello world"]
+        assert done["data"]["text"] == "Hello world"
+        assert events[-1]["event"] == "response.failed"
+        assert "divergent replacement text snapshot" in events[-1]["data"]["response"]["error"]["message"]
+
+    async def test_container_file_citation_is_consistent_across_stream_events(self) -> None:
+        resp = await _post(
+            _make_server(_make_agent(stream_updates=_container_file_citation_updates())),
+            stream=True,
+        )
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        expected_annotation = _expected_container_file_citation()
+
+        annotation_event = next(event for event in events if event["event"] == "response.output_text.annotation.added")
+        assert annotation_event["data"]["annotation"] == expected_annotation
+        text_done_index = next(
+            index
+            for index, event in enumerate(events)
+            if event["event"] == "response.output_text.done" and event["data"]["text"] == "Download result.txt"
+        )
+        annotation_index = events.index(annotation_event)
+        content_done_index = next(
+            index
+            for index, event in enumerate(events)
+            if event["event"] == "response.content_part.done"
+            and event["data"]["part"].get("text") == "Download result.txt"
+        )
+        assert text_done_index < annotation_index < content_done_index
+
+        content_done = events[content_done_index]
+        assert content_done["data"]["part"]["annotations"] == [expected_annotation]
+
+        output_done = next(
+            event
+            for event in events
+            if event["event"] == "response.output_item.done"
+            and event["data"]["item"].get("type") == "message"
+            and event["data"]["item"]["content"][0].get("text") == "Download result.txt"
+        )
+        assert output_done["data"]["item"]["content"][0]["annotations"] == [expected_annotation]
+
+        completed = next(event["data"]["response"] for event in events if event["event"] == "response.completed")
+        final_message = next(
+            item
+            for item in completed["output"]
+            if item["type"] == "message" and item["content"][0].get("text") == "Download result.txt"
+        )
+        assert final_message["content"][0]["annotations"] == [expected_annotation]
+
+    async def test_framework_url_citation_is_consistent_across_stream_events(self) -> None:
+        source_citation = _url_citation(start_index=0, end_index=1)
+        source_citation["annotated_regions_coordinate_space"] = "source"
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_text("See ", annotations=[source_citation])],
+                    role="assistant",
+                    message_id="msg_citation",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_text(
+                            "Python",
+                            annotations=[_url_citation(start_index=4, end_index=10)],
+                        )
+                    ],
+                    role="assistant",
+                    message_id="msg_citation",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_text("", annotations=[_url_citation(start_index=4, end_index=10)])],
+                    role="assistant",
+                    message_id="msg_citation",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_text(
+                            "See Python",
+                            annotations=[_url_citation(start_index=4, end_index=10)],
+                            merge_mode="replace",
+                        )
+                    ],
+                    role="assistant",
+                    message_id="msg_citation",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        expected_annotation = _expected_url_citation(start_index=4, end_index=10)
+        annotation_events = [event for event in events if event["event"] == "response.output_text.annotation.added"]
+        assert [event["data"]["annotation"] for event in annotation_events] == [expected_annotation]
+
+        content_done = next(event for event in events if event["event"] == "response.content_part.done")
+        assert content_done["data"]["part"]["annotations"] == [expected_annotation]
+
+        completed = next(event["data"]["response"] for event in events if event["event"] == "response.completed")
+        final_message = next(item for item in completed["output"] if item["type"] == "message")
+        assert final_message["content"][0]["annotations"] == [expected_annotation]
+
+    async def test_pending_container_file_citation_survives_tracker_recovery(self) -> None:
+        stream = ResponseEventStream(response_id="resp_container_file")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+
+        function_call = Content.from_function_call("call_1", "code_interpreter", arguments={})
+        _ = [event async for event in tracker.handle(function_call)]
+        _ = [event async for event in tracker.handle(_container_file_result("call_1"))]
+        _ = list(tracker.close())
+        _ = stream.checkpoint()
+
+        recovered = _OutputItemTracker(stream)
+        events = [
+            event
+            async for event in recovered.handle(
+                Content.from_text("Download result.txt"),
+                message_id="msg_final",
+            )
+        ]
+        events.extend(recovered.close())
+
+        annotation_event = next(event for event in events if event["type"] == "response.output_text.annotation.added")
+        assert annotation_event["annotation"] == _expected_container_file_citation()
+        final_message = next(
+            item
+            for item in stream.response["output"]
+            if item["type"] == "message" and item["content"][0].get("text") == "Download result.txt"
+        )
+        assert final_message["content"][0]["annotations"] == [_expected_container_file_citation()]
+
     async def test_computer_call_streaming_emits_complete_items_once(self) -> None:
         item_id = "cu_" + "a" * 32
         call = Content.from_computer_tool_call(
@@ -4301,6 +5511,205 @@ class TestStreaming:
         args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
         assert len(args_done) == 1
         assert args_done[0]["data"]["arguments"] == '{"q": "hello"}'
+
+    async def test_function_call_replace_snapshot_not_appended(self) -> None:
+        """A ``replace`` snapshot (function_call_arguments.done) must not be appended after streamed fragments."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_1", "get_weather", arguments="{", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            "call_1", "get_weather", arguments='"location":"Seattle"}', merge_mode="append"
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            "call_1", "get_weather", arguments='{"location":"Seattle"}', merge_mode="replace"
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_result("call_1", result="The weather in Seattle is sunny.")],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+
+        # Two fragment deltas only; the replace snapshot equals the accumulated
+        # fragments, so it must NOT be re-emitted as a third delta.
+        assert types.count("response.function_call_arguments.delta") == 2
+
+        args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
+        assert len(args_done) == 1
+        assert args_done[0]["data"]["arguments"] == '{"location":"Seattle"}'
+
+        completed = events[-1]["data"]["response"]
+        fc_item = next(item for item in completed["output"] if item["type"] == "function_call")
+        assert fc_item["arguments"] == '{"location":"Seattle"}'
+        assert fc_item["status"] == "completed"
+
+    async def test_function_call_replace_snapshot_extends_fragments(self) -> None:
+        """When the replace snapshot carries more than the streamed fragments, only the unsent suffix streams."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call("call_2", "get_weather",
+                                                arguments='{"loc', merge_mode="append")
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            "call_2", "get_weather", arguments='{"location":"Seattle"}', merge_mode="replace"
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_result("call_2", result="The weather in Seattle is sunny.")],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+
+        args_deltas = [e for e in events if e["event"] == "response.function_call_arguments.delta"]
+        assert [e["data"]["delta"] for e in args_deltas] == ['{"loc', 'ation":"Seattle"}']
+
+        args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
+        assert len(args_done) == 1
+        assert args_done[0]["data"]["arguments"] == '{"location":"Seattle"}'
+
+    async def test_function_call_replace_snapshot_without_fragments(self) -> None:
+        """A replace snapshot with no prior fragments streams the whole snapshot once as the delta."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            "call_3", "get_weather", arguments='{"location":"Seattle"}', merge_mode="replace"
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_result("call_3", result="Sunny.")],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+
+        args_deltas = [e for e in events if e["event"] == "response.function_call_arguments.delta"]
+        assert [e["data"]["delta"] for e in args_deltas] == ['{"location":"Seattle"}']
+
+        args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
+        assert len(args_done) == 1
+        assert args_done[0]["data"]["arguments"] == '{"location":"Seattle"}'
+
+    async def test_function_call_divergent_snapshot_fails_stream(self) -> None:
+        """A replace snapshot that is not an extension of the fragments fails the stream, like text does."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call("call_4", "get_weather", arguments='{"a":1', merge_mode="append")
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call("call_4", "get_weather", arguments='{"b":2}', merge_mode="replace")
+                    ],
+                    role="assistant",
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        events = _parse_sse_events(resp.text)
+        assert events[-1]["event"] == "response.failed"
+        assert "divergent replacement text snapshot" in events[-1]["data"]["response"]["error"]["message"]
+
+    async def test_function_call_without_arguments_emits_no_empty_delta(self) -> None:
+        """A call with no arguments closes with empty arguments and emits no empty delta event."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_5", "ping")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_result("call_5", result="pong")],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+
+        assert "response.function_call_arguments.delta" not in _sse_event_types(events)
+        args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
+        assert len(args_done) == 1
+        assert args_done[0]["data"]["arguments"] == ""
+
+    async def test_non_streaming_function_call_replace_snapshot_not_appended(self) -> None:
+        """Non-streaming requests collect the same streamed updates; arguments stay the single snapshot."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_6", "get_weather", arguments="{", merge_mode="append")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            "call_6", "get_weather", arguments='{"location":"Seattle"}', merge_mode="replace"
+                        )
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_result("call_6", result="Sunny.")],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+        resp = await _post(server, stream=False)
+
+        assert resp.status_code == 200
+        fc_items = [item for item in resp.json()["output"] if item["type"] == "function_call"]
+        assert len(fc_items) == 1
+        assert fc_items[0]["arguments"] == '{"location":"Seattle"}'
 
     async def test_function_result_omits_internal_exception(self) -> None:
         agent = _make_agent(
@@ -4726,6 +6135,9 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].name == "get_weather"
+        assert msg.contents[0].status == "completed"
+        assert msg.contents[0].additional_properties["openai"]["item_id"] == "fc-1"
+        assert msg.contents[0].additional_properties["fc_id"] == "fc-1"
         assert msg.contents[0].informational_only is False
 
     async def test_function_call_output(self) -> None:
@@ -4904,14 +6316,13 @@ class TestOutputItemToMessage:
     async def test_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
             FunctionShellCallOutputContent,
-            FunctionShellCallOutputExitOutcome,
             OutputItemFunctionShellCallOutput,
         )
 
         output: FunctionShellCallOutputContent = {
             "stdout": "file.txt",
             "stderr": "warning",
-            "outcome": cast(FunctionShellCallOutputExitOutcome, {"type": "exit", "exit_code": 3}),
+            "outcome": {"type": "exit", "exit_code": 3},
         }
         item: OutputItemFunctionShellCallOutput = {
             "type": "shell_call_output",
@@ -4934,14 +6345,13 @@ class TestOutputItemToMessage:
     async def test_shell_call_output_preserves_timeout(self) -> None:
         from azure.ai.agentserver.responses.models import (
             FunctionShellCallOutputContent,
-            FunctionShellCallOutputTimeoutOutcome,
             OutputItemFunctionShellCallOutput,
         )
 
         output: FunctionShellCallOutputContent = {
             "stdout": "partial",
             "stderr": "timeout details",
-            "outcome": cast(FunctionShellCallOutputTimeoutOutcome, {"type": "timeout"}),
+            "outcome": {"type": "timeout"},
         }
         item: OutputItemFunctionShellCallOutput = {
             "type": "shell_call_output",
@@ -5008,6 +6418,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemWebSearchToolCall, WebSearchActionSearch
@@ -5023,6 +6434,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_computer_call(self) -> None:
         item = cast(
@@ -5042,6 +6454,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].id == "cc-1"
         assert msg.contents[0].call_id == "call_cc"
         assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["openai"]["computer_action_format"] == "single"
         assert msg.contents[0].additional_properties["computer_action_format"] == "single"
         assert msg.contents[0].user_input_request is True
 
@@ -5135,6 +6548,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_custom_tool_call_output(self) -> None:
         item = cast(
@@ -5201,6 +6615,7 @@ class TestOutputItemToMessage:
             "diff": "+ new line",
         }
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemApplyPatchToolCallOutput
@@ -5230,6 +6645,8 @@ class TestOutputItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "oauth_consent_request"
         assert msg.contents[0].consent_link == "https://example.com/consent"
+        assert msg.contents[0].additional_properties["openai"]["server_label"] == "my_server"
+        assert msg.contents[0].additional_properties["server_label"] == "my_server"
 
     async def test_structured_outputs_dict(self) -> None:
         from azure.ai.agentserver.responses.models import StructuredOutputsOutputItem
@@ -5346,6 +6763,9 @@ class TestItemToMessage:
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].name == "get_weather"
         assert msg.contents[0].arguments == '{"city": "NYC"}'
+        assert msg.contents[0].status == "completed"
+        assert msg.contents[0].additional_properties["openai"]["item_id"] == "fc-1"
+        assert msg.contents[0].additional_properties["fc_id"] == "fc-1"
         assert msg.contents[0].informational_only is False
 
     async def test_function_call_output(self) -> None:
@@ -5536,14 +6956,13 @@ class TestItemToMessage:
     async def test_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
             FunctionShellCallOutputContentParam,
-            FunctionShellCallOutputExitOutcomeParam,
             FunctionShellCallOutputItemParam,
         )
 
         output: FunctionShellCallOutputContentParam = {
             "stdout": "file.txt",
             "stderr": "warning",
-            "outcome": cast(FunctionShellCallOutputExitOutcomeParam, {"type": "exit", "exit_code": 3}),
+            "outcome": {"type": "exit", "exit_code": 3},
         }
         item: FunctionShellCallOutputItemParam = {
             "type": "shell_call_output",
@@ -5566,13 +6985,12 @@ class TestItemToMessage:
         from azure.ai.agentserver.responses.models import (
             FunctionShellCallOutputContentParam,
             FunctionShellCallOutputItemParam,
-            FunctionShellCallOutputTimeoutOutcomeParam,
         )
 
         output: FunctionShellCallOutputContentParam = {
             "stdout": "partial",
             "stderr": "timeout details",
-            "outcome": cast(FunctionShellCallOutputTimeoutOutcomeParam, {"type": "timeout"}),
+            "outcome": {"type": "timeout"},
         }
         item: FunctionShellCallOutputItemParam = {
             "type": "shell_call_output",
@@ -5640,6 +7058,7 @@ class TestItemToMessage:
         assert msg.contents[0].name == "file_search"
         assert '"what is AI"' in (msg.contents[0].arguments or "")
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemWebSearchToolCall
@@ -5658,6 +7077,7 @@ class TestItemToMessage:
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "web_search"
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_computer_call(self) -> None:
         item = cast(
@@ -5678,6 +7098,7 @@ class TestItemToMessage:
         assert msg.contents[0].id == "cc-1"
         assert msg.contents[0].call_id == "call_cc"
         assert msg.contents[0].actions == [{"type": "click"}]
+        assert msg.contents[0].additional_properties["openai"]["computer_action_format"] == "single"
         assert msg.contents[0].additional_properties["computer_action_format"] == "single"
         assert msg.contents[0].user_input_request is True
 
@@ -5758,6 +7179,7 @@ class TestItemToMessage:
         assert msg.contents[0].name == "my_tool"
         assert msg.contents[0].arguments == '{"key": "value"}'
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_custom_tool_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ItemCustomToolCallOutput
@@ -5845,6 +7267,7 @@ class TestItemToMessage:
             "diff": "+ new line",
         }
         assert msg.contents[0].informational_only is True
+        assert msg.contents[0].hosted is True
 
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ApplyPatchToolCallOutputItemParam
@@ -5929,6 +7352,7 @@ def _make_multi_response_agent(
     return agent
 
 
+@pytest.mark.xdist_group("session_isolation")
 class TestMultiTurnMixedContent:
     """End-to-end multi-turn tests with mixed text and non-text content types."""
 
@@ -6902,6 +8326,7 @@ class TestFunctionApprovalConversion:
         assert c.approved is False
 
 
+@pytest.mark.xdist_group("session_isolation")
 class TestFunctionApprovalRoundTrip:
     """End-to-end round-trip tests for the function approval flow.
 
@@ -6937,9 +8362,34 @@ class TestFunctionApprovalRoundTrip:
         assert loaded.function_call is not None
         assert loaded.function_call.name == "delete_file"
 
-    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
+    @pytest.mark.parametrize("with_preamble", [False, True])
+    async def test_streaming_emits_mcp_approval_request_and_persists_to_storage(self, with_preamble: bool) -> None:
         request_content = _make_function_approval_request_content(request_id="apr_streaming")
-        agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[request_content], role="assistant")])
+        updates: list[AgentResponseUpdate] = []
+        preambles = ("Checking the refund policy.", "The refund requires approval.")
+        if with_preamble:
+            client = OpenAIChatClient(model="test-model", api_key="test-key")
+            for output_index, text in enumerate(preambles):
+                event_args: dict[str, Any] = {
+                    "content_index": 0,
+                    "item_id": f"message_{output_index}",
+                    "output_index": output_index,
+                    "sequence_number": output_index * 2,
+                }
+                for event in (
+                    ResponseTextDeltaEvent(type="response.output_text.delta", delta=text, logprobs=[], **event_args),
+                    ResponseTextDoneEvent(type="response.output_text.done", text=text, logprobs=[], **event_args),
+                ):
+                    update = client._parse_chunk_from_openai(event, {}, {})
+                    updates.append(
+                        AgentResponseUpdate(
+                            contents=update.contents,
+                            message_id=update.message_id,
+                            role="assistant",
+                        )
+                    )
+        updates.append(AgentResponseUpdate(contents=[request_content], role="assistant"))
+        agent = _make_agent(stream_updates=updates)
         server = _make_server(agent)
 
         resp = await _post(server, stream=True)
@@ -6949,6 +8399,11 @@ class TestFunctionApprovalRoundTrip:
         types = _sse_event_types(events)
         assert types[0] == "response.created"
         assert types[-1] == "response.completed"
+
+        if with_preamble:
+            assert [event["data"]["text"] for event in events if event["event"] == "response.output_text.done"] == list(
+                preambles
+            )
 
         approval_request_id: str | None = None
         for e in events:
@@ -7156,12 +8611,12 @@ def _make_consent_error(
     """Build an exception wrapping a Foundry MCP gateway consent error.
 
     Mirrors the real-world wrapping produced by ``MCPStreamableHTTPTool.__aenter__``,
-    which catches connection-time ``McpError``s and re-raises them as a
+    which catches connection-time ``MCPError``s and re-raises them as a
     ``ToolExecutionException`` (an ``AgentFrameworkException`` subclass) with the
     original error attached via ``inner_exception``. ``consent_url_from_error``
-    then finds the wrapped ``McpError`` in ``exc.args``.
+    then finds the wrapped ``MCPError`` in ``exc.args``.
 
-    The McpError message uses the structured Foundry MCP gateway format:
+    The MCPError message uses the structured Foundry MCP gateway format:
     a human-readable prefix followed by a JSON document describing each
     failed tool source and its consent URL.
     """
@@ -7180,7 +8635,7 @@ def _make_consent_error(
         ]
     })
     message = f"tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {payload}"
-    inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message=message))
+    inner = MCPError(CONSENT_ERROR_CODE, message)
     return ToolExecutionException("MCP consent required", inner_exception=inner)
 
 
@@ -7203,21 +8658,21 @@ class TestConsentUrlFromError:
         assert consent_url_from_error(Exception("boom")) is None
 
     def test_returns_none_when_mcp_error_has_different_code(self) -> None:
-        inner = McpError(ErrorData(code=-32000, message="some other error"))
+        inner = MCPError(-32000, "some other error")
         exc = Exception("wrapped", inner)
         assert consent_url_from_error(exc) is None
 
     def test_returns_none_for_bare_mcp_error_without_wrapping(self) -> None:
-        # `args` of a bare McpError holds the message string, not an McpError
+        # `args` of a bare MCPError holds the message string, not an MCPError
         # instance, so it does not match the wrapping pattern produced by the
         # MCP client when it bubbles consent errors up.
-        bare = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="https://x"))
+        bare = MCPError(CONSENT_ERROR_CODE, "https://x")
         assert consent_url_from_error(bare) is None
 
     def test_returns_none_when_message_has_no_json(self) -> None:
         from agent_framework.exceptions import ToolExecutionException
 
-        inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="no json here"))
+        inner = MCPError(CONSENT_ERROR_CODE, "no json here")
         exc = ToolExecutionException("MCP consent required", inner_exception=inner)
         assert consent_url_from_error(exc) is None
 
@@ -7352,6 +8807,7 @@ class TestAgentLifecycle:
         assert agent.__aenter__.await_count == 2
 
 
+@pytest.mark.xdist_group("session_isolation")
 class TestOAuthConsentSurfacing:
     async def test_explicit_none_origin_allowlist_accepts_any_safe_https_consent(self) -> None:
         agent = _make_agent(
@@ -7393,7 +8849,11 @@ class TestOAuthConsentSurfacing:
 
         assert body["status"] == "failed"
         assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
-        assert "must include an allowed safe HTTPS consent link" in caplog.text
+        assert "must include an allowed safe HTTPS consent link" in body["error"]["message"]
+        assert "must include an allowed safe HTTPS consent link" not in caplog.text
+        assert "phase=OAuth consent validation" in caplog.text
+        assert f"response_id={body['id']}" in caplog.text
+        assert "error_type=ValueError" in caplog.text
         agent.run.assert_not_called()
 
     async def test_non_streaming_consent_error_emits_oauth_output_item(self) -> None:
@@ -7541,7 +9001,7 @@ class TestOAuthConsentSurfacing:
 
         duplicate = Content.from_oauth_consent_request(
             consent_link="https://consent.example.com/obo",
-            additional_properties={"server_label": "Foundry Toolbox"},
+            additional_properties={"openai": {"server_label": "Foundry Toolbox"}},
         )
         assert [event async for event in tracker.handle(duplicate)] == []
 
@@ -7580,7 +9040,7 @@ class TestOAuthConsentSurfacing:
     async def test_streaming_mid_run_consent_is_emitted_once_and_can_be_retried(self) -> None:
         consent = Content.from_oauth_consent_request(
             consent_link="https://consent.example.com/obo",
-            additional_properties={"server_label": "Foundry Toolbox"},
+            additional_properties={"openai": {"server_label": "Foundry Toolbox"}},
         )
 
         async def consent_updates() -> AsyncIterator[AgentResponseUpdate]:
@@ -7808,7 +9268,7 @@ class TestIncompleteFinishReasonSurfacing:
         stream.emit_in_progress()
         tracker = _OutputItemTracker(stream)
         tracker.record_finish_reason("content_filter")
-        assert stream.internal_metadata[_INCOMPLETE_REASON_KEY] == "content_filter"
+        assert stream.response["internal_metadata"][_INCOMPLETE_REASON_KEY] == "content_filter"
 
         # Simulate recovery: a fresh tracker over the checkpointed response snapshot.
         recovered = _OutputItemTracker(stream)
@@ -7818,6 +9278,84 @@ class TestIncompleteFinishReasonSurfacing:
 
         # A stream that was never marked restores nothing.
         assert _OutputItemTracker(ResponseEventStream(response_id="resp_clean")).incomplete_reason is None
+
+    @pytest.mark.parametrize(
+        ("stream", "finish_reason", "expected_reason"),
+        [
+            (False, "content_filter", "content_filter"),
+            (False, "length", "max_output_tokens"),
+            (True, "content_filter", "content_filter"),
+            (True, "length", "max_output_tokens"),
+        ],
+    )
+    async def test_sixteen_public_metadata_keys_keep_truncated_output(
+        self,
+        stream: bool,
+        finish_reason: FinishReasonLiteral,
+        expected_reason: str,
+    ) -> None:
+        """A full public metadata map must not turn a truncated turn into a failure or drop its text."""
+        metadata = _public_metadata(16)
+        expected_text = "I'm sorry, but I cannot assist with that request."
+        server = _make_server(self._filtered_agent(finish_reason=finish_reason))
+
+        resp = await _post(server, input_text="hello", stream=stream, metadata=metadata, store=True)
+        assert resp.status_code == 200
+        if stream:
+            events = _parse_sse_events(resp.text)
+            event_types = _sse_event_types(events)
+            assert event_types[-1] == "response.incomplete"
+            assert "response.failed" not in event_types
+            assert "response.completed" not in event_types
+            body = events[-1]["data"]["response"]
+            done_text = [event["data"].get("text") for event in events if event["event"] == "response.output_text.done"]
+            assert expected_text in done_text
+        else:
+            body = resp.json()
+
+        assert body["status"] == "incomplete"
+        assert body["incomplete_details"] == {"reason": expected_reason}
+        assert body.get("error") is None
+        assert body.get("metadata") == metadata
+        assert "_internal_metadata" not in body["metadata"]
+        assert "internal_metadata" not in body
+        messages = [item for item in body["output"] if item["type"] == "message"]
+        assert len(messages) == 1
+        assert messages[0]["content"][0]["text"] == expected_text
+
+        stored = await _get_response(server, body["id"])
+        assert stored.status_code == 200
+        stored_body = stored.json()
+        assert stored_body["status"] == "incomplete"
+        assert stored_body["incomplete_details"] == {"reason": expected_reason}
+        assert stored_body.get("error") is None
+        assert stored_body.get("metadata") == metadata
+        assert "internal_metadata" not in stored_body
+        stored_messages = [item for item in stored_body["output"] if item["type"] == "message"]
+        assert len(stored_messages) == 1
+        assert stored_messages[0]["content"][0]["text"] == expected_text
+
+    async def test_forged_internal_metadata_does_not_mark_a_completed_turn_incomplete(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[Content.from_text("hello")], role="assistant", finish_reason="stop"),
+            ]
+        )
+        server = _make_server(agent)
+        forged = json.dumps({_INCOMPLETE_REASON_KEY: "content_filter"})
+
+        resp = await _post(
+            server,
+            input_text="hello",
+            stream=False,
+            metadata={"source": "client", "_internal_metadata": forged},
+            store=True,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        assert body.get("incomplete_details") is None
+        assert body.get("metadata") == {"source": "client"}
 
     async def test_workflow_agent_content_filter_marks_response_incomplete(self) -> None:
         workflow_agent = _build_text_workflow_agent("filtered by workflow", finish_reason="content_filter")
@@ -7832,13 +9370,12 @@ class TestIncompleteFinishReasonSurfacing:
 
 class TestResponseFailedSurfacing:
     """Tests that exceptions raised by the hosted agent are converted into
-    terminal ``response.failed`` events carrying the exception message,
-    rather than propagating as 5xx HTTP errors or being replaced by the
-    orchestrator's generic ``"An internal server error occurred."``
-    fallback.
+    terminal ``response.failed`` events carrying a stable public message,
+    rather than propagating as 5xx HTTP errors or exposing exception details.
     """
 
     async def test_non_streaming_run_failure_emits_response_failed(self) -> None:
+        private_error_detail = "non-stream-secret at C:\\sensitive\\non_stream.py"
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
@@ -7846,7 +9383,7 @@ class TestResponseFailedSurfacing:
         def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args, kwargs
             return ResponseStream(
-                _raising_updates("non-stream kaboom"),
+                _raising_updates(private_error_detail),
                 finalizer=AgentResponse.from_updates,
             )
 
@@ -7859,12 +9396,15 @@ class TestResponseFailedSurfacing:
         body = resp.json()
         assert body["status"] == "failed"
         error: dict[str, Any] = body.get("error") or {}
-        assert error.get("message") == "non-stream kaboom"
+        assert error.get("message") == "An internal server error occurred."
+        assert private_error_detail not in resp.text
 
     async def test_streaming_run_failure_emits_response_failed(self) -> None:
+        private_error_detail = "stream-secret at C:\\sensitive\\stream.py"
+
         async def _raise_stream() -> AsyncIterator[AgentResponseUpdate]:
             yield AgentResponseUpdate(contents=[Content.from_text("partial ")], role="assistant")
-            raise RuntimeError("stream kaboom")
+            raise RuntimeError(private_error_detail)
 
         agent = _RawAgentMock()
         agent.id = "test-agent"
@@ -7903,7 +9443,9 @@ class TestResponseFailedSurfacing:
         assert len(failed) == 1
         response_payload: dict[str, Any] = failed[0]["data"].get("response") or {}
         error: dict[str, Any] = response_payload.get("error") or {}
-        assert error.get("message") == "stream kaboom"
+        assert error.get("message") == "An internal server error occurred."
+        assert response_payload["id"] == events[0]["data"]["response"]["id"]
+        assert private_error_detail not in resp.text
 
     async def test_streaming_run_failure_drains_pending_output_item(self) -> None:
         """If a streaming output item was open when the failure happens, the
@@ -7996,11 +9538,12 @@ class TestResponseFailedSurfacing:
         agent path.
         """
         workflow_agent = _build_text_workflow_agent("ignored")
+        private_error_detail = "workflow-secret at C:\\sensitive\\workflow.py"
 
         def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args, kwargs
             return ResponseStream(
-                _raising_updates("workflow kaboom"),
+                _raising_updates(private_error_detail),
                 finalizer=AgentResponse.from_updates,
             )
 
@@ -8015,7 +9558,52 @@ class TestResponseFailedSurfacing:
         body = resp.json()
         assert body["status"] == "failed"
         error: dict[str, Any] = body.get("error") or {}
-        assert error.get("message") == "workflow kaboom"
+        assert error.get("message") == "An internal server error occurred."
+        assert private_error_detail not in resp.text
+
+    @pytest.mark.parametrize("sensitive_data", [False, True])
+    async def test_failure_diagnostics_respect_sensitive_data(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        sensitive_data: bool,
+    ) -> None:
+        private_error_detail = "foundry-diagnostic-secret at C:\\sensitive\\foundry.py"
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_instrumentation", True)
+        monkeypatch.setattr(OBSERVABILITY_SETTINGS, "enable_sensitive_data", sensitive_data)
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("unused")])])
+        )
+
+        def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args, kwargs
+            return ResponseStream(
+                _raising_updates(private_error_detail),
+                finalizer=AgentResponse.from_updates,
+            )
+
+        agent.run = MagicMock(side_effect=run_failure)
+        server = _make_server(agent)
+
+        with caplog.at_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses"):
+            resp = await _post(server, input_text="hello", stream=True)
+
+        body = _parse_sse_events(resp.text)[-1]["data"]["response"]
+        assert body["status"] == "failed"
+        assert body["error"]["message"] == "An internal server error occurred."
+        assert private_error_detail not in resp.text
+        assert f"response_id={body['id']}" in caplog.text
+        assert "phase=response production" in caplog.text
+        assert "error_type=RuntimeError" in caplog.text
+        assert (private_error_detail in caplog.text) is sensitive_data
+        records = [
+            record
+            for record in caplog.records
+            if record.name == "agent_framework_foundry_hosting._responses"
+            and "phase=response production" in record.getMessage()
+        ]
+        assert len(records) == 1
+        assert bool(records[0].exc_info) is sensitive_data
 
 
 # endregion
@@ -8334,7 +9922,7 @@ def _build_multi_update_workflow_agent(
 @asynccontextmanager
 async def _pending_workflow_event(
     handler: AsyncGenerator[Any], started: asyncio.Event
-) -> AsyncIterator[asyncio.Future[Any]]:
+) -> AsyncGenerator[asyncio.Future[Any]]:
     pending = asyncio.ensure_future(anext(handler))
     started_wait = asyncio.ensure_future(started.wait())
     try:
@@ -8970,7 +10558,7 @@ class TestResilientBackgroundCheckpointing:
         assert snapshots, "expected the completed workflow to be snapshotted"
         checkpoint_ids: list[str] = []
         for text_before, response in snapshots:
-            internal = json.loads(response["metadata"]["_internal_metadata"])
+            internal = response["internal_metadata"]
             checkpoint_ids.append(internal[_LATEST_CHECKPOINT_ID_KEY])
             snapshot_text = "".join(
                 part["text"]
@@ -8985,7 +10573,7 @@ class TestResilientBackgroundCheckpointing:
         # The last snapshot is paired with the workflow's final checkpoint and carries everything.
         final_text, final_response = snapshots[-1]
         assert final_text == "filtered by workflow"
-        assert json.loads(final_response["metadata"]["_internal_metadata"])[_INCOMPLETE_REASON_KEY] == "content_filter"
+        assert final_response["internal_metadata"][_INCOMPLETE_REASON_KEY] == "content_filter"
         assert final_response["status"] == "in_progress"
 
 

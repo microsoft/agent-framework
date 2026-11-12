@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,7 +19,8 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI;
 /// </remarks>
 internal static class MemoryCacheExtensions
 {
-    private static readonly ConcurrentDictionary<(IMemoryCache, object), SemaphoreSlim> s_semaphores = new();
+    private static readonly object s_syncRoot = new();
+    private static readonly Dictionary<(IMemoryCache, object), CacheLock> s_locks = new();
 
     /// <summary>
     /// Atomically gets the value associated with this key if it exists, or generates a new entry
@@ -30,7 +31,7 @@ internal static class MemoryCacheExtensions
     /// <param name="key">The key of the entry to look for or create.</param>
     /// <param name="factory">The factory that creates the value associated with this key if the key does not exist in the cache.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A tuple containing the value and a flag indicating whether it was created (true) or retrieved from cache (false).</returns>
+    /// <returns>The cached or newly created value.</returns>
     public static async Task<T> GetOrCreateAtomicAsync<T>(
         this IMemoryCache memoryCache,
         object key,
@@ -44,29 +45,26 @@ internal static class MemoryCacheExtensions
             return (T)value;
         }
 
-        // Get or create a semaphore for this cache key
-        bool isOwner = false;
+        // Register both holders and waiters before touching the semaphore. A lock must remain
+        // registered until its last caller leaves, even when a factory fails or a waiter cancels.
         var semaphoreKey = (memoryCache, key);
-        if (!s_semaphores.TryGetValue(semaphoreKey, out SemaphoreSlim? semaphore))
+        CacheLock cacheLock;
+        lock (s_syncRoot)
         {
-            SemaphoreSlim? createdSemaphore = null;
-            semaphore = s_semaphores.GetOrAdd(semaphoreKey, _ => createdSemaphore = new SemaphoreSlim(1));
+            if (!s_locks.TryGetValue(semaphoreKey, out cacheLock!))
+            {
+                s_locks.Add(semaphoreKey, cacheLock = new CacheLock());
+            }
 
-            // If we created the semaphore that made it into the dictionary, we're the owner
-            if (ReferenceEquals(createdSemaphore, semaphore))
-            {
-                isOwner = true;
-            }
-            else
-            {
-                // Our semaphore wasn't the one stored, so dispose it
-                createdSemaphore?.Dispose();
-            }
+            cacheLock.ReferenceCount++;
         }
 
-        await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+        bool lockAcquired = false;
         try
         {
+            await cacheLock.Semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            lockAcquired = true;
+
             // Double-check: another thread might have created the value while we were waiting
             if (!memoryCache.TryGetValue(key, out value))
             {
@@ -82,14 +80,29 @@ internal static class MemoryCacheExtensions
         }
         finally
         {
-            // If we were the owner of the semaphore, remove it from the dictionary
-            // This prevents memory leaks from accumulating semaphores for evicted cache entries
-            if (isOwner)
+            if (lockAcquired)
             {
-                s_semaphores.TryRemove(semaphoreKey, out _);
+                cacheLock.Semaphore.Release();
             }
 
-            semaphore.Release();
+            lock (s_syncRoot)
+            {
+                if (--cacheLock.ReferenceCount == 0)
+                {
+                    s_locks.Remove(semaphoreKey);
+                    cacheLock.Semaphore.Dispose();
+                }
+            }
         }
+    }
+
+    /// <summary>Tracks all callers that can still use a cache key's semaphore.</summary>
+    private sealed class CacheLock
+    {
+        /// <summary>Gets the semaphore that serializes factories for one cache key.</summary>
+        public SemaphoreSlim Semaphore { get; } = new(1, 1);
+
+        /// <summary>Gets or sets the caller count, accessed only while holding <see cref="s_syncRoot"/>.</summary>
+        public int ReferenceCount { get; set; }
     }
 }

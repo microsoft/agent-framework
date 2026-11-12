@@ -13,18 +13,13 @@ namespace Microsoft.Agents.AI.Hosting.A2A;
 public sealed class A2AServerRegistrationOptions
 {
     /// <summary>
-    /// Gets or sets the agent run mode that controls how the agent responds to A2A requests.
-    /// </summary>
-    /// <remarks>
-    /// When <see langword="null"/>, defaults to <see cref="AgentRunMode.ReturnMessage"/>.
-    /// </remarks>
-    public AgentRunMode? AgentRunMode { get; set; }
-
-    /// <summary>
     /// Gets or sets the A2A server options used to configure the underlying <see cref="A2AServer"/>.
     /// </summary>
     /// <remarks>
     /// When <see langword="null"/>, no custom server options are applied.
+    /// Publishing an agent card does not configure these options. Set
+    /// <see cref="A2AServerOptions.SupportsStreaming"/> and <see cref="A2AServerOptions.SupportedInputModes"/>
+    /// to match the card's streaming capability and its default and skill-specific input modes.
     /// </remarks>
     public A2AServerOptions? ServerOptions { get; set; }
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from collections.abc import Callable
 from pathlib import Path
@@ -54,7 +55,7 @@ class StubSystemOneResponse(SystemOneResponse):
     """SystemOneResponse with deterministic request metadata."""
 
     @property
-    def request_id(self) -> str:
+    def request_id(self) -> str:  # ty: ignore[invalid-property-type-override]
         """Return a deterministic request identifier."""
         return "request-123"
 
@@ -262,9 +263,15 @@ async def test_owned_client_sends_configured_api_key_on_wire(monkeypatch: pytest
             json=make_response().model_dump(mode="json"),
         )
 
+    def create_client(**kwargs: Any) -> AsyncTypeSafeClient:
+        # The connector must leave the SDK's HTTP stack alone so proxy settings still apply.
+        assert "transport" not in kwargs
+        assert "http_client" not in kwargs
+        return AsyncTypeSafeClient(**kwargs, transport=httpx2.MockTransport(handle_request))
+
     monkeypatch.setattr(
-        "agent_framework_typesafe._chat_client.httpx2.AsyncHTTPTransport",
-        lambda: httpx2.MockTransport(handle_request),
+        "agent_framework_typesafe._chat_client.AsyncTypeSafeClient",
+        create_client,
     )
 
     async with TypeSafeChatClient(
@@ -277,6 +284,49 @@ async def test_owned_client_sends_configured_api_key_on_wire(monkeypatch: pytest
         )
 
     assert authorization_headers == ["Bearer configured-api-key"]
+
+
+async def test_owned_client_honors_proxy_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    proxied_requests: list[tuple[str, str]] = []
+    body = make_response().model_dump_json().encode()
+
+    async def handle_proxy_request(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        request_line = (await reader.readline()).decode("latin-1").strip()
+        headers: dict[str, str] = {}
+        while (line := await reader.readline()) not in (b"\r\n", b""):
+            name, _, value = line.decode("latin-1").partition(":")
+            headers[name.strip().lower()] = value.strip()
+        await reader.readexactly(int(headers.get("content-length", "0")))
+        proxied_requests.append((request_line, headers.get("authorization", "")))
+        writer.write(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nx-typesafe-request-id: request-123\r\n"
+            + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+            + body
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    proxy = await asyncio.start_server(handle_proxy_request, "127.0.0.1", 0)
+    proxy_port = proxy.sockets[0].getsockname()[1]
+    for name in ("http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HTTP_PROXY", f"http://127.0.0.1:{proxy_port}")
+
+    async with (
+        proxy,
+        TypeSafeChatClient(
+            api_key="configured-api-key",
+            base_url="http://typesafe.invalid",
+        ) as client,
+    ):
+        response = await client.get_response(
+            [Message("user", ["hello"])],
+            options={"response_format": questions()},
+        )
+
+    assert proxied_requests == [("POST http://typesafe.invalid/v1/systemone HTTP/1.1", "Bearer configured-api-key")]
+    assert isinstance(response.value, SystemOneResponse)
 
 
 async def test_streaming_is_rejected_on_consumption() -> None:
@@ -608,22 +658,22 @@ async def test_raw_client_decodes_closed_set_arguments_and_omits_optional_defaul
     )
     response = make_response({
         "urgent": {"type": "noul", "noul": 0.1},
-        "__af_tool__.t0.a0.value": {
-            "type": "choice",
-            "choice": "v1",
-            "confidence": 1.0,
-            "probabilities": {"v0": 0.0, "v1": 1.0},
-        },
-        "__af_tool__.t0.a1.present": {"type": "noul", "noul": 0.0},
-        "__af_tool__.t0.a1.value": {
+        "__af_tool__.t0.a0.value": {"type": "noul", "noul": 0.9},
+        "__af_tool__.t0.a1.m0": {"type": "noul", "noul": 0.2},
+        "__af_tool__.t0.a1.m1": {"type": "noul", "noul": 0.8},
+        "__af_tool__.t0.a2.present": {"type": "noul", "noul": 0.0},
+        "__af_tool__.t0.a2.value": {
             "type": "choice",
             "choice": "v0",
             "confidence": 1.0,
             "probabilities": {"v0": 1.0, "v1": 0.0},
         },
-        "__af_tool__.t0.a2.value": {"type": "noul", "noul": 0.9},
-        "__af_tool__.t0.a3.m0": {"type": "noul", "noul": 0.2},
-        "__af_tool__.t0.a3.m1": {"type": "noul", "noul": 0.8},
+        "__af_tool__.t0.a3.value": {
+            "type": "choice",
+            "choice": "v1",
+            "confidence": 1.0,
+            "probabilities": {"v0": 0.0, "v1": 1.0},
+        },
     })
     client = RawTypeSafeChatClient(async_client=cast(AsyncTypeSafeClient, StubTypeSafeClient(response=response)))
 

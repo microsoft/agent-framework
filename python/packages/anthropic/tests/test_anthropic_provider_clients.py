@@ -1,5 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,9 +13,11 @@ from agent_framework.observability import ChatTelemetryLayer
 
 from agent_framework_anthropic import (
     AnthropicBedrockClient,
+    AnthropicClient,
     AnthropicFoundryClient,
     AnthropicVertexClient,
     RawAnthropicBedrockClient,
+    RawAnthropicClient,
     RawAnthropicFoundryClient,
     RawAnthropicVertexClient,
 )
@@ -25,6 +30,38 @@ def _create_mock_transport(base_url: str) -> MagicMock:
     transport.beta.messages = MagicMock()
     transport.beta.messages.create = AsyncMock()
     return transport
+
+
+@pytest.mark.parametrize(
+    ("client_type", "factory", "kwargs"),
+    [
+        (RawAnthropicClient, "_chat_client.AsyncAnthropic", {"api_key": "test-key"}),
+        (AnthropicClient, "_chat_client.AsyncAnthropic", {"api_key": "test-key"}),
+        (RawAnthropicFoundryClient, "_foundry_client.AsyncAnthropicFoundry", {"resource": "test", "api_key": "test"}),
+        (AnthropicFoundryClient, "_foundry_client.AsyncAnthropicFoundry", {"resource": "test", "api_key": "test"}),
+        (RawAnthropicBedrockClient, "_bedrock_client.AsyncAnthropicBedrock", {"aws_region": "us-east-1"}),
+        (AnthropicBedrockClient, "_bedrock_client.AsyncAnthropicBedrock", {"aws_region": "us-east-1"}),
+        (
+            RawAnthropicVertexClient,
+            "_vertex_client.AsyncAnthropicVertex",
+            {"project_id": "test", "region": "us-central1"},
+        ),
+        (AnthropicVertexClient, "_vertex_client.AsyncAnthropicVertex", {"project_id": "test", "region": "us-central1"}),
+    ],
+)
+@pytest.mark.parametrize("injected", [False, True])
+async def test_anthropic_client_context_ownership(client_type, factory: str, kwargs, injected: bool) -> None:
+    sdk_client = _create_mock_transport("https://test.example.com")
+    sdk_client.close = AsyncMock()
+    if injected:
+        kwargs = {**kwargs, "anthropic_client": sdk_client}
+    with patch(f"agent_framework_anthropic.{factory}", return_value=sdk_client):
+        client = client_type(model="test-model", **kwargs)
+    async with client as entered:
+        assert entered is client
+        sdk_client.close.assert_not_awaited()
+    await client.close()
+    assert sdk_client.close.await_count == (0 if injected else 1)
 
 
 @pytest.mark.parametrize(
@@ -209,6 +246,50 @@ def test_raw_anthropic_bedrock_client_creates_sdk_client_from_arguments(
     )
     for key in ("aws_access_key", "aws_secret_key", "aws_session_token"):
         assert type(factory.call_args.kwargs[key]) is str
+
+
+def test_raw_anthropic_bedrock_client_preserves_default_region(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    mock_transport = _create_mock_transport("https://bedrock-runtime.us-east-1.amazonaws.com")
+
+    with (
+        patch("boto3.Session") as session_factory,
+        patch(
+            "agent_framework_anthropic._bedrock_client.AsyncAnthropicBedrock",
+            return_value=mock_transport,
+        ) as factory,
+        caplog.at_level(logging.WARNING, logger="agent_framework.anthropic"),
+    ):
+        session_factory.return_value.region_name = None
+        RawAnthropicBedrockClient(model="claude-bedrock-test")
+
+    assert factory.call_args.kwargs["aws_region"] == "us-east-1"
+    assert "No AWS region specified, defaulting to us-east-1" in caplog.text
+
+
+def test_raw_anthropic_bedrock_client_uses_profile_region(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    mock_transport = _create_mock_transport("https://bedrock-runtime.eu-west-1.amazonaws.com")
+
+    with (
+        patch("boto3.Session") as session_factory,
+        patch(
+            "agent_framework_anthropic._bedrock_client.AsyncAnthropicBedrock",
+            return_value=mock_transport,
+        ) as factory,
+    ):
+        session_factory.return_value.region_name = "eu-west-1"
+        RawAnthropicBedrockClient(model="claude-bedrock-test", aws_profile="test-profile")
+
+    session_factory.assert_called_once_with(profile_name="test-profile")
+    assert factory.call_args.kwargs["aws_region"] == "eu-west-1"
 
 
 @pytest.mark.parametrize("access_token", ["access-token", SecretString("access-token")], ids=["str", "secret"])

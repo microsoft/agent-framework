@@ -366,6 +366,7 @@ class Workflow(DictConvertible):
         self.start_executor_id = start_executor.id
         self.max_iterations = max_iterations
         self.name = name
+        self._generated_name: str | None = None
         self.description = description
         # Generate a unique ID for the workflow instance for monitoring purposes. This is not intended to be a
         # stable identifier across instances created from the same builder, for that, use the name field.
@@ -559,7 +560,7 @@ class Workflow(DictConvertible):
         """
         # Create workflow span that encompasses the entire execution
         attributes: dict[str, Any] = {OtelAttr.WORKFLOW_ID: self.id}
-        if self.name:
+        if self.name and self.name != self._generated_name:
             attributes[OtelAttr.WORKFLOW_NAME] = self.name
         if self.description:
             attributes[OtelAttr.WORKFLOW_DESCRIPTION] = self.description
@@ -682,7 +683,12 @@ class Workflow(DictConvertible):
                     yield event
 
                 # Surface structured failure details before propagating exception
-                details = WorkflowErrorDetails.from_exception(exc)
+                from ..observability import OBSERVABILITY_SETTINGS
+
+                details = WorkflowErrorDetails.from_exception(
+                    exc,
+                    include_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED,
+                )
                 with _framework_event_origin():
                     failed_event = WorkflowEvent.failed(details)
                 yield failed_event
@@ -690,12 +696,14 @@ class Workflow(DictConvertible):
                 with _framework_event_origin():
                     failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
                 yield failed_status
+                error_attributes = {
+                    "error.type": type(exc).__name__,
+                }
+                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+                    error_attributes["error.message"] = str(exc)
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,
-                    attributes={
-                        "error.message": str(exc),
-                        "error.type": type(exc).__name__,
-                    },
+                    attributes=error_attributes,
                 )
                 capture_exception(span, exception=exc)
                 raise

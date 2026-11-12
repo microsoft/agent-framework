@@ -113,7 +113,7 @@ internal sealed class StateManager
 
         UpdateKey stateKey = new(scopeId, key);
 
-        T? result = defaultValueFactory != null ? defaultValueFactory() : default;
+        T? result = default;
         bool needsInit = false;
 
         // If there is executor-local state (from a queued update), read it first
@@ -159,7 +159,8 @@ internal sealed class StateManager
 
             Debug.Assert(initOnDefault);
 
-            await this.WriteStateAsync(scopeId, key, defaultValueFactory()).ConfigureAwait(false);
+            result = defaultValueFactory();
+            await this.WriteStateAsync(scopeId, key, result).ConfigureAwait(false);
         }
 
         return result;
@@ -248,6 +249,14 @@ internal sealed class StateManager
         }
 
         return this._scopes.Values.SelectMany(ExportScope).ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+    }
+
+    internal void DiscardQueuedUpdates() => this._queuedUpdates.Clear();
+
+    internal ValueTask RollbackStateAsync(Checkpoint checkpoint)
+    {
+        this.DiscardQueuedUpdates();
+        return this.ImportStateAsync(checkpoint);
     }
 
     internal ValueTask ImportStateAsync(Checkpoint checkpoint)

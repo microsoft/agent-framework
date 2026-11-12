@@ -32,14 +32,52 @@ prompts:
   reviewers only**. Automated/AI reviewers must ignore it and review the entire
   change rather than narrowing scope to it.
 
+For material Python public-API changes, include the following within this section:
+- A short before/after usage example with public imports and initialization.
+- The affected execution modes and their intentional differences.
+- Changes to defaults, precedence, ownership, persistence, or compatibility.
+- The agreed decision or investigation that supports the direction. An investigation
+  supplies evidence; its proposed implementation still needs maintainer agreement.
+
+Use an options matrix only when interacting settings make it useful. Do not add a
+separate mandatory section or repeat the canonical
+[Python coding standards](../../../python/CODING_STANDARD.md). For semantic review,
+follow the [Python review guidance](../../instructions/python.instructions.md).
+
 ### `### Related Issue`
 Link the issue the PR fixes using a GitHub closing keyword (`Fixes #123` /
-`Closes #123`) so it closes automatically on merge. A PR with no linked issue may
-be closed regardless of how valid the change is. Before opening, confirm there is
-no other open PR for the same issue; if there is, explain how this PR differs.
+`Closes #123`) so it closes automatically on merge. For a non-trivial change,
+confirm that a maintainer added the `ready-for-implementation` label or explicitly
+agreed with the direction in an issue comment. A PR with no agreed issue may be
+closed without detailed review. Before opening, confirm there is no other open PR
+for the same issue; if there is, explain how this PR differs.
+
+A team-only issue, assignment, investigation, `/plan` comment, or suggested option
+does not authorize implementation. Check the agreed scope and readiness; team-only
+work remains unavailable for community pickup unless maintainers explicitly open it.
+
+For a trivial change that does not require an issue, replace the `Fixes #`
+placeholder with `N/A - trivial change` and briefly explain why the change is an
+obvious correction whose desired result is not reasonably in dispute.
+
+For repository-maintained scheduled automation, replace the placeholder with
+`N/A - repository automation` and identify the generating workflow.
+
+### `### AI Assistance`
+Check exactly one option:
+- Select **"No material AI assistance was used."** only when generative AI did
+  not create or substantially transform submitted content.
+- Otherwise select **"This is an AI-assisted contribution."** and briefly
+  identify the assisted areas.
+
+Generating or substantially editing the PR description with Copilot counts as
+material AI assistance even if the implementation itself was not AI-assisted.
+Never include prompts or sensitive information in the disclosure.
 
 ### `### Contribution Checklist`
-Check every item that applies. For the breaking-change item:
+Check every item that applies. Confirm that the PR links to an agreed issue or
+documents a trivial-change or repository-automation exception. For the
+breaking-change item:
 - Leave **"This is not a breaking change."** checked for the common case.
 - If the change **is** breaking, add the `breaking change` label **or** put
   `[BREAKING]` in the title prefix, before or after a language prefix such as
@@ -61,6 +99,14 @@ is a stable cross-package contract, not a per-PR changelog. A specification
 change is warranted only when the PR intentionally changes normative behavior,
 the scenario inventory, an acknowledged coverage gap, or the authoritative
 scenario-to-test mapping; keep any such edit to the smallest affected sections.
+
+### Community project listings
+
+When either `python/samples/community-projects.md` or
+`dotnet/samples/community-projects.md` changes, load and apply the
+[`community-projects`](../community-projects/SKILL.md) skill before reviewing
+or approving the change. Load it as well when an issue or pull request proposes
+an external project listing, even if neither catalog file has changed yet.
 
 ### Creating the PR
 Open new PRs as **drafts** until they are ready for review. Example:

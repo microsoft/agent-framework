@@ -25,4 +25,7 @@ def register_backend_tool_rendering(app: FastAPI) -> None:
         app,
         weather_agent(client),
         "/backend_tool_rendering",
+        # Local example only. For production, remove (or set False) and provide
+        # authorization_scope_resolver backed by authenticated request context.
+        single_user=True,
     )

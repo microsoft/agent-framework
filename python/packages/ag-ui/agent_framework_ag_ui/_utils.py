@@ -11,8 +11,7 @@ from collections.abc import Callable, MutableMapping, Sequence
 from typing import Any
 
 from agent_framework import AgentResponseUpdate, ChatResponseUpdate, Content, FunctionTool
-from agent_framework import _mcp as _core_mcp  # pyright: ignore[reportPrivateUsage]
-from agent_framework._serialization import make_json_safe  # pyright: ignore[reportPrivateUsage]
+from agent_framework._serialization import make_json_safe
 
 
 def _mcp_tool_result_host_payload_key(core_mcp: Any) -> str:
@@ -20,7 +19,7 @@ def _mcp_tool_result_host_payload_key(core_mcp: Any) -> str:
     return getattr(core_mcp, "_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY", "_mcp_tool_result_host_payload")
 
 
-_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = _mcp_tool_result_host_payload_key(_core_mcp)
+_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = _mcp_tool_result_host_payload_key(None)
 _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY = "_agentFrameworkModelContent"
 _AGUI_MCP_TOOL_RESULT_KEY = "_agentFrameworkMcpResult"
 _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY = "_agentFrameworkHostPayload"
@@ -307,8 +306,21 @@ def _function_call_server_label(function_call: Any) -> str | None:
     """Return a normalized hosted-tool server label."""
     if function_call is None:
         return None
+    server_name = getattr(function_call, "server_name", None)
+    if isinstance(server_name, str) and server_name:
+        return server_name
     server_label = getattr(function_call, "additional_properties", {}).get("server_label")
     return server_label if isinstance(server_label, str) and server_label else None
+
+
+def _function_call_is_hosted(function_call: Any) -> bool:
+    """Return whether the provider, rather than Agent Framework, executes the call."""
+    if function_call is None:
+        return False
+    hosted = getattr(function_call, "hosted", None)
+    if type(hosted) is bool:
+        return hosted
+    return _function_call_server_label(function_call) is not None
 
 
 def _approval_interrupt_id(content: Any) -> str | None:
@@ -317,7 +329,7 @@ def _approval_interrupt_id(content: Any) -> str | None:
     if function_call is None:
         return None
     request_id = getattr(content, "id", None)
-    if _function_call_server_label(function_call) is not None:
+    if _function_call_is_hosted(function_call):
         return request_id if isinstance(request_id, str) and request_id else None
     if getattr(content, "additional_properties", {}).get("_replacement_approval_request") is True:
         return request_id if isinstance(request_id, str) and request_id else None

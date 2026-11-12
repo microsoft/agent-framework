@@ -17,7 +17,7 @@ runs:
     using: "composite"
     steps:
       - name: Set up uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
             version-file: "python/pyproject.toml"
             enable-cache: true
@@ -47,4 +47,17 @@ runs:
       - name: Install the project
         shell: bash
         run: |
-          cd python && uv sync --all-packages --all-extras --all-groups --prerelease=if-necessary
+          cd python
+          sync_args=(
+            --all-packages
+            --all-extras
+            --all-groups
+            --no-group tool-runtime
+            --no-group tool-hooks
+            --no-group tool-markdown
+            --prerelease=if-necessary
+          )
+          if [[ -z "${{ inputs.exclude-packages }}" ]]; then
+            sync_args+=(--frozen)
+          fi
+          uv sync "${sync_args[@]}"

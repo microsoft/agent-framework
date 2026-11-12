@@ -16,7 +16,8 @@ afterwards for background fact/summary extraction.
 
 Set these environment variables (or put them in a ``.env`` file) before running:
     COSMOS_ENDPOINT     Azure Cosmos DB account endpoint
-    FOUNDRY_ENDPOINT    Azure AI Foundry project endpoint (chat + embeddings)
+    FOUNDRY_PROJECT_ENDPOINT
+                        Azure AI Foundry project endpoint (chat + embeddings)
 
 Optional:
     COSMOS_DATABASE     Database name (default: ai_memory)
@@ -38,11 +39,16 @@ from dotenv import load_dotenv
 from agent_framework_azure_cosmos_memory import CosmosMemoryContextProvider
 
 
+def _foundry_project_endpoint() -> str:
+    """Read the preferred project endpoint variable with legacy compatibility."""
+    return os.environ.get("FOUNDRY_PROJECT_ENDPOINT") or os.environ["FOUNDRY_ENDPOINT"]
+
+
 def _build_agent(provider: CosmosMemoryContextProvider, credential: DefaultAzureCredential) -> Agent:
     """Build an agent that uses the memory provider and the same Foundry endpoint for chat."""
     return Agent(
         client=FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_ENDPOINT"],
+            project_endpoint=_foundry_project_endpoint(),
             model=os.getenv("CHAT_MODEL", "gpt-4o-mini"),
             credential=credential,
         ),
@@ -57,7 +63,7 @@ async def user_scoped_memory() -> None:
     credential = DefaultAzureCredential()
     provider = CosmosMemoryContextProvider(
         cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
-        foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
+        foundry_endpoint=_foundry_project_endpoint(),
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-large"),
         chat_model=os.getenv("CHAT_MODEL", "gpt-4o-mini"),
         credential=credential,
@@ -87,7 +93,7 @@ async def session_scoped_memory() -> None:
     credential = DefaultAzureCredential()
     provider = CosmosMemoryContextProvider(
         cosmos_endpoint=os.environ["COSMOS_ENDPOINT"],
-        foundry_endpoint=os.environ["FOUNDRY_ENDPOINT"],
+        foundry_endpoint=_foundry_project_endpoint(),
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-large"),
         chat_model=os.getenv("CHAT_MODEL", "gpt-4o-mini"),
         credential=credential,

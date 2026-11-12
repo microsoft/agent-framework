@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = [
 #     "agent-framework-core",
 #     "agent-framework-foundry",
@@ -68,7 +68,7 @@ def run_bash(command: str) -> str:
 def create_agent() -> Agent:
     """Create client state per request rather than keeping history on the agent."""
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
+    model = os.environ.get("FOUNDRY_MODEL") or os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     credential = (
         ManagedIdentityCredential(client_id=os.environ.get("FOUNDRY_AGENT_INSTANCE_CLIENT_ID"))
         if AgentConfig.from_env().is_hosted

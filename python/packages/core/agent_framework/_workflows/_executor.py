@@ -222,6 +222,7 @@ class Executor(RequestInfoMixin, DictConvertible):
             builtin_type[Any] | types.UnionType, Callable[[Any, WorkflowContext[Any, Any]], Awaitable[None]]
         ] = {}
         self._handler_specs: list[dict[str, Any]] = []
+        self._response_handler_specs: list[dict[str, Any]] = []
         if not defer_discovery:
             self._discover_handlers()
 
@@ -269,9 +270,6 @@ class Executor(RequestInfoMixin, DictConvertible):
             runner_context: The runner context that provides methods to send messages and events.
             trace_contexts: Optional trace contexts from multiple sources for OpenTelemetry propagation.
             source_span_ids: Optional source span IDs from multiple sources for linking.
-
-        Returns:
-            An awaitable that resolves to the result of the execution.
         """
         async with self._get_execution_lock():
             # Create processing span for tracing (gracefully handles disabled tracing)
@@ -312,8 +310,14 @@ class Executor(RequestInfoMixin, DictConvertible):
                     await handler(message, context)
                 except Exception as exc:
                     # Surface structured executor failure before propagating
+                    from ..observability import OBSERVABILITY_SETTINGS
+
+                    details = WorkflowErrorDetails.from_exception(
+                        exc,
+                        include_sensitive_data=OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED,
+                    )
                     with _framework_event_origin():
-                        failure_event = WorkflowEvent.executor_failed(self.id, WorkflowErrorDetails.from_exception(exc))
+                        failure_event = WorkflowEvent.executor_failed(self.id, details)
                     await context.add_event(failure_event)
                     raise
                 with _framework_event_origin():
@@ -459,7 +463,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         output_types: set[type[Any] | types.UnionType] = set()
 
         # Collect output types from all handlers
-        for handler_spec in self._handler_specs + self._response_handler_specs:
+        for handler_spec in self._handler_specs + getattr(self, "_response_handler_specs", []):
             handler_output_types = handler_spec.get("output_types", [])
             output_types.update(handler_output_types)
 
@@ -475,7 +479,7 @@ class Executor(RequestInfoMixin, DictConvertible):
         output_types: set[type[Any] | types.UnionType] = set()
 
         # Collect workflow output types from all handlers
-        for handler_spec in self._handler_specs + self._response_handler_specs:
+        for handler_spec in self._handler_specs + getattr(self, "_response_handler_specs", []):
             handler_workflow_output_types = handler_spec.get("workflow_output_types", [])
             output_types.update(handler_workflow_output_types)
 

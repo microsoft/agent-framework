@@ -4,6 +4,10 @@
 
 **FIDES**  is a comprehensive deterministic prompt injection defense system for the agent framework. The implementation provides label-based security mechanisms to defend against prompt injection attacks by tracking integrity and confidentiality of content throughout agent execution.
 
+FIDES enforces tool-result, hidden-variable, caller-replayed, and history-provider flows. Applications can use
+`SecureAgentConfig.message_labeler` as the authoritative trust boundary for messages added by earlier
+`ContextProvider` implementations.
+
 **🚀 Key Features:**
 - **Context Provider Pattern** - `SecureAgentConfig` extends `ContextProvider`, injecting tools, instructions, and middleware automatically
 - **Automatic Variable Hiding** - UNTRUSTED content is automatically hidden without requiring manual intervention
@@ -355,7 +359,7 @@ cd python/packages/core && ../../.venv/bin/pytest tests/test_security.py -v
 
 **FIDES** provides a comprehensive, deterministic defense against prompt injection attacks with:
 
-- **Zero-effort protection**: Automatic variable hiding for developers
+- **Automatic result protection**: FIDES-labeled untrusted tool output is hidden automatically
 - **Context provider pattern**: `SecureAgentConfig` extends `ContextProvider` for automatic setup
 - **Granular control**: Per-item embedded labels via `Content.from_text()` for mixed-trust data
 - **Easy configuration**: `SecureAgentConfig` for one-line setup
@@ -363,4 +367,10 @@ cd python/packages/core && ../../.venv/bin/pytest tests/test_security.py -v
 - **Full traceability**: Message-level label tracking
 - **Complete auditability**: All security events logged
 
-The system ensures that untrusted content never directly reaches the LLM context and that all tool calls are policy-checked based on the cumulative security state before execution.
+The system hides FIDES-labeled untrusted tool output from the LLM context and policy-checks tool calls against the
+cumulative security state before execution. Newly supplied assistant/tool messages are conservatively labeled even
+when state was restored. Stored provider history is reconstructed conservatively whenever it is loaded; FIDES does not
+infer trust through transcript persistence, deduplication, compaction, or merging. Applications may instead configure
+`SecureAgentConfig.message_labeler` to authoritatively classify messages added by context providers registered before
+it, without mutating or stamping those messages.
+Per-service-call history that is unavailable at run setup is treated as **UNTRUSTED + PRIVATE**.

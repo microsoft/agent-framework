@@ -19,7 +19,7 @@ This sample deploys to Foundry **directly from source (code / ZIP upload)**: the
 | File | Purpose |
 |------|---------|
 | `Program.cs` | The agent: registers sandbox-only compute/fetch_data tools with a LocalCodeActProvider, exposes a single execute_code tool, hosts it with the Responses protocol. |
-| `azure.yaml` | The unified `azd` project file. Declares the Foundry project and the hosted agent with `codeConfiguration` (source/ZIP deploy), and passes the listen port and the model deployment name to the container through env. |
+| `azure.yaml` | The unified `azd` project file. Declares the Foundry project and the hosted agent with `codeConfiguration` (source/ZIP deploy), and passes the listen port, model deployment name, and Python interpreter path to the container through env. |
 | `.agentignore` | Controls which files are excluded from the code-deploy ZIP upload (`.gitignore` syntax). |
 | `HostedLocalCodeAct.csproj` | Self-contained project: single target framework and explicit package versions. It also opts out of the repository's central package management, which does not travel inside the ZIP. |
 | `.env.example` | Template for local configuration. |
@@ -27,7 +27,7 @@ This sample deploys to Foundry **directly from source (code / ZIP upload)**: the
 
 ## Configuration
 
-Copy the template and fill in your project endpoint:
+Copy the template and fill in your project endpoint and Python interpreter path:
 
 PowerShell:
 
@@ -43,12 +43,21 @@ cp .env.example .env
 
 ```env
 FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_MODEL=gpt-4o
+LOCAL_CODEACT_PYTHON=/absolute/path/to/python3
 ASPNETCORE_URLS=http://+:8088
 AZURE_TOKEN_CREDENTIALS=dev
 ```
 
 > `.env` is gitignored. The `.env.example` template is checked in as a reference.
+
+On every platform, set `LOCAL_CODEACT_PYTHON` to the fully qualified path of an existing
+Python interpreter. Replace the placeholder above with your installed interpreter,
+for example `C:/Program Files/Python/python.exe` on Windows or `/usr/bin/python3` on
+Linux if Python is installed there. Bare names such as `python3` and relative paths
+are rejected. Keep the interpreter and its parent directories protected from writes
+by untrusted code or tools. The sample checks this configuration at startup because
+its currently referenced published LocalCodeAct version does not enforce this contract.
 
 > `ASPNETCORE_URLS` pins the local run to the port the `Using-Samples` REPLs expect. Recent
 > `Microsoft.Agents.AI.Foundry.Hosting` versions bind that port themselves, so it only matters
@@ -139,6 +148,7 @@ before the commands below. Everyone else can ignore it.
 cd hosted-local-codeact
 azd env get-values
 azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME <model-deployment>
+azd env set LOCAL_CODEACT_PYTHON <fully-qualified-python-path-in-hosted-runtime>
 azd provision
 azd deploy
 azd ai agent invoke "Use compute to add 21 and 21, then tell me the result."
@@ -147,6 +157,10 @@ azd ai agent invoke "Use compute to add 21 and 21, then tell me the result."
 `azd` packages the source into a ZIP (honoring `.agentignore`), uploads it, and Foundry runs
 `dotnet restore` + `dotnet publish` on it during provisioning (`dependencyResolution: remote_build`
 in `azure.yaml`). No Dockerfile, no container registry.
+
+For deployment, `LOCAL_CODEACT_PYTHON` must identify the interpreter inside the hosted
+runtime, not the interpreter on your workstation. Set it in the `azd` environment as
+shown above; `azure.yaml` passes that value to the hosted process.
 
 ### Step 4: clean up
 

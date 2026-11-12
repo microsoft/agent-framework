@@ -23,6 +23,7 @@ import logging
 import math
 import os
 import threading
+import time
 import uuid
 import warnings
 import weakref
@@ -872,7 +873,8 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                     content.id is not None
                     and function_call is not None
                     and function_call.call_id is not None
-                    and not function_call.additional_properties.get("server_label")
+                    # server_name is descriptive; only hosted controls execution ownership.
+                    and not function_call.hosted
                     and content.id not in unresolved_local_responses_by_id
                 ):
                     unresolved_local_responses_by_id[content.id] = content
@@ -1999,6 +2001,37 @@ class SessionStore:
         self._sessions.pop(session_id, None)
 
 
+_SESSION_FILE_REPLACE_ATTEMPTS = 3
+_SESSION_FILE_REPLACE_RETRY_DELAY_SECONDS = 0.01
+# Only Windows reports a briefly-held destination as ``PermissionError``; on POSIX the
+# same code means the caller genuinely may not replace the file.
+_RETRY_REPLACE_ON_THIS_PLATFORM: bool = os.name == "nt"
+
+
+def _replace_session_file(source: Path, target: Path) -> None:
+    """Replace ``target`` with ``source``, retrying briefly on transient lock contention.
+
+    Windows raises :class:`PermissionError` when the destination file is briefly held
+    open (for example right after a previous replacement), even though callers already
+    serialize access per snapshot. A bounded retry preserves the documented
+    last-writer-wins behaviour instead of surfacing the transient failure.
+
+    The retry is Windows-only: on POSIX a :class:`PermissionError` means the caller
+    really is not allowed to replace the file, so retrying would only delay the same
+    failure. The whole sequence is bounded at ~30 ms and re-raises the original error
+    once the attempts are exhausted.
+    """
+    attempts = _SESSION_FILE_REPLACE_ATTEMPTS if _RETRY_REPLACE_ON_THIS_PLATFORM else 1
+    for attempt in range(attempts):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(_SESSION_FILE_REPLACE_RETRY_DELAY_SECONDS * (attempt + 1))
+
+
 @experimental(feature_id=ExperimentalFeature.SESSION_STORE)
 class FileSessionStore(SessionStore):
     """File-backed storage for Agent Framework session snapshots.
@@ -2150,7 +2183,7 @@ class FileSessionStore(SessionStore):
                 temp_path = file_path.with_name(f".{file_path.name}.{uuid.uuid4().hex}.tmp")
                 try:
                     temp_path.write_bytes(serialized)
-                    os.replace(temp_path, file_path)
+                    _replace_session_file(temp_path, file_path)
                 finally:
                     temp_path.unlink(missing_ok=True)
 
@@ -2466,14 +2499,38 @@ class FileHistoryProvider(HistoryProvider):
                 new_messages = filter_new_messages(existing_messages, messages)
                 if not new_messages:
                     return
+                # Check the whole batch first so a record the reader would reject never reaches
+                # the file and the existing history stays loadable. Records are encoded into one
+                # reused buffer, once to check and once to write, so memory is bounded by the
+                # largest record rather than the batch.
+                record = bytearray()
+                for message in new_messages:
+                    self._encode_msgpack_record(message, record)
                 with file_path.open("ab") as file_handle:
-                    for message in new_messages:
-                        serialized = _DEFAULT_MSGPACK_ENCODER.encode(message.to_dict())
-                        file_handle.write(len(serialized).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
-                        file_handle.write(serialized)
+                    append_offset = file_handle.seek(0, os.SEEK_END)
+                    try:
+                        for message in new_messages:
+                            # Encode and check again: the bytes written must be the checked bytes,
+                            # and to_dict() may not return the same result as during the preflight.
+                            self._encode_msgpack_record(message, record)
+                            file_handle.write(len(record).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
+                            file_handle.write(record)
+                    except BaseException:
+                        # Drop any records this call already appended so the history stays loadable.
+                        file_handle.truncate(append_offset)
+                        raise
 
         async with async_lock:
             await asyncio.to_thread(_append_messages)
+
+    def _encode_msgpack_record(self, message: Message, record: bytearray) -> None:
+        """Encode ``message`` into ``record`` and reject it if the reader would refuse the record."""
+        _DEFAULT_MSGPACK_ENCODER.encode_into(message.to_dict(), record)
+        if len(record) > self._MAX_MSGPACK_RECORD_BYTES:
+            raise ValueError(
+                f"Message encodes to {len(record)} bytes, which exceeds the "
+                f"{self._MAX_MSGPACK_RECORD_BYTES}-byte MessagePack history record limit."
+            )
 
     def _read_json_messages(self, file_path: Path) -> list[Message]:
         """Read JSON Lines messages from ``file_path``."""

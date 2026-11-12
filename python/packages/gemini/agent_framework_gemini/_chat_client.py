@@ -8,7 +8,7 @@ import logging
 import sys
 from collections import OrderedDict
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from typing import Any, ClassVar, Generic, cast
+from typing import Any, ClassVar, Generic, TypedDict, cast
 from uuid import uuid4
 
 from agent_framework import (
@@ -30,7 +30,7 @@ from agent_framework import (
     detect_media_type_from_base64,
     validate_tool_mode,
 )
-from agent_framework._settings import SecretString, load_settings
+from agent_framework._settings import SecretString
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._types import _get_data_bytes  # type: ignore[reportPrivateUsage]
 from agent_framework.exceptions import (
@@ -51,6 +51,7 @@ from ._feature_usage import FeatureIndex
 from ._sdk_client import (
     GoogleGeminiSettings,
     create_genai_client,
+    load_gemini_settings,
 )
 
 if sys.version_info >= (3, 13):
@@ -63,10 +64,6 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import override  # pragma: no cover
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.gemini")
 
@@ -307,7 +304,10 @@ class RawGeminiChatClient(
                 Application Default Credentials.
             env_file_path: Path to a ``.env`` file for credential loading.
             env_file_encoding: Encoding for the ``.env`` file.
-            client: Pre-built ``genai.Client`` instance. When provided, connector auth settings are not required.
+            client: Pre-built ``genai.Client`` instance. When provided, it is used as-is: the API key,
+                project, and location arguments and connection environment settings are not read.
+                ``GOOGLE_MODEL`` still applies. Explicit mode arguments only apply when the client does not
+                expose its own mode.
             additional_properties: Extra properties stored on the client instance.
             max_tracked_thought_signatures: Maximum number of Gemini 3 thought signatures retained
                 for replay, keyed by call ID. Least-recently-used entries are evicted beyond this.
@@ -317,9 +317,8 @@ class RawGeminiChatClient(
         """
         if max_tracked_thought_signatures < 1:
             raise ValueError("max_tracked_thought_signatures must be greater than 0.")
-        google_settings = load_settings(
-            GoogleGeminiSettings,
-            env_prefix="GOOGLE_",
+        google_settings = load_gemini_settings(
+            client=client,
             api_key=api_key,
             model=model,
             genai_use_enterprise=enterprise,
@@ -341,12 +340,24 @@ class RawGeminiChatClient(
             location=google_settings.get("cloud_location"),
             credentials=credentials,
         )
+        self._owns_client = client is None
+        self._client_closed = False
 
         self.model = google_settings.get("model")
         self.max_tracked_thought_signatures = max_tracked_thought_signatures
         self._thought_signature_cache: OrderedDict[str, bytes] = OrderedDict()
 
         super().__init__(additional_properties=additional_properties)
+
+    @override
+    async def close(self) -> None:
+        """Close both owned SDK transports, leaving caller-supplied credentials open."""
+        if self._owns_client and not self._client_closed:
+            try:
+                await self._genai_client.aio.aclose()
+            finally:
+                self._genai_client.close()
+            self._client_closed = True
 
     @staticmethod
     def get_code_interpreter_tool() -> types.Tool:
@@ -484,12 +495,25 @@ class RawGeminiChatClient(
                     cast(Any, self._genai_client.aio.models).generate_content_stream,
                 )
                 try:
-                    async for chunk in await generate_content_stream(
+                    response_stream = await generate_content_stream(
                         model=model,
                         contents=contents,
                         config=config,
-                    ):
-                        yield self._process_chunk(chunk)
+                    )
+                    # The SDK stream owns the HTTP response; close it as soon as the consumer stops early
+                    # instead of leaving the response open until the generator is garbage collected.
+                    try:
+                        # Once the server names a version, later chunks that omit it keep that version
+                        # instead of reverting to the requested alias.
+                        fallback_model = model
+                        async for chunk in response_stream:
+                            if chunk.model_version:
+                                fallback_model = chunk.model_version
+                            yield self._process_chunk(chunk, fallback_model)
+                    finally:
+                        aclose = getattr(response_stream, "aclose", None)
+                        if aclose is not None:
+                            await aclose()
                 except AgentFrameworkException:
                     raise
                 except Exception as ex:
@@ -511,7 +535,7 @@ class RawGeminiChatClient(
                 raise
             except Exception as ex:
                 raise _wrap_gemini_error(ex) from ex
-            return self._process_generate_response(raw, response_format=validated.get("response_format"))
+            return self._process_generate_response(raw, model=model, response_format=validated.get("response_format"))
 
         return _get_response()
 
@@ -657,19 +681,36 @@ class RawGeminiChatClient(
                         # No adjacent carrier: fall back to the signature recorded for this call at
                         # parse time. Covers replays where the carrier was dropped in transit.
                         thought_signature = self._recall_thought_signature(call_id)
-                    if (
-                        content.informational_only
-                        and isinstance(raw_part, types.Part)
-                        and raw_part.tool_call is not None
-                    ):
-                        tool_call = raw_part.tool_call.model_copy(
-                            update={
-                                "id": call_id,
-                                "args": content.parse_arguments() or {},
-                            },
-                            deep=True,
+                    if content.informational_only:
+                        if isinstance(raw_part, types.Part) and raw_part.tool_call is not None:
+                            tool_call = raw_part.tool_call.model_copy(
+                                update={
+                                    "id": call_id,
+                                    "args": content.parse_arguments() or {},
+                                },
+                                deep=True,
+                            )
+                            parts.append(raw_part.model_copy(update={"tool_call": tool_call}, deep=True))
+                            continue
+                        if content.name not in {tool_type.value for tool_type in types.ToolType}:
+                            raise ContentError(
+                                f"Gemini hosted tool-call replay requires a supported tool name, got {content.name!r}."
+                            )
+                        try:
+                            resolved_tool_type = types.ToolType(content.name or "")
+                        except ValueError as exc:
+                            raise ContentError(
+                                f"Gemini hosted tool-call replay requires a supported tool name, got {content.name!r}."
+                            ) from exc
+                        parts.append(
+                            types.Part(
+                                tool_call=types.ToolCall(
+                                    id=call_id,
+                                    tool_type=resolved_tool_type,
+                                    args=content.parse_arguments() or {},
+                                )
+                            )
                         )
-                        parts.append(raw_part.model_copy(update={"tool_call": tool_call}, deep=True))
                         continue
                     if content.name:
                         call_id_to_name[call_id] = content.name
@@ -850,6 +891,19 @@ class RawGeminiChatClient(
             if key == "stop" and isinstance(value, str):
                 # ChatOptions allows a single stop string; stop_sequences takes a list.
                 value = [value]
+            if key == "candidate_count":
+                # Both the streaming and non-streaming parsers read candidates[0] only,
+                # so any count other than one is billed while every candidate but the
+                # first is silently dropped. The default should be to not pass the
+                # option at all; if passed, it needs to be 1 (including the stringified
+                # form some config paths produce, which is normalized here).
+                if value not in (1, "1"):
+                    raise ChatClientInvalidRequestException(
+                        "Gemini chat client supports a single candidate. Remove "
+                        "candidate_count or set it to 1; candidate_count="
+                        f"{value!r} would silently drop every candidate but the first."
+                    )
+                value = 1
             kwargs[_OPTION_TRANSLATIONS.get(key, key)] = value
 
         response_format = options.get("response_format")
@@ -859,7 +913,7 @@ class RawGeminiChatClient(
         if response_schema is not None:
             kwargs["response_schema"] = response_schema
         elif (schema := self._extract_response_schema(response_format)) is not None:
-            kwargs["response_schema"] = schema
+            kwargs["response_json_schema"] = schema
         tools = self._prepare_tools(options)
         if tools:
             kwargs["tools"] = tools
@@ -1035,12 +1089,14 @@ class RawGeminiChatClient(
         self,
         response: types.GenerateContentResponse,
         *,
+        model: str | None = None,
         response_format: type[BaseModel] | None = None,
     ) -> ChatResponse:
         """Convert a Gemini generate_content response to a framework ChatResponse.
 
         Args:
             response: The raw ``GenerateContentResponse`` from the Gemini API.
+            model: The model the request was sent to, reported when the response carries no model version.
             response_format: Optional Pydantic model type for structured output parsing.
                 When provided, the response text is parsed into the given model and
                 made available via ``ChatResponse.value``.
@@ -1055,49 +1111,49 @@ class RawGeminiChatClient(
             response_id=None,
             messages=[Message(role="assistant", contents=contents, raw_representation=candidate)],
             usage_details=self._parse_usage(response.usage_metadata),
-            model=response.model_version or self.model,
-            finish_reason=self._map_finish_reason(
-                candidate.finish_reason.name if candidate and candidate.finish_reason else None
-            ),
+            model=response.model_version or model or self.model,
+            finish_reason=self._response_finish_reason(response, candidate),
             response_format=response_format,
             raw_representation=response,
         )
 
-    def _process_chunk(self, chunk: types.GenerateContentResponse) -> ChatResponseUpdate:
+    def _process_chunk(self, chunk: types.GenerateContentResponse, model: str) -> ChatResponseUpdate:
         """Convert a single streaming chunk to a framework ChatResponseUpdate.
 
         Usage details are attached only to the final chunk, identified by a non-None finish reason.
 
         Args:
             chunk: A streaming ``GenerateContentResponse`` chunk from the Gemini API.
+            model: The model to report when the chunk carries no model version: the last version the
+                server reported in this stream, or the model resolved for this request.
 
         Returns:
-            A ``ChatResponseUpdate`` with parsed contents, finish reason, and model ID.
+            An assistant ``ChatResponseUpdate`` with parsed contents, finish reason, and model ID.
         """
         candidate = chunk.candidates[0] if chunk.candidates else None
         parts: list[types.Part] = (candidate.content.parts or []) if candidate and candidate.content else []
-        contents = self._parse_parts(parts)
+        contents = self._parse_parts(parts, streaming=True)
 
-        finish_reason = self._map_finish_reason(
-            candidate.finish_reason.name if candidate and candidate.finish_reason else None
-        )
+        finish_reason = self._response_finish_reason(chunk, candidate)
 
         # Attach usage to the final chunk only (when finish_reason is set).
         if finish_reason and (usage := self._parse_usage(chunk.usage_metadata)):
-            contents.append(Content.from_usage(usage_details=usage))
+            contents.append(Content.from_usage(usage_details=usage, merge_mode="replace"))
 
         return ChatResponseUpdate(
+            role="assistant",
             contents=contents,
-            model=chunk.model_version,
+            model=chunk.model_version or model,
             finish_reason=finish_reason,
             raw_representation=chunk,
         )
 
-    def _parse_parts(self, parts: Sequence[types.Part]) -> list[Content]:
+    def _parse_parts(self, parts: Sequence[types.Part], *, streaming: bool = False) -> list[Content]:
         """Convert Gemini response parts to framework Content objects.
 
         Args:
             parts: Sequence of ``types.Part`` objects from a Gemini response candidate.
+            streaming: Whether the parts came from a streaming response chunk.
 
         Returns:
             A list of framework ``Content`` objects (text_reasoning, text, function_call, or
@@ -1107,10 +1163,22 @@ class RawGeminiChatClient(
         for part in parts:
             if part.thought:
                 if part.text:
-                    contents.append(Content.from_text_reasoning(text=part.text, raw_representation=part))
+                    contents.append(
+                        Content.from_text_reasoning(
+                            text=part.text,
+                            merge_mode="append" if streaming else None,
+                            raw_representation=part,
+                        )
+                    )
                 continue
             if part.text is not None:
-                contents.append(Content.from_text(text=part.text, raw_representation=part))
+                contents.append(
+                    Content.from_text(
+                        text=part.text,
+                        merge_mode="append" if streaming else None,
+                        raw_representation=part,
+                    )
+                )
             elif part.tool_call is not None:
                 tool_call = part.tool_call
                 if tool_call.id:
@@ -1128,6 +1196,8 @@ class RawGeminiChatClient(
                         name=tool_name,
                         arguments=tool_call.args or {},
                         informational_only=True,
+                        hosted=True,
+                        merge_mode="replace" if streaming else None,
                         raw_representation=part,
                     )
                 )
@@ -1152,7 +1222,8 @@ class RawGeminiChatClient(
                 if part.thought_signature is not None:
                     contents.append(
                         Content.from_text_reasoning(
-                            protected_data=base64.b64encode(part.thought_signature).decode("utf-8")
+                            protected_data=base64.b64encode(part.thought_signature).decode("utf-8"),
+                            merge_mode="append" if streaming else None,
                         )
                     )
                     # Also key it by the resolved call_id so the signature survives surfaces that
@@ -1164,6 +1235,7 @@ class RawGeminiChatClient(
                         call_id=call_id,
                         name=function_call.name or "",
                         arguments=function_call.args or {},
+                        merge_mode="replace" if streaming else None,
                         raw_representation=part,
                     )
                 )
@@ -1178,10 +1250,22 @@ class RawGeminiChatClient(
                 )
             elif part.executable_code is not None:
                 if part.executable_code.code:
-                    contents.append(Content.from_text(text=part.executable_code.code, raw_representation=part))
+                    contents.append(
+                        Content.from_text(
+                            text=part.executable_code.code,
+                            merge_mode="append" if streaming else None,
+                            raw_representation=part,
+                        )
+                    )
             elif part.code_execution_result is not None:
                 if part.code_execution_result.output:
-                    contents.append(Content.from_text(text=part.code_execution_result.output, raw_representation=part))
+                    contents.append(
+                        Content.from_text(
+                            text=part.code_execution_result.output,
+                            merge_mode="append" if streaming else None,
+                            raw_representation=part,
+                        )
+                    )
             else:
                 logger.debug("Skipping unsupported response part from Gemini")
         return contents
@@ -1209,6 +1293,28 @@ class RawGeminiChatClient(
         if (v := usage.thoughts_token_count) is not None:
             details["reasoning_output_token_count"] = v
         return details or None
+
+    def _response_finish_reason(
+        self, response: types.GenerateContentResponse, candidate: types.Candidate | None
+    ) -> FinishReasonLiteral | FinishReason | None:
+        """Return the finish reason for a response or streaming chunk.
+
+        Args:
+            response: The ``GenerateContentResponse`` (or streaming chunk) from the Gemini API.
+            candidate: The first candidate of ``response``, or None if it has none.
+
+        Returns:
+            The mapped candidate finish reason, ``"content_filter"`` when Gemini blocked the prompt
+            itself, or None.
+        """
+        if candidate and candidate.finish_reason:
+            return self._map_finish_reason(candidate.finish_reason.name)
+        # A blocked prompt sets prompt_feedback.block_reason. There are usually no candidates, but when
+        # a later automatic-continuation hop is blocked, the SDK keeps the earlier candidate with its
+        # finish_reason cleared.
+        if response.prompt_feedback and response.prompt_feedback.block_reason:
+            return "content_filter"
+        return None
 
     def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | FinishReason | None:
         """Map a Gemini finish reason string to the framework's FinishReasonLiteral.
@@ -1321,7 +1427,10 @@ class GeminiChatClient(
                 Application Default Credentials.
             env_file_path: Path to a ``.env`` file for credential loading.
             env_file_encoding: Encoding for the ``.env`` file.
-            client: Pre-built ``genai.Client`` instance. When provided, connector auth settings are not required.
+            client: Pre-built ``genai.Client`` instance. When provided, it is used as-is: the API key,
+                project, and location arguments and connection environment settings are not read.
+                ``GOOGLE_MODEL`` still applies. Explicit mode arguments only apply when the client does not
+                expose its own mode.
             additional_properties: Extra properties stored on the client instance.
             middleware: Optional middleware chain applied to every call.
             function_invocation_configuration: Optional configuration for the function invocation loop.

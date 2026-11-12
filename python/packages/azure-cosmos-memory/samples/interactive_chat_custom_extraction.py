@@ -29,7 +29,8 @@ installed, instead of forking a 600-line template.
 
 Set these environment variables (or put them in a ``.env`` file) before running:
     COSMOS_ENDPOINT     Azure Cosmos DB account endpoint
-    FOUNDRY_ENDPOINT    Azure AI Foundry project endpoint (chat + embeddings)
+    FOUNDRY_PROJECT_ENDPOINT
+                        Azure AI Foundry project endpoint (chat + embeddings)
 
 Optional:
     COSMOS_DATABASE     Database name (default: ai_memory)
@@ -105,9 +106,9 @@ def _build_custom_prompts_dir() -> str:
 def create_agent_with_memory(prompts_dir: str) -> tuple[Agent, CosmosMemoryContextProvider]:
     """Create an agent wired to Cosmos DB memory that uses the custom extraction prompt."""
     cosmos_endpoint = os.environ.get("COSMOS_ENDPOINT")
-    foundry_endpoint = os.environ.get("FOUNDRY_ENDPOINT")
+    foundry_endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT") or os.environ.get("FOUNDRY_ENDPOINT")
     if not cosmos_endpoint or not foundry_endpoint:
-        print("ERROR: set COSMOS_ENDPOINT and FOUNDRY_ENDPOINT (see this file's docstring).")
+        print("ERROR: set COSMOS_ENDPOINT and FOUNDRY_PROJECT_ENDPOINT (see this file's docstring).")
         sys.exit(1)
 
     credential = DefaultAzureCredential()

@@ -3,8 +3,8 @@ name = "agent-framework-azure-cosmos"
 description = "Azure Cosmos DB for NoSQL integrations for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
-requires-python = ">=3.10"
-version = "1.0.0b261002"
+requires-python = ">=3.11"
+version = "1.0.0b261106"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -15,15 +15,15 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.19.0,<2",
+    "agent-framework-core>=1.24.0,<2",
     "azure-cosmos>=4.7.0,<5",
     "six>=1.17.0,<2",
 ]
@@ -69,7 +69,7 @@ include = ["agent_framework_azure_cosmos"]
 [tool.mypy]
 plugins = ['pydantic.mypy']
 strict = true
-python_version = "3.10"
+python_version = "3.11"
 ignore_missing_imports = true
 disallow_untyped_defs = true
 no_implicit_optional = true
@@ -100,5 +100,5 @@ help = "Run the package integration test suite."
 cmd = "pytest tests/test_cosmos_history_provider.py -m integration"
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

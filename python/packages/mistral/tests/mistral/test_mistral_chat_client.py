@@ -1,10 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import json
 import logging
 import os
 from collections.abc import AsyncIterator, Sequence
 from typing import Any, cast
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -194,21 +197,56 @@ def test_mistral_chat_service_url_default() -> None:
     assert client.service_url() == "https://api.mistral.ai"
 
 
-async def test_mistral_chat_close_only_closes_owned_client() -> None:
-    owned = MistralChatClient(model="mistral-large-latest", api_key="test-key")
+@pytest.mark.parametrize("client_type", [RawMistralChatClient, MistralChatClient])
+async def test_mistral_chat_close_only_closes_owned_client(client_type) -> None:
+    owned = client_type(model="mistral-large-latest", api_key="test-key")
     owned_http_client = owned.client.sdk_configuration.async_client
+    async with owned as entered:
+        assert entered is owned
     await owned.close()
     assert isinstance(owned_http_client, httpx.AsyncClient)
     assert owned_http_client.is_closed
 
     http_client = httpx.AsyncClient(base_url="https://custom.mistral.ai")
-    injected = MistralChatClient(model="mistral-large-latest", http_client=http_client)
+    injected = client_type(model="mistral-large-latest", http_client=http_client)
     assert injected.service_url() == "https://custom.mistral.ai"
 
+    async with injected:
+        pass
     await injected.close()
 
     assert not http_client.is_closed
     await http_client.aclose()
+
+
+async def test_mistral_chat_context_leaves_injected_sdk_client_open() -> None:
+    sdk_client = Mistral(api_key="test-key")
+    async_transport = sdk_client.sdk_configuration.async_client
+    sync_transport = sdk_client.sdk_configuration.client
+    client = MistralChatClient(model="test-model", client=sdk_client)
+    async with client:
+        pass
+    await client.close()
+    assert isinstance(async_transport, httpx.AsyncClient)
+    assert isinstance(sync_transport, httpx.Client)
+    assert not async_transport.is_closed
+    assert not sync_transport.is_closed
+    await async_transport.aclose()
+    sync_transport.close()
+
+
+async def test_mistral_chat_closes_sync_transport_when_async_cleanup_fails() -> None:
+    client = MistralChatClient(model="test-model", api_key="test-key")
+    sync_transport = client.client.sdk_configuration.client
+    assert isinstance(sync_transport, httpx.Client)
+    with (
+        patch.object(client.client, "__aexit__", new_callable=AsyncMock, side_effect=RuntimeError("close failed")),
+        pytest.raises(RuntimeError, match="close failed"),
+    ):
+        async with client:
+            pass
+    assert sync_transport.is_closed
+    await client.close()
 
 
 async def test_mistral_chat_missing_model_raises_at_request(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -318,6 +356,7 @@ async def test_get_response_includes_extended_usage() -> None:
     assert usage_details["mistral.prompt_audio_seconds"] == 4
     assert usage_details["mistral.prompt_audio_tokens"] == 12
     assert response.additional_properties["service_tier"] == "priority"
+    assert response.additional_properties["mistral"]["service_tier"] == "priority"
 
 
 @pytest.mark.parametrize("cached_tokens", ["80", 80.5, True, False])
@@ -492,6 +531,23 @@ async def test_get_response_rejects_transport_arguments_split_across_options_and
         assert server.http_requests == []
     finally:
         await client.close()
+
+
+@pytest.mark.parametrize("client_type", [RawMistralChatClient, MistralChatClient])
+@pytest.mark.parametrize("server_url", [None, "https://explicit.example"], ids=["env", "explicit"])
+def test_injected_sdk_client_endpoint_wins_over_configured_server_url(
+    client_type: type[RawMistralChatClient],
+    server_url: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An injected SDK client defines the endpoint, so MISTRAL_SERVER_URL or server_url should not change it."""
+    monkeypatch.setenv("MISTRAL_SERVER_URL", "https://env.example")
+    sdk_client = Mistral(api_key="test-key", server_url="https://client.example")
+
+    client = client_type(model="mistral-small-latest", client=sdk_client, server_url=server_url)
+
+    assert client.service_url() == "https://client.example"
+    assert client.client is sdk_client
 
 
 @pytest.mark.parametrize("client_type", [RawMistralChatClient, MistralChatClient])
@@ -1110,6 +1166,9 @@ async def test_streaming_response() -> None:
     stream = client.get_response([Message("user", ["hi"])], stream=True)
     updates = [update async for update in stream]
     assert [u.text for u in updates] == ["Hel", "lo", ""]
+    assert updates[0].contents[0].merge_mode == "append"
+    assert updates[1].contents[0].merge_mode == "append"
+    assert updates[2].contents[0].merge_mode == "replace"
 
     response = await stream.get_final_response()
     assert response.text == "Hello"

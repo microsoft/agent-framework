@@ -23,8 +23,8 @@ Env.TraversePath().Load();
 string projectEndpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = FirstNonBlank(
-    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     "gpt-4o")!;
 
 string searchEndpoint = FirstNonBlank(System.Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT"))
@@ -67,7 +67,7 @@ AIAgent agent = new AIProjectClient(new Uri(projectEndpoint), credential)
 
 // Host the agent as a Foundry Hosted Agent using the Responses API.
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent);
+builder.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();

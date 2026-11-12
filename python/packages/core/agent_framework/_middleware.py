@@ -2,14 +2,26 @@
 
 from __future__ import annotations
 
-import contextlib
+import asyncio
+import contextvars
 import inspect
 import logging
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, cast, overload, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Literal,
+    Protocol,
+    TypeAlias,
+    TypedDict,
+    cast,
+    overload,
+    runtime_checkable,
+)
 
 from ._clients import SupportsChatGetResponse
 from ._feature_stage import ExperimentalFeature, experimental
@@ -28,14 +40,14 @@ from .exceptions import MiddlewareException
 
 logger = logging.getLogger(__name__)
 
+_ACTIVE_FUNCTION_MIDDLEWARE_CONTEXT: contextvars.ContextVar[tuple[Any, asyncio.Task[Any] | None] | None] = (
+    contextvars.ContextVar("agent_framework_core_active_function_middleware_context", default=None)
+)
+
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -457,6 +469,10 @@ class FunctionInvocationContext:
                 bare ``Content`` of type ``function_approval_request``, which the
                 invocation layer passes through untouched to drive the approval flow.
         kwargs: Additional runtime keyword arguments forwarded to the function invocation.
+        parent_service_session_state_keys: Provider-owned keys in ``session.state`` declared by the invoking
+                parent agent and its client. The automatic function-calling loop supplies this value. Custom loops
+                that directly invoke an agent tool with session propagation must provide it explicitly, including
+                an empty collection when the parent declares no such keys.
         tools: The live, mutable list of tools available to the model for the current
                 agent run, or ``None`` when the function is invoked outside of a
                 function-calling loop (for example via ``FunctionTool.invoke`` directly).
@@ -504,6 +520,7 @@ class FunctionInvocationContext:
         result: Any = None,
         kwargs: Mapping[str, Any] | None = None,
         tools: list[ToolTypes] | None = None,
+        parent_service_session_state_keys: Collection[str] | None = None,
     ) -> None:
         """Initialize the FunctionInvocationContext.
 
@@ -520,6 +537,8 @@ class FunctionInvocationContext:
             tools: The live, mutable list of tools for the current agent run. When provided,
                 this is the same list object the model sees on the next iteration, so
                 appending or removing tools changes the model's available tools.
+            parent_service_session_state_keys: Provider-owned keys declared by the invoking parent agent and client,
+                or ``None`` when the invocation path cannot establish that ownership.
         """
         self.function = function
         self.arguments = arguments
@@ -527,6 +546,9 @@ class FunctionInvocationContext:
         self.metadata: dict[str, Any] = dict(metadata) if metadata is not None else {}
         self.result = result
         self.kwargs: dict[str, Any] = dict(kwargs) if kwargs is not None else {}
+        self.parent_service_session_state_keys: frozenset[str] | None = (
+            frozenset(parent_service_session_state_keys) if parent_service_session_state_keys is not None else None
+        )
         self.tools = tools
 
     @experimental(feature_id=ExperimentalFeature.PROGRESSIVE_TOOLS)
@@ -1348,6 +1370,26 @@ class BaseMiddlewarePipeline(ABC):
             )
 
 
+def _warn_unbuffered_result_gates(stream: ResponseStream[Any, Any]) -> None:
+    """Warn when result gates are registered on a stream that releases updates unbuffered.
+
+    A result gate runs at finalization, so on an unbuffered stream the consumer has already
+    received every update by the time the gate raises: the gate fails open. Buffering holds
+    the updates until the gates pass. The check reads the final stream state, so gates and
+    buffering a middleware configured directly on the stream are reflected too.
+    """
+    if not stream._stream_updates:  # pyright: ignore[reportPrivateUsage]
+        return
+    if not (stream._result_gates_before or stream._result_gates_after):  # pyright: ignore[reportPrivateUsage]
+        return
+    logger.warning(
+        "Result gates are registered on a streamed run that releases updates unbuffered; "
+        "updates reach the consumer before the gates run, so a gate that raises cannot hold "
+        "the answer back. Enable buffering (stream_buffer_updates=True or buffer_updates()) "
+        "to make the gates blocking."
+    )
+
+
 class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
     """Executes agent middleware in a chain.
 
@@ -1422,8 +1464,13 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             return current_handler
 
         first_handler = create_next_handler(0)
-        with contextlib.suppress(MiddlewareTermination):
+        try:
             await first_handler()
+        except MiddlewareTermination as termination:
+            if context.result is None:
+                context.result = cast(
+                    AgentResponse | ResponseStream[AgentResponseUpdate, AgentResponse] | None, termination.result
+                )
 
         if context.result and isinstance(context.result, ResponseStream):
             if context.stream_buffer_updates:
@@ -1458,6 +1505,7 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
                 context.result._with_release_error_hook(hook)  # pyright: ignore[reportPrivateUsage]
             for cleanup_hook in context.stream_cleanup_hooks:
                 context.result.with_cleanup_hook(cleanup_hook)
+            _warn_unbuffered_result_gates(context.result)
         return context.result
 
 
@@ -1528,9 +1576,20 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
             if index >= len(self._middleware):
 
                 async def final_wrapper() -> None:
-                    context.result = final_handler(context)
-                    if inspect.isawaitable(context.result):
-                        context.result = await context.result
+                    from ._tools import (
+                        _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT,  # pyright: ignore[reportPrivateUsage]
+                        _suspend_security_argument_materialization,  # pyright: ignore[reportPrivateUsage]
+                    )
+
+                    security_materialization = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.get()
+                    if security_materialization is not None:
+                        active_context, materialize, origin_task = security_materialization
+                        if context is active_context and asyncio.current_task() is origin_task:
+                            materialize(context)
+                    with _suspend_security_argument_materialization():
+                        context.result = final_handler(context)
+                        if inspect.isawaitable(context.result):
+                            context.result = await context.result
 
                 return final_wrapper
 
@@ -1542,7 +1601,11 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
 
         first_handler = create_next_handler(0)
         # Don't suppress MiddlewareTermination - let it propagate to signal loop termination
-        await first_handler()
+        pipeline_token = _ACTIVE_FUNCTION_MIDDLEWARE_CONTEXT.set((context, asyncio.current_task()))
+        try:
+            await first_handler()
+        finally:
+            _ACTIVE_FUNCTION_MIDDLEWARE_CONTEXT.reset(pipeline_token)
 
         return context.result
 
@@ -1632,8 +1695,13 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             return current_handler
 
         first_handler = create_next_handler(0)
-        with contextlib.suppress(MiddlewareTermination):
+        try:
             await first_handler()
+        except MiddlewareTermination as termination:
+            if context.result is None:
+                context.result = cast(
+                    ChatResponse | ResponseStream[ChatResponseUpdate, ChatResponse] | None, termination.result
+                )
 
         if context.result and isinstance(context.result, ResponseStream):
             if context.stream_buffer_updates:
@@ -1668,6 +1736,7 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
                 context.result._with_release_error_hook(hook)  # pyright: ignore[reportPrivateUsage]
             for cleanup_hook in context.stream_cleanup_hooks:
                 context.result.with_cleanup_hook(cleanup_hook)
+            _warn_unbuffered_result_gates(context.result)
         return context.result
 
 

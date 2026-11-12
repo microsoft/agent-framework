@@ -45,6 +45,6 @@ services:
         version: 2.0.0
   ai-project:
     host: azure.ai.project
-    endpoint: ${AZURE_AI_PROJECT_ENDPOINT}
+    endpoint: ${FOUNDRY_PROJECT_ENDPOINT}
 infra:
   provider: microsoft.foundry

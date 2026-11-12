@@ -20,6 +20,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using CreateResponse = Azure.AI.AgentServer.Responses.Models.CreateResponse;
 using ResponseStreamEvent = Azure.AI.AgentServer.Responses.Models.ResponseStreamEvent;
 
@@ -165,6 +166,11 @@ public sealed class ResilientTwoLifetimeIntegrationTests
                     await coordinator.Blocked.Task.WaitAsync(TimeSpan.FromSeconds(15));
                     await coordinator.ExpectedCheckpointProcessed.Task.WaitAsync(
                         TimeSpan.FromSeconds(15));
+                    await WaitForPersistedOutputCountAsync(
+                        stateRoot,
+                        responseId,
+                        expectedCount: 3,
+                        TimeSpan.FromSeconds(15));
 
                     using CancellationTokenSource stopTimeout =
                         new(TimeSpan.FromSeconds(15));
@@ -233,9 +239,7 @@ public sealed class ResilientTwoLifetimeIntegrationTests
         builder.Services.AddFoundryResponses(
             agent,
             sessionStore,
-            options => options.ResilientBackground = true);
-        builder.Services.AddSingleton<HostedSessionIsolationKeyProvider>(
-            new FakeHostedSessionIsolationKeyProvider());
+            new FoundryResponsesServerOptions { ResilientBackground = true });
         builder.Services.AddLogging();
         if (recoveryCoordinator is not null)
         {
@@ -243,7 +247,8 @@ public sealed class ResilientTwoLifetimeIntegrationTests
             builder.Services.AddSingleton<ResponseHandler>(serviceProvider =>
                 new CheckpointObservingResponseHandler(
                     ActivatorUtilities.CreateInstance<AgentFrameworkResponseHandler>(
-                        serviceProvider),
+                        serviceProvider,
+                        serviceProvider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value),
                     recoveryCoordinator));
         }
 
@@ -325,19 +330,70 @@ public sealed class ResilientTwoLifetimeIntegrationTests
         string stateRoot,
         string responseId)
     {
-        string path = GetPersistedResponsePath(stateRoot, responseId);
-        using JsonDocument document = JsonDocument.Parse(File.ReadAllBytes(path));
-        return document.RootElement.GetProperty("envelope").Clone();
+        return TryReadPersistedResponse(stateRoot, responseId, out JsonElement response)
+            ? response
+            : throw new InvalidOperationException($"Persisted response '{responseId}' was not found.");
     }
 
-    private static string GetPersistedResponsePath(
+    private static bool TryReadPersistedResponse(
         string stateRoot,
-        string responseId) =>
-        Path.Combine(
+        string responseId,
+        out JsonElement response)
+    {
+        response = default;
+        string directory = Path.Combine(
             stateRoot,
             "responses",
-            "envelopes",
-            $"{responseId}.json");
+            "partitions-v1",
+            "anonymous",
+            "envelopes");
+        if (!Directory.Exists(directory))
+        {
+            return false;
+        }
+
+        foreach (string path in Directory.GetFiles(directory, "*.json"))
+        {
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllBytes(path));
+            JsonElement envelope = document.RootElement.GetProperty("envelope");
+            if (string.Equals(
+                envelope.GetProperty("id").GetString(),
+                responseId,
+                StringComparison.Ordinal))
+            {
+                response = envelope.Clone();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async Task WaitForPersistedOutputCountAsync(
+        string stateRoot,
+        string responseId,
+        int expectedCount,
+        TimeSpan timeout)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        int actualCount = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (TryReadPersistedResponse(stateRoot, responseId, out JsonElement response))
+            {
+                actualCount = GetOutputTexts(response).Count;
+                if (actualCount >= expectedCount)
+                {
+                    return;
+                }
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(25));
+        }
+
+        throw new TimeoutException(
+            $"Persisted response '{responseId}' contained {actualCount} output items; expected at least {expectedCount}.");
+    }
 
     private static string GetOutputText(JsonElement response)
     {
@@ -593,6 +649,15 @@ public sealed class ResilientTwoLifetimeIntegrationTests
             AgentSessionStoreKey key,
             CancellationToken cancellationToken = default) =>
             inner.GetSessionAsync(
+                agent,
+                key,
+                cancellationToken);
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            inner.DeleteSessionAsync(
                 agent,
                 key,
                 cancellationToken);

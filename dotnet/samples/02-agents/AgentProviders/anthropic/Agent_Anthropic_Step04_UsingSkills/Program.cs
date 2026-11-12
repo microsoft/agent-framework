@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable MAAIANTHROPIC001 // This sample demonstrates experimental Anthropic beta service extensions.
+
 // This sample demonstrates how to use Anthropic-managed Skills with an AI agent.
 // Skills are pre-built capabilities provided by Anthropic that can be used with the Claude API.
 // This sample shows how to:

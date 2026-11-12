@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -12,8 +13,125 @@ namespace Microsoft.Agents.AI.Tools.Shell.UnitTests;
 /// Tests for the side-effect-free argv builders on <see cref="DockerShellExecutor"/>.
 /// These don't require a Docker daemon to run.
 /// </summary>
-public sealed class DockerShellExecutorTests
+public sealed class DockerShellExecutorTests : IDisposable
 {
+    // A real file with a fully qualified path. Constructing the executor never launches it.
+    private readonly string _dockerBinaryPath = Path.GetTempFileName();
+
+    public void Dispose() => File.Delete(this._dockerBinaryPath);
+
+    [Theory]
+    [InlineData("docker.exe")]
+    [InlineData("docker")]
+    [InlineData("./docker")]
+    [InlineData("../docker")]
+    [InlineData(@".\docker.exe")]
+    [InlineData(@"..\docker.exe")]
+    [InlineData("C:docker.exe")]
+    [InlineData(@"\docker.exe")]
+    public async Task Ctor_RejectsNonFullyQualifiedPathsAsync(string dockerBinaryPath)
+    {
+        // Act
+        var ctorException = Assert.Throws<ArgumentException>(() => new DockerShellExecutor(dockerBinaryPath));
+        var probeException = await Assert.ThrowsAsync<ArgumentException>(() => DockerShellExecutor.IsAvailableAsync(dockerBinaryPath));
+
+        // Assert
+        Assert.Equal("dockerBinaryPath", ctorException.ParamName);
+        Assert.Equal("dockerBinaryPath", probeException.ParamName);
+    }
+
+    [Fact]
+    public void Ctor_RejectsRootRelativePathOnWindows()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "A leading slash is an absolute path on Unix.");
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentException>(() => new DockerShellExecutor("/usr/bin/docker"));
+        Assert.Equal("dockerBinaryPath", exception.ParamName);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Ctor_RejectsNullOrWhitespacePath(string? dockerBinaryPath)
+    {
+        // Act & Assert
+        var exception = Assert.ThrowsAny<ArgumentException>(() => new DockerShellExecutor(dockerBinaryPath!));
+        Assert.Equal("dockerBinaryPath", exception.ParamName);
+    }
+
+    [Fact]
+    public void Ctor_RejectsMissingFile()
+    {
+        // Arrange
+        var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "docker.exe");
+
+        // Act & Assert
+        var exception = Assert.Throws<FileNotFoundException>(() => new DockerShellExecutor(missing));
+        Assert.Equal(missing, exception.FileName);
+    }
+
+    [Fact]
+    public void Ctor_RejectsDirectory()
+    {
+        // Arrange
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".exe")).FullName;
+
+        try
+        {
+            // Act & Assert
+            var exception = Assert.Throws<FileNotFoundException>(() => new DockerShellExecutor(directory));
+            Assert.Equal(directory, exception.FileName);
+        }
+        finally
+        {
+            Directory.Delete(directory);
+        }
+    }
+
+    [Fact]
+    public async Task Ctor_RejectsPathWithoutExtensionOnWindowsAsync()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "File extensions are only required on Windows.");
+
+        // Arrange
+        var directory = Directory.CreateTempSubdirectory("af-docker-path-").FullName;
+        var dockerBinaryPath = Path.Combine(directory, "docker");
+        File.WriteAllText(dockerBinaryPath, string.Empty);
+
+        try
+        {
+            // Act
+            var ctorException = Assert.Throws<ArgumentException>(() => new DockerShellExecutor(dockerBinaryPath));
+            var probeException = await Assert.ThrowsAsync<ArgumentException>(() => DockerShellExecutor.IsAvailableAsync(dockerBinaryPath));
+
+            // Assert
+            Assert.Equal("dockerBinaryPath", ctorException.ParamName);
+            Assert.Equal("dockerBinaryPath", probeException.ParamName);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Ctor_UsesValidatedPathForEveryRuntimeCommandAsync()
+    {
+        // Arrange
+        await using var executor = new DockerShellExecutor(this._dockerBinaryPath);
+
+        // Act
+        var persistent = executor.BuildRunArgvPersistent();
+        var stateless = executor.BuildRunArgvStateless("stateless");
+
+        // Assert
+        Assert.Equal(this._dockerBinaryPath, executor.DockerBinaryPath);
+        Assert.Equal(this._dockerBinaryPath, persistent[0]);
+        Assert.Equal(this._dockerBinaryPath, stateless[0]);
+    }
+
     [Fact]
     public void BuildRunArgv_EmitsRestrictiveDefaults()
     {
@@ -124,6 +242,51 @@ public sealed class DockerShellExecutorTests
         Assert.Contains("owner=test", list);
     }
 
+    [Fact]
+    public void Ctor_RejectsNullUnsafeExtraRunArg()
+    {
+        // Arrange
+        var options = new DockerShellExecutorOptions { UnsafeExtraRunArgs = [null!] };
+
+        // Act
+        var exception = Assert.Throws<ArgumentException>(() => new DockerShellExecutor(this._dockerBinaryPath, options));
+
+        // Assert
+        Assert.Contains("UnsafeExtraRunArgs", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("null token", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Ctor_SnapshotsCallerOwnedUnsafeExtraRunArgListAsync()
+    {
+        // Arrange
+        var unsafeArgs = new List<string> { "--network", "host" };
+        await using var unsafeExecutor = new DockerShellExecutor(this._dockerBinaryPath, new() { UnsafeExtraRunArgs = unsafeArgs });
+
+        // Act
+        unsafeArgs.Add("--privileged");
+
+        // Assert
+        Assert.DoesNotContain("--privileged", unsafeExecutor.BuildRunArgvPersistent());
+        Assert.DoesNotContain("--privileged", unsafeExecutor.BuildRunArgvStateless("unsafe"));
+    }
+
+    [Fact]
+    public async Task Ctor_PassesUnsafeExtraRunArgsVerbatimInBothModesAsync()
+    {
+        // Arrange
+        string[] unsafeArgs = ["--network", "host", "--entrypoint", "/bin/custom"];
+        await using var executor = new DockerShellExecutor(this._dockerBinaryPath, new() { UnsafeExtraRunArgs = unsafeArgs });
+
+        // Act
+        var persistent = executor.BuildRunArgvPersistent();
+        var stateless = executor.BuildRunArgvStateless("stateless");
+
+        // Assert
+        AssertOrderedSubsequence(persistent, unsafeArgs);
+        AssertOrderedSubsequence(stateless, unsafeArgs);
+    }
+
     private static readonly string[] s_expectedInteractive = new[] { "docker", "exec", "-i", "af-shell-x", "bash", "--noprofile", "--norc" };
 
     [Fact]
@@ -136,8 +299,8 @@ public sealed class DockerShellExecutorTests
     [Fact]
     public async Task Ctor_GeneratesUniqueContainerNameAsync()
     {
-        await using var t1 = new DockerShellExecutor(new() { Mode = ShellMode.Stateless });
-        await using var t2 = new DockerShellExecutor(new() { Mode = ShellMode.Stateless });
+        await using var t1 = new DockerShellExecutor(this._dockerBinaryPath, new() { Mode = ShellMode.Stateless });
+        await using var t2 = new DockerShellExecutor(this._dockerBinaryPath, new() { Mode = ShellMode.Stateless });
         Assert.StartsWith("af-shell-", t1.ContainerName, StringComparison.Ordinal);
         Assert.StartsWith("af-shell-", t2.ContainerName, StringComparison.Ordinal);
         Assert.NotEqual(t1.ContainerName, t2.ContainerName);
@@ -146,14 +309,14 @@ public sealed class DockerShellExecutorTests
     [Fact]
     public async Task Ctor_RespectsExplicitContainerNameAsync()
     {
-        await using var t = new DockerShellExecutor(new() { ContainerName = "my-explicit-name", Mode = ShellMode.Stateless });
+        await using var t = new DockerShellExecutor(this._dockerBinaryPath, new() { ContainerName = "my-explicit-name", Mode = ShellMode.Stateless });
         Assert.Equal("my-explicit-name", t.ContainerName);
     }
 
     [Fact]
     public async Task ShellExecutor_DockerShellTool_ImplementsInterfaceAsync()
     {
-        await using var t = new DockerShellExecutor(new() { Mode = ShellMode.Stateless });
+        await using var t = new DockerShellExecutor(this._dockerBinaryPath, new() { Mode = ShellMode.Stateless });
         ShellExecutor executor = t;
         Assert.NotNull(executor);
     }
@@ -165,16 +328,19 @@ public sealed class DockerShellExecutorTests
         // ApprovalRequiredAIFunction — container configuration alone is
         // not a sufficient signal to safely auto-execute model-generated
         // commands, so the caller must explicitly opt out.
-        await using var t = new DockerShellExecutor(new() { Mode = ShellMode.Stateless });
+        await using var t = new DockerShellExecutor(this._dockerBinaryPath, new() { Mode = ShellMode.Stateless });
         var fn = t.AsAIFunction();
         Assert.IsType<ApprovalRequiredAIFunction>(fn);
         Assert.Equal("run_shell", fn.Name);
+        Assert.NotNull(fn.Description);
+        Assert.Contains("configured Docker container", fn.Description, StringComparison.Ordinal);
+        Assert.DoesNotContain("has no network", fn.Description, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task AsAIFunction_OptInApproval_WrapsInApprovalRequiredAsync()
     {
-        await using var t = new DockerShellExecutor(new() { Mode = ShellMode.Stateless });
+        await using var t = new DockerShellExecutor(this._dockerBinaryPath, new() { Mode = ShellMode.Stateless });
         var fn = t.AsAIFunction(requireApproval: true);
         Assert.IsType<ApprovalRequiredAIFunction>(fn);
     }
@@ -182,7 +348,7 @@ public sealed class DockerShellExecutorTests
     [Fact]
     public async Task AsAIFunction_ExplicitOptOut_IsNotApprovalGatedAsync()
     {
-        await using var t = new DockerShellExecutor(new()
+        await using var t = new DockerShellExecutor(this._dockerBinaryPath, new()
         {
             Mode = ShellMode.Stateless,
             Network = "host",
@@ -194,7 +360,13 @@ public sealed class DockerShellExecutorTests
     [Fact]
     public async Task IsAvailableAsync_NonExistentBinary_ReturnsFalseAsync()
     {
-        var ok = await DockerShellExecutor.IsAvailableAsync(binary: "definitely-not-a-real-binary-xyz123");
+        // Arrange
+        var missing = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "docker.exe");
+
+        // Act
+        var ok = await DockerShellExecutor.IsAvailableAsync(missing);
+
+        // Assert
         Assert.False(ok);
     }
 
@@ -203,12 +375,23 @@ public sealed class DockerShellExecutorTests
     {
         // Pure policy path: the policy check runs before any docker invocation,
         // so this exercises rejection without needing a Docker daemon.
-        await using var t = new DockerShellExecutor(new()
+        await using var t = new DockerShellExecutor(this._dockerBinaryPath, new()
         {
             Mode = ShellMode.Stateless,
             Policy = new ShellPolicy(denyList: [@"\brm\s+-rf?\s+[\/]"]),
         });
         await Assert.ThrowsAsync<ShellCommandRejectedException>(
             () => t.RunAsync("rm -rf /"));
+    }
+
+    private static void AssertOrderedSubsequence(IReadOnlyList<string> actual, IReadOnlyList<string> expected)
+    {
+        var start = 0;
+        foreach (var value in expected)
+        {
+            var index = actual.ToList().FindIndex(start, item => string.Equals(item, value, StringComparison.Ordinal));
+            Assert.True(index >= 0, $"Expected '{value}' after index {start - 1}.");
+            start = index + 1;
+        }
     }
 }

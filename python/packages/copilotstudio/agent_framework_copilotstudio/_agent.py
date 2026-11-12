@@ -372,7 +372,12 @@ class CopilotStudioAgent(BaseAgent):
             ):
                 yield Message(
                     role="assistant",
-                    contents=[Content.from_text(activity.text)],
+                    contents=[
+                        Content.from_text(
+                            activity.text,
+                            merge_mode="append" if streaming else None,
+                        )
+                    ],
                     author_name=activity.from_property.name if activity.from_property else None,
                     message_id=activity.id,
                     raw_representation=activity,

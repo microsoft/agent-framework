@@ -17,11 +17,22 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 internal static class HostedCallContext
 {
     private static readonly AsyncLocal<string?> s_callId = new();
+    private static readonly AsyncLocal<string?> s_toolboxCacheScopeId = new();
 
     /// <summary>Gets or sets the current request's call id, or <see langword="null"/> when absent.</summary>
     public static string? CallId
     {
         get => s_callId.Value;
         set => s_callId.Value = value;
+    }
+
+    /// <summary>
+    /// Gets or sets the current response's toolbox cache scope, or <see langword="null"/> when no
+    /// response-owned toolbox client may be opened.
+    /// </summary>
+    public static string? ToolboxCacheScopeId
+    {
+        get => s_toolboxCacheScopeId.Value;
+        set => s_toolboxCacheScopeId.Value = value;
     }
 }

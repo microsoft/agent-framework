@@ -19,9 +19,13 @@ stored under the sample's local `storage/` root. Checkpoints are scoped into
 per-continuation buckets so a "latest checkpoint" lookup cannot cross
 conversations.
 
-The sample passes a builder with `cache_target=False`, producing a fresh
-workflow instance for every request. This is required for simultaneous runs
-because one `Workflow` instance intentionally permits only one active run.
+The sample passes a factory with `cache_target=False`. The factory creates the
+workflow and its `AgentExecutor` for every request. This is required for
+simultaneous runs, because one `Workflow` instance intentionally permits only
+one active run. It also keeps requests independent: an `AgentExecutor` keeps one
+`AgentSession` between runs, so an executor created at module scope
+would carry one request's history into the next. The workflow name and executor
+ids stay stable, so a checkpoint restores into the next request's new workflow.
 
 ## Production readiness
 
@@ -37,7 +41,7 @@ by tenant/user as appropriate for your application.
 ## Run
 
 ```bash
-export FOUNDRY_PROJECT_ENDPOINT=https://<your-project>.services.ai.azure.com
+export FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
 export FOUNDRY_MODEL=gpt-5-nano
 az login
 

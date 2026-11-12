@@ -14,10 +14,9 @@ import asyncio
 import json
 import logging
 import re
-import sys
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Self, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -41,15 +40,11 @@ from ._feature_usage import FeatureIndex
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
 
+
 from ._detection import (
     detect_and_strip_files,
 )
 from ._models import AnalysisSection, DocumentEntry, DocumentStatus, FileSearchConfig
-
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.azure_contentunderstanding")
 
@@ -299,6 +294,8 @@ class ContentUnderstandingContextProvider(ContextProvider):
             upload_timeout = getattr(self, "max_wait", None)
             remaining_uploads: list[tuple[str, DocumentEntry]] = []
             for upload_key, upload_entry in pending_uploads:
+                # Restoring session state does not preserve shared document references.
+                upload_entry = documents.get(upload_key, upload_entry)
                 try:
                     if upload_timeout is not None:
                         await asyncio.wait_for(
@@ -307,7 +304,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                         )
                     else:
                         await self._upload_to_vector_store(upload_key, upload_entry, state=state)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Leave timed-out uploads pending so they can be retried on a later turn.
                     logger.warning(
                         "Timed out while uploading document '%s' to vector store; will retry later.",
@@ -553,7 +550,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
             # Wait with timeout; defer to background polling on timeout.
             try:
                 result = await asyncio.wait_for(poller.result(), timeout=self.max_wait)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Save continuation token for resuming on next before_run().
                 # Continuation tokens are serializable strings, so state can
                 # be persisted to disk/storage without issues.
@@ -601,7 +598,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                 error=None,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise
         except Exception as e:
             logger.warning("CU analysis error for '%s': %s", filename, e)
@@ -676,7 +673,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                         poller.result(),  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
                         timeout=resolution_timeout,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Still running — update token and keep for next turn
                     new_token: str = poller.continuation_token()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
                     token_info["continuation_token"] = new_token
@@ -876,7 +873,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
             logger.info("Uploaded '%s' to vector store in %.1fs (%s bytes).", doc_key, upload_duration, len(result))
             return True
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.info("Vector store upload for '%s' timed out; deferring to background.", doc_key)
             entry["status"] = DocumentStatus.UPLOADING
             if state is not None:

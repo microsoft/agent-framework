@@ -7,7 +7,7 @@ These samples demonstrate how to use the `agent-framework-azure-contentunderstan
 1. Azure CLI logged in: `az login`
 2. Environment variables set (or `.env` file in the `python/` directory):
    ```
-   FOUNDRY_PROJECT_ENDPOINT=https://your-project.services.ai.azure.com
+   FOUNDRY_PROJECT_ENDPOINT=https://your-account.services.ai.azure.com/api/projects/your-project
    FOUNDRY_MODEL=gpt-4.1
    AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.cognitiveservices.azure.com/
    ```

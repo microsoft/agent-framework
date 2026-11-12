@@ -58,6 +58,16 @@ def _is_valid_guid(value: str | None) -> bool:
         return False
 
 
+def _get_message_user_id(message: Message) -> str | None:
+    """Return the message's explicit user id: a valid ``user_id`` property, else a GUID ``author_name``."""
+    potential_user_id = (message.additional_properties or {}).get("user_id")
+    if isinstance(potential_user_id, str) and _is_valid_guid(potential_user_id):
+        return potential_user_id
+    if _is_valid_guid(message.author_name):
+        return message.author_name
+    return None
+
+
 # RFC 2397: data:[<mediatype>][;base64],<data>, where <mediatype> may be followed by any number of
 # ";parameter=value" segments (for example "data:text/plain;charset=utf-8;base64,..."). The optional
 # parameters have to be matched explicitly, otherwise a parameterised media type fails to decode and
@@ -137,7 +147,14 @@ def _map_content(content: Content) -> ContentBase | None:
 
 def _map_message_contents(message: Message) -> list[ContentBase]:
     """Map every non-empty content item of a message to Purview content entries."""
-    return [purview_content for content in message.contents if (purview_content := _map_content(content))]
+    mapped: list[ContentBase] = []
+    for content in message.contents:
+        if purview_content := _map_content(content):
+            mapped.append(purview_content)
+        # Annotations (for example citations) are not part of the text, so they are evaluated separately.
+        if content.type in ("text", "text_reasoning") and content.annotations:
+            mapped.extend(PurviewTextContent(data=_serialize_for_evaluation(a)) for a in content.annotations)
+    return mapped
 
 
 def _is_blocking_action(action_info: DlpActionInfo) -> bool:
@@ -205,12 +222,13 @@ class ScopedContentProcessor:
             messages: The messages to process
             activity: The activity type (e.g., UPLOAD_TEXT)
             session_id: Optional session/conversation id. Else, a new GUID is generated.
-            user_id: Optional user_id to use for all messages. If provided, this is the fallback.
+            user_id: Optional user_id to use for all messages when the credential does not identify a user.
+                Otherwise, each message is evaluated under its own user id.
 
         Returns:
             A tuple of (should_block: bool, resolved_user_id: str | None).
-            The resolved_user_id can be stored and passed back when processing the response
-            to ensure the same user context is maintained throughout the request/response cycle.
+            The resolved_user_id is the user id of the last message. It can be stored and passed back when
+            processing the response so the response is evaluated under the same user context.
         """
         pc_requests, resolved_user_id = await self._map_messages(messages, activity, session_id, user_id)
         should_block = False
@@ -238,10 +256,12 @@ class ScopedContentProcessor:
             messages: The messages to map
             activity: The activity type
             session_id: Optional session/conversation id to use for correlation
-            provided_user_id: Optional user_id to use. If provided, this is the fallback.
+            provided_user_id: Optional user_id to use for all messages when the credential does not identify a
+                user. Otherwise, each message uses its own user id, and messages without one inherit the latest
+                explicit user id in the batch.
 
         Returns:
-            A tuple of (requests, resolved_user_id)
+            A tuple of (requests, resolved_user_id), where resolved_user_id is the user id of the last message.
         """
         results: list[ProcessContentRequest] = []
         token_info = await self._client.get_user_info_from_token(tenant_id=self._settings.get("tenant_id"))
@@ -250,34 +270,32 @@ class ScopedContentProcessor:
         if not tenant_id or not _is_valid_guid(tenant_id):
             raise ValueError("Tenant id required or must be inferable from credential")
 
-        resolved_user_id = (token_info or {}).get("user_id")
-        resolved_author_name = None
-        if not resolved_user_id:
-            resolved_user_id = provided_user_id if provided_user_id and _is_valid_guid(provided_user_id) else None
+        message_list = list(messages)
+        override_user_id = (token_info or {}).get("user_id")
+        if not override_user_id:
+            override_user_id = provided_user_id if provided_user_id and _is_valid_guid(provided_user_id) else None
 
-        if not resolved_user_id:
-            for m in messages:
-                if m.additional_properties:
-                    potential_user_id = m.additional_properties.get("user_id")
-                    if _is_valid_guid(potential_user_id):
-                        resolved_user_id = potential_user_id
-                        break
-                if m.author_name and _is_valid_guid(m.author_name) and not resolved_author_name:
-                    resolved_author_name = m.author_name
-
-        if not resolved_user_id and resolved_author_name:
-            resolved_user_id = resolved_author_name
+        # Leading messages without an identity (e.g. system or generated messages) use the first explicit identity.
+        inherited_user_id = override_user_id or next(
+            (uid for uid in map(_get_message_user_id, message_list) if uid), None
+        )
 
         # Fail closed: without a resolvable user identity no policy can be evaluated,
         # so the content must not be allowed through unevaluated.
-        if not resolved_user_id or not _is_valid_guid(resolved_user_id):
+        if not inherited_user_id or not _is_valid_guid(inherited_user_id):
             raise ValueError(
                 "No user id provided or inferred for Purview request. Please provide an Entra user id in each "
                 "message, pass a user id to the processor, or configure the credential to authenticate to an "
                 "Entra user."
             )
 
-        for m in messages:
+        for m in message_list:
+            if not override_user_id:
+                # Messages without an identity (e.g. assistant or tool messages) are attributed to the
+                # latest explicitly identified user, without overriding later explicit identities.
+                inherited_user_id = _get_message_user_id(m) or inherited_user_id
+            resolved_user_id = inherited_user_id
+
             message_id = m.message_id or str(uuid.uuid4())
             correlation_id = (session_id or str(uuid.uuid4())) + "@AF"
             # This would be c# ticks equivalent and needs to fit inside c# long
@@ -330,13 +348,13 @@ class ScopedContentProcessor:
                 )
                 req = ProcessContentRequest(
                     content_to_process=ctp,
-                    user_id=resolved_user_id,  # Use the resolved user_id for all messages
+                    user_id=resolved_user_id,
                     tenant_id=tenant_id,
                     correlation_id=correlation_id,
                     process_inline=None,  # Will be set based on execution mode
                 )
                 results.append(req)
-        return results, resolved_user_id
+        return results, inherited_user_id
 
     async def _process_with_scopes(self, pc_request: ProcessContentRequest) -> ProcessContentResponse:
         app_location = pc_request.content_to_process.protected_app_metadata.application_location

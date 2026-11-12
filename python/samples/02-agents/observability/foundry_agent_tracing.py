@@ -1,12 +1,12 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = [
 #     "agent-framework-foundry",
 #     "azure-monitor-opentelemetry>=1.8.10,<2",
 # ]
 # ///
 # Run from python/ with the workspace environment:
-#   uv run --group test python samples/02-agents/observability/foundry_agent_tracing.py
+#   uv run python samples/02-agents/observability/foundry_agent_tracing.py
 
 # Copyright (c) Microsoft. All rights reserved.
 

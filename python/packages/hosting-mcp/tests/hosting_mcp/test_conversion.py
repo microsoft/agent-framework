@@ -4,6 +4,7 @@ import json
 
 from agent_framework import AgentResponse, Content, Message
 from mcp import types
+from mcp.shared.exceptions import MCPError
 from pytest import raises
 
 from agent_framework_hosting_mcp import mcp_from_run, mcp_to_run
@@ -34,12 +35,12 @@ def test_mcp_to_run_converts_selected_argument() -> None:
 
 
 def test_mcp_to_run_rejects_missing_argument() -> None:
-    with raises(ValueError, match="'task' string"):
+    with raises(MCPError, match="'task' string"):
         mcp_to_run({})
 
 
 def test_mcp_to_run_rejects_non_string_argument() -> None:
-    with raises(ValueError, match="'task' must be a string"):
+    with raises(MCPError, match="'task' must be a string"):
         mcp_to_run({"task": 42})
 
 
@@ -71,11 +72,11 @@ def test_mcp_from_run_converts_final_response() -> None:
     assert blocks[1].name == "image.png"
     assert isinstance(blocks[2], types.ImageContent)
     assert blocks[2].data == "aW1hZ2U="
-    assert blocks[2].mimeType == "image/png"
+    assert blocks[2].mime_type == "image/png"
     assert blocks[2].meta == {"source": "image"}
     assert isinstance(blocks[3], types.AudioContent)
     assert blocks[3].data == "YXVkaW8="
-    assert blocks[3].mimeType == "audio/wav"
+    assert blocks[3].mime_type == "audio/wav"
     assert isinstance(blocks[4], types.EmbeddedResource)
     assert isinstance(blocks[4].resource, types.BlobResourceContents)
     assert str(blocks[4].resource.uri) == "af://binary"

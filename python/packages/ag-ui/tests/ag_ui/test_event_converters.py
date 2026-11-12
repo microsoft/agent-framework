@@ -6,9 +6,9 @@ import logging
 from typing import Any, cast
 
 import pytest
-from agent_framework import ChatResponse
+from agent_framework import Annotation, ChatResponse, Content, Message
 
-from agent_framework_ag_ui._event_converters import AGUIEventConverter, _finalize_agui_response
+from agent_framework_ag_ui._event_converters import AGUIEventConverter, _finalize_agui_response, _finalize_agui_updates
 
 
 class TestAGUIEventConverter:
@@ -65,6 +65,7 @@ class TestAGUIEventConverter:
         assert update.message_id == "msg_1"
         assert len(update.contents) == 1
         assert update.contents[0].text == "Hello"
+        assert update.contents[0].merge_mode == "append"
 
     def test_text_message_streaming(self) -> None:
         """Test streaming text across multiple TEXT_MESSAGE_CONTENT events."""
@@ -112,6 +113,7 @@ class TestAGUIEventConverter:
         assert update.contents[0].call_id == "call_123"
         assert update.contents[0].name == "get_weather"
         assert update.contents[0].arguments == ""
+        assert update.contents[0].merge_mode == "append"
         assert converter.current_tool_call_id == "call_123"
         assert converter.current_tool_name == "get_weather"
 
@@ -161,6 +163,8 @@ class TestAGUIEventConverter:
         assert all(update is not None for update in updates)
         assert updates[0].contents[0].arguments == '{"query": "'
         assert updates[1].contents[0].arguments == 'latest news"}'
+        assert updates[0].contents[0].merge_mode == "append"
+        assert updates[1].contents[0].merge_mode == "append"
         assert converter.accumulated_tool_args == '{"query": "latest news"}'
 
     def test_tool_call_end_event(self) -> None:
@@ -479,6 +483,91 @@ class TestAGUIEventConverter:
         assert update.additional_properties is not None
         assert update.additional_properties["ag_ui_custom_event"]["value"] == value
         assert "annotations" in caplog.text
+
+    def test_finalizer_preserves_rebuilt_empty_message_with_response_event_metadata(self) -> None:
+        """Metadata copied to a different message is not a message-linked annotation event."""
+        annotations = [Annotation(type="citation", url="https://example.test/source")]
+        original = ChatResponse(
+            messages=[
+                Message(
+                    role="assistant", message_id="m1", contents=[Content.from_text("First", annotations=annotations)]
+                ),
+                Message(role="assistant", message_id="m2", contents=[Content.from_text("")]),
+            ],
+            additional_properties={
+                "ag_ui_custom_event": {"name": "annotations", "value": {"messageId": "m1", "annotations": annotations}}
+            },
+        )
+
+        response = _finalize_agui_response(original.to_updates())
+
+        assert [(message.message_id, message.text) for message in response.messages] == [("m1", "First"), ("m2", "")]
+        assert response.messages[0].contents[0].annotations == annotations
+        assert response.additional_properties == original.additional_properties
+
+    def test_agent_finalizer_preserves_metadata_from_annotation_only_update(self) -> None:
+        """Mapped annotation events retain agent-only fields without creating an empty duplicate."""
+        from agent_framework import AgentResponse, AgentResponseUpdate, ContinuationToken
+        from pydantic import BaseModel
+
+        class CursorToken(ContinuationToken):
+            cursor: str
+
+        class Answer(BaseModel):
+            reply: str
+
+        token = CursorToken(cursor="next")
+        annotations = [Annotation(type="citation", url="https://example.test/source")]
+        updates = [
+            AgentResponseUpdate(
+                role="assistant",
+                message_id="m1",
+                contents=[Content.from_text("First")],
+                raw_representation={"index": 0},
+            ),
+            AgentResponseUpdate(
+                role="assistant",
+                message_id="m2",
+                contents=[Content.from_text('{"reply":"Second"}')],
+                raw_representation={"index": 1},
+            ),
+            AgentResponseUpdate(
+                role="assistant",
+                message_id="m1",
+                contents=[Content.from_text("", annotations=annotations)],
+                agent_id="agent-2",
+                response_id="response-2",
+                finish_reason="stop",
+                continuation_token=token,
+                additional_properties={
+                    "ag_ui_custom_event": {
+                        "name": "annotations",
+                        "value": {"messageId": "m1", "annotations": annotations},
+                    }
+                },
+                raw_representation={"index": 2},
+            ),
+        ]
+
+        response = _finalize_agui_updates(
+            updates, lambda items: AgentResponse.from_updates(items, output_format_type=Answer)
+        )
+
+        assert [(message.message_id, message.text) for message in response.messages] == [
+            ("m1", "First"),
+            ("m2", '{"reply":"Second"}'),
+        ]
+        assert response.messages[0].contents[0].annotations == annotations
+        assert response.agent_id == "agent-2"
+        assert response.response_id == "response-2"
+        assert response.finish_reason == "stop"
+        assert response.continuation_token == token
+        assert response.raw_representation == [{"index": 0}, {"index": 1}, {"index": 2}]
+        assert response.additional_properties == updates[-1].additional_properties
+        assert isinstance(response.value, Answer)
+        assert response.value.reply == "Second"
+        assert updates[-1].message_id == "m1"
+        assert updates[-1].contents[0].annotations == annotations
 
     def test_full_conversation_flow(self) -> None:
         """Test complete conversation flow with multiple event types."""

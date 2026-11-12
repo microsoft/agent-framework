@@ -228,6 +228,11 @@ public sealed class HarnessAgentOptions
     /// above the function invocation middleware. It records each surfaced approval request and, on the next
     /// request, binds every approval response to its recorded request so an approved call matches exactly what
     /// was surfaced for approval.
+    /// Any recorded request left unanswered when the underlying agent next runs is automatically rejected without
+    /// executing the tool. This also applies to partially answered batches and runs without messages.
+    /// Disabling binding also disables automatic rejection.
+    /// Generated rejection responses are included in the underlying agent's returned messages before tool results,
+    /// allowing end-of-run history saving to record them.
     /// </remarks>
     public bool DisableApprovalResponseBinding { get; set; }
 

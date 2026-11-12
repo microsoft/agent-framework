@@ -3285,6 +3285,205 @@ public class ToolApprovalAgentTests
 
     #endregion
 
+    #region Duplicate approval request IDs
+
+    /// <summary>
+    /// Verify that one request ID cannot refer to two different tool calls.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DifferentCallsWithSameRequestId_ThrowsAsync()
+    {
+        // Arrange
+        var harmless = new ToolApprovalRequestContent(
+            "shared-id",
+            new FunctionCallContent("shared-call", "BenignLookup", new Dictionary<string, object?> { ["query"] = "weather" }));
+        var privileged = new ToolApprovalRequestContent(
+            "shared-id",
+            new FunctionCallContent("shared-call", "RunPrivilegedShell", new Dictionary<string, object?> { ["command"] = "sensitive-command" }));
+        var innerAgent = CreateMockAgent(new AgentResponse([new ChatMessage(ChatRole.Assistant, [harmless, privileged])]));
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => agent.RunAsync([new ChatMessage(ChatRole.User, "Go")], new ChatClientAgentSession()));
+
+        // Assert
+        Assert.Contains("shared-id", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("RunPrivilegedShell", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("sensitive-command", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verify that repeating the exact same request under one ID is rejected.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_EquivalentCallsWithSameRequestId_ThrowsAsync()
+    {
+        // Arrange
+        var first = new ToolApprovalRequestContent(
+            "shared-id",
+            new FunctionCallContent("shared-call", "BenignLookup", new Dictionary<string, object?> { ["query"] = "weather" }));
+        var repeated = new ToolApprovalRequestContent(
+            "shared-id",
+            new FunctionCallContent("shared-call", "BenignLookup", new Dictionary<string, object?> { ["query"] = "weather" }));
+        var agent = new ToolApprovalAgent(
+            CreateMockAgent(new AgentResponse([new ChatMessage(ChatRole.Assistant, [first, repeated])])).Object);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => agent.RunAsync([new ChatMessage(ChatRole.User, "Go")], new ChatClientAgentSession()));
+    }
+
+    /// <summary>
+    /// Verify that streaming batches are checked before any conflicting request is surfaced.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_DifferentCallsWithSameRequestId_ThrowsBeforeYieldAsync()
+    {
+        // Arrange
+        var harmless = new ToolApprovalRequestContent("shared-id", new FunctionCallContent("shared-call", "BenignLookup"));
+        var privileged = new ToolApprovalRequestContent("shared-id", new FunctionCallContent("shared-call", "RunPrivilegedShell"));
+        var innerAgent = CreateMockStreamingAgent(
+        [
+            new AgentResponseUpdate(ChatRole.Assistant, new List<AIContent> { harmless }),
+            new AgentResponseUpdate(ChatRole.Assistant, new List<AIContent> { privileged }),
+        ]);
+        var agent = new ToolApprovalAgent(innerAgent.Object);
+        var yielded = new List<AgentResponseUpdate>();
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var update in agent.RunStreamingAsync(
+                [new ChatMessage(ChatRole.User, "Go")],
+                new ChatClientAgentSession()))
+            {
+                yielded.Add(update);
+            }
+        });
+
+        // Assert
+        Assert.Empty(yielded);
+        Assert.Contains("shared-id", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verify that the final non-streaming turn at the auto-approval cap also rejects conflicting IDs.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_CappedResponseWithDifferentCallsUnderSameRequestId_ThrowsAsync()
+    {
+        // Arrange
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() => ++callCount == 1
+                ? new AgentResponse([new ChatMessage(ChatRole.Assistant,
+                    [new ToolApprovalRequestContent("auto", new FunctionCallContent("auto-call", "AutoTool"))])])
+                : new AgentResponse([new ChatMessage(ChatRole.Assistant,
+                [
+                    new ToolApprovalRequestContent("shared-id", new FunctionCallContent("shared-call", "BenignLookup")),
+                    new ToolApprovalRequestContent("shared-id", new FunctionCallContent("shared-call", "RunPrivilegedShell")),
+                ])]));
+        var agent = new ToolApprovalAgent(innerAgent.Object, new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule],
+            MaxAutoApprovalIterations = 1,
+        });
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => agent.RunAsync([new ChatMessage(ChatRole.User, "Go")], new ChatClientAgentSession()));
+    }
+
+    /// <summary>
+    /// Verify that the final streaming turn at the auto-approval cap invalidates every ID repeated by a later update.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_CappedUpdatesWithMultipleDuplicateIds_InvalidatesAllAsync()
+    {
+        // Arrange
+        var callCount = 0;
+        var firstA = new ToolApprovalRequestContent("id-a", new FunctionCallContent("call-a", "ToolA"));
+        var firstB = new ToolApprovalRequestContent("id-b", new FunctionCallContent("call-b", "ToolB"));
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() => ++callCount == 1
+                ? ToAsyncEnumerableAsync(
+                [
+                    new AgentResponseUpdate(ChatRole.Assistant, new List<AIContent>
+                    {
+                        new ToolApprovalRequestContent("auto", new FunctionCallContent("auto-call", "AutoTool")),
+                    }),
+                ])
+                : ToAsyncEnumerableAsync(
+                [
+                    new AgentResponseUpdate(ChatRole.Assistant, new List<AIContent>
+                    {
+                        firstA,
+                        firstB,
+                    }),
+                    new AgentResponseUpdate(ChatRole.Assistant, new List<AIContent>
+                    {
+                        new ToolApprovalRequestContent("id-a", new FunctionCallContent("repeated-call-a", "DifferentToolA")),
+                        new ToolApprovalRequestContent("id-b", new FunctionCallContent("repeated-call-b", "DifferentToolB")),
+                    }),
+                ]));
+        var agent = new ToolApprovalAgent(innerAgent.Object, new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule],
+            MaxAutoApprovalIterations = 1,
+        });
+        var session = new ChatClientAgentSession();
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in agent.RunStreamingAsync(
+                [new ChatMessage(ChatRole.User, "Go")],
+                session))
+            {
+            }
+        });
+
+        var nextA = new ToolApprovalRequestContent("next-a", new FunctionCallContent("next-call-a", "ToolA"));
+        var nextB = new ToolApprovalRequestContent("next-b", new FunctionCallContent("next-call-b", "ToolB"));
+        var followUpAgent = new ToolApprovalAgent(
+            CreateMockAgent(new AgentResponse([new ChatMessage(ChatRole.Assistant, [nextA, nextB])])).Object);
+
+        var firstResponse = await followUpAgent.RunAsync(
+            [new ChatMessage(ChatRole.User,
+            [
+                firstA.CreateAlwaysApproveToolResponse(),
+                firstB.CreateAlwaysApproveToolResponse(),
+            ])],
+            session);
+
+        var secondResponse = await followUpAgent.RunAsync(
+            [new ChatMessage(ChatRole.User, [nextA.CreateResponse(approved: true)])],
+            session);
+
+        // Assert
+        Assert.Contains("id-a", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("id-b", exception.Message, StringComparison.Ordinal);
+        Assert.Equal("next-a", firstResponse.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().Single().RequestId);
+        Assert.Equal("next-b", secondResponse.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().Single().RequestId);
+    }
+
+    #endregion
+
     #region Auto-approval iteration cap
 
     /// <summary>

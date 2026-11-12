@@ -3,8 +3,8 @@ name = "agent-framework-hosting-responses"
 description = "OpenAI Responses-shaped helpers for agent-framework-hosting."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
-requires-python = ">=3.10"
-version = "1.0.0a261002"
+requires-python = ">=3.11"
+version = "1.0.0a261106"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -15,22 +15,22 @@ classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.19.0,<2",
-    "agent-framework-hosting==1.0.0a260730",
+    "agent-framework-core>=1.22.0,<2",
+    "agent-framework-hosting==1.0.0a261106",
     "openai>=1.99.0,<4",
 ]
 
 [dependency-groups]
 test = [
-    "fastapi>=0.115.0,<0.142.0",
+    "fastapi>=0.115.0,<0.163.0",
     "httpx>=0.28.1",
 ]
 
@@ -82,5 +82,5 @@ help = "Run the default unit test suite for this package."
 cmd = 'pytest -m "not integration" --cov=agent_framework_hosting_responses --cov-report=term-missing:skip-covered tests'
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
+requires = ["flit-core>=3.11,<5.0"]
 build-backend = "flit_core.buildapi"

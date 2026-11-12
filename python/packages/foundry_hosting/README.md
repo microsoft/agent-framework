@@ -2,6 +2,29 @@
 
 This package provides the integration of Agent Framework agents and workflows with the Foundry Agent Server, which can be hosted on Foundry infrastructure.
 
+## Toolbox tool approvals
+
+`FoundryToolbox` uses each discovered tool's `_meta.tool_configuration.require_approval` when
+`approval_mode` is omitted or `None`. See the
+[Foundry approval configuration](https://learn.microsoft.com/python/api/azure-ai-projects/azure.ai.projects.models.mcptoolrequireapproval)
+for supported metadata shapes.
+
+Unlike regular MCP tools, Toolbox `approval_mode=None` does not mean no approval.
+Use `"never_require"` to disable local approval or `"always_require"` to require it for every function.
+Any explicit non-`None` policy, including a dictionary or callable, replaces metadata handling entirely.
+Missing metadata defaults to no approval; malformed metadata raises `ToolExecutionException`.
+
+Metadata filters use remote/original tool names, not local prefixes. Filter criteria must all match;
+`always` wins overlaps and unmatched filter-policy tools require approval. Discovery refreshes and reconnects
+reapply the policy; failed refreshes preserve the previous complete snapshot and approval modes.
+
+**Trust boundary:** This Foundry-specific integration trusts the supplied `annotations.readOnlyHint`
+when evaluating `read_only` filters, including rules that skip approval. It does not independently
+verify that classification or enforce read-only behavior. Applications must trust the classifications
+supplied through their configured Toolbox. The private metadata parser is intended only for Foundry
+Toolbox; reusing it elsewhere provides no security or compatibility guarantees. It is not a
+general-purpose MCP approval policy.
+
 ## Agent instances and factories
 
 `ResponsesHostServer` and `InvocationsHostServer` accept an agent instance or a zero-argument callable through the
@@ -13,9 +36,28 @@ server = ResponsesHostServer(agent=create_agent)
 ```
 
 Passing an instance reuses that object for the lifetime of the host. Pass a callable when the agent keeps mutable state
-outside `AgentSession`. In particular, a `WorkflowAgent` wraps a stateful workflow, so its callable should build a new
-workflow, executors, and wrapped agents. Keep the workflow name and executor IDs stable so later requests can find and
-restore its checkpoints:
+outside `AgentSession`. The Responses host continues regular agents through its existing session store and workflow
+agents through its existing checkpoint store. A callable does not make arbitrary instance fields persistent; state
+needed by later requests must remain in the supported stores.
+
+### Hosting a `WorkflowAgent` is deprecated
+
+Hosting a `WorkflowAgent` (for example `workflow.as_agent()`) through `agent=` is deprecated and should be avoided, and
+both `ResponsesHostServer` and `InvocationsHostServer` emit a `DeprecationWarning` for it and log the same message at
+`WARNING` level, once per host. A `WorkflowAgent` is stateful: its workflow state stays in memory between runs, so one
+instance must never serve requests from different users or conversations. Host the workflow natively with `workflow=`
+and a request-aware factory instead; see
+[Native Responses workflows](#native-responses-workflows) and
+[Native Invocations workflows](#native-invocations-workflows):
+
+```python
+# build_workflow(request) returns a freshly built Workflow for each request.
+server = ResponsesHostServer(workflow=build_workflow, parse_response=parse_response)
+```
+
+Until you migrate `ResponsesHostServer`, pass a callable that builds a new workflow, executors, and wrapped agents for
+every request, and never return a shared instance. Keep the workflow name and executor IDs stable so later requests can
+find and restore its checkpoints:
 
 ```python
 def create_agent():
@@ -25,9 +67,8 @@ def create_agent():
 server = ResponsesHostServer(agent=create_agent)
 ```
 
-The Responses host continues regular agents through its existing session store and workflow agents through its
-existing checkpoint store. A callable does not make arbitrary instance fields persistent; state needed by later
-requests must remain in the supported stores.
+`InvocationsHostServer` does not restore workflow checkpoints for agents, so a per-request factory only suits stateless,
+single-turn workflows there. Use `workflow=` for any workflow that pauses or spans turns.
 
 ## Native Responses workflows
 
@@ -98,7 +139,9 @@ only the current Responses turn to `list[Message]`. It does not load outer
 history or decode pending replies. Existing `agent=workflow.as_agent()` hosting
 remains for this beta with a once-per-host deprecation warning because wrapper
 context providers, history, event projection, and request-info translation are
-real semantics and are not silently unwrapped.
+real semantics and are not silently unwrapped. See
+[Hosting a `WorkflowAgent` is deprecated](#hosting-a-workflowagent-is-deprecated)
+for the instance-sharing restriction.
 
 With `resilient_background=True`, the application must also enable the
 AgentServer resilient task subsystem. Host-owned checkpoint/output pairs
@@ -107,11 +150,13 @@ state. This is not an exactly-once guarantee for external tools: make
 side-effecting operations idempotent. Legacy unscoped workflow state is not
 read; migration starts a fresh Responses chain.
 
-For Responses integrations, use a factory when an MCP connection, provider, tool
-cache or client carries request identity. A Toolbox's streamable-HTTP writer
-inherits the context of the request that **connects** it; sharing that connection
-across callers can retain the first call ID. Create the Toolbox and its skills
-provider inside the factory, not at process startup.
+For Responses integrations, use a factory when a provider, tool cache, client or
+credential carries request identity or needs request-owned cleanup.
+`FoundryToolbox` resolves platform headers at each operation boundary and
+rebinds its MCP session when that identity changes, so a long-lived Toolbox does
+not retain the first request's call ID. The integration samples still construct
+it inside the factory because they also own request-scoped clients, credentials
+and providers.
 
 Factory agents are entered/exited for each request, including failed entry and
 cancellation. `Agent` manages context-managed clients and MCP tools, but it does
@@ -253,6 +298,18 @@ screenshots, and typed safety checks. It restores those items from request input
 output item ID without changing the provider's `call_id`.
 Although screenshots are optional in shared `Content`, this Responses host requires them on computer results.
 The computer-use `Content` constructors and `ComputerSafetyCheck` type are experimental Agent Framework APIs.
+
+## Responses citation annotations
+
+`ResponsesHostServer` serializes supported framework URL and file citations into `output_text.annotations`.
+URL and container-file citation spans refer to character positions in the generated response text.
+Annotations with `annotated_regions_coordinate_space == "source"` retain source-document coordinates
+(for example, Anthropic character, page, or block locations); the host does not emit those regions as
+output-text spans. Other supported citation metadata, such as file citations with an explicit output index,
+is still converted.
+Completed provider responses retain separate text content parts, keeping citation offsets relative to
+their original part. Ordinary streaming deltas still merge within their existing text occurrence,
+without shifting citation offsets.
 
 ## State store
 
@@ -426,7 +483,8 @@ storage locally. Stored approvals are scoped under `function_approvals`.
 ## Native Invocations workflows
 
 Host a native workflow with an explicit application parser rather than wrapping it
-with `workflow.as_agent()`:
+with `workflow.as_agent()`, which is deprecated for hosting (see
+[Hosting a `WorkflowAgent` is deprecated](#hosting-a-workflowagent-is-deprecated)):
 
 ```python
 server = InvocationsHostServer(
