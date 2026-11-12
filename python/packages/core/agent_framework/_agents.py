@@ -61,6 +61,7 @@ from ._types import (
     AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
+    ContinuationToken,
     Message,
     ResponseStream,
     _append_instructions,  # pyright: ignore[reportPrivateUsage]
@@ -1381,13 +1382,21 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         ):
             session.service_session_id = response.conversation_id
 
-    def _refresh_service_continuation_context(self, context: _RunContext) -> None:
+    def _refresh_service_continuation_context(
+        self,
+        context: _RunContext,
+        continuation_token: ContinuationToken | None = None,
+    ) -> None:
         """Synchronize provider metadata with the continuation used by the completed run."""
         options = dict(context["chat_options"])
         session = context["session"]
         conversation_id = self._get_chat_conversation_id(session)
         continuation_option_names = self._service_continuation_option_names()
-        if conversation_id is not None:
+        if continuation_token is not None and "continuation_token" in continuation_option_names:
+            for option_name in continuation_option_names:
+                options.pop(option_name, None)
+            options["continuation_token"] = continuation_token
+        elif conversation_id is not None:
             for option_name in continuation_option_names:
                 if option_name != "conversation_id":
                     options.pop(option_name, None)
@@ -1432,7 +1441,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         session = context["session"]
         self._update_session_from_chat_response(session, response)
-        self._refresh_service_continuation_context(context)
+        self._refresh_service_continuation_context(context, response.continuation_token)
 
         agent_response = _build_agent_response_from_chat_response(
             response,
@@ -1472,7 +1481,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 and session.service_session_id != conversation_id
             ):
                 session.service_session_id = conversation_id
-            self._refresh_service_continuation_context(context)
+            self._refresh_service_continuation_context(context, response.continuation_token)
 
             session_context = context["session_context"]
             if context["suppress_response_id"]:
@@ -1631,7 +1640,17 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session_conversation_id if session_conversation_id is not None else effective_conversation_id
         )
         continuation_option_names = self._service_continuation_option_names()
-        if resolved_conversation_id is not None:
+        continuation_token_present = (
+            "continuation_token" in continuation_option_names
+            and effective_options.get("continuation_token") is not None
+        )
+        if continuation_token_present:
+            resolved_conversation_id = None
+            for option_name in continuation_option_names:
+                if option_name != "continuation_token":
+                    effective_options.pop(option_name, None)
+                    opts.pop(option_name, None)
+        elif resolved_conversation_id is not None:
             for option_name in continuation_option_names:
                 if option_name != "conversation_id":
                     effective_options.pop(option_name, None)
@@ -1693,7 +1712,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             service_stores_history=bool(service_stores_history),
             service_continuation=service_continuation,
         )
-        if resolved_conversation_id is not None:
+        if continuation_token_present:
+            for option_name in continuation_option_names:
+                if option_name != "continuation_token":
+                    chat_options.pop(option_name, None)
+        elif resolved_conversation_id is not None:
             for option_name in continuation_option_names:
                 if option_name != "conversation_id":
                     chat_options.pop(option_name, None)

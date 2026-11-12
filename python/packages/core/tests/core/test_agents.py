@@ -30,6 +30,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ContinuationToken,
     ContextProvider,
     Embedding,
     FunctionMiddleware,
@@ -5254,6 +5255,7 @@ class _PscSpyChatClient(MockBaseChatClient):
         "previous_response_id",
         "conversation",
         "custom_continuation",
+        "continuation_token",
     )
 
     def __init__(
@@ -5264,6 +5266,7 @@ class _PscSpyChatClient(MockBaseChatClient):
         script: list[tuple[str, ...]] | None = None,
         echo_conversation_id: bool = True,
         conversation_ids: Sequence[str | None] | None = None,
+        continuation_tokens: Sequence[ContinuationToken | None] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -5272,6 +5275,7 @@ class _PscSpyChatClient(MockBaseChatClient):
         self._script = list(script) if script is not None else [("text", "ok")]
         self._echo_conversation_id = echo_conversation_id
         self._conversation_ids = list(conversation_ids) if conversation_ids is not None else []
+        self._continuation_tokens = list(continuation_tokens) if continuation_tokens is not None else []
         self.received_messages: list[list[Message]] = []
         self.received_options: list[dict[str, Any]] = []
         self.saves_before_call: list[int] = []
@@ -5307,6 +5311,7 @@ class _PscSpyChatClient(MockBaseChatClient):
             if store_and_echo and self._conversation_ids
             else (_PSC_SERVICE_CONVERSATION_ID if store_and_echo else None)
         )
+        continuation_token = self._continuation_tokens.pop(0) if self._continuation_tokens else None
         contents = self._next_contents()
 
         if stream:
@@ -5318,12 +5323,14 @@ class _PscSpyChatClient(MockBaseChatClient):
                     role="assistant",
                     finish_reason="stop",
                     conversation_id=conv_id,
+                    continuation_token=continuation_token,
                 )
 
             def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
                 response = ChatResponse.from_updates(updates, output_format_type=options.get("response_format"))
                 if conv_id:
                     response.conversation_id = conv_id
+                response.continuation_token = continuation_token
                 return response
 
             return ResponseStream(_stream(), finalizer=_finalize)
@@ -5333,6 +5340,7 @@ class _PscSpyChatClient(MockBaseChatClient):
             return ChatResponse(
                 messages=Message(role="assistant", contents=contents),
                 conversation_id=conv_id,
+                continuation_token=continuation_token,
             )
 
         return _get()
@@ -5900,6 +5908,68 @@ async def test_fides_service_tool_loop_validates_initial_continuation(stream: bo
     restored = AgentSession.from_dict(resumed.to_dict())
     assert await _psc_run(agent, "Continue", restored, stream=stream) == "continue done"
     assert restored.service_session_id == "service-3"
+
+
+@_psc_stream_params
+async def test_fides_continuation_token_overrides_session_dispatch_and_requires_bound_state(stream: bool) -> None:
+    """Opaque polling tokens drive dispatch and remain bound to the FIDES state that issued them."""
+    provider = _PscSpyHistoryProvider(load_messages=False)
+    token = cast(ContinuationToken, {"response_id": "service-0"})
+    client = _PscSpyChatClient(
+        provider=provider,
+        stores_by_default=True,
+        script=[("text", "queued"), ("text", "completed")],
+        conversation_ids=["service-0", "service-1"],
+        continuation_tokens=[token, None],
+    )
+    security = SecureAgentConfig()
+    agent = Agent(
+        client=cast(SupportsChatGetResponse, client),
+        context_providers=[security, provider],
+    )
+    session = agent.create_session()
+
+    assert await _psc_run(agent, "Start", session, stream=stream) == "queued"
+    assert session.service_session_id == "service-0"
+
+    rejected = AgentSession.from_dict(session.to_dict())
+    rejected_options = cast(ChatOptions, {"continuation_token": {"response_id": "different"}})
+    with pytest.raises(RuntimeError, match="authoritative FIDES context label"):
+        if stream:
+            await agent.run(
+                "Poll",
+                session=rejected,
+                stream=True,
+                options=rejected_options,
+            ).get_final_response()
+        else:
+            await agent.run(
+                "Poll",
+                session=rejected,
+                options=rejected_options,
+            )
+    assert client.call_count == 1
+
+    resumed = AgentSession.from_dict(session.to_dict())
+    resumed_options = cast(ChatOptions, {"continuation_token": token})
+    if stream:
+        response = await agent.run(
+            "Poll",
+            session=resumed,
+            stream=True,
+            options=resumed_options,
+        ).get_final_response()
+    else:
+        response = await agent.run(
+            "Poll",
+            session=resumed,
+            options=resumed_options,
+        )
+
+    assert response.text == "completed"
+    assert client.received_options[1]["continuation_token"] == token
+    assert "conversation_id" not in client.received_options[1]
+    assert resumed.service_session_id == "service-1"
 
 
 @_psc_stream_params
