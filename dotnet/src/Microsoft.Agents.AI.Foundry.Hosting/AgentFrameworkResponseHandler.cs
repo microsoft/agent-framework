@@ -43,6 +43,12 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
     private readonly FoundryToolboxService? _toolboxService;
 
     /// <summary>
+    /// The factory agent that answers requests without a matching agent name when no agent is registered
+    /// without a key. See <see cref="FoundryDefaultAgentName"/>.
+    /// </summary>
+    private readonly string? _defaultAgentName;
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="AgentFrameworkResponseHandler"/> class
     /// that resolves agents from keyed DI services.
     /// </summary>
@@ -82,6 +88,7 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         this._logger = logger;
         this._options = foundryResponsesOptions;
         this._toolboxService = toolboxService;
+        this._defaultAgentName = serviceProvider.GetService<FoundryDefaultAgentName>()?.Name;
     }
 
     /// <inheritdoc/>
@@ -90,13 +97,11 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         ResponseContext context,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        // 1. Resolve agent
-        var agent = this.ResolveAgent(request);
-        var sessionStore = this.ResolveSessionStore(request);
-
-        // 2. Resolve the per-request hosted user identity, so the session can be
+        // 1. Resolve the per-request hosted user identity, so the session can be
         // loaded from a per-user partition. Fresh sessions are tagged once; resumed sessions are
         // validated against the live request to detect cross-user session leaks and in-process tampering.
+        // This runs before any agent or store is created, so a rejected request never invokes a
+        // caller-supplied agent or session store factory.
         string? resolvedUserId = context.PlatformContext?.UserIdKey;
         if (string.IsNullOrWhiteSpace(resolvedUserId))
         {
@@ -113,6 +118,16 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
                 "The Foundry platform did not provide a user identity for the current request. " +
                 "Ensure the x-agent-user-id header is present.");
         }
+
+        // 2. Resolve agent and session store from a DI scope owned by this response run. The scope
+        // covers the whole enumeration, not the HTTP request: background runs continue after the
+        // HTTP response is sent, and recovery runs have no HTTP request at all. Scoped and transient
+        // registrations are therefore created per run and disposed when the event stream ends.
+        AsyncServiceScope serviceScope = this._serviceProvider.CreateAsyncScope();
+        await using var configuredServiceScope = serviceScope.ConfigureAwait(false);
+        IServiceProvider services = serviceScope.ServiceProvider;
+        var (agent, sessionStoreKey) = this.ResolveAgent(request, services);
+        var sessionStore = this.ResolveSessionStore(sessionStoreKey, services);
 
         // When resolvedUserId is null here the container is NOT hosted by Foundry (local
         // development: docker run / dotnet run outside the platform, so no x-agent-user-id header).
@@ -878,44 +893,73 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
     /// <summary>
     /// Resolves an <see cref="AIAgent"/> from the request.
     /// Tries <c>agent.name</c> first, then falls back to <c>metadata["entity_id"]</c>.
-    /// If neither is present, attempts to resolve a default (non-keyed) <see cref="AIAgent"/>.
+    /// If neither matches a keyed agent, attempts to resolve a default (non-keyed) <see cref="AIAgent"/>, and
+    /// then the agent registered through the factory overload of <c>AddFoundryResponses</c> as the default.
     /// </summary>
-    private AIAgent ResolveAgent(CreateResponse request)
+    /// <param name="request">The incoming request.</param>
+    /// <param name="services">The service provider of the DI scope owned by the current response run.</param>
+    /// <returns>The prepared agent and the name to look its session store up with.</returns>
+    private (AIAgent Agent, string? SessionStoreKey) ResolveAgent(CreateResponse request, IServiceProvider services)
     {
         var agentName = GetAgentName(request);
 
         if (!string.IsNullOrEmpty(agentName))
         {
-            var agent = this._serviceProvider.GetKeyedService<AIAgent>(agentName);
+            var agent = services.GetKeyedService<AIAgent>(agentName);
             if (agent is not null)
             {
-                string storageIdentity = FoundryHostingAgent.ResolveSessionStorageIdentity(
-                    agent,
-                    agentName,
-                    this._serviceProvider.GetService<AIAgent>());
-                return this.PrepareResolvedAgent(agent, storageIdentity);
+                // The default agent is looked up only after the requested agent, as before: the storage
+                // location depends on whether both registrations return the same object. The factory default
+                // has no non-keyed registration to compare against, so it is recognized by name. It keeps the
+                // location AddFoundryResponses(agent) uses for the default agent, unless a non-keyed agent took
+                // the default role.
+                var registeredDefaultAgent = services.GetService<AIAgent>();
+                string storageIdentity = registeredDefaultAgent is null
+                    && string.Equals(agentName, this._defaultAgentName, StringComparison.Ordinal)
+                        ? DefaultAgentStorageIdentity(agentName)
+                        : FoundryHostingAgent.ResolveSessionStorageIdentity(agent, agentName, registeredDefaultAgent);
+                return (this.PrepareResolvedAgent(agent, storageIdentity), agentName);
             }
 
             LogKeyedAgentNotFound(this._logger, agentName);
         }
 
-        // Try non-keyed default
-        var defaultAgent = this._serviceProvider.GetService<AIAgent>();
+        var defaultAgent = services.GetService<AIAgent>();
         if (defaultAgent is not null)
         {
             string storageIdentity = FoundryHostingAgent.ResolveSessionStorageIdentity(
                 defaultAgent,
                 registrationKey: null,
                 defaultAgent);
-            return this.PrepareResolvedAgent(defaultAgent, storageIdentity);
+
+            // The default agent uses the store registered under its own name, the same store a request
+            // naming that agent uses.
+            string? sessionStoreKey = string.IsNullOrWhiteSpace(defaultAgent.Name) ? null : defaultAgent.Name;
+            return (this.PrepareResolvedAgent(defaultAgent, storageIdentity), sessionStoreKey);
+        }
+
+        // The factory overload registers its agent only under its name, so that DI owns each created
+        // object once. Requests without a matching agent name reach it through the recorded default name.
+        if (this._defaultAgentName is { } defaultAgentName
+            && services.GetKeyedService<AIAgent>(defaultAgentName) is { } factoryDefaultAgent)
+        {
+            return (
+                this.PrepareResolvedAgent(factoryDefaultAgent, DefaultAgentStorageIdentity(defaultAgentName)),
+                defaultAgentName);
         }
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AIAgent is registered."
-            : $"Agent '{agentName}' not found. Ensure it is registered via builder.AddFoundryResponses(agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
+            : $"Agent '{agentName}' not found. Ensure it is registered via builder.AddFoundryResponses(agent), builder.AddFoundryResponses(\"{agentName}\", agentFactory, lifetime), or a keyed AIAgent service registration such as services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
     }
+
+    /// <summary>
+    /// The storage identity <c>AddFoundryResponses(agent)</c> gives the default agent, used for the factory
+    /// default whatever its lifetime.
+    /// </summary>
+    private static string DefaultAgentStorageIdentity(string agentName) => $"name:{agentName}";
 
     private AIAgent PrepareResolvedAgent(AIAgent agent, string sessionStorageIdentity)
     {
@@ -930,17 +974,16 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
     }
 
     /// <summary>
-    /// Resolves an <see cref="AIAgent"/> from the request.
-    /// Tries <c>agent.name</c> first, then falls back to <c>metadata["entity_id"]</c>.
-    /// If neither is present, attempts to resolve a default (non-keyed) <see cref="AIAgent"/>.
+    /// Resolves the <see cref="AgentSessionStore"/> registered under <paramref name="agentName"/>, or the
+    /// store registered for all agents (non-keyed) when there is none.
     /// </summary>
-    private AgentSessionStore ResolveSessionStore(CreateResponse request)
+    /// <param name="agentName">The key returned by <see cref="ResolveAgent"/>.</param>
+    /// <param name="services">The service provider of the DI scope owned by the current response run.</param>
+    private AgentSessionStore ResolveSessionStore(string? agentName, IServiceProvider services)
     {
-        var agentName = GetAgentName(request);
-
         if (!string.IsNullOrEmpty(agentName))
         {
-            var sessionStore = this._serviceProvider.GetKeyedService<AgentSessionStore>(agentName);
+            var sessionStore = services.GetKeyedService<AgentSessionStore>(agentName);
             if (sessionStore is not null)
             {
                 return sessionStore;
@@ -949,8 +992,8 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
             LogKeyedSessionStoreNotFound(this._logger, agentName);
         }
 
-        // Try non-keyed default
-        var defaultSessionStore = this._serviceProvider.GetService<AgentSessionStore>();
+        // An agent without a store of its own uses the store registered for all agents.
+        var defaultSessionStore = services.GetService<AgentSessionStore>();
         if (defaultSessionStore is not null)
         {
             return defaultSessionStore;
@@ -958,7 +1001,7 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
 
         var errorMessage = string.IsNullOrEmpty(agentName)
             ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AgentSessionStore is registered."
-            : $"AgentSessionStore for agent '{agentName}' not found. Ensure it is registered via builder.AddFoundryResponses(agent, agentSessionStore) or services.AddKeyedSingleton<AgentSessionStore>(\"{agentName}\", ...).";
+            : $"AgentSessionStore for agent '{agentName}' not found. Ensure it is registered via services.AddFoundryAgentSessionStore(agentSessionStore, \"{agentName}\"), services.AddFoundryAgentSessionStore(agentSessionStore) for all agents, or builder.AddFoundryResponses(agent, agentSessionStore).";
 
         throw new InvalidOperationException(errorMessage);
     }
@@ -1034,6 +1077,6 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
 
     [LoggerMessage(LogLevel.Warning, "Agent '{AgentName}' not found in keyed services. Attempting default resolution.", EventId = 0)]
     private static partial void LogKeyedAgentNotFound(ILogger logger, string agentName);
-    [LoggerMessage(LogLevel.Warning, "SessionStore for agent '{AgentName}' not found in keyed services. Attempting default resolution.", EventId = 0)]
+    [LoggerMessage(LogLevel.Debug, "No session store registered for agent '{AgentName}'. Using the store registered for all agents.", EventId = 0)]
     private static partial void LogKeyedSessionStoreNotFound(ILogger logger, string agentName);
 }
