@@ -191,6 +191,7 @@ internal sealed class InvokeMcpToolExecutor(
         }
         else if (snapshot.RequiresHeaderReapprovalAfterRestore || this.Model.Headers is { Count: > 0 })
         {
+            // Restored snapshots keep only fingerprints, so reuse the approval only if the host key and headers still match.
             if (snapshot.HeaderFingerprint is null && snapshot.HeaderFingerprintKeyId is null)
             {
                 await this.RequestApprovalAsync(context, snapshot.AutoSend, cancellationToken).ConfigureAwait(false);
@@ -202,6 +203,7 @@ internal sealed class InvokeMcpToolExecutor(
                 throw this.Exception("The MCP approval header fingerprint in the checkpoint is incomplete.");
             }
 
+            // A different key cannot authenticate the checkpoint's fingerprint; require the host to restore the original key.
             byte[] currentKeyId = this.ComputeHeaderFingerprint(approvalResponse.RequestId, headers: null, keyIdentifier: true);
             if (!FixedTimeEquals(snapshot.HeaderFingerprintKeyId, currentKeyId))
             {
@@ -209,6 +211,7 @@ internal sealed class InvokeMcpToolExecutor(
             }
 
             headers = this.GetHeaders();
+            // Changed transport credentials invalidate the consent captured with the original approval.
             byte[] currentFingerprint = this.ComputeHeaderFingerprint(approvalResponse.RequestId, headers, keyIdentifier: false);
             if (!FixedTimeEquals(snapshot.HeaderFingerprint, currentFingerprint))
             {
@@ -221,6 +224,7 @@ internal sealed class InvokeMcpToolExecutor(
             headers = null;
         }
 
+        // Older checkpoints may lack the separate consent that must precede an approval-gated tool invocation.
         if (!snapshot.IsDiscoveryApproval &&
             !snapshot.DiscoveryApproved &&
             !string.Equals(snapshot.ToolName, ListToolsToolName, StringComparison.Ordinal))
@@ -245,6 +249,7 @@ internal sealed class InvokeMcpToolExecutor(
         string? conversationId = this.GetConversationId();
         if (!string.Equals(snapshot.ToolName, ListToolsToolName, StringComparison.Ordinal))
         {
+            // Revalidate the discovered definition before invoking a tool; discovery consent alone is not tool consent.
             string currentToolDefinitionFingerprint = await this.GetToolDefinitionFingerprintAsync(
                 snapshot.ServerUrl,
                 snapshot.ServerLabel,
@@ -378,6 +383,7 @@ internal sealed class InvokeMcpToolExecutor(
         string? toolDefinitionFingerprint = null)
     {
         bool isListTools = string.Equals(toolName, ListToolsToolName, StringComparison.Ordinal);
+        // A missing definition fingerprint identifies the first-stage consent request, not approval to invoke the tool.
         bool isDiscoveryApproval = toolDefinitionFingerprint is null && !isListTools;
         string requestId = Guid.NewGuid().ToString("N");
         bool requiresHeaderFingerprint = headers is not null || this.Model.Headers is { Count: > 0 };
@@ -422,6 +428,7 @@ internal sealed class InvokeMcpToolExecutor(
 
     private static byte[] CreateProcessHeaderFingerprintKey()
     {
+        // The default supports restores within this process; hosts can provide a stable key for cross-process restores.
         byte[] key = new byte[32];
         using RandomNumberGenerator random = RandomNumberGenerator.Create();
         random.GetBytes(key);
@@ -435,6 +442,7 @@ internal sealed class InvokeMcpToolExecutor(
             return false;
         }
 
+        // Compare every byte so a matching prefix does not shorten the comparison.
         int difference = 0;
         for (int index = 0; index < left.Length; index++)
         {
@@ -446,6 +454,7 @@ internal sealed class InvokeMcpToolExecutor(
 
     private byte[] ComputeHeaderFingerprint(string requestId, Dictionary<string, string>? headers, bool keyIdentifier)
     {
+        // Bind the digest to this request and normalize header names and ordering for stable comparisons.
         using MemoryStream stream = new();
         using (Utf8JsonWriter writer = new(stream))
         {
@@ -504,6 +513,7 @@ internal sealed class InvokeMcpToolExecutor(
         bool foundToolsArray = false;
         if (toolList.Outputs is not null)
         {
+            // Responses can contain non-JSON text alongside the tool list.
             foreach (string serialized in toolList.Outputs.OfType<TextContent>().Select(textContent => textContent.Text.TrimStart()))
             {
                 if (serialized.Length == 0 || serialized[0] != '{')
@@ -529,6 +539,7 @@ internal sealed class InvokeMcpToolExecutor(
                         throw this.Exception($"The MCP server returned multiple definitions for tool '{toolName}'.");
                     }
 
+                    // Fail closed rather than fingerprinting an incomplete definition that cannot detect schema changes.
                     if (!tool.TryGetProperty("inputSchema", out JsonElement inputSchema) ||
                         inputSchema.ValueKind != JsonValueKind.Object ||
                         !inputSchema.TryGetProperty("type", out JsonElement schemaType) ||
@@ -558,6 +569,7 @@ internal sealed class InvokeMcpToolExecutor(
 
     private static string ComputeToolDefinitionFingerprint(JsonElement tool)
     {
+        // Include the complete published definition so changes to annotations and other metadata invalidate approval.
         using MemoryStream stream = new();
         using (Utf8JsonWriter writer = new(stream))
         {
@@ -577,6 +589,7 @@ internal sealed class InvokeMcpToolExecutor(
         switch (value.ValueKind)
         {
             case JsonValueKind.Object:
+                // Object property order is immaterial, while array order remains part of the definition.
                 writer.WriteStartObject();
                 foreach (JsonProperty property in value.EnumerateObject().OrderBy(property => property.Name, StringComparer.Ordinal))
                 {
