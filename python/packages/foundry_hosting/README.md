@@ -25,6 +25,13 @@ supplied through their configured Toolbox. The private metadata parser is intend
 Toolbox; reusing it elsewhere provides no security or compatibility guarantees. It is not a
 general-purpose MCP approval policy.
 
+## Toolbox search citations
+
+`FoundryToolbox` and generic MCP tools use the default `structured_first` result handling for Toolbox search results.
+When a result contains text content and `url_citation` annotations, the text stays visible to the model before the
+structured JSON, and the citations are attached to the tool result. Another `tool_result_content` mode or a custom
+`parse_tool_results` replaces this handling, and hosted answers then receive no Toolbox citations.
+
 ## Agent instances and factories
 
 `ResponsesHostServer` and `InvocationsHostServer` accept an agent instance or a zero-argument callable through the
@@ -310,6 +317,12 @@ is still converted.
 Completed provider responses retain separate text content parts, keeping citation offsets relative to
 their original part. Ordinary streaming deltas still merge within their existing text occurrence,
 without shifting citation offsets.
+
+Web URL citations on function results, such as `FoundryToolbox` search results, are listed as sources on the
+final answer text when the response completes. These citations do not identify which part of the answer each
+source supports, so the host emits each one as a zero-length `url_citation` at the end of that text. Sources are
+deduplicated by URL, limited to `http` and `https`, skipped when the answer already cites the same URL, and not
+attached to interim text. Plain `agent.run()` responses do not include these sources.
 
 ## State store
 

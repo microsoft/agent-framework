@@ -627,14 +627,13 @@ async def test_web_search_without_prose_keeps_structured_result(content: list[di
 @pytest.mark.parametrize(
     ("mode", "expected"),
     [
-        ("structured_first", ['{"annotations": [{"type": "url_citation", "url": "https://example.test"}]}']),
         ("content_first", ["Search prose"]),
         ("content_only", ["Search prose"]),
         ("structured_only", ['{"annotations": [{"type": "url_citation", "url": "https://example.test"}]}']),
         ("both", ["Search prose", '{"annotations": [{"type": "url_citation", "url": "https://example.test"}]}']),
     ],
 )
-async def test_explicit_mcp_content_mode_overrides_toolbox_projection(mode: str, expected: list[str]) -> None:
+async def test_other_mcp_content_modes_replace_citation_handling(mode: str, expected: list[str]) -> None:
     server = _ToolResultServer()
     server.tools = [toolbox_tool("never")]
     server.call_result = {

@@ -1412,6 +1412,51 @@ def test_parse_tool_result_content_modes_for_complementary_and_duplicate_payload
     assert content_only._parse_tool_result_from_mcp(empty)[0].text == "null"
 
 
+def test_structured_first_keeps_cited_content_and_attaches_url_citations():
+    """Default MCP parsing keeps search text when url_citation metadata is present (for example, Foundry Toolbox)."""
+    block_citation = {
+        "type": "url_citation",
+        "url": "https://example.test/block",
+        "title": "Block",
+        "start_index": 0,
+        "end_index": 4,
+    }
+    aggregate_citation = {"type": "url_citation", "url": "https://example.test/aggregate"}
+    structured = {"annotations": [block_citation, aggregate_citation, {"type": "other"}]}
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Mars is red.", _meta={"annotations": [block_citation]})],
+        structured_content=structured,
+        _meta={"source": "server"},
+    )
+
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert [item.text for item in result] == ["Mars is red.", json.dumps(structured)]
+    assert result[0].annotations == [
+        {
+            "type": "citation",
+            "url": "https://example.test/block",
+            "title": "Block",
+            "annotated_regions": [{"type": "text_span", "start_index": 0, "end_index": 4}],
+        }
+    ]
+    assert result[1].annotations == [{"type": "citation", "url": "https://example.test/aggregate"}]
+    assert all(item.additional_properties["_meta"] == {"source": "server"} for item in result)
+
+
+def test_structured_first_does_not_attach_url_citations_to_error_results():
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Search failed")],
+        structured_content={"annotations": [{"type": "url_citation", "url": "https://example.test"}]},
+        is_error=True,
+    )
+
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert len(result) == 1
+    assert result[0].annotations is None
+
+
 async def test_generated_mcp_tool_preserves_complete_host_payload_once() -> None:
     """The generated FunctionTool path retains one complete, persistent Host payload."""
     file_meta = {

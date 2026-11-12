@@ -46,6 +46,7 @@ from ._tools import (
     _FunctionResultPayloadBudget,  # pyright: ignore[reportPrivateUsage]
 )
 from ._types import (
+    Annotation,
     ChatOptions,
     Content,
     Message,
@@ -194,7 +195,10 @@ MCPToolResultContentMode = Literal[
 MCP servers disagree on whether the two fields are duplicates or complementary (#7866).
 Callers pick an explicit policy:
 
-- ``structured_first`` (default): use ``structuredContent`` when present, else ``content``
+- ``structured_first`` (default): use ``structuredContent`` when present, else ``content``. When the result
+  has text content and ``url_citation`` entries in ``structuredContent.annotations`` or a content block's
+  ``_meta.annotations`` (for example, Foundry Toolbox web search), the text content is kept before
+  ``structuredContent`` and the citations are attached as framework annotations.
 - ``content_first``: use ``content`` when non-empty, else ``structuredContent``
 - ``content_only``: ignore ``structuredContent`` for the model-visible result
 - ``structured_only``: ignore ``content`` for the model-visible result
@@ -203,6 +207,124 @@ Callers pick an explicit policy:
 The full MCP payload is still retained on the Host channel regardless of mode.
 Custom ``parse_tool_results`` overrides this policy entirely.
 """
+
+_MCPCitationKey: TypeAlias = tuple[str, str | None, int | None, int | None]
+
+
+def _parse_mcp_url_citation(value: Any, text_utf16: bytes | None = None) -> tuple[Annotation, _MCPCitationKey] | None:
+    """Validate an MCP ``url_citation`` entry and convert valid UTF-16 spans to Python text offsets."""
+    if not isinstance(value, Mapping):
+        return None
+    raw = cast(Mapping[str, Any], value)
+    url = raw.get("url")
+    if raw.get("type") != "url_citation" or not isinstance(url, str) or not url.strip():
+        return None
+
+    raw_title = raw.get("title")
+    title = raw_title if isinstance(raw_title, str) else None
+    raw_start, raw_end = raw.get("start_index"), raw.get("end_index")
+    start = raw_start if type(raw_start) is int else None
+    end = raw_end if type(raw_end) is int else None
+    citation = Annotation(type="citation", url=url)
+    if title is not None:
+        citation["title"] = title
+    if text_utf16 is not None and start is not None and end is not None and 0 <= start <= end <= len(text_utf16) // 2:
+        # Citation offsets use UTF-16 code units; framework spans use Python text offsets.
+        boundaries = (start, end)
+        if all(
+            offset == 0
+            or offset == len(text_utf16) // 2
+            or not (
+                0xD800 <= int.from_bytes(text_utf16[(offset - 1) * 2 : offset * 2], "little") <= 0xDBFF
+                and 0xDC00 <= int.from_bytes(text_utf16[offset * 2 : (offset + 1) * 2], "little") <= 0xDFFF
+            )
+            for offset in boundaries
+        ):
+            citation["annotated_regions"] = [
+                {
+                    "type": "text_span",
+                    "start_index": len(text_utf16[: start * 2].decode("utf-16-le", errors="surrogatepass")),
+                    "end_index": len(text_utf16[: end * 2].decode("utf-16-le", errors="surrogatepass")),
+                }
+            ]
+    return citation, (url, title, start, end)
+
+
+def _mcp_block_annotations(item: Any) -> list[Any]:
+    """Collect annotation metadata from an MCP content block and its embedded resource."""
+    metadata: list[Any] = [getattr(item, "meta", None)]
+    resource = getattr(item, "resource", None)
+    if resource is not None:
+        metadata.append(getattr(resource, "meta", None))
+    annotations: list[Any] = []
+    for entry in metadata:
+        if isinstance(entry, Mapping):
+            values = cast(Mapping[str, Any], entry).get("annotations")
+            if isinstance(values, list):
+                annotations.extend(cast(list[Any], values))
+    return annotations
+
+
+def _project_mcp_url_citations(
+    mcp_type: types.CallToolResult,
+    content_items: list[Content],
+    structured_block: Content | None,
+) -> list[Content] | None:
+    """Keep cited text content before structured content and attach its URL citations as annotations.
+
+    Returns ``None`` when the result is an error, has no recognized ``url_citation`` entries, or has no text content.
+    ``content_items`` must hold exactly one parsed item per MCP content block.
+    """
+    if mcp_type.is_error or not mcp_type.content:
+        return None
+    structured: Any = mcp_type.structured_content
+    structured_values = (
+        cast(Mapping[str, Any], structured).get("annotations") if isinstance(structured, Mapping) else None
+    )
+    structured_annotations = cast(list[Any], structured_values) if isinstance(structured_values, list) else []
+    block_annotations = [_mcp_block_annotations(item) for item in mcp_type.content]
+    if not any(
+        _parse_mcp_url_citation(value) is not None
+        for value in [*structured_annotations, *(value for values in block_annotations for value in values)]
+    ):
+        return None
+    if not any(item.type == "text" and item.text for item in content_items):
+        return None
+
+    # Match aggregate and block-owned occurrences without collapsing repeated citations.
+    block_citations: dict[_MCPCitationKey, int] = {}
+    for item, values in zip(content_items, block_annotations, strict=True):
+        text_utf16 = (
+            item.text.encode("utf-16-le", errors="surrogatepass")
+            if item.type == "text" and item.text is not None
+            else None
+        )
+        item_citations = list(item.annotations or [])
+        item_seen: set[_MCPCitationKey] = set()
+        for value in values:
+            parsed = _parse_mcp_url_citation(value, text_utf16)
+            if parsed is not None and parsed[1] not in item_seen:
+                item_citations.append(parsed[0])
+                item_seen.add(parsed[1])
+                block_citations[parsed[1]] = block_citations.get(parsed[1], 0) + 1
+        if item_citations:
+            item.annotations = item_citations
+
+    unbound: list[Annotation] = []
+    for value in structured_annotations:
+        parsed = _parse_mcp_url_citation(value)
+        if parsed is None:
+            continue
+        if block_citations.get(parsed[1]):
+            block_citations[parsed[1]] -= 1
+        else:
+            unbound.append(parsed[0])
+    if structured_block is None:
+        return content_items
+    if unbound:
+        structured_block.annotations = [*(structured_block.annotations or []), *unbound]
+    return [*content_items, structured_block]
+
 
 _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_IS_TOOL_KEY = "_mcp_is_tool"
@@ -1521,7 +1643,10 @@ class MCPTool:
             if not result and structured_block is not None:
                 result.append(structured_block)
         elif mode == "structured_first":
-            if structured_block is not None:
+            cited = _project_mcp_url_citations(mcp_type, result, structured_block)
+            if cited is not None:
+                result = cited
+            elif structured_block is not None:
                 result = [structured_block]
         else:  # pragma: no cover - validated in __init__
             raise ValueError(f"Unknown tool_result_content mode: {mode!r}")

@@ -6,7 +6,6 @@ import asyncio
 import inspect
 import logging
 import os
-from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import _AsyncGeneratorContextManager  # pyright: ignore[reportPrivateUsage]
 from contextvars import ContextVar
@@ -15,7 +14,6 @@ from urllib.parse import urlsplit
 
 import httpx2 as httpx
 from agent_framework import (
-    Annotation,
     CachingSkillsSource,
     DeduplicatingSkillsSource,
     MCPSkillsSource,
@@ -27,7 +25,6 @@ from agent_framework import (
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import ToolExecutionException
 from azure.ai.agentserver.core import get_request_context
-from mcp import types as mcp_types
 from mcp.types import Tool
 from typing_extensions import override
 
@@ -225,61 +222,6 @@ def _toolbox_approval_mode(item: Tool | Prompt) -> Literal["always_require", "ne
     return "never_require"
 
 
-def _parse_toolbox_url_citation(
-    value: Any, text_utf16: bytes | None = None
-) -> tuple[Annotation, tuple[str, str | None, int | None, int | None]] | None:
-    """Validate a Toolbox URL citation and convert valid UTF-16 spans to Python offsets."""
-    if not isinstance(value, Mapping):
-        return None
-    raw = cast(Mapping[str, Any], value)
-    url = raw.get("url")
-    if raw.get("type") != "url_citation" or not isinstance(url, str) or not url.strip():
-        return None
-
-    raw_title = raw.get("title")
-    title = raw_title if isinstance(raw_title, str) else None
-    raw_start, raw_end = raw.get("start_index"), raw.get("end_index")
-    start = raw_start if type(raw_start) is int else None
-    end = raw_end if type(raw_end) is int else None
-    citation = Annotation(type="citation", url=url)
-    if title is not None:
-        citation["title"] = title
-    if text_utf16 is not None and start is not None and end is not None and 0 <= start <= end <= len(text_utf16) // 2:
-        # Toolbox offsets use UTF-16 code units; framework spans use Python text offsets.
-        boundaries = (start, end)
-        if all(
-            offset == 0
-            or offset == len(text_utf16) // 2
-            or not (
-                0xD800 <= int.from_bytes(text_utf16[(offset - 1) * 2 : offset * 2], "little") <= 0xDBFF
-                and 0xDC00 <= int.from_bytes(text_utf16[offset * 2 : (offset + 1) * 2], "little") <= 0xDFFF
-            )
-            for offset in boundaries
-        ):
-            citation["annotated_regions"] = [
-                {
-                    "type": "text_span",
-                    "start_index": len(text_utf16[: start * 2].decode("utf-16-le", errors="surrogatepass")),
-                    "end_index": len(text_utf16[: end * 2].decode("utf-16-le", errors="surrogatepass")),
-                }
-            ]
-    return citation, (url, title, start, end)
-
-
-def _toolbox_block_annotations(item: Any) -> list[Any]:
-    """Collect annotation metadata from an MCP content block and its embedded resource."""
-    metadata: list[Any] = [getattr(item, "meta", None)]
-    if isinstance(item, mcp_types.EmbeddedResource):
-        metadata.append(item.resource.meta)
-    annotations: list[Any] = []
-    for entry in metadata:
-        if isinstance(entry, Mapping):
-            values = cast(Mapping[str, Any], entry).get("annotations")
-            if isinstance(values, list):
-                annotations.extend(cast(list[Any], values))
-    return annotations
-
-
 class FoundryToolbox(MCPStreamableHTTPTool):
     """A Foundry toolbox exposed as an MCP tool, with hosting wired in.
 
@@ -293,13 +235,12 @@ class FoundryToolbox(MCPStreamableHTTPTool):
     - forwards the platform per-request call-id (``x-agent-foundry-call-id``) so the
       Foundry MCP proxy can resolve the caller context server-side.
 
-    By default, web-search results with URL citation metadata retain their content blocks
-    and expose the citations as framework annotations. Structured content remains
-    model-visible, and aggregate citations without an identified content block remain
-    attached to that structured content without spans. Citation spans refer to the
-    search result, not a later assistant answer. An explicit ``tool_result_content``
-    or ``parse_tool_results`` option replaces this Toolbox-specific projection with
-    the selected MCP behavior.
+    Web-search results with URL citation metadata use the core MCP ``structured_first``
+    handling: content blocks stay model-visible before the structured content, and the
+    citations become framework annotations. Aggregate citations without an identified
+    content block remain attached to the structured content without spans. Citation spans
+    refer to the search result, not a later assistant answer. Another ``tool_result_content``
+    mode or a custom ``parse_tool_results`` replaces this handling.
 
     Platform headers are resolved at each operation boundary before work crosses
     into the MCP connection's writer task. The complete effective header set is
@@ -429,7 +370,6 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         self._credential = credential
         self._token_scope = token_scope
         self._timeout = timeout
-        self._use_toolbox_result_projection = "tool_result_content" not in kwargs
         caller_header_provider = cast(
             Callable[[dict[str, Any]], dict[str, str]] | None,
             kwargs.pop("header_provider", None),
@@ -462,66 +402,6 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             additional_tool_argument_names=additional_tool_argument_names,
             **kwargs,
         )
-
-    @override
-    def _parse_tool_result_from_mcp(self, mcp_type: mcp_types.CallToolResult) -> list[Content]:
-        """Preserve Toolbox search text and project recognized citations onto the returned content."""
-        if (
-            not self._use_toolbox_result_projection
-            or self.tool_result_content != "structured_first"
-            or mcp_type.is_error
-            or not mcp_type.content
-        ):
-            return super()._parse_tool_result_from_mcp(mcp_type)
-
-        structured: Any = mcp_type.structured_content
-        structured_mapping = cast(Mapping[str, Any], structured) if isinstance(structured, Mapping) else None
-        structured_values = structured_mapping.get("annotations") if structured_mapping is not None else None
-        structured_annotations = cast(list[Any], structured_values) if isinstance(structured_values, list) else []
-        block_annotations = [_toolbox_block_annotations(item) for item in mcp_type.content]
-        if not any(
-            _parse_toolbox_url_citation(value) is not None
-            for value in [*structured_annotations, *(value for values in block_annotations for value in values)]
-        ):
-            return super()._parse_tool_result_from_mcp(mcp_type)
-
-        result = super()._parse_tool_result_from_mcp(mcp_type.model_copy(update={"structured_content": None}))
-        text_items = [item for item in result if item.type == "text" and item.text is not None]
-        if not any(item.text for item in text_items):
-            return super()._parse_tool_result_from_mcp(mcp_type)
-
-        # Match aggregate and block-owned occurrences without collapsing repeated citations.
-        block_citations: Counter[tuple[str, str | None, int | None, int | None]] = Counter()
-        for item, values in zip(result, block_annotations, strict=True):
-            text = item.text
-            text_utf16 = (
-                text.encode("utf-16-le", errors="surrogatepass") if item.type == "text" and text is not None else None
-            )
-            item_citations = list(item.annotations or [])
-            item_seen: set[tuple[str, str | None, int | None, int | None]] = set()
-            for value in values:
-                parsed = _parse_toolbox_url_citation(value, text_utf16)
-                if parsed is not None and parsed[1] not in item_seen:
-                    item_citations.append(parsed[0])
-                    item_seen.add(parsed[1])
-                    block_citations[parsed[1]] += 1
-            if item_citations:
-                item.annotations = item_citations
-
-        unbound: list[Annotation] = []
-        for value in structured_annotations:
-            parsed = _parse_toolbox_url_citation(value)
-            if parsed is not None:
-                if block_citations[parsed[1]]:
-                    block_citations[parsed[1]] -= 1
-                else:
-                    unbound.append(parsed[0])
-        if structured is not None:
-            structured_result = super()._parse_tool_result_from_mcp(mcp_type.model_copy(update={"content": []}))
-            if unbound:
-                structured_result[0].annotations = unbound
-            result.extend(structured_result)
-        return result
 
     @override
     async def connect(self, *, reset: bool = False) -> None:
