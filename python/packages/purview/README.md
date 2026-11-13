@@ -384,8 +384,7 @@ If blocked content must not be retained, set `store` to `False` so the framework
 conversation, and attach a history provider:
 
 ```python
-client = ChatClient(...)
-client.chat_middleware = [PurviewChatPolicyMiddleware(credential, settings)]
+client = OpenAIChatClient(middleware=[PurviewChatPolicyMiddleware(credential, settings)])
 
 agent = Agent(
     client=client,
