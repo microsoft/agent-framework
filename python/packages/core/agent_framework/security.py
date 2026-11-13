@@ -2088,11 +2088,6 @@ _current_context: ContextVar[FunctionInvocationContext | None] = ContextVar(
     default=None,
 )
 
-_current_function: ContextVar[FunctionTool | None] = ContextVar(
-    "agent_framework_current_security_function",
-    default=None,
-)
-
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
 class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding):
@@ -2812,7 +2807,6 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         scope_token = self._activate_security_scope(context)
         middleware_token = _current_middleware.set(self)
         context_token = _current_context.set(context)
-        function_token = _current_function.set(context.function)
         materialization_token: Token[tuple[Any, Callable[[Any], None], asyncio.Task[Any] | None] | None] | None = None
         try:
             function_name = context.function.name
@@ -2917,7 +2911,6 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         finally:
             if materialization_token is not None:
                 _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.reset(materialization_token)
-            _current_function.reset(function_token)
             _current_context.reset(context_token)
             _current_middleware.reset(middleware_token)
             self._active_security_scope.reset(scope_token)
@@ -6126,10 +6119,13 @@ def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: Integ
 
         def has_matching_tracker() -> bool:
             active_context = _current_context.get()
+            if active_context is None:
+                return False
+            active_authority = active_context.metadata.get(_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY)
             return (
                 _current_middleware.get() is not None
-                and active_context is not None
-                and _current_function.get() is func_tool
+                and isinstance(active_authority, _SecurityInvocationAuthority)
+                and active_authority.function is func_tool
                 and (invocation_context is None or active_context is invocation_context)
             )
 
