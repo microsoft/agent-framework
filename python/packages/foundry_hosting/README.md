@@ -323,7 +323,8 @@ Web URL citations on function results, such as `FoundryToolbox` search results, 
 final answer text when the response completes. These citations do not identify which part of the answer each
 source supports, so the host emits each one as a zero-length `url_citation` at the end of that text. Sources are
 deduplicated by URL, limited to `http` and `https`, skipped when the answer already cites the same URL, and not
-attached to interim text. Plain `agent.run()` responses do not include these sources.
+attached to interim text. A response retains at most 100 sources and 64 KiB of UTF-8 URL and title data;
+additional or oversized sources are skipped with a warning. Plain `agent.run()` responses do not include these sources.
 
 ## State store
 

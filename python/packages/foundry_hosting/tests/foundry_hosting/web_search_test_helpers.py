@@ -4,13 +4,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
 import httpx2 as httpx
-from agent_framework import AgentResponseUpdate, Annotation, Content
+from agent_framework import (
+    AgentResponseUpdate,
+    Annotation,
+    Content,
+    Executor,
+    Message,
+    WorkflowAgent,
+    WorkflowBuilder,
+    WorkflowContext,
+    handler,
+)
 
-from .toolbox_approval_helpers import ToolboxApprovalServer
+from .toolbox_approval_helpers import (  # pyrefly: ignore[missing-import] - pytest's importlib namespace
+    ToolboxApprovalServer,
+)
 
 _PYTHON_SOURCE_URL = "https://www.python.org/downloads/release/python-31315/"
 _DOCS_SOURCE_URL = "https://docs.python.org/3/whatsnew/3.13.html"
@@ -30,6 +43,67 @@ class _ToolResultServer(ToolboxApprovalServer):
                 self.calls.append(payload["params"])
                 return httpx.Response(200, json={"jsonrpc": "2.0", "id": payload["id"], "result": self.call_result})
         return await super().handle(request)
+
+
+class _CitationWorkflowExecutor(Executor):
+    """Emit a cited tool result before the final answer in a later superstep."""
+
+    def __init__(
+        self,
+        started: asyncio.Event | None = None,
+        release: asyncio.Event | None = None,
+        stopped: asyncio.Event | None = None,
+        *,
+        final_text: str | None = "Final answer",
+    ) -> None:
+        super().__init__("citation-workflow")
+        self.started = started
+        self.release = release
+        self.stopped = stopped
+        self.final_text = final_text
+
+    @handler
+    async def run(self, step: int, ctx: WorkflowContext[int, Message]) -> None:
+        if step:
+            await ctx.yield_output(Message("tool", [_web_search_result("call_1")]))
+            await ctx.yield_output(Message("assistant", "Checking."))
+            await ctx.send_message(0)
+            return
+        if self.started is not None:
+            self.started.set()
+        try:
+            if self.release is not None:
+                await self.release.wait()
+        finally:
+            if self.stopped is not None:
+                self.stopped.set()
+        if self.final_text is not None:
+            await ctx.yield_output(Message("assistant", self.final_text))
+
+
+class _LegacyCitationStart(Executor):
+    def __init__(self) -> None:
+        super().__init__("citation-start")
+
+    @handler
+    async def run(self, messages: list[Message], ctx: WorkflowContext[str, Content]) -> None:
+        await ctx.yield_output(_web_search_result("call_1"))
+        await ctx.send_message("answer")
+
+
+class _LegacyCitationFinish(Executor):
+    def __init__(self) -> None:
+        super().__init__("citation-finish")
+
+    @handler
+    async def run(self, message: str, ctx: WorkflowContext[str, Content]) -> None:
+        await ctx.yield_output(Content.from_text("Final answer"))
+
+
+def _legacy_citation_workflow_agent() -> WorkflowAgent:
+    start, finish = _LegacyCitationStart(), _LegacyCitationFinish()
+    workflow = WorkflowBuilder(name="legacy-citation", start_executor=start).add_edge(start, finish).build()
+    return WorkflowAgent(workflow=workflow, name="Legacy Citation Workflow")
 
 
 def _web_search_result(call_id: str) -> Content:

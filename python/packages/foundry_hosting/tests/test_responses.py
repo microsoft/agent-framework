@@ -124,6 +124,7 @@ from .foundry_hosting.web_search_test_helpers import (  # pyrefly: ignore[missin
     _DOCS_SOURCE_URL,
     _expected_source_citations,
     _expected_url_citation,
+    _legacy_citation_workflow_agent,
     _url_citation,
     _web_search_citation_updates,
     _web_search_result,
@@ -5489,6 +5490,152 @@ class TestStreaming:
         events.extend(discarded.close(final_answer=True))
         assert not any(event["type"] == "response.output_text.annotation.added" for event in events)
 
+    @pytest.mark.parametrize("final_already_cites", [False, True])
+    async def test_pending_sources_deduplicate_across_final_message_parts_only(self, final_already_cites: bool) -> None:
+        stream = ResponseEventStream(response_id="resp_multipart_citations")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+        _ = [event async for event in tracker.handle(Content.from_text("Interim", annotations=[_url_citation()]))]
+        _ = list(tracker.close())
+        _ = [event async for event in tracker.handle(_web_search_result("call_1"))]
+        update = AgentResponseUpdate(
+            contents=[
+                Content.from_text("First", annotations=[_url_citation()] if final_already_cites else None),
+                Content.from_text(" final"),
+            ],
+            role="assistant",
+            message_id="final",
+        )
+        events = [event async for event in tracker.handle_update(update, complete_message=True)]
+        events.extend(tracker.close(final_answer=True))
+
+        annotations = [
+            event["annotation"] for event in events if event["type"] == "response.output_text.annotation.added"
+        ]
+        expected = (
+            [
+                _expected_url_citation(),
+                _expected_url_citation(url=_DOCS_SOURCE_URL, title="What's New", start_index=6, end_index=6),
+            ]
+            if final_already_cites
+            else _expected_source_citations(" final")
+        )
+        assert annotations == expected
+        message = next(
+            event["item"]
+            for event in events
+            if event["type"] == "response.output_item.done" and event["item"]["type"] == "message"
+        )
+        parts = [part for part in message["content"] if part["type"] == "output_text"]
+        assert [part["annotations"] for part in parts] == (
+            [[expected[0]], [expected[1]]] if final_already_cites else [[], expected]
+        )
+
+    async def test_pending_source_limits_apply_across_results_and_recovery(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses._MAX_PENDING_URL_CITATIONS", 2)
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses._MAX_PENDING_URL_CITATION_BYTES", 64)
+        stream = ResponseEventStream(response_id="resp_source_limits")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+        first = Content.from_function_result(
+            "call_1",
+            result=[
+                Content.from_text(
+                    "Result",
+                    annotations=[
+                        Annotation(type="citation", url="https://example.test/1", title="A"),
+                        Annotation(type="citation", url="https://example.test/too-large", title="x" * 64),
+                    ],
+                )
+            ],
+        )
+        _ = [event async for event in tracker.handle(first)]
+        recovered = _OutputItemTracker(stream)
+        second = Content.from_function_result(
+            "call_2",
+            result=[
+                Content.from_text(
+                    "Result",
+                    annotations=[
+                        Annotation(type="citation", url="https://example.test/2", title="B"),
+                        Annotation(type="citation", url="https://example.test/3", title="C"),
+                    ],
+                )
+            ],
+        )
+        _ = [event async for event in recovered.handle(second)]
+        events = [event async for event in recovered.handle(Content.from_text("Done."), message_id="final")]
+        events.extend(recovered.close(final_answer=True))
+
+        annotations = [
+            event["annotation"]["url"]
+            for event in events
+            if event["type"] == "response.output_text.annotation.added"
+            and event["annotation"]["type"] == "url_citation"
+        ]
+        assert annotations == [
+            "https://example.test/1",
+            "https://example.test/2",
+        ]
+        assert "excess sources were skipped" in caplog.text
+
+    async def test_pending_source_byte_limit_counts_utf8_and_skips_oversized_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses._MAX_PENDING_URL_CITATION_BYTES", 33)
+        stream = ResponseEventStream(response_id="resp_source_bytes")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+        result = Content.from_function_result(
+            "call_1",
+            result=[
+                Content.from_text(
+                    "Result",
+                    annotations=[
+                        Annotation(type="citation", url="https://x", title="\U0001f30e" * 4),
+                        Annotation(type="citation", url="https://y"),
+                        Annotation(type="citation", url="http://z"),
+                    ],
+                )
+            ],
+        )
+        _ = [event async for event in tracker.handle(result)]
+        recovered = _OutputItemTracker(stream)
+        events = [event async for event in recovered.handle(Content.from_text("Done."), message_id="final")]
+        events.extend(recovered.close(final_answer=True))
+
+        assert [
+            event["annotation"]["url"]
+            for event in events
+            if event["type"] == "response.output_text.annotation.added"
+            and event["annotation"]["type"] == "url_citation"
+        ] == ["https://x", "http://z"]
+
+    async def test_recovery_bounds_previously_persisted_sources(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses._MAX_PENDING_URL_CITATIONS", 2)
+        stream = ResponseEventStream(response_id="resp_oversized_source_snapshot")
+        stream.emit_created()
+        stream.emit_in_progress()
+        _hosted_internal_metadata(stream)["_foundry_pending_url_citations"] = [
+            {"url": f"https://example.test/{index}", "title": str(index)} for index in range(3)
+        ]
+
+        recovered = _OutputItemTracker(stream)
+        events = [event async for event in recovered.handle(Content.from_text("Done."), message_id="final")]
+        events.extend(recovered.close(final_answer=True))
+
+        assert [
+            event["annotation"]["url"]
+            for event in events
+            if event["type"] == "response.output_text.annotation.added"
+            and event["annotation"]["type"] == "url_citation"
+        ] == ["https://example.test/0", "https://example.test/1"]
+
     async def test_pending_container_file_citation_survives_tracker_recovery(self) -> None:
         stream = ResponseEventStream(response_id="resp_container_file")
         stream.emit_created()
@@ -10754,6 +10901,44 @@ class TestResilientBackgroundCheckpointing:
         final_message = next(item for item in checkpoints[0].response["output"] if item["type"] == "message")
         final_content = cast(dict[str, Any], final_message["content"][0])
         assert final_content["annotations"] == _expected_source_citations("Final answer")
+
+    async def test_workflow_completion_and_recovery_attach_tool_sources(self, tmp_path: Path) -> None:
+        request = CreateResponse(model="m", input="hi", background=True, stream=True, store=True)
+        store = FileResponseStore(storage_dir=tmp_path)
+        options = ResponsesServerOptions(resilient_background=True)
+        server = _make_server(_legacy_citation_workflow_agent(), response_store=store, options=options)
+        context = ResponseContext(response_id="response-citation-workflow", mode_flags=MagicMock())
+
+        snapshots: list[dict[str, Any]] = []
+        events: list[Any] = []
+        async for event in server._handle_response(request, context, asyncio.Event()):
+            if isinstance(event, ResponseCheckpointEvent):
+                snapshots.append(copy.deepcopy(dict(event.response)))
+            else:
+                events.append(event)
+
+        completed = next(event["response"] for event in events if event["type"] == "response.completed")
+        message = next(item for item in completed["output"] if item["type"] == "message")
+        assert message["content"][0]["annotations"] == _expected_source_citations("Final answer")
+        pending = next(
+            snapshot
+            for snapshot in snapshots
+            if snapshot.get("internal_metadata", {}).get("_foundry_pending_url_citations")
+        )
+
+        recovered_context = ResponseContext(response_id=context.response_id, mode_flags=MagicMock())
+        recovered_context.is_recovery = True
+        recovered_context.persisted_response = cast(ResponseObject, pending)
+        restarted = _make_server(_legacy_citation_workflow_agent(), response_store=store, options=options)
+        recovered_events = [
+            event
+            async for event in restarted._handle_response(request, recovered_context, asyncio.Event())
+            if isinstance(event, Mapping)
+        ]
+        recovered = next(event["response"] for event in recovered_events if event["type"] == "response.completed")
+        message = next(item for item in recovered["output"] if item["type"] == "message")
+        part = next(part for part in message["content"] if part["type"] == "output_text")
+        assert part["annotations"] == _expected_source_citations("Final answer")
 
 
 # endregion

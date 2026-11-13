@@ -18,12 +18,14 @@ from collections.abc import (
     Awaitable,
     Callable,
     Generator,
+    Iterator,
     Mapping,
     Sequence,
 )
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
 from copy import copy
 from dataclasses import asdict, dataclass, is_dataclass
+from itertools import chain
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
@@ -153,6 +155,8 @@ _HOSTED_PROVIDER_OUTPUT_COUNT_KEY = "_foundry_provider_output_count"
 _HOSTED_PROVIDER_USAGE_KEY = "_foundry_provider_usage"
 _PENDING_CONTAINER_FILE_CITATIONS_KEY = "_foundry_pending_container_file_citations"
 _PENDING_URL_CITATIONS_KEY = "_foundry_pending_url_citations"
+_MAX_PENDING_URL_CITATIONS = 100
+_MAX_PENDING_URL_CITATION_BYTES = 64 * 1024
 _CONTAINER_FILE_CITATIONS_KEY = "container_file_citations"
 _PUBLIC_STREAM_FAILURE_MESSAGE = "An internal server error occurred."
 
@@ -283,13 +287,11 @@ def _container_file_citations_from_function_result(content: Content) -> list[_Co
     return citations
 
 
-def _url_citations_from_function_result(content: Content) -> dict[str, str]:
-    """Collect the web sources cited by a function result, keyed by URL in first-seen order with their titles."""
-    candidates: list[Any] = list(content.annotations or [])
-    for item in content.items or []:
-        candidates.extend(item.annotations or [])
-
-    citations: dict[str, str] = {}
+def _url_citations_from_function_result(content: Content) -> Iterator[tuple[str, str]]:
+    """Yield web sources cited by a function result in their original order."""
+    candidates = chain(
+        content.annotations or [], chain.from_iterable(item.annotations or [] for item in content.items or [])
+    )
     for annotation in candidates:
         if not isinstance(annotation, Mapping):
             continue
@@ -297,7 +299,7 @@ def _url_citations_from_function_result(content: Content) -> dict[str, str]:
         if annotation_mapping.get("type") != "citation" or annotation_mapping.get("file_id"):
             continue
         url = annotation_mapping.get("url")
-        if not isinstance(url, str) or url in citations:
+        if not isinstance(url, str):
             continue
         try:
             scheme = urlparse(url).scheme.lower()
@@ -306,8 +308,7 @@ def _url_citations_from_function_result(content: Content) -> dict[str, str]:
         if scheme not in {"http", "https"}:
             continue
         title = annotation_mapping.get("title")
-        citations[url] = title if isinstance(title, str) else ""
-    return citations
+        yield url, title if isinstance(title, str) else ""
 
 
 def _annotations_to_output_text(
@@ -2613,6 +2614,7 @@ class _OutputItemTracker:
         self._oauth_consent_requests: set[tuple[str, str]] = set()
         self._pending_container_file_citations: dict[str, _ContainerFileCitation] = {}
         self._pending_url_citations: dict[str, str] = {}
+        self._pending_url_citation_bytes = 0
         self._text_annotations: list[ResponsesAnnotation] = []
         self._message_text_annotations: dict[int, list[ResponsesAnnotation]] = {}
         # Set when an agent update reports the model stopped early (content filter, token
@@ -2658,6 +2660,7 @@ class _OutputItemTracker:
                 persisted_url_citations, (str, bytes, bytearray)
             ):
                 raise RuntimeError("The persisted URL citations are invalid.")
+            skipped_url_citation = False
             for raw_url_citation in cast(Sequence[Any], persisted_url_citations):
                 if not isinstance(raw_url_citation, Mapping):
                     raise RuntimeError("The persisted URL citations are invalid.")
@@ -2666,7 +2669,10 @@ class _OutputItemTracker:
                 title = url_citation.get("title")
                 if not isinstance(url, str) or not url or not isinstance(title, str):
                     raise RuntimeError("The persisted URL citations are invalid.")
-                self._pending_url_citations.setdefault(url, title)
+                skipped_url_citation |= not self._retain_pending_url_citation(url, title)
+            if skipped_url_citation:
+                logger.warning("Pending URL citations exceeded the hosted source limits; excess sources were skipped.")
+                self._persist_pending_url_citations()
         for item in stream.response.get("output", []):
             if not isinstance(item, Mapping):
                 continue
@@ -2862,10 +2868,14 @@ class _OutputItemTracker:
                 for citation in citations:
                     self._pending_container_file_citations[citation.filename] = citation
                 self._persist_pending_container_file_citations()
-            url_citations = _url_citations_from_function_result(content)
-            if url_citations:
-                for url, title in url_citations.items():
-                    self._pending_url_citations.setdefault(url, title)
+            skipped_url_citation = False
+            had_url_citations = False
+            for url, title in _url_citations_from_function_result(content):
+                had_url_citations = True
+                skipped_url_citation |= not self._retain_pending_url_citation(url, title)
+            if skipped_url_citation:
+                logger.warning("Pending URL citations exceeded the hosted source limits; excess sources were skipped.")
+            if had_url_citations:
                 self._persist_pending_url_citations()
             async for event in self._stream.output_item_function_call_output(
                 content.call_id,  # type: ignore[arg-type]
@@ -3133,6 +3143,7 @@ class _OutputItemTracker:
         self._pending_container_file_citations.clear()
         self._persist_pending_container_file_citations()
         self._pending_url_citations.clear()
+        self._pending_url_citation_bytes = 0
         self._persist_pending_url_citations()
 
     # -- Private open/close helpers --
@@ -3290,7 +3301,10 @@ class _OutputItemTracker:
                 if annotation not in annotations:
                     annotations.append(annotation)
             if attach_sources:
-                annotations.extend(self._source_url_annotations_for_text(accumulated, annotations))
+                earlier_annotations = chain.from_iterable(self._message_text_annotations.values())
+                annotations.extend(
+                    self._source_url_annotations_for_text(accumulated, [*earlier_annotations, *annotations])
+                )
             yield self._text_content.emit_text_done(accumulated)
             for annotation in annotations:
                 yield self._text_content.emit_annotation_added(annotation)
@@ -3376,8 +3390,24 @@ class _OutputItemTracker:
             if url not in cited_urls
         ]
         self._pending_url_citations.clear()
+        self._pending_url_citation_bytes = 0
         self._persist_pending_url_citations()
         return annotations
+
+    def _retain_pending_url_citation(self, url: str, title: str) -> bool:
+        if url in self._pending_url_citations:
+            return True
+        if (
+            len(self._pending_url_citations) >= _MAX_PENDING_URL_CITATIONS
+            or len(url) + len(title) > _MAX_PENDING_URL_CITATION_BYTES
+        ):
+            return False
+        size = len(url.encode("utf-8", errors="surrogatepass")) + len(title.encode("utf-8", errors="surrogatepass"))
+        if self._pending_url_citation_bytes + size > _MAX_PENDING_URL_CITATION_BYTES:
+            return False
+        self._pending_url_citations[url] = title
+        self._pending_url_citation_bytes += size
+        return True
 
     def _persist_pending_url_citations(self) -> None:
         if not self._pending_url_citations:

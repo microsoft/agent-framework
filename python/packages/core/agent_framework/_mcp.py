@@ -10,6 +10,8 @@ import re
 import sys
 import warnings
 from abc import abstractmethod
+from array import array
+from bisect import bisect_left
 from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Coroutine, Generator, Mapping, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager, asynccontextmanager, contextmanager  # type: ignore
 from contextvars import ContextVar
@@ -212,8 +214,27 @@ Custom ``parse_tool_results`` overrides this policy entirely.
 _MCPCitationKey: TypeAlias = tuple[str, str | None, int | None, int | None]
 
 
-def _parse_mcp_url_citation(value: Any, text_utf16: bytes | None = None) -> tuple[Annotation, _MCPCitationKey] | None:
-    """Validate an MCP ``url_citation`` entry and convert valid UTF-16 spans to Python text offsets."""
+def _utf16_surrogate_offsets(text: str) -> tuple[int, array[int]]:
+    """Return UTF-16 length and low-surrogate offsets belonging to pairs."""
+    offset = 0
+    previous_high = False
+    low_offsets = array("Q")
+    for character in text:
+        code = ord(character)
+        if code > 0xFFFF:
+            low_offsets.append(offset + 1)
+            offset += 2
+            previous_high = False
+        else:
+            if previous_high and 0xDC00 <= code <= 0xDFFF:
+                low_offsets.append(offset)
+            previous_high = 0xD800 <= code <= 0xDBFF
+            offset += 1
+    return offset, low_offsets
+
+
+def _parse_mcp_url_citation(value: Any) -> tuple[Annotation, _MCPCitationKey] | None:
+    """Validate an MCP ``url_citation`` entry."""
     if not isinstance(value, Mapping):
         return None
     raw = cast(Mapping[str, Any], value)
@@ -229,26 +250,27 @@ def _parse_mcp_url_citation(value: Any, text_utf16: bytes | None = None) -> tupl
     citation = Annotation(type="citation", url=url)
     if title is not None:
         citation["title"] = title
-    if text_utf16 is not None and start is not None and end is not None and 0 <= start <= end <= len(text_utf16) // 2:
+    return citation, (url, title, start, end)
+
+
+def _attach_mcp_citation_span(
+    citation: Annotation, key: _MCPCitationKey, text_utf16_length: int, low_offsets: Sequence[int]
+) -> None:
+    _, _, start, end = key
+    if start is not None and end is not None and 0 <= start <= end <= text_utf16_length:
         # Citation offsets use UTF-16 code units; framework spans use Python text offsets.
-        boundaries = (start, end)
-        if all(
-            offset == 0
-            or offset == len(text_utf16) // 2
-            or not (
-                0xD800 <= int.from_bytes(text_utf16[(offset - 1) * 2 : offset * 2], "little") <= 0xDBFF
-                and 0xDC00 <= int.from_bytes(text_utf16[offset * 2 : (offset + 1) * 2], "little") <= 0xDFFF
-            )
-            for offset in boundaries
+        start_pairs = bisect_left(low_offsets, start)
+        end_pairs = bisect_left(low_offsets, end)
+        if (start_pairs == len(low_offsets) or low_offsets[start_pairs] != start) and (
+            end_pairs == len(low_offsets) or low_offsets[end_pairs] != end
         ):
             citation["annotated_regions"] = [
                 {
                     "type": "text_span",
-                    "start_index": len(text_utf16[: start * 2].decode("utf-16-le", errors="surrogatepass")),
-                    "end_index": len(text_utf16[: end * 2].decode("utf-16-le", errors="surrogatepass")),
+                    "start_index": start - start_pairs,
+                    "end_index": end - end_pairs,
                 }
             ]
-    return citation, (url, title, start, end)
 
 
 def _mcp_block_annotations(item: Any) -> list[Any]:
@@ -310,16 +332,18 @@ def _project_mcp_url_citations(
     # Match aggregate and block-owned occurrences without collapsing repeated citations.
     block_citations: dict[_MCPCitationKey, int] = {}
     for item, values in zip(content_items, block_annotations, strict=True):
-        text_utf16 = (
-            item.text.encode("utf-16-le", errors="surrogatepass")
-            if item.type == "text" and item.text is not None
-            else None
+        text_utf16_length, low_offsets = (
+            _utf16_surrogate_offsets(item.text)
+            if values and item.type == "text" and item.text is not None
+            else (None, array("Q"))
         )
         item_citations = list(item.annotations or [])
         item_seen: set[_MCPCitationKey] = set()
         for value in values:
-            parsed = _parse_mcp_url_citation(value, text_utf16)
+            parsed = _parse_mcp_url_citation(value)
             if parsed is not None and parsed[1] not in item_seen:
+                if text_utf16_length is not None:
+                    _attach_mcp_citation_span(parsed[0], parsed[1], text_utf16_length, low_offsets)
                 item_citations.append(parsed[0])
                 item_seen.add(parsed[1])
                 block_citations[parsed[1]] = block_citations.get(parsed[1], 0) + 1

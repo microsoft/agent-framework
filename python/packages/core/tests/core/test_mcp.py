@@ -1444,6 +1444,34 @@ def test_structured_first_keeps_cited_content_and_attaches_url_citations():
     assert all(item.additional_properties["_meta"] == {"source": "server"} for item in result)
 
 
+def test_cited_text_converts_multiple_utf16_spans_and_deduplicates():
+    text = "A\U0001f30eB\U0001f680C"
+    citations = [
+        {"type": "url_citation", "url": "https://example.test/earth", "start_index": 1, "end_index": 3},
+        {"type": "url_citation", "url": "https://example.test/rocket", "start_index": 4, "end_index": 6},
+        {"type": "url_citation", "url": "https://example.test/invalid", "start_index": 2, "end_index": 6},
+    ]
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text=text, _meta={"annotations": [*citations, *citations]})]
+    )
+
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert result[0].annotations == [
+        {
+            "type": "citation",
+            "url": "https://example.test/earth",
+            "annotated_regions": [{"type": "text_span", "start_index": 1, "end_index": 2}],
+        },
+        {
+            "type": "citation",
+            "url": "https://example.test/rocket",
+            "annotated_regions": [{"type": "text_span", "start_index": 3, "end_index": 4}],
+        },
+        {"type": "citation", "url": "https://example.test/invalid"},
+    ]
+
+
 def test_structured_first_does_not_attach_url_citations_to_error_results():
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="Search failed")],

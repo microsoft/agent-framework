@@ -49,6 +49,11 @@ from agent_framework_foundry_hosting import (
 )
 from agent_framework_foundry_hosting._workflow_state import FoundryWorkflowBindingStore, HostedWorkflowRun
 
+from .web_search_test_helpers import (  # pyrefly: ignore[missing-import] - pytest's importlib namespace
+    _CitationWorkflowExecutor,
+    _expected_source_citations,
+)
+
 
 class _Ticket(BaseModel):
     text: str
@@ -602,6 +607,145 @@ async def test_streaming_framework_output_keeps_occurrence_relative_citation_off
     message = next(item for item in response["output"] if item["type"] == "message")
     assert [part["text"] for part in message["content"]] == ["See Python"]
     assert message["content"][0]["annotations"] == [_expected_url_citation(start_index=4, end_index=10)]
+
+
+@pytest.mark.parametrize("stored", [False, True])
+async def test_native_workflow_attaches_tool_sources_only_to_final_answer(stored: bool) -> None:
+    def create(request: HostedResponseRequest) -> Workflow:
+        source = _CitationWorkflowExecutor()
+        return WorkflowBuilder(name="citation-workflow", start_executor=source).add_edge(source, source).build()
+
+    server = _server(create, parser=_parse_count)
+    response = await _post(server, "1", store=stored)
+
+    assert response["status"] == "completed", response
+    messages = [item for item in response["output"] if item["type"] == "message"]
+    assert [item["content"][0]["text"] for item in messages] == ["Checking.", "Final answer"]
+    assert messages[0]["content"][0]["annotations"] == []
+    assert messages[1]["content"][0]["annotations"] == _expected_source_citations("Final answer")
+    assert "_foundry_pending_url_citations" not in response.get("internal_metadata", {})
+
+
+async def test_native_workflow_streams_final_sources_consistently() -> None:
+    def create(request: HostedResponseRequest) -> Workflow:
+        source = _CitationWorkflowExecutor()
+        return WorkflowBuilder(name="citation-stream", start_executor=source).add_edge(source, source).build()
+
+    server = _server(create, parser=_parse_count)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        response = await client.post("/responses", json={"input": "1", "store": False, "stream": True})
+
+    assert response.status_code == 200
+    events = [
+        json.loads(line[5:].strip())
+        for line in response.text.splitlines()
+        if line.startswith("data:") and line[5:].strip() != "[DONE]"
+    ]
+    expected = _expected_source_citations("Final answer")
+    assert [event["annotation"] for event in events if event["type"] == "response.output_text.annotation.added"] == (
+        expected
+    )
+    done = [event for event in events if event["type"] == "response.content_part.done"]
+    assert [event["part"]["annotations"] for event in done] == [[], expected]
+    completed = next(event["response"] for event in events if event["type"] == "response.completed")
+    messages = [item for item in completed["output"] if item["type"] == "message"]
+    assert messages[-1]["content"][0]["annotations"] == expected
+
+
+async def test_native_workflow_discards_sources_without_a_final_answer() -> None:
+    def create(request: HostedResponseRequest) -> Workflow:
+        source = _CitationWorkflowExecutor(final_text=None)
+        return WorkflowBuilder(name="citation-no-answer", start_executor=source).add_edge(source, source).build()
+
+    committed: list[dict[str, Any]] = []
+    original = HostedWorkflowRun.commit
+
+    async def commit(run: HostedWorkflowRun, snapshot: Any = None) -> None:
+        committed.append(snapshot)
+        await original(run, snapshot)
+
+    with patch.object(HostedWorkflowRun, "commit", commit):
+        response = await _post(_server(create, parser=_parse_count), "1")
+
+    assert response["status"] == "completed", response
+    message = next(item for item in response["output"] if item["type"] == "message")
+    assert message["content"][0]["annotations"] == []
+    assert "_foundry_pending_url_citations" not in committed[-1].get("internal_metadata", {})
+
+
+async def test_native_workflow_does_not_cite_terminal_intermediate_output() -> None:
+    def create(request: HostedResponseRequest) -> Workflow:
+        source = _CitationWorkflowExecutor()
+        return (
+            WorkflowBuilder(
+                name="citation-intermediate",
+                start_executor=source,
+                output_from=[],
+                intermediate_output_from="all",
+            )
+            .add_edge(source, source)
+            .build()
+        )
+
+    response = await _post(_server(create, parser=_parse_count), "1", store=False)
+
+    assert response["status"] == "completed", response
+    messages = [item for item in response["output"] if item["type"] == "message"]
+    assert [item["content"][0]["annotations"] for item in messages] == [[], []]
+
+
+async def test_native_workflow_recovers_pending_sources(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from azure.ai.agentserver.core.tasks import resilient_tasks_enabled, set_resilient_tasks_enabled
+
+    enabled = resilient_tasks_enabled()
+    set_resilient_tasks_enabled(True)
+    monkeypatch.setenv("AGENTSERVER_SHUTDOWN_GRACE_SECONDS", "0.1")
+    started, release, stopped, paired = (asyncio.Event() for _ in range(4))
+
+    def create(request: HostedResponseRequest) -> Workflow:
+        source = _CitationWorkflowExecutor(started, release, stopped)
+        return WorkflowBuilder(name="citation-recovery", start_executor=source).add_edge(source, source).build()
+
+    provider = FileResponseStore(storage_dir=tmp_path / "responses")
+    options = ResponsesServerOptions(resilient_background=True, shutdown_grace_period_seconds=1)
+    server = _server(create, parser=_parse_count, response_store=provider, options=options)
+    original = HostedWorkflowRun.stage
+
+    async def stage(run: HostedWorkflowRun, snapshot: Any, **kwargs: Any) -> None:
+        await original(run, snapshot, **kwargs)
+        if snapshot.get("internal_metadata", {}).get("_foundry_pending_url_citations"):
+            paired.set()
+
+    try:
+        with patch.object(HostedWorkflowRun, "stage", stage):
+            async with (
+                server.router.lifespan_context(server),
+                httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client,
+            ):
+                pending = await client.post(
+                    "/responses",
+                    json={"input": "1", "agent_session_id": "sandbox", "store": True, "background": True},
+                )
+                assert pending.status_code == 200
+                response_id = pending.json()["id"]
+                await asyncio.wait_for(started.wait(), timeout=3)
+                await asyncio.wait_for(paired.wait(), timeout=3)
+        assert stopped.is_set()
+        release.set()
+        restarted = _server(create, parser=_parse_count, response_store=provider, options=options)
+        async with (
+            restarted.router.lifespan_context(restarted),
+            httpx.AsyncClient(transport=httpx.ASGITransport(app=restarted), base_url="http://test") as client,
+        ):
+            result = await _poll(client, response_id)
+        assert result["status"] == "completed", result
+        messages = [item for item in result["output"] if item["type"] == "message"]
+        assert [item["content"][0]["text"] for item in messages] == ["Checking.", "Final answer"]
+        assert messages[0]["content"][0]["annotations"] == []
+        assert messages[1]["content"][0]["annotations"] == _expected_source_citations("Final answer")
+    finally:
+        release.set()
+        set_resilient_tasks_enabled(enabled)
 
 
 async def test_native_agent_executor_applies_options_without_mutating_defaults_or_double_keywords() -> None:
