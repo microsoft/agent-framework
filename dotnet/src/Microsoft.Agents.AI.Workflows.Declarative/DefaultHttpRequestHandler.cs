@@ -220,11 +220,18 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
         using ResponseBodySizeValidator validator = new();
 #if NET
         await content.CopyToAsync(validator, cancellationToken).ConfigureAwait(false);
-        return await content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 #else
         await content.CopyToAsync(validator).ConfigureAwait(false);
-        return await content.ReadAsStringAsync().ConfigureAwait(false);
 #endif
+        cancellationToken.ThrowIfCancellationRequested();
+
+#if NET
+        string body = await content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+#else
+        string body = await content.ReadAsStringAsync().ConfigureAwait(false);
+#endif
+        cancellationToken.ThrowIfCancellationRequested();
+        return body;
     }
 
     private sealed class ResponseBodySizeValidator : Stream
