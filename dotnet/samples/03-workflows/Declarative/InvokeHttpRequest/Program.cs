@@ -5,6 +5,7 @@ using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Shared.Foundry;
 using Shared.Workflows;
 
@@ -50,12 +51,19 @@ internal sealed class Program
         // Get input from command line or console
         string workflowInput = Application.GetInput(args);
 
-        // The default HttpRequestHandler is sufficient for this sample because the
-        // GitHub REST endpoint used here does not require authentication. For
-        // authenticated endpoints, supply a custom Func<HttpRequestInfo, ..., HttpClient?>
-        // to DefaultHttpRequestHandler so each request can be routed through a
-        // pre-configured (cached) HttpClient with the appropriate credentials.
-        await using DefaultHttpRequestHandler httpRequestHandler = new();
+        // The application owns transport policy and pooled handler lifetime.
+        ServiceCollection services = new();
+        services.AddHttpClient("WorkflowHttp")
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = false,
+                CheckCertificateRevocationList = true,
+            })
+            .SetHandlerLifetime(TimeSpan.FromMinutes(5));
+        using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        DefaultHttpRequestHandler httpRequestHandler = new(
+            ["api.github.com"], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>(), "WorkflowHttp");
 
         // Create the workflow factory with the HTTP request handler
         WorkflowFactory workflowFactory = new("InvokeHttpRequest.yaml", foundryEndpoint)

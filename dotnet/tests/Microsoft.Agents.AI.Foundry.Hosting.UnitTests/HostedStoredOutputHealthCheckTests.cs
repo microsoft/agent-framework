@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Microsoft.Extensions.Options;
 using Moq;
 using CreateResponseOptions = OpenAI.Responses.CreateResponseOptions;
 
@@ -84,7 +83,7 @@ public class HostedStoredOutputHealthCheckTests
                 },
             });
 
-        var check = BuildCheckFor(agent, new FoundryResponsesOptions { AllowStoredOutputEnabled = true });
+        var check = BuildCheckFor(agent, new FoundryResponsesServerOptions { InferenceStoredOutputAllowed = true });
 
         // Act
         var result = await check.CheckHealthAsync(NewContext(), CancellationToken.None);
@@ -196,13 +195,40 @@ public class HostedStoredOutputHealthCheckTests
         Assert.Contains("foundry-agent", (List<string>)result.Data["storingAgents"]);
     }
 
-    private static HostedStoredOutputHealthCheck BuildCheckFor(AIAgent agent, FoundryResponsesOptions? hostingOptions = null)
+    [Fact]
+    public async Task CheckHealthAsync_ScopedAgentRegistration_IsResolvedFromAScopeAsync()
+    {
+        // Arrange: a scoped agent cannot be resolved from the root container when scopes are validated.
+        var services = new ServiceCollection();
+        services.AddKeyedScoped<AIAgent>("scoped-agent", (_, _) => new ChatClientAgent(
+            NewSilentChatClient(),
+            new ChatClientAgentOptions
+            {
+                Name = "scoped-agent",
+                ChatOptions = new ChatOptions
+                {
+                    RawRepresentationFactory = _ => new CreateResponseOptions { StoredOutputEnabled = true },
+                },
+            }));
+        var check = new HostedStoredOutputHealthCheck(
+            services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true }),
+            new FoundryResponsesServerOptions());
+
+        // Act
+        var result = await check.CheckHealthAsync(NewContext(), CancellationToken.None);
+
+        // Assert: the agent was resolved and probed rather than failing the readiness probe.
+        Assert.Equal(HealthStatus.Unhealthy, result.Status);
+        Assert.Contains("scoped-agent", (List<string>)result.Data["storingAgents"]);
+    }
+
+    private static HostedStoredOutputHealthCheck BuildCheckFor(AIAgent agent, FoundryResponsesServerOptions? hostingOptions = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(agent);
         return new HostedStoredOutputHealthCheck(
             services.BuildServiceProvider(),
-            Options.Create(hostingOptions ?? new FoundryResponsesOptions()));
+            hostingOptions ?? new FoundryResponsesServerOptions());
     }
 
     private static HealthCheckContext NewContext() => new()

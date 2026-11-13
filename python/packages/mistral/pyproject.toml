@@ -4,7 +4,7 @@ description = "Mistral AI integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.0.0b261030"
+version = "1.0.0b261112"
 license-files = ["LICENSE"]
 urls.homepage = "https://learn.microsoft.com/en-us/agent-framework/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -25,7 +25,8 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.24.0,<2",
-    "mistralai>=2.9.2,<3",
+    "httpx>=0.28.1,<1",
+    "mistralai>=2.9.2,<4",
 ]
 
 [tool.uv]

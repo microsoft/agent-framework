@@ -523,6 +523,66 @@ class TestBuildItemSchema:
 
 
 class TestFoundryEvals:
+    @pytest.mark.parametrize(
+        ("model", "env_model", "expected_model"),
+        [
+            ("explicit-model", "env-model", "explicit-model"),
+            ("explicit-model", None, "explicit-model"),
+            (None, "env-model", "env-model"),
+            (None, None, "gpt-4o"),
+            (None, "", "gpt-4o"),
+        ],
+    )
+    def test_auto_created_client_model_precedence(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        model: str | None,
+        env_model: str | None,
+        expected_model: str,
+    ) -> None:
+        if env_model is None:
+            monkeypatch.delenv("FOUNDRY_MODEL", raising=False)
+        else:
+            monkeypatch.setenv("FOUNDRY_MODEL", env_model)
+
+        mock_openai_client = MagicMock()
+
+        @dataclass(kw_only=True)
+        class StubFoundryChatClient:
+            model: str
+            client: Any = mock_openai_client
+
+        monkeypatch.setattr("agent_framework_foundry._chat_client.FoundryChatClient", StubFoundryChatClient)
+
+        fe = FoundryEvals(model=model)
+
+        assert fe._model == expected_model
+        assert fe._client is mock_openai_client
+
+    @pytest.mark.parametrize("injected_client", ["client", "project_client"])
+    def test_injected_client_does_not_auto_create_chat_client(
+        self, monkeypatch: pytest.MonkeyPatch, injected_client: str
+    ) -> None:
+        from agent_framework_foundry import FoundryChatClient
+
+        monkeypatch.setenv("FOUNDRY_MODEL", "env-model")
+        constructor = MagicMock(side_effect=AssertionError("Must use the injected client"))
+        monkeypatch.setattr(FoundryChatClient, "__init__", constructor)
+        mock_openai_client = MagicMock(spec=AsyncOpenAI)
+        kwargs: dict[str, Any] = {"model": "explicit-model"}
+        if injected_client == "client":
+            kwargs["client"] = mock_openai_client
+        else:
+            mock_project = MagicMock()
+            mock_project.get_openai_client.return_value = mock_openai_client
+            kwargs["project_client"] = mock_project
+
+        fe = FoundryEvals(**kwargs)
+
+        assert fe._model == "explicit-model"
+        assert fe._client is mock_openai_client
+        constructor.assert_not_called()
+
     def test_constructor_with_openai_client(self) -> None:
         mock_client = MagicMock()
         fe = FoundryEvals(client=mock_client, model="gpt-4o")

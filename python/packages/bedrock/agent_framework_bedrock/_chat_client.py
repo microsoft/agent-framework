@@ -273,8 +273,8 @@ class BedrockChatClient(
         """Create a Bedrock chat client and load AWS credentials.
 
         Args:
-            region: Region to send Bedrock requests to; falls back to BEDROCK_REGION, then to the region
-                of ``boto3_session``, then to us-east-1.
+            region: Region to send Bedrock requests to; falls back to the region of ``boto3_session``,
+                then to BEDROCK_REGION, then to us-east-1. A supplied ``client`` keeps its own region.
             model: Default model identifier; falls back to BEDROCK_CHAT_MODEL.
             access_key: Optional AWS access key for manual credential injection.
             secret_key: Optional AWS secret key paired with ``access_key``.
@@ -318,8 +318,12 @@ class BedrockChatClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        session_region = boto3_session.region_name if boto3_session and not client else None
-        region = settings.get("region") or session_region or DEFAULT_REGION
+        if client is not None:
+            client_region = getattr(getattr(client, "meta", None), "region_name", None)
+            region = client_region if isinstance(client_region, str) else (settings.get("region") or DEFAULT_REGION)
+        else:
+            session_region = boto3_session.region_name if boto3_session else None
+            region = region or session_region or settings.get("region") or DEFAULT_REGION
         chat_model = settings.get("chat_model")
 
         self._owns_client = client is None
@@ -868,17 +872,29 @@ class BedrockChatClient(
         if not usage:
             return None
         details: UsageDetails = {}
-        if (input_tokens := usage.get("inputTokens")) is not None:
-            details["input_token_count"] = input_tokens
-        if (output_tokens := usage.get("outputTokens")) is not None:
+        input_tokens = usage.get("inputTokens")
+        output_tokens = usage.get("outputTokens")
+        cache_read = usage.get("cacheReadInputTokens")
+        cache_write = usage.get("cacheWriteInputTokens")
+        # Bedrock Converse reports these when prompt caching is active.
+        if cache_read is not None:
+            details["cache_read_input_token_count"] = cache_read
+        if cache_write is not None:
+            details["cache_creation_input_token_count"] = cache_write
+        # inputTokens covers only the uncached part when prompt caching is active;
+        # total input (and gen_ai.usage.input_tokens) must include cache tokens,
+        # matching other connectors and the GenAI semconv.
+        input_total = input_tokens
+        if cache_read is not None:
+            input_total = cache_read if input_total is None else input_total + cache_read
+        if cache_write is not None:
+            input_total = cache_write if input_total is None else input_total + cache_write
+        if input_total is not None:
+            details["input_token_count"] = input_total
+        if output_tokens is not None:
             details["output_token_count"] = output_tokens
         if (total_tokens := usage.get("totalTokens")) is not None:
             details["total_token_count"] = total_tokens
-        # Bedrock Converse reports these when prompt caching is active.
-        if (cache_read := usage.get("cacheReadInputTokens")) is not None:
-            details["cache_read_input_token_count"] = cache_read
-        if (cache_write := usage.get("cacheWriteInputTokens")) is not None:
-            details["cache_creation_input_token_count"] = cache_write
         return details or None
 
     def _parse_message_contents(self, content_blocks: Sequence[dict[str, Any]]) -> list[Any]:

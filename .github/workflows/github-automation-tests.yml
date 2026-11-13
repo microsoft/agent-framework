@@ -12,6 +12,11 @@ on:
       - ".github/workflows/devflow-fix-ci.yml"
       - ".github/workflows/issue-plan.md"
       - ".github/workflows/issue-plan.lock.yml"
+      - ".github/workflows/issue-routing.md"
+      - ".github/workflows/issue-routing.lock.yml"
+      - ".github/issue-routing-owners.yaml"
+      - "dotnet/agent-framework-dotnet.slnx"
+      - "python/packages/*/pyproject.toml"
       - "python/pyproject.toml"
       - "python/tooling/requirements-api-compatibility.txt"
       - "python/uv.lock"
@@ -28,6 +33,11 @@ on:
       - ".github/workflows/devflow-fix-ci.yml"
       - ".github/workflows/issue-plan.md"
       - ".github/workflows/issue-plan.lock.yml"
+      - ".github/workflows/issue-routing.md"
+      - ".github/workflows/issue-routing.lock.yml"
+      - ".github/issue-routing-owners.yaml"
+      - "dotnet/agent-framework-dotnet.slnx"
+      - "python/packages/*/pyproject.toml"
       - "python/pyproject.toml"
       - "python/tooling/requirements-api-compatibility.txt"
       - "python/uv.lock"
@@ -53,8 +63,19 @@ jobs:
         with:
           version-file: "python/pyproject.toml"
 
+      - name: Set up pinned routing publisher for integration tests
+        uses: github/gh-aw-actions/setup@221ba4f4319de6b8e809d1a15528b3ae6a818aa5 # v1.0.1
+        with:
+          destination: ${{ runner.temp }}/routing-publisher
+        env:
+          GH_AW_OTLP_ENDPOINTS: "[]"
+          OTEL_EXPORTER_OTLP_ENDPOINT: ""
+          OTEL_EXPORTER_OTLP_HEADERS: ""
+
       - name: Run JavaScript tests
         run: node --test .github/tests/*.js
+        env:
+          GH_AW_TEST_RUNTIME: ${{ runner.temp }}/routing-publisher
 
       - name: Run Python tests
         run: python .github/tests/test_python_check_coverage.py

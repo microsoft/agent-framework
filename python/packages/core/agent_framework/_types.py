@@ -425,8 +425,6 @@ else:
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
-URI_PATTERN = re.compile(r"^data:(?P<media_type>[^;]+);base64,(?P<base64_data>[A-Za-z0-9+/=]+)$")
-
 KNOWN_MEDIA_TYPES = [
     "application/json",
     "application/octet-stream",
@@ -492,7 +490,7 @@ _MERGEABLE_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
     "code_interpreter_tool_call",
     "code_interpreter_tool_result",
 })
-APPROVAL_REJECTION_RESULT_KEY = "_approval_rejection_result"
+_APPROVAL_REJECTION_RESULT_KEY = "_approval_rejection_result"
 SKILL_CONTEXT_NAME_KEY = "_skill_context_name"
 
 _CONTENT_TYPES: Final[frozenset[str]] = frozenset(get_args(ContentType))
@@ -3129,6 +3127,21 @@ class ContinuationToken(TypedDict):
 # endregion
 
 
+def _validate_structured_json(model: Any, text: str) -> Any:
+    """Validate JSON against ``model`` with alias validation enabled.
+
+    Providers are asked for alias-keyed output (the model's JSON schema uses aliases), so aliases are
+    always accepted, even for a model configured with ``validate_by_alias=False``. The model's own
+    ``validate_by_name`` / ``populate_by_name`` setting is preserved. Overriding ``by_alias`` needs
+    pydantic 2.11; earlier versions use the model's own settings.
+    """
+    from pydantic import VERSION
+
+    if tuple(int(part) for part in VERSION.split(".")[:2]) >= (2, 11):
+        return model.model_validate_json(text, by_alias=True)
+    return model.model_validate_json(text)
+
+
 def _parse_structured_response_value(text: str, response_format: Any | None) -> Any | None:
     if response_format is None:
         return None
@@ -3138,7 +3151,7 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
         from pydantic import BaseModel
 
         if issubclass(response_format, BaseModel):
-            return response_format.model_validate_json(text)
+            return _validate_structured_json(response_format, text)
     if isinstance(response_format, Mapping):
         try:
             return json.loads(text)
@@ -3194,7 +3207,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
     Examples:
         .. code-block:: python
 
-            from agent_framework import ChatResponse, Message
+            from agent_framework import ChatResponse, ChatResponseUpdate, Content, Message
 
             # Create a response with messages
             msg = Message("assistant", ["The weather is sunny."])
@@ -3206,7 +3219,14 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             print(response.text)  # "The weather is sunny."
 
             # Combine streaming updates
-            updates = [...]  # List of ChatResponseUpdate objects
+            updates = [
+                ChatResponseUpdate(
+                    contents=[Content.from_text("The weather is sunny.")],
+                    role="assistant",
+                    finish_reason="stop",
+                    model="gpt-4",
+                )
+            ]
             response = ChatResponse.from_updates(updates)
 
             # Serialization - to_dict and from_dict
@@ -3686,7 +3706,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
     Examples:
         .. code-block:: python
 
-            from agent_framework import AgentResponse, Message
+            from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message
 
             # Create agent response
             msg = Message("assistant", ["Task completed successfully."])
@@ -3698,7 +3718,13 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             print(len(user_requests))  # 0
 
             # Combine streaming updates
-            updates = [...]  # List of AgentResponseUpdate objects
+            updates = [
+                AgentResponseUpdate(
+                    contents=[Content.from_text("Task completed successfully.")],
+                    role="assistant",
+                    response_id="run_123",
+                )
+            ]
             response = AgentResponse.from_updates(updates)
 
             # Serialization - to_dict and from_dict

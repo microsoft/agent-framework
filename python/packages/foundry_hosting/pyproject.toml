@@ -4,7 +4,7 @@ description = "Foundry Hosting integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.11"
-version = "1.0.0b261030"
+version = "1.0.0b261112"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,14 +23,14 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.24.0,<2",
+    "agent-framework-core>=1.25.0,<2",
     "azure-ai-agentserver-core>=2.1.0,<3",
     "azure-ai-agentserver-responses>=2.2.0b1,<3",
     "azure-ai-agentserver-invocations>=1.1.0,<2",
     "httpx>=0.28,<1",
     "httpx2>=2.0.0,<3",
     "mcp>=2.2.0,<3",
-    "tenacity>=9.1.4,<9.2.0",
+    "tenacity>=9.1.4,<10",
 ]
 
 [dependency-groups]
@@ -52,7 +52,7 @@ fallback-version = "0.0.0"
 
 [tool.pytest.ini_options]
 testpaths = 'tests'
-addopts = "-ra -q -r fEX"
+addopts = "-ra -q -r fEX --import-mode=importlib"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []

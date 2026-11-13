@@ -5,6 +5,8 @@ import os
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agent_framework_tools.shell._killtree import (
     _kill_via_psutil,
     _kill_via_stdlib,
@@ -58,9 +60,27 @@ def test_resolve_taskkill_uses_systemroot_and_caches(monkeypatch) -> None:
     assert _resolve_taskkill() == expected_path
 
 
-async def test_kill_process_tree_short_circuits_or_delegates() -> None:
+def test_resolve_taskkill_refuses_the_bare_name_when_the_system_binary_is_missing(monkeypatch) -> None:
+    import agent_framework_tools.shell._killtree as killtree_module
+
+    monkeypatch.setattr(killtree_module, "_taskkill_path", None)
+    monkeypatch.setenv("SystemRoot", "C:\\Windows")
+    monkeypatch.setattr(killtree_module.os.path, "isfile", lambda path: False)
+
+    with pytest.raises(FileNotFoundError, match="taskkill.exe"):
+        _resolve_taskkill()
+
+    assert killtree_module._taskkill_path is None
+
+
+async def test_kill_process_tree_short_circuits_or_delegates(monkeypatch) -> None:
+    import agent_framework_tools.shell._killtree as killtree_module
+
+    monkeypatch.setattr(killtree_module.sys, "platform", "win32")
     proc = cast(asyncio.subprocess.Process, _FakeAsyncProcess(returncode=0))
-    await kill_process_tree(proc)
+    with patch("agent_framework_tools.shell._killtree._kill_via_psutil", AsyncMock()) as via_psutil:
+        await kill_process_tree(proc)
+    via_psutil.assert_not_awaited()
 
     live = cast(asyncio.subprocess.Process, _FakeAsyncProcess(returncode=None))
     with (
@@ -72,7 +92,7 @@ async def test_kill_process_tree_short_circuits_or_delegates() -> None:
     via_psutil.assert_awaited_once_with(live, grace=2.0)
 
 
-async def test_kill_via_psutil_terminates_parent_and_children() -> None:
+async def test_kill_via_psutil_terminates_parent_and_children(monkeypatch) -> None:
     import agent_framework_tools.shell._killtree as killtree_module
 
     no_such_process = type("NoSuchProcess", (Exception,), {})
@@ -85,6 +105,7 @@ async def test_kill_via_psutil_terminates_parent_and_children() -> None:
         AccessDenied=access_denied,
     )
     proc = cast(asyncio.subprocess.Process, _FakeAsyncProcess(pid=4321, returncode=None))
+    monkeypatch.setattr(killtree_module.os, "killpg", MagicMock(), raising=False)
 
     with patch.object(killtree_module, "psutil", fake_psutil):
         await _kill_via_psutil(proc, grace=0.01)
@@ -95,12 +116,13 @@ async def test_kill_via_psutil_terminates_parent_and_children() -> None:
     child.kill.assert_called_once()
 
 
-async def test_kill_via_psutil_handles_missing_parent_process() -> None:
+async def test_kill_via_psutil_handles_missing_parent_process(monkeypatch) -> None:
     import agent_framework_tools.shell._killtree as killtree_module
 
     no_such_process = type("NoSuchProcess", (Exception,), {})
     fake_psutil = MagicMock(Process=MagicMock(side_effect=no_such_process()), NoSuchProcess=no_such_process)
     proc = cast(asyncio.subprocess.Process, _FakeAsyncProcess(pid=9999, returncode=None))
+    monkeypatch.setattr(killtree_module.os, "killpg", MagicMock(), raising=False)
 
     with patch.object(killtree_module, "psutil", fake_psutil):
         await _kill_via_psutil(proc, grace=0.01)
@@ -122,12 +144,28 @@ async def test_kill_via_stdlib_windows_uses_taskkill_and_proc_kill(monkeypatch) 
     assert raw_proc.killed is True
 
 
+async def test_kill_via_stdlib_windows_does_not_launch_taskkill_when_it_is_missing(monkeypatch) -> None:
+    import agent_framework_tools.shell._killtree as killtree_module
+
+    monkeypatch.setattr(killtree_module.sys, "platform", "win32")
+    monkeypatch.setattr(killtree_module, "_taskkill_path", None)
+    monkeypatch.setenv("SystemRoot", "C:\\Windows")
+    monkeypatch.setattr(killtree_module.os.path, "isfile", lambda path: False)
+    raw_proc = _FakeAsyncProcess(pid=55, returncode=None)
+    proc = cast(asyncio.subprocess.Process, raw_proc)
+
+    with patch("agent_framework_tools.shell._killtree.asyncio.create_subprocess_exec", AsyncMock()) as create_proc:
+        await _kill_via_stdlib(proc, grace=0.01)
+
+    create_proc.assert_not_awaited()
+    assert raw_proc.killed is True
+
+
 async def test_kill_via_stdlib_posix_escalates_to_sigkill(monkeypatch) -> None:
     import agent_framework_tools.shell._killtree as killtree_module
 
     monkeypatch.setattr(killtree_module.sys, "platform", "darwin")
     killpg = MagicMock()
-    monkeypatch.setattr(killtree_module.os, "getpgid", lambda pid: 99, raising=False)
     monkeypatch.setattr(killtree_module.os, "killpg", killpg, raising=False)
     monkeypatch.setattr(killtree_module.signal, "SIGKILL", 9, raising=False)
 
@@ -146,5 +184,31 @@ async def test_kill_via_stdlib_posix_escalates_to_sigkill(monkeypatch) -> None:
     with patch("agent_framework_tools.shell._killtree.asyncio.wait_for", side_effect=fake_wait_for):
         await _kill_via_stdlib(proc, grace=0.01)
 
-    assert killpg.call_args_list[0].args == (99, killtree_module.signal.SIGTERM)
-    assert killpg.call_args_list[1].args == (99, killtree_module.signal.SIGKILL)
+    assert killpg.call_args_list[0].args == (12, killtree_module.signal.SIGTERM)
+    assert killpg.call_args_list[1].args == (12, killtree_module.signal.SIGKILL)
+
+
+async def test_kill_via_psutil_signals_process_group_after_shell_exited(monkeypatch) -> None:
+    import agent_framework_tools.shell._killtree as killtree_module
+
+    monkeypatch.setattr(killtree_module.sys, "platform", "linux")
+
+    def fake_killpg(pgid: int, sig: int) -> None:
+        if sig == 0:
+            raise ProcessLookupError
+
+    killpg = MagicMock(side_effect=fake_killpg)
+    monkeypatch.setattr(killtree_module.os, "killpg", killpg, raising=False)
+    monkeypatch.setattr(killtree_module.signal, "SIGKILL", 9, raising=False)
+    fake_psutil = MagicMock(NoSuchProcess=type("NoSuchProcess", (Exception,), {}))
+    proc = cast(asyncio.subprocess.Process, _FakeAsyncProcess(pid=77, returncode=0))
+
+    with patch.object(killtree_module, "psutil", fake_psutil):
+        await kill_process_tree(proc, grace=0.01)
+
+    fake_psutil.Process.assert_not_called()
+    assert [c.args for c in killpg.call_args_list] == [
+        (77, killtree_module.signal.SIGTERM),
+        (77, 0),
+        (77, killtree_module.signal.SIGKILL),
+    ]

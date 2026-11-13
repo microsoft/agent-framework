@@ -304,6 +304,8 @@ def test_serialize_type() -> None:
     assert serialize_type(dict) == "builtins.dict"
     assert serialize_type(tuple) == "builtins.tuple"
     assert serialize_type(set) == "builtins.set"
+    # ``type(None)`` claims the builtins module even though it is bound as ``types.NoneType``.
+    assert serialize_type(type(None)) == "builtins.NoneType"
 
     # Test custom class
     @dataclass
@@ -326,12 +328,13 @@ def test_deserialize_type() -> None:
     assert deserialize_type("builtins.dict") is dict
     assert deserialize_type("builtins.tuple") is tuple
     assert deserialize_type("builtins.set") is set
+    assert deserialize_type("builtins.NoneType") is type(None)
 
 
 def test_serialize_deserialize_roundtrip() -> None:
     """Test that serialization and deserialization are inverse operations."""
     # Test built-in types
-    types_to_test = [int, str, float, bool, list, dict, tuple, set]
+    types_to_test = [int, str, float, bool, list, dict, tuple, set, type(None)]
 
     for type_to_test in types_to_test:
         serialized = serialize_type(type_to_test)

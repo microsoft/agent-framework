@@ -551,7 +551,7 @@ public class HarnessAgentTests
 
         // Assert
         Assert.NotNull(response);
-        Assert.True(response.Messages.Any());
+        Assert.NotEmpty(response.Messages);
     }
 
     #endregion

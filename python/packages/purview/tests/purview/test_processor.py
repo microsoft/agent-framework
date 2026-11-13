@@ -1236,10 +1236,39 @@ class TestUserIdResolution:
         # All requests should have the same user_id
         assert all(req.user_id == "55555555-5555-5555-5555-555555555555" for req in requests)
 
-    async def test_first_valid_user_id_in_messages_is_used(
+    async def test_each_message_uses_its_own_user_id(self, mock_client: AsyncMock, settings: PurviewSettings) -> None:
+        """Test that messages from different users are evaluated under each user's own id.
+
+        Messages without an id inherit the latest explicit id; leading ones use the first explicit id.
+        """
+        processor = ScopedContentProcessor(mock_client, settings)
+        mock_client.get_user_info_from_token.return_value = {
+            "tenant_id": "12345678-1234-1234-1234-123456789012",
+            "client_id": "12345678-1234-1234-1234-123456789012",
+        }
+        user_a = "66666666-6666-6666-6666-666666666666"
+        user_b = "77777777-7777-7777-7777-777777777777"
+
+        messages = [
+            Message(role="system", contents=["System"]),
+            Message(
+                role="user", contents=["From A"], author_name="Not a GUID", additional_properties={"user_id": user_a}
+            ),
+            Message(role="assistant", contents=["Reply to A"]),
+            Message(role="user", contents=["From A again"], author_name=user_a),
+            Message(role="user", contents=["From B"], additional_properties={"user_id": user_b}),
+            Message(role="assistant", contents=["Reply to B"]),
+        ]
+
+        requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
+
+        assert [req.user_id for req in requests] == [user_a, user_a, user_a, user_a, user_b, user_b]
+        assert user_id == user_b
+
+    async def test_user_id_property_takes_priority_over_author_name(
         self, mock_client: AsyncMock, settings: PurviewSettings
     ) -> None:
-        """Test that the first valid user_id found in messages is used for all."""
+        """Test a message's user_id property wins over a GUID author_name on the same message."""
         processor = ScopedContentProcessor(mock_client, settings)
         mock_client.get_user_info_from_token.return_value = {
             "tenant_id": "12345678-1234-1234-1234-123456789012",
@@ -1247,24 +1276,47 @@ class TestUserIdResolution:
         }
 
         messages = [
-            Message(role="user", contents=["First"], author_name="Not a GUID"),
-            Message(
-                role="assistant",
-                contents=["Response"],
-                additional_properties={"user_id": "66666666-6666-6666-6666-666666666666"},
-            ),
             Message(
                 role="user",
-                contents=["Third"],
-                additional_properties={"user_id": "77777777-7777-7777-7777-777777777777"},
-            ),
+                contents=["Test"],
+                author_name="33333333-3333-3333-3333-333333333333",
+                additional_properties={"user_id": "66666666-6666-6666-6666-666666666666"},
+            )
         ]
 
         requests, user_id = await processor._map_messages(messages, Activity.UPLOAD_TEXT)
 
-        # First valid user_id (from second message) should be used
         assert user_id == "66666666-6666-6666-6666-666666666666"
-        assert all(req.user_id == "66666666-6666-6666-6666-666666666666" for req in requests)
+        assert requests[0].user_id == "66666666-6666-6666-6666-666666666666"
+
+    @pytest.mark.parametrize("override_source", ["token", "provided"])
+    async def test_override_user_id_applies_to_all_messages(
+        self, mock_client: AsyncMock, settings: PurviewSettings, override_source: str
+    ) -> None:
+        """Test that a token or provided user id is used for every message, ignoring per-message ids."""
+        processor = ScopedContentProcessor(mock_client, settings)
+        override = "11111111-1111-1111-1111-111111111111"
+        provided_user_id = None
+        if override_source == "provided":
+            mock_client.get_user_info_from_token.return_value = {
+                "tenant_id": "12345678-1234-1234-1234-123456789012",
+                "client_id": "12345678-1234-1234-1234-123456789012",
+            }
+            provided_user_id = override
+
+        messages = [
+            Message(
+                role="user", contents=["A"], additional_properties={"user_id": "66666666-6666-6666-6666-666666666666"}
+            ),
+            Message(role="user", contents=["B"], author_name="77777777-7777-7777-7777-777777777777"),
+        ]
+
+        requests, user_id = await processor._map_messages(
+            messages, Activity.UPLOAD_TEXT, provided_user_id=provided_user_id
+        )
+
+        assert user_id == override
+        assert [req.user_id for req in requests] == [override, override]
 
 
 class TestScopedContentProcessorCaching:

@@ -566,7 +566,11 @@ class WorkflowBuilder:
         The output of each executor in the chain will be sent to the next executor in the chain.
         The input types of each executor must be compatible with the output types of the previous executor.
 
-        Cycles in the chain are not allowed, meaning an executor cannot appear more than once in the chain.
+        An edge is added between each consecutive pair of executors in the sequence. If an executor
+        appears more than once, the corresponding edges are still added, which can introduce a cycle
+        (for example, ``add_chain([a, b, a])`` adds the edges ``a -> b`` and ``b -> a``). This is
+        permitted: the workflow graph supports cycles, just as calling ``add_edge(a, b)`` followed by
+        ``add_edge(b, a)`` does.
 
         Args:
             executors: A list of executors or agents to chain together.

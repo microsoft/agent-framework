@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -59,12 +58,12 @@ internal static partial class ChatMessageExtensions
                     break;
 
                 case McpServerToolResultContent mstResultContent:
-                    if (mstResultContent.Outputs?.Any() is true)
+                    if (mstResultContent.Outputs is { Count: > 0 })
                     {
                         pairMatcher.TryResolveMcpServerToolCall(mstResultContent, out string? mcpServerToolName);
                         resultBuilder.AppendLine($"[Start MCP Server Tool Call '{mcpServerToolName ?? mstResultContent.CallId}' Results]");
 
-                        ProcessAIContents(resultBuilder, mstResultContent.Outputs!);
+                        ProcessAIContents(resultBuilder, mstResultContent.Outputs);
 
                         resultBuilder.AppendLine($"[End MCP Server Tool Call '{mcpServerToolName ?? mstResultContent.CallId}']");
                     }

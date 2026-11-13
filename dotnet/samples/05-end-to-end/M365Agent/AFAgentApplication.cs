@@ -124,7 +124,12 @@ internal sealed class AFAgentApplication : AgentApplication
         {
             var requestContent = JsonSerializer.Deserialize<ToolApprovalRequestContent>(requestJsonElement.GetString()!, JsonUtilities.DefaultOptions);
 
-            return new ChatMessage(ChatRole.User, [requestContent!.CreateResponse(approvedJsonElement.ValueKind == JsonValueKind.True)]);
+            bool approved = approvedJsonElement.ValueKind == JsonValueKind.True;
+
+            // When rejecting, tell the model not to retry the call.
+            return new ChatMessage(ChatRole.User, [approved
+                ? requestContent!.CreateResponse(approved: true)
+                : requestContent!.CreateResponse(approved: false, reason: "The user rejected this tool call. Do not retry it.")]);
         }
 
         return new ChatMessage(ChatRole.User, turnContext.Activity.Text);

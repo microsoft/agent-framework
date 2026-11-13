@@ -16,9 +16,8 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Rejects an unsupported hosted Responses protocol before the request enters AgentServer's
 /// resilient task boundary.
 /// </summary>
-internal sealed class HostedProtocolCompatibilityFilter : IEndpointFilter
+internal sealed partial class HostedProtocolCompatibilityFilter : IEndpointFilter
 {
-    private const string CallIdHeaderName = "x-agent-foundry-call-id";
     private const string ErrorSourceHeaderName = "x-platform-error-source";
     private const string UpstreamErrorSource = "upstream";
 
@@ -32,7 +31,7 @@ internal sealed class HostedProtocolCompatibilityFilter : IEndpointFilter
         _ = Throw.IfNull(configuration);
         this._logger = Throw.IfNull(logger);
         this._isHosted = !string.IsNullOrEmpty(
-            configuration[FoundryHostingExtensions.FoundryHostingEnvironmentKey]);
+            configuration[ServiceCollectionExtensions.FoundryHostingEnvironmentKey]);
     }
 
     /// <inheritdoc/>
@@ -49,7 +48,7 @@ internal sealed class HostedProtocolCompatibilityFilter : IEndpointFilter
             return next(context);
         }
 
-        string? callId = request.Headers.TryGetValue(CallIdHeaderName, out var values)
+        string? callId = request.Headers.TryGetValue(HostedProtocolCompatibility.CallIdHeaderName, out var values)
             ? values.ToString()
             : null;
         var unsupportedProtocolError =
@@ -59,8 +58,7 @@ internal sealed class HostedProtocolCompatibilityFilter : IEndpointFilter
             return next(context);
         }
 
-        this._logger.LogError(
-            "Hosted container served unsupported Responses protocol 1.0.0 (no x-agent-foundry-call-id header); this image requires protocol 2.0.0.");
+        LogUnsupportedResponsesProtocol(this._logger);
 
         BinaryData responseData =
             ((IPersistableModel<ApiErrorResponse>)new ApiErrorResponse(unsupportedProtocolError.Error))
@@ -77,4 +75,7 @@ internal sealed class HostedProtocolCompatibilityFilter : IEndpointFilter
     private static bool IsCreateResponseRequest(HttpRequest request)
         => HttpMethods.IsPost(request.Method) &&
             request.Path.Value?.EndsWith("/responses", StringComparison.OrdinalIgnoreCase) is true;
+
+    [LoggerMessage(LogLevel.Error, "Hosted container served unsupported Responses protocol 1.0.0 (no x-agent-foundry-call-id header); this image requires protocol 2.0.0.", EventId = 0)]
+    private static partial void LogUnsupportedResponsesProtocol(ILogger logger);
 }

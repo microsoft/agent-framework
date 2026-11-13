@@ -541,21 +541,32 @@ class EvalResults:
             msg: Optional custom failure message.
 
         Raises:
-            EvalNotPassedError: When any matching score is below the threshold.
+            EvalNotPassedError: When any matching score is below the threshold,
+                or when ``evaluator`` is specified but matches no scores.
         """
         offenders: list[str] = []
+        matching_scores_count = 0
+        seen_evaluators: set[str] = set()
 
         def _check(results: EvalResults) -> None:
+            nonlocal matching_scores_count
             for item in results.items:
                 for score in item.scores:
+                    seen_evaluators.add(score.name)
                     if evaluator is not None and score.name != evaluator:
                         continue
+                    matching_scores_count += 1
                     if score.score < min_score:
                         offenders.append(f"{item.item_id}/{score.name}={score.score:.3f}")
             for sub in results.sub_results.values():
                 _check(sub)
 
         _check(self)
+        if evaluator is not None and matching_scores_count == 0:
+            available = f": {', '.join(sorted(seen_evaluators))}" if seen_evaluators else ": none"
+            detail = msg or f"No scores found for evaluator '{evaluator}'. Available evaluator(s){available}"
+            raise EvalNotPassedError(detail)
+
         if offenders:
             detail = msg or (
                 f"{len(offenders)} score(s) below threshold {min_score}"
@@ -1412,6 +1423,12 @@ def _coerce_result(value: Any, check_name: str) -> CheckResult:
 
     if isinstance(value, dict):
         d = cast(dict[str, Any], value)
+        if "passed" in d:
+            passed_val = d["passed"]
+            if not isinstance(passed_val, (bool, int)):
+                raise TypeError(
+                    f"Function evaluator '{check_name}' returned dict with non-boolean 'passed' value: {passed_val!r}"
+                )
         if "score" in d:
             try:
                 score = float(d["score"])
@@ -1425,10 +1442,6 @@ def _coerce_result(value: Any, check_name: str) -> CheckResult:
             return CheckResult(passed=passed, reason=reason, check_name=check_name)
         if "passed" in d:
             passed_val = d["passed"]
-            if not isinstance(passed_val, (bool, int)):
-                raise TypeError(
-                    f"Function evaluator '{check_name}' returned dict with non-boolean 'passed' value: {passed_val!r}"
-                )
             return CheckResult(
                 passed=bool(passed_val),
                 reason=str(d.get("reason", "passed" if passed_val else "failed")),

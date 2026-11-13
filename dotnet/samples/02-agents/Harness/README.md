@@ -11,6 +11,19 @@ Samples demonstrating the [Harness AIContextProviders](../../../src/Microsoft.Ag
 | [Harness_Step03_DataProcessing](./Harness_Step03_DataProcessing/README.md) | Using FileAccessProvider to give an agent access to CSV data files for reading, analysis, and output generation |
 | [Harness_Step05_Loop](./Harness_Step05_Loop/README.md) | Wrapping a HarnessAgent with the LoopAgent decorator to re-invoke it until a configured LoopEvaluator (completion marker, predicate, AI judge, or approval-aware loop) decides to stop |
 
+## Choosing a chat client
+
+A harness agent is built on top of an `IChatClient` of your choice: `AsHarnessAgent` uses
+whatever client you call it on. Pick a service, and a matching `IChatClient`, that supports
+the features your agent needs. Model providers differ in which features they support, such
+as tool calling or reasoning. See
+[Model providers](https://learn.microsoft.com/agent-framework/integrations/by-component/model-providers)
+for the available providers and how they compare.
+
+These samples use the Responses API on a Microsoft Foundry project
+(`FOUNDRY_PROJECT_ENDPOINT`), creating their client with
+`projectClient.GetProjectOpenAIClient().GetResponsesClient().AsIChatClient(deploymentName)`.
+
 ## Build your own claw blog series
 
 Samples accompanying the [*Build your own agent harness or claw with Microsoft Agent Framework*](https://devblogs.microsoft.com/agent-framework/build-your-own-claw-and-agent-harness-with-microsoft-agent-framework) blog series, which builds a personal finance assistant step by step.
@@ -24,7 +37,7 @@ Samples accompanying the [*Build your own agent harness or claw with Microsoft A
 
 ## Foundry hosted Harness sample
 
-The Research sample hosts a `HarnessAgent` as a Foundry hosted agent using source ZIP deployment with the default `AllowStoredOutputEnabled = false`, so the model service never stores the conversation.
+The Research sample hosts a `HarnessAgent` as a Foundry hosted agent using source ZIP deployment with the default `InferenceStoredOutputAllowed = false`, so the model service never stores the conversation.
 
 | Sample | Description |
 | --- | --- |

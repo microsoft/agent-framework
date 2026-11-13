@@ -48,7 +48,9 @@ from ._sessions import (
     SessionContext,
     _adopt_run_persistence_gate_claim,  # pyright: ignore[reportPrivateUsage]
     _defer_run_persistence,  # pyright: ignore[reportPrivateUsage]
+    _normalize_service_continuation,  # pyright: ignore[reportPrivateUsage]
     _run_identity_scope,  # pyright: ignore[reportPrivateUsage]
+    _set_service_continuation,  # pyright: ignore[reportPrivateUsage]
     is_local_history_conversation_id,
 )
 from ._telemetry import FeatureIndex, mark_feature_used
@@ -59,6 +61,7 @@ from ._types import (
     AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
+    ContinuationToken,
     Message,
     ResponseStream,
     _append_instructions,  # pyright: ignore[reportPrivateUsage]
@@ -104,6 +107,7 @@ logger = logging.getLogger("agent_framework")
 # and nothing leaks into the caller's context while a stream is paused.
 _LOOP_ITERATION_TOKEN_KEY = "_agent_loop_iteration"  # nosec B105 - a context-options key, not a credential  # ruff: ignore[hardcoded-password-string]
 _DELEGATED_STATE_MISSING = object()
+_PREPARED_PER_SERVICE_CALL_HISTORY_CONTEXT_KEY = "_agent_framework_prepared_per_service_call_history"
 
 
 def _tool_approval_source_ids(middleware: Sequence[MiddlewareTypes] | None) -> frozenset[str]:
@@ -697,12 +701,16 @@ class BaseAgent(SerializationMixin):
 
             When parent and child both use ToolApprovalMiddleware with
             ``propagate_session=True``, configure distinct middleware ``source_id``
-            values. The delegated call raises ToolExecutionException before running
+            values, whether the parent middleware is set on the agent or passed to a
+            single run. The delegated call raises ToolExecutionException before running
             the child when their shared session-state keys overlap.
 
             Direct or custom-loop invocation with ``propagate_session=True`` must set
             :attr:`FunctionInvocationContext.parent_service_session_state_keys` when
             the parent session is non-empty. Automatic function calling supplies it.
+
+            ``WorkflowAgent.as_tool()`` is not supported, because every caller of
+            the tool would share the state of one workflow.
 
         Examples:
             .. code-block:: python
@@ -885,6 +893,8 @@ class BaseAgent(SerializationMixin):
             func=_agent_wrapper,
             input_model=input_schema,
             approval_mode=approval_mode,
+            # Private link for hosts that must know which agent a tool delegates to. Serialization skips it.
+            _wrapped_agent=self,
         )
 
 
@@ -1126,26 +1136,28 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
     def _get_history_providers(self) -> list[HistoryProvider]:
         return [provider for provider in self.context_providers if isinstance(provider, HistoryProvider)]
 
+    def _service_continuation_option_names(self) -> tuple[str, ...]:
+        """Return the client-declared options that activate service continuation."""
+        declared = getattr(self.client, "SERVICE_CONTINUATION_OPTION_NAMES", ("conversation_id",))
+        if not isinstance(declared, Sequence) or isinstance(declared, (str, bytes, bytearray)):
+            return ("conversation_id",)
+        names = tuple(name for name in cast(Sequence[Any], declared) if isinstance(name, str))
+        return names or ("conversation_id",)
+
     def _resolve_per_service_call_history_providers(
         self,
         *,
-        session: AgentSession | None,
-        conversation_id: str | None,
+        service_continuation_present: bool,
         service_stores_history: bool,
     ) -> list[HistoryProvider]:
         history_providers = self._get_history_providers()
         if not self.require_per_service_call_history_persistence or not history_providers:
             return []
 
-        # A live service-managed session id takes precedence over the resolved conversation id.
-        # Structured values are validated by _get_chat_conversation_id before generic forwarding.
-        session_conversation_id = self._get_chat_conversation_id(session)
-        if session_conversation_id:
-            conversation_id = session_conversation_id
         # Without service-side storage the middleware persists locally and drives the function
         # loop with a local sentinel, which cannot be reconciled with an existing service-managed
         # conversation. When the service stores history, an existing conversation id is expected.
-        if conversation_id is not None and not service_stores_history:
+        if service_continuation_present and not service_stores_history:
             raise AgentInvalidRequestException(
                 "require_per_service_call_history_persistence cannot be used "
                 "with an existing service-managed conversation."
@@ -1370,6 +1382,32 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         ):
             session.service_session_id = response.conversation_id
 
+    def _refresh_service_continuation_context(
+        self,
+        context: _RunContext,
+        continuation_token: ContinuationToken | None = None,
+    ) -> None:
+        """Synchronize provider metadata with the continuation used by the completed run."""
+        options = dict(context["chat_options"])
+        session = context["session"]
+        conversation_id = self._get_chat_conversation_id(session)
+        continuation_option_names = self._service_continuation_option_names()
+        if continuation_token is not None and "continuation_token" in continuation_option_names:
+            for option_name in continuation_option_names:
+                options.pop(option_name, None)
+            options["continuation_token"] = continuation_token
+        elif conversation_id is not None:
+            for option_name in continuation_option_names:
+                if option_name != "conversation_id":
+                    options.pop(option_name, None)
+            options["conversation_id"] = conversation_id
+        session_context = context["session_context"]
+        session_context.service_session_id = session.service_session_id if session is not None else None
+        _set_service_continuation(
+            session_context,
+            _normalize_service_continuation(continuation_option_names, options),
+        )
+
     def _update_session_from_chat_response_update(
         self,
         session: AgentSession | None,
@@ -1403,6 +1441,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         session = context["session"]
         self._update_session_from_chat_response(session, response)
+        self._refresh_service_continuation_context(context, response.continuation_token)
 
         agent_response = _build_agent_response_from_chat_response(
             response,
@@ -1442,6 +1481,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 and session.service_session_id != conversation_id
             ):
                 session.service_session_id = conversation_id
+            self._refresh_service_continuation_context(context, response.continuation_token)
 
             session_context = context["session_context"]
             if context["suppress_response_id"]:
@@ -1517,6 +1557,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         response_format: Any | None = None,
     ) -> AgentResponse[Any]:
         """Finalize response updates into a single AgentResponse."""
+        if isinstance(self.client, BaseChatClient):
+            return self.client._finalize_agent_response_updates(  # pyright: ignore[reportPrivateUsage]
+                updates, response_format=response_format
+            )
         return AgentResponse.from_updates(
             updates,
             output_format_type=response_format,
@@ -1590,8 +1634,33 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         )
         # Resolve conversation_id from the same combined view so an agent-level default is honored
         # when the runtime omits it (a live session id still takes precedence below).
-        effective_conversation_id = effective_options.get("conversation_id")
+        effective_conversation_id = cast(str | None, effective_options.get("conversation_id"))
         session_conversation_id = self._get_chat_conversation_id(session)
+        resolved_conversation_id = (
+            session_conversation_id if session_conversation_id is not None else effective_conversation_id
+        )
+        continuation_option_names = self._service_continuation_option_names()
+        continuation_token_present = (
+            "continuation_token" in continuation_option_names
+            and effective_options.get("continuation_token") is not None
+        )
+        if continuation_token_present:
+            resolved_conversation_id = None
+            for option_name in continuation_option_names:
+                if option_name != "continuation_token":
+                    effective_options.pop(option_name, None)
+                    opts.pop(option_name, None)
+        elif resolved_conversation_id is not None:
+            for option_name in continuation_option_names:
+                if option_name != "conversation_id":
+                    effective_options.pop(option_name, None)
+                    opts.pop(option_name, None)
+            effective_options["conversation_id"] = resolved_conversation_id
+        service_continuation = _normalize_service_continuation(
+            continuation_option_names,
+            effective_options,
+        )
+        opts.pop("conversation_id", None)
         # Auto-inject InMemoryHistoryProvider when session is provided, no context providers
         # registered, and no service-side storage indicators
         if (
@@ -1599,11 +1668,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             and not any(
                 provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
             )
-            and not session_conversation_id
-            and not effective_conversation_id
+            and not service_continuation[0]
             and not service_stores_history
         ):
-            self.context_providers.append(InMemoryHistoryProvider())
+            self.context_providers.insert(0, InMemoryHistoryProvider())
 
         active_session = session
         framework_created_session = False
@@ -1612,8 +1680,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             framework_created_session = True
 
         per_service_call_history_providers = self._resolve_per_service_call_history_providers(
-            session=active_session,
-            conversation_id=effective_conversation_id,
+            service_continuation_present=service_continuation[0],
             service_stores_history=service_stores_history,
         )
 
@@ -1641,7 +1708,18 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session=active_session,
             input_messages=input_messages,
             options=opts,
+            conversation_id=resolved_conversation_id,
+            service_stores_history=bool(service_stores_history),
+            service_continuation=service_continuation,
         )
+        if continuation_token_present:
+            for option_name in continuation_option_names:
+                if option_name != "continuation_token":
+                    chat_options.pop(option_name, None)
+        elif resolved_conversation_id is not None:
+            for option_name in continuation_option_names:
+                if option_name != "conversation_id":
+                    chat_options.pop(option_name, None)
         default_additional_args = chat_options.pop("additional_function_arguments", None)
         if isinstance(default_additional_args, Mapping):
             existing_additional_args = {
@@ -1665,6 +1743,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # Extract additional function arguments
         effective_function_invocation_kwargs = (
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
+        )
+        # Approval middleware that runs for this invocation claims its session-state key here. Keep the claim out of
+        # the kwargs that MCP header providers and tools can read. As for the other readers of this private channel,
+        # only a frozenset is a claim; any other value is no claim.
+        claim = effective_function_invocation_kwargs.pop(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY, None)
+        claimed_approval_source_ids: frozenset[str] = (
+            cast("frozenset[str]", claim) if isinstance(claim, frozenset) else frozenset()
         )
         additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
@@ -1699,8 +1784,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 duplicate_error_message=mcp_duplicate_message,
             )
 
-        additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = _tool_approval_source_ids(
-            self.middleware
+        # Claims only add isolated keys; they never remove keys declared by this agent's own middleware.
+        additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = (
+            _tool_approval_source_ids(self.middleware) | claimed_approval_source_ids
         )
         # Recompute ownership for this invoking agent; caller kwargs must not replace its declarations.
         additional_function_arguments[_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY] = (
@@ -1711,9 +1797,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {
-            "conversation_id": self._get_chat_conversation_id(active_session)
-            if active_session
-            else opts.pop("conversation_id", None),
+            "conversation_id": resolved_conversation_id,
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
             "frequency_penalty": opts.pop("frequency_penalty", None),
             "logit_bias": opts.pop("logit_bias", None),
@@ -1740,8 +1824,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # scoping, but it is framework-private metadata and must not reach the client.
         co.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
-        # Build session_messages from session context: context messages + input messages
-        session_messages: list[Message] = session_context.get_messages(include_input=True)
+        # Build the first model input from the exact prepared history snapshot, when present.
+        prepared_history_context = session_context.metadata.get(_PREPARED_PER_SERVICE_CALL_HISTORY_CONTEXT_KEY)
+        session_messages: list[Message] = (
+            prepared_history_context.get_messages(include_input=True)
+            if isinstance(prepared_history_context, SessionContext)
+            else session_context.get_messages(include_input=True)
+        )
 
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         from ._tools import _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY  # pyright: ignore[reportPrivateUsage]
@@ -1756,8 +1845,22 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 agent=self,
                 session=active_session,
                 providers=per_service_call_history_providers,
+                run_context=session_context,
                 service_stores_history=service_stores_history,
+                prepared_context=(
+                    prepared_history_context if isinstance(prepared_history_context, SessionContext) else None
+                ),
+                service_continuation_option_names=continuation_option_names,
             )
+        if per_service_call_history_middleware is not None:
+            existing_middleware = cast(
+                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
+            )
+            effective_client_kwargs["middleware"] = [
+                *_as_middleware_list(existing_middleware),
+                per_service_call_history_middleware,
+            ]
+
         provider_middleware = session_context.get_middleware()
         if provider_middleware:
             # Providers may only contribute chat/function middleware (enforced by
@@ -1776,15 +1879,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                     *_as_middleware_list(existing_middleware),
                     *provider_function_chat_middleware,
                 ]
-
-        if per_service_call_history_middleware is not None:
-            existing_middleware = cast(
-                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
-            )
-            effective_client_kwargs["middleware"] = [
-                *_as_middleware_list(existing_middleware),
-                per_service_call_history_middleware,
-            ]
 
         evaluation_tools: dict[str, dict[str, Any]] = {}
         if isinstance(self.client, BaseChatClient):
@@ -1813,6 +1907,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         session: AgentSession | None,
         input_messages: list[Message] | None = None,
         options: dict[str, Any] | None = None,
+        conversation_id: str | None = None,
+        service_stores_history: bool = False,
+        service_continuation: tuple[bool, str | None] = (False, None),
     ) -> tuple[SessionContext, dict[str, Any]]:
         """Prepare the session context and messages for agent execution.
 
@@ -1823,6 +1920,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session: The conversation session (None for stateless invocation).
             input_messages: Messages to process.
             options: Runtime options dict (already copied, safe to mutate).
+            conversation_id: Effective provider conversation identity after session/default/runtime precedence.
+            service_stores_history: Whether the service owns history for this run.
+            service_continuation: Whether service history is resumed and its normalized identity.
 
         Returns:
             A tuple containing:
@@ -1844,24 +1944,32 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()
 
+        context_options = dict(options or {})
+        if conversation_id is not None:
+            context_options["conversation_id"] = conversation_id
+        if not service_continuation[0]:
+            service_continuation = _normalize_service_continuation(
+                self._service_continuation_option_names(),
+                _merge_options(self.default_options, context_options),
+            )
         session_context = SessionContext(
             session_id=provider_session.session_id if provider_session else None,
             service_session_id=provider_session.service_session_id if provider_session else None,
             input_messages=input_messages or [],
-            options=options or {},
+            options=context_options,
         )
+        _set_service_continuation(session_context, service_continuation)
 
-        # When per-service-call persistence is enabled, the per-service-call middleware owns
-        # HistoryProvider loading (it loads locally when the service does not store history, or
-        # relies on the service when it does), so skip them on the once-per-run before_run path.
+        # Per-service-call persistence owns later reloads and every write. The first local
+        # snapshot is prepared here; service-owned history is not loaded from local providers.
         per_service_call_history_required = self.require_per_service_call_history_persistence and bool(
             self._get_history_providers()
         )
 
-        # Run before_run providers (forward order, skip HistoryProvider when per-service-call
-        # persistence owns loading)
+        # Run providers in declared order. Service-owned history remains remote; local
+        # per-service-call history is loaded here and reused by the first service call.
         for provider in self.context_providers:
-            if per_service_call_history_required and isinstance(provider, HistoryProvider):
+            if per_service_call_history_required and service_stores_history and isinstance(provider, HistoryProvider):
                 continue
             if isinstance(provider, HistoryProvider) and not provider.load_messages:
                 continue
@@ -1873,6 +1981,23 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 context=session_context,
                 state=provider_session.state.setdefault(provider.source_id, {}),
             )
+
+        if per_service_call_history_required and not service_stores_history:
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when local history is prepared.")
+            prepared_context = SessionContext(
+                session_id=provider_session.session_id,
+                service_session_id=provider_session.service_session_id,
+                input_messages=session_context.input_messages.copy(),
+                context_messages={
+                    source_id: messages.copy() for source_id, messages in session_context.context_messages.items()
+                },
+                instructions=session_context.instructions.copy(),
+                tools=session_context.tools.copy(),
+                options=session_context.options.copy(),
+                metadata=session_context.metadata,
+            )
+            session_context.metadata[_PREPARED_PER_SERVICE_CALL_HISTORY_CONTEXT_KEY] = prepared_context
 
         # Merge provider-contributed tools into chat_options
         if session_context.tools:

@@ -113,11 +113,32 @@ public class HostedWorkflowCheckpointingHealthCheckTests
         AIAgent agent = BuildWorkflowAgent(executionEnvironment: null);
 
         // Act
-        AIAgent result = FoundryHostingExtensions.ApplyWorkflowCheckpointing(agent);
+        AIAgent result = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(agent);
 
         // Assert: a redirected copy is returned even locally; the SDK chooses its local backend.
         Assert.NotSame(agent, result);
         Assert.True(result.GetService<WorkflowAgentMetadata>()?.UsesOwnCheckpointStorage);
+    }
+
+    [Fact]
+    public async Task CheckHealthAsync_ScopedWorkflowAgent_IsResolvedFromAScopeAsync()
+    {
+        // Arrange: a scoped agent cannot be resolved from the root container when scopes are validated.
+        var environment = InProcessExecution.OffThread.WithCheckpointing(CheckpointManager.CreateInMemory());
+        var services = new ServiceCollection();
+        services.AddKeyedScoped("workflow", (_, _) => BuildWorkflowAgent(environment));
+        var check = new HostedWorkflowCheckpointingHealthCheck(
+            services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true }))
+        {
+            IsHosted = true,
+        };
+
+        // Act
+        var result = await check.CheckHealthAsync(NewContext(), CancellationToken.None);
+
+        // Assert: the agent was resolved and inspected rather than failing the readiness probe.
+        Assert.Equal(HealthStatus.Unhealthy, result.Status);
+        Assert.Equal(["WorkflowAgent"], Assert.IsType<List<string>>(result.Data["incompatibleAgents"]));
     }
 
     private static HostedWorkflowCheckpointingHealthCheck BuildCheckFor(AIAgent agent)

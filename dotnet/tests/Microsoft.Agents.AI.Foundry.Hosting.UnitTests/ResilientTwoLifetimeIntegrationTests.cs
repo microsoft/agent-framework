@@ -20,6 +20,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using CreateResponse = Azure.AI.AgentServer.Responses.Models.CreateResponse;
 using ResponseStreamEvent = Azure.AI.AgentServer.Responses.Models.ResponseStreamEvent;
 
@@ -124,8 +125,11 @@ public sealed class ResilientTwoLifetimeIntegrationTests
         }
     }
 
-    [Fact]
-    public async Task StoppedHost_RecoversWorkflowWithCompleteOrderedOutputAsync()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient)]
+    public async Task StoppedHost_RecoversWorkflowWithCompleteOrderedOutputAsync(ServiceLifetime? factoryLifetime)
     {
         // Arrange
         string stateRoot = Path.Combine(
@@ -151,7 +155,9 @@ public sealed class ResilientTwoLifetimeIntegrationTests
                 Directory.CreateDirectory(checkpointRoot)))
             {
                 WebApplication firstHost = await StartServerAsync(
-                    BuildCountdownWorkflowAgent(coordinator, checkpointStore),
+                    "countdown-workflow",
+                    () => BuildCountdownWorkflowAgent(coordinator, checkpointStore),
+                    factoryLifetime,
                     new FoundryAgentSessionStore(storeName: sessionStoreName),
                     coordinator);
                 try
@@ -192,7 +198,9 @@ public sealed class ResilientTwoLifetimeIntegrationTests
             using var recoveryCheckpointStore = new FileSystemJsonCheckpointStore(
                 Directory.CreateDirectory(checkpointRoot));
             await using WebApplication secondHost = await StartServerAsync(
-                BuildCountdownWorkflowAgent(coordinator, recoveryCheckpointStore),
+                "countdown-workflow",
+                () => BuildCountdownWorkflowAgent(coordinator, recoveryCheckpointStore),
+                factoryLifetime,
                 new FoundryAgentSessionStore(storeName: sessionStoreName));
             using HttpClient secondClient = GetClient(secondHost);
             JsonElement completed = await WaitForTerminalAsync(
@@ -228,19 +236,37 @@ public sealed class ResilientTwoLifetimeIntegrationTests
         }
     }
 
-    private static async Task<WebApplication> StartServerAsync(
+    private static Task<WebApplication> StartServerAsync(
         AIAgent agent,
+        AgentSessionStore sessionStore,
+        CountdownRecoveryCoordinator? recoveryCoordinator = null) =>
+        StartServerAsync(agent.Name!, () => agent, factoryLifetime: null, sessionStore, recoveryCoordinator);
+
+    /// <summary>
+    /// Starts a host that registers the agent instance with <c>AddFoundryResponses(agent)</c> when
+    /// <paramref name="factoryLifetime"/> is <see langword="null"/>, or with the factory overload and
+    /// that lifetime otherwise.
+    /// </summary>
+    private static async Task<WebApplication> StartServerAsync(
+        string agentName,
+        Func<AIAgent> createAgent,
+        ServiceLifetime? factoryLifetime,
         AgentSessionStore sessionStore,
         CountdownRecoveryCoordinator? recoveryCoordinator = null)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddFoundryResponses(
-            agent,
-            sessionStore,
-            options => options.ResilientBackground = true);
-        builder.Services.AddSingleton<HostedSessionIsolationKeyProvider>(
-            new FakeHostedSessionIsolationKeyProvider());
+        var options = new FoundryResponsesServerOptions { ResilientBackground = true };
+        if (factoryLifetime is { } lifetime)
+        {
+            builder.Services.AddFoundryResponses(agentName, _ => createAgent(), lifetime, options);
+            builder.Services.AddFoundryAgentSessionStore(sessionStore);
+        }
+        else
+        {
+            builder.Services.AddFoundryResponses(createAgent(), sessionStore, options);
+        }
+
         builder.Services.AddLogging();
         if (recoveryCoordinator is not null)
         {
@@ -248,7 +274,8 @@ public sealed class ResilientTwoLifetimeIntegrationTests
             builder.Services.AddSingleton<ResponseHandler>(serviceProvider =>
                 new CheckpointObservingResponseHandler(
                     ActivatorUtilities.CreateInstance<AgentFrameworkResponseHandler>(
-                        serviceProvider),
+                        serviceProvider,
+                        serviceProvider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value),
                     recoveryCoordinator));
         }
 

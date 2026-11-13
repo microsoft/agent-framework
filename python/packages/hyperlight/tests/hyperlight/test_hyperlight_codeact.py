@@ -15,16 +15,15 @@ import os
 import subprocess
 import sys
 import threading
-import time
 import weakref
 from collections.abc import Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import DEFAULT, patch
 
 import pytest
 from agent_framework import (
@@ -39,13 +38,14 @@ from agent_framework import (
     ResponseStream,
     tool,
 )
-from agent_framework_hyperlight import AllowedDomain, FileMount, HyperlightCodeActProvider, HyperlightExecuteCodeTool
-from agent_framework_hyperlight import _execute_code_tool as execute_code_module
-from agent_framework_hyperlight import _instructions as instructions_module
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pytest import fixture
+
+from agent_framework_hyperlight import AllowedDomain, FileMount, HyperlightCodeActProvider, HyperlightExecuteCodeTool
+from agent_framework_hyperlight import _execute_code_tool as execute_code_module
+from agent_framework_hyperlight import _instructions as instructions_module
 
 
 def _hyperlight_integration_static_skip_reason() -> str | None:
@@ -325,6 +325,9 @@ class _FakeSandbox:
     def snapshot(self) -> str:
         return "snapshot"
 
+    def interrupt_handle(self) -> SimpleNamespace:
+        return SimpleNamespace(kill=lambda: False)
+
     def restore(self, snapshot: Any) -> None:
         self.restore_calls.append(snapshot)
 
@@ -346,9 +349,7 @@ class _FakeSandboxWithoutOutputListing(_FakeSandbox):
         return []
 
 
-class _FakeSandboxWithDelayedUnlistedOutput(_FakeSandboxWithoutOutputListing):
-    writer_threads: list[threading.Thread] = []
-
+class _FakeSandboxWithUnlistedOutput(_FakeSandboxWithoutOutputListing):
     def run(self, code: str) -> _FakeResult:
         if (
             'Path("/output/report.txt").write_text("artifact", encoding="utf-8")' in code
@@ -356,15 +357,7 @@ class _FakeSandboxWithDelayedUnlistedOutput(_FakeSandboxWithoutOutputListing):
         ):
             if self.output_dir is None:
                 raise AssertionError("Expected output directory for delayed output test.")
-            output_dir = self.output_dir
-
-            def _write_file() -> None:
-                time.sleep(0.15)
-                Path(output_dir, "report.txt").write_text("artifact", encoding="utf-8")
-
-            writer_thread = threading.Thread(target=_write_file)
-            writer_thread.start()
-            self.writer_threads.append(writer_thread)
+            Path(self.output_dir, "report.txt").write_text("artifact", encoding="utf-8")
             return _FakeResult(success=True)
 
         return super().run(code)
@@ -2361,37 +2354,49 @@ async def test_execute_code_tool_collects_output_files_without_backend_listing(
 async def test_execute_code_tool_waits_for_unlisted_output_files_to_appear(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _FakeSandboxWithDelayedUnlistedOutput.writer_threads.clear()
-    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithDelayedUnlistedOutput)
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithUnlistedOutput)
 
     execute_code = HyperlightExecuteCodeTool(
         file_mounts=[FileMount(Path(__file__), "fixtures/source.py")],
     )
-    result = await execute_code.invoke(
-        arguments={"code": 'Path("/output/report.txt").write_text("artifact", encoding="utf-8")'}
-    )
+    try:
+        # Hide the file on the first poll without racing a background writer against the retry deadline.
+        with patch.object(
+            execute_code_module,
+            "_collect_output_relative_paths",
+            wraps=execute_code_module._collect_output_relative_paths,
+            side_effect=[set(), DEFAULT],
+        ) as collect_output_paths:
+            result = await execute_code.invoke(
+                arguments={"code": 'Path("/output/report.txt").write_text("artifact", encoding="utf-8")'}
+            )
 
-    for writer_thread in _FakeSandboxWithDelayedUnlistedOutput.writer_threads:
-        writer_thread.join()
-
-    assert any(item.type == "data" and item.additional_properties["path"] == "/output/report.txt" for item in result)
+        assert collect_output_paths.call_count == 2
+        assert any(
+            item.type == "data" and item.additional_properties["path"] == "/output/report.txt" for item in result
+        )
+    finally:
+        _close_execute_code_registry(execute_code)
 
 
 async def test_execute_code_tool_waits_for_dynamically_addressed_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _FakeSandboxWithDelayedUnlistedOutput.writer_threads.clear()
-    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithDelayedUnlistedOutput)
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithUnlistedOutput)
     execute_code = HyperlightExecuteCodeTool(
         file_mounts=[FileMount(Path(__file__), "fixtures/source.py")],
     )
 
     try:
-        result = await execute_code.invoke(arguments={"code": "create-dynamic-delayed-output"})
+        with patch.object(
+            execute_code_module,
+            "_collect_output_relative_paths",
+            wraps=execute_code_module._collect_output_relative_paths,
+            side_effect=[set(), DEFAULT],
+        ) as collect_output_paths:
+            result = await execute_code.invoke(arguments={"code": "create-dynamic-delayed-output"})
 
-        for writer_thread in _FakeSandboxWithDelayedUnlistedOutput.writer_threads:
-            writer_thread.join()
-
+        assert collect_output_paths.call_count == 2
         assert any(
             item.type == "data" and item.additional_properties["path"] == "/output/report.txt" for item in result
         )
@@ -2502,6 +2507,9 @@ async def test_execute_code_tool_retries_allowed_domains_with_urls_when_backend_
         def snapshot(self) -> str:
             return "snapshot"
 
+        def interrupt_handle(self) -> SimpleNamespace:
+            return SimpleNamespace(kill=lambda: False)
+
         def restore(self, snapshot: Any) -> None:
             del snapshot
 
@@ -2607,6 +2615,30 @@ async def test_provider_forwards_output_limits_to_run_tool_and_serializable_stat
     assert state[provider.source_id]["max_output_file_bytes"] == 11
     assert state[provider.source_id]["max_output_total_bytes"] == 13
     json.dumps(state)
+
+
+@pytest.mark.parametrize("constructor", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+@pytest.mark.parametrize("value", [True, "30", None, 0, -1, float("inf"), float("-inf"), float("nan")])
+def test_execution_timeout_requires_a_positive_finite_number(constructor: Any, value: Any) -> None:
+    with pytest.raises((TypeError, ValueError), match="execution_timeout_seconds"):
+        constructor(execution_timeout_seconds=value)
+
+
+async def test_provider_captures_execution_timeout_without_changing_sandbox_identity() -> None:
+    runtime = _FakeRuntime()
+    provider = HyperlightCodeActProvider(execution_timeout_seconds=0.25, _registry=runtime)
+    context = _FakeSessionContext()
+    state: dict[str, Any] = {}
+
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
+    run_tool = context.tools[0][1][0]
+    assert isinstance(run_tool, HyperlightExecuteCodeTool)
+    await run_tool.invoke(arguments={"code": "None"})
+
+    assert runtime.calls[0][0].execution_timeout_seconds == 0.25
+    assert state[provider.source_id]["execution_timeout_seconds"] == 0.25
+    default_config = HyperlightExecuteCodeTool(_registry=runtime)._build_run_config()
+    assert runtime.calls[0][0].cache_key() == default_config.cache_key()
 
 
 async def test_output_limits_are_isolated_when_registry_is_shared(

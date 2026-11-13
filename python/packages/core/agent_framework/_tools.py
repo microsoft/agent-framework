@@ -17,11 +17,12 @@ from collections.abc import (
     AsyncIterable,
     Awaitable,
     Callable,
+    Generator,
     Iterable,
     Mapping,
     Sequence,
 )
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from datetime import time as datetime_time
@@ -109,6 +110,7 @@ def _generate_function_call_occurrence_id() -> str:
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
+_LOCAL_TOOL_RESULT_KEY: Final[str] = "agent_framework.local_tool_result"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
 _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY: Final[str] = "_approval_session_is_authoritative"
 _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY: Final[str] = "_parent_tool_approval_source_ids"
@@ -138,10 +140,23 @@ _APPROVED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_approved_function_arguments"
 _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: Final[str] = "_security_function_arguments"
 _PREPARED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_prepared_function_arguments"
 _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: Final[str] = "_auto_prepare_function_arguments"
+_SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT: Final[
+    contextvars.ContextVar[tuple[Any, Callable[[Any], None], asyncio.Task[Any] | None] | None]
+] = contextvars.ContextVar("agent_framework_core_security_argument_materialization_context", default=None)
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
 _USER_VISIBLE_CONTENT_TYPES: Final[set[str]] = {"data", "uri", "error", "hosted_file", "hosted_vector_store"}
+
+
+@contextmanager
+def _suspend_security_argument_materialization() -> Generator[None]:
+    """Prevent nested tool calls from inheriting one invocation's materialization capability."""
+    token = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.set(None)
+    try:
+        yield
+    finally:
+        _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.reset(token)
 
 
 class _FunctionArgumentValidationError(TypeError):
@@ -498,6 +513,8 @@ _ToolParameterFormat: TypeAlias = Literal["compact", "json"]
 _ToolDescriptionFormat: TypeAlias = _ToolParameterFormat | Mapping[str, _ToolParameterFormat]
 _NormalizedToolDescriptionFormat: TypeAlias = _ToolParameterFormat | dict[str, _ToolParameterFormat]
 _TOOL_DESCRIPTION_FORMAT_ERROR = "tool_description_format must be 'compact', 'json', or a tool-name mapping."
+# model_dump's fallback (str for values JSON mode doesn't know) only exists on newer Pydantic 2 versions.
+_MODEL_DUMP_HAS_FALLBACK = "fallback" in inspect.signature(BaseModel.model_dump).parameters
 
 
 def _normalize_tool_description_format(  # pyright: ignore[reportUnusedFunction]
@@ -664,6 +681,8 @@ class FunctionTool(SerializationMixin):
         "_schema_supplied",
         "_invoke_sync_on_event_loop",
     }
+    # A tool that ``BaseAgent.as_tool()`` made keeps pointing at its agent when copied, as its function does.
+    _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation", "_wrapped_agent"}
 
     def __init__(
         self,
@@ -1167,7 +1186,6 @@ class FunctionTool(SerializationMixin):
         direct_argument_kwargs = (
             {key: value for key, value in kwargs.items() if key in parameter_names} if arguments is None else {}
         )
-        runtime_kwargs = dict(context.kwargs) if context is not None else {}
         unexpected_kwargs = {key: value for key, value in kwargs.items() if key not in direct_argument_kwargs}
         if unexpected_kwargs:
             unexpected_names = ", ".join(sorted(unexpected_kwargs))
@@ -1180,6 +1198,23 @@ class FunctionTool(SerializationMixin):
         if arguments is None and context is not None:
             arguments = context.arguments
 
+        security_materialization = _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT.get()
+        if security_materialization is not None:
+            active_context, materialize, origin_task = security_materialization
+            if (
+                asyncio.current_task() is origin_task
+                and active_context.function is self
+                and (context is None or context is active_context)
+            ):
+                direct_arguments = self._arguments_as_mapping(arguments)
+                if direct_arguments is not None:
+                    active_context.arguments = direct_arguments
+                active_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
+                materialize(active_context)
+                arguments = active_context.arguments
+                context = active_context
+
+        runtime_kwargs = dict(context.kwargs) if context is not None else {}
         current_arguments = self._arguments_as_mapping(arguments)
         approval_visible_arguments = self._approval_visible_arguments(arguments, context)
         self._ensure_security_arguments_unchanged(context, current_arguments)
@@ -1211,7 +1246,8 @@ class FunctionTool(SerializationMixin):
         if not OBSERVABILITY_SETTINGS.ENABLED:
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {observable_kwargs}")
-            result = await self._invoke_function(call_kwargs)
+            with _suspend_security_argument_materialization():
+                result = await self._invoke_function(call_kwargs)
             if skip_parsing:
                 logger.info(f"Function {self.name} succeeded.")
                 logger.debug(f"Function result: {type(result).__name__}")
@@ -1290,7 +1326,8 @@ class FunctionTool(SerializationMixin):
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
             try:
-                result = await self._invoke_function(call_kwargs)
+                with _suspend_security_argument_materialization():
+                    result = await self._invoke_function(call_kwargs)
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()
@@ -1395,12 +1432,34 @@ class FunctionTool(SerializationMixin):
         if isinstance(value, Content):
             return value.to_dict(exclude={"raw_representation", "additional_properties"})
         if isinstance(value, BaseModel):
-            return value.model_dump()
+            return FunctionTool._dump_model(value)
         if hasattr(value, "to_dict"):
             return value.to_dict()
         if hasattr(value, "text") and isinstance(value.text, str):
             return value.text
         return value
+
+    @staticmethod
+    def _dump_model(model: BaseModel) -> Any:
+        """Dump a Pydantic model in JSON mode.
+
+        JSON mode applies enum, datetime and UUID encoding and JSON-only serializers, and values it
+        doesn't know become their str() form. Pydantic versions without ``model_dump(..., fallback=...)``
+        get the same output from ``to_jsonable_python(..., serialize_unknown=True)``. If Pydantic still
+        can't dump the model (bytes that aren't valid UTF-8, a reference cycle), a placeholder is returned,
+        so no part of the model is sent without its serializers and exclusions.
+        """
+        try:
+            if _MODEL_DUMP_HAS_FALLBACK:
+                return model.model_dump(mode="json", fallback=str)
+            return to_jsonable_python(model, by_alias=False, serialize_unknown=True)
+        except Exception as exception:
+            logger.warning(
+                "Replacing %s in the tool result with a placeholder: it can't be serialized as JSON (%s).",
+                type(model).__name__,
+                type(exception).__name__,
+            )
+            return f"[{type(model).__name__} could not be serialized as JSON]"
 
     @staticmethod
     def parse_result(result: Any) -> list[Content]:
@@ -4493,7 +4552,7 @@ def _replace_approval_contents_with_results(
     Returns:
         The terminal contents produced while resolving the approval responses, in response order.
     """
-    from ._types import APPROVAL_REJECTION_RESULT_KEY, Content
+    from ._types import _APPROVAL_REJECTION_RESULT_KEY, Content  # pyright: ignore[reportPrivateUsage]
 
     result_groups_by_call_id: dict[str, deque[list[Content]]] = {}
     for result_group in approved_function_result_groups:
@@ -4622,7 +4681,7 @@ def _replace_approval_contents_with_results(
                             result="Error: Tool call invocation was rejected by user.",
                             additional_properties={
                                 **content.function_call.additional_properties,
-                                APPROVAL_REJECTION_RESULT_KEY: True,
+                                _APPROVAL_REJECTION_RESULT_KEY: True,
                             },
                         )
                     ]
@@ -4940,10 +4999,21 @@ def _reset_required_tool_choice(options: dict[str, Any]) -> None:
 
 
 def _prepare_messages_for_next_iteration(prepared_messages: list[Message], response: ChatResponse[Any]) -> None:
+    from ._types import Message
+
     if response.conversation_id is None:
         prepared_messages.extend(response.messages)
         return
-    prepared_messages[:] = response.messages[-1:]
+    local_results = [
+        content
+        for message in response.messages[:-1]
+        for content in message.contents
+        if content.type in {"function_result", "shell_tool_result", "computer_tool_result"}
+        and content.additional_properties.get(_LOCAL_TOOL_RESULT_KEY) is True
+    ]
+    prepared_messages[:] = (
+        [Message(role="tool", contents=local_results)] if local_results else []
+    ) + response.messages[-1:]
 
 
 @dataclass
@@ -5643,6 +5713,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         if (chat_middleware := (categorized_middleware["chat"] or None)) is not None:
             kwargs["middleware"] = chat_middleware
         super().__init__(**kwargs)
+
+    def _finalize_function_invocation_updates(
+        self,
+        updates: Sequence[ChatResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> ChatResponse[Any]:
+        """Aggregate all model turns and tool results without reapplying per-turn processing."""
+        from ._types import ChatResponse
+
+        return ChatResponse.from_updates(updates, output_format_type=response_format)
 
     def _update_function_invocation_continuation_state(
         self,
@@ -6386,10 +6467,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         from ._middleware import _as_middleware_list, categorize_middleware  # pyright: ignore[reportPrivateUsage]
-        from ._types import (
-            ChatResponse,
-            ResponseStream,
-        )
+        from ._types import ResponseStream
 
         super_get_response = cast(
             Callable[..., Any],
@@ -6515,7 +6593,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         def finalize_stream(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
             if invalidation_error:
                 raise invalidation_error[0]
-            return ChatResponse.from_updates(updates, output_format_type=response_format)
+            return self._finalize_function_invocation_updates(updates, response_format=response_format)
 
         return ResponseStream(
             self._stream_response_with_function_invocation(
