@@ -55,6 +55,7 @@ SMOKE_IMPORTS: dict[str, tuple[str, ...]] = {
     "agent-framework-hosting-telegram": ("agent_framework_hosting_telegram:telegram_to_run",),
     "agent-framework-hyperlight": ("agent_framework.hyperlight:HyperlightCodeActProvider",),
     "agent-framework-mem0": ("agent_framework.mem0:Mem0ContextProvider",),
+    "agent-framework-milvus": ("agent_framework_milvus:MilvusStore",),
     "agent-framework-mistral": ("agent_framework.mistral:MistralChatClient",),
     "agent-framework-mongodb": ("agent_framework_mongodb:MongoDBStore",),
     "agent-framework-monty": ("agent_framework.monty:MontyCodeActProvider",),
