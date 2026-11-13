@@ -1,5 +1,8 @@
 # Tools
 
+[Container Apps Dynamic Sessions](./container_apps_dynamic_sessions.py) shows a
+function tool that executes Python in a cloud session with per-run session ownership.
+
 Samples that show how to define, configure, and control function tools for an
 agent — from basic declarations to approvals, invocation limits, session
 injection, and dynamic (progressive) tool exposure.
@@ -88,3 +91,6 @@ take effect on the **next iteration** of the function-calling loop.
 > CodeAct setup in
 > [`../context_providers/code_act/`](../context_providers/code_act/), which adds
 > dynamic tool / capability management.
+
+The Dynamic Sessions tool returns only execution status and output to the model;
+session identifiers and HTTP request URLs remain application-owned.
