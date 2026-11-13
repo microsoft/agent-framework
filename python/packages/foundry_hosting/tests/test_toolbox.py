@@ -53,22 +53,9 @@ from .foundry_hosting.toolbox_approval_helpers import (  # pyrefly: ignore[missi
     toolbox_connection,
     toolbox_tool,
 )
-
-
-class _ToolResultServer(ToolboxApprovalServer):
-    """Offline Toolbox server whose ``tools/call`` response is configurable per test."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.call_result: dict[str, Any] = {}
-
-    async def handle(self, request: httpx.Request) -> httpx.Response:
-        if request.method == "POST":
-            payload = json.loads(request.content)
-            if payload.get("method") == "tools/call" and "id" in payload:
-                self.calls.append(payload["params"])
-                return httpx.Response(200, json={"jsonrpc": "2.0", "id": payload["id"], "result": self.call_result})
-        return await super().handle(request)
+from .foundry_hosting.web_search_test_helpers import (  # pyrefly: ignore[missing-import] - pytest's importlib namespace
+    _ToolResultServer,
+)
 
 
 class _StubAgent:
@@ -622,6 +609,7 @@ async def test_web_search_without_prose_keeps_structured_result(content: list[di
     assert isinstance(result, list)
     assert result[0].text is not None
     assert json.loads(result[0].text) == structured
+    assert result[0].annotations == [{"type": "citation", "url": "https://example.test"}]
 
 
 @pytest.mark.parametrize(

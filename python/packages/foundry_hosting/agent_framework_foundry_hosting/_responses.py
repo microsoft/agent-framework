@@ -2441,14 +2441,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             def snapshot_response(
                 checkpoint_id: str | None,
+                *,
+                final_answer: bool = False,
             ) -> Generator[ResponseStreamEvent | ResponseCheckpointEvent]:
                 # Pair the response output emitted so far with the workflow checkpoint it corresponds
                 # to, so recovery from that checkpoint replays exactly the updates that came after it.
-                if checkpoint_id is None or checkpoint_id == _hosted_internal_metadata(response_event_stream).get(
-                    _LATEST_CHECKPOINT_ID_KEY
-                ):
+                if checkpoint_id is None:
                     return
-                yield from tracker.close()
+                previous_checkpoint_id = _hosted_internal_metadata(response_event_stream).get(_LATEST_CHECKPOINT_ID_KEY)
+                if checkpoint_id == previous_checkpoint_id and not final_answer:
+                    return
+                events = list(tracker.close(final_answer=final_answer))
+                if checkpoint_id == previous_checkpoint_id and not events:
+                    return
+                yield from events
                 _hosted_internal_metadata(response_event_stream)[_LATEST_CHECKPOINT_ID_KEY] = checkpoint_id
                 yield response_event_stream.checkpoint()
 
@@ -2482,7 +2488,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             elif self._resilient_background and not main_iter.signalled:
                 # The workflow ran to completion: pair its final checkpoint with the full output, so
                 # recovery after this point does not replay the last superstep.
-                for event in snapshot_response(await latest_checkpoint_id()):
+                for event in snapshot_response(await latest_checkpoint_id(), final_answer=True):
                     yield event
         except Exception as exc:
             _log_response_failure("workflow execution", context.response_id, exc)

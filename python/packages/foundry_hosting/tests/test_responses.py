@@ -120,6 +120,15 @@ from agent_framework_foundry_hosting._state_store import (
     FunctionApprovalStoreProvider,
 )
 
+from .foundry_hosting.web_search_test_helpers import (  # pyrefly: ignore[missing-import] - pytest's importlib namespace
+    _DOCS_SOURCE_URL,
+    _expected_source_citations,
+    _expected_url_citation,
+    _url_citation,
+    _web_search_citation_updates,
+    _web_search_result,
+)
+
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 _PRIVATE_ERROR_DETAIL = "test-token-value at /srv/private/tool.py"
 _SESSION_STORAGE_ERROR_DETAIL = "session-storage-secret at C:\\sensitive\\session_store.py"
@@ -244,82 +253,6 @@ def _expected_container_file_citation(
         "filename": filename,
         "start_index": start_index,
         "end_index": start_index + len(filename),
-    }
-
-
-_PYTHON_SOURCE_URL = "https://www.python.org/downloads/release/python-31315/"
-_DOCS_SOURCE_URL = "https://docs.python.org/3/whatsnew/3.13.html"
-
-
-def _web_search_result(call_id: str) -> Content:
-    """Build a search tool result whose citations repeat a URL and include ignored non-web citations."""
-    return Content.from_function_result(
-        call_id,
-        result=[
-            Content.from_text(
-                "Python 3.13.15 is the latest release.",
-                annotations=[_url_citation(), Annotation(type="citation", url=_DOCS_SOURCE_URL, title="What's New")],
-            ),
-            Content.from_text(
-                '{"annotations": []}',
-                annotations=[
-                    Annotation(type="citation", url=_PYTHON_SOURCE_URL, title="Duplicate title"),
-                    Annotation(type="citation", url="javascript:alert(1)", title="Unsafe"),
-                    Annotation(type="citation", url="notes.txt", file_id="file_123", title="File"),
-                ],
-            ),
-        ],
-    )
-
-
-def _expected_source_citations(text: str) -> list[dict[str, Any]]:
-    """Return the zero-length end-of-text citations expected for ``_web_search_result``."""
-    return [
-        _expected_url_citation(start_index=len(text), end_index=len(text)),
-        _expected_url_citation(url=_DOCS_SOURCE_URL, title="What's New", start_index=len(text), end_index=len(text)),
-    ]
-
-
-def _web_search_citation_updates(answer: str) -> list[AgentResponseUpdate]:
-    return [
-        AgentResponseUpdate(
-            contents=[Content.from_function_call("call_1", "web_search", arguments={})],
-            role="assistant",
-            message_id="msg_call",
-        ),
-        AgentResponseUpdate(contents=[_web_search_result("call_1")], role="tool", message_id="msg_result"),
-        AgentResponseUpdate(contents=[Content.from_text(answer)], role="assistant", message_id="msg_answer"),
-    ]
-
-
-def _url_citation(
-    *,
-    url: str = "https://www.python.org/downloads/release/python-31315/",
-    title: str = "Python 3.13.15",
-    start_index: int = 0,
-    end_index: int = 6,
-) -> Annotation:
-    return Annotation(
-        type="citation",
-        url=url,
-        title=title,
-        annotated_regions=[{"type": "text_span", "start_index": start_index, "end_index": end_index}],
-    )
-
-
-def _expected_url_citation(
-    *,
-    url: str = "https://www.python.org/downloads/release/python-31315/",
-    title: str = "Python 3.13.15",
-    start_index: int = 0,
-    end_index: int = 6,
-) -> dict[str, Any]:
-    return {
-        "type": "url_citation",
-        "url": url,
-        "title": title,
-        "start_index": start_index,
-        "end_index": end_index,
     }
 
 
@@ -2608,9 +2541,11 @@ class TestAgentSessionPersistence:
 
         completed = next(event["response"] for event in events if event["type"] == "response.completed")
         messages = [item for item in completed["output"] if item["type"] == "message"]
-        assert [message["content"][0]["text"] for message in messages] == ["Let me search.", answer]
-        assert messages[0]["content"][0]["annotations"] == []
-        assert messages[1]["content"][0]["annotations"] == _expected_source_citations(answer)
+        parts = [part for message in messages for part in message["content"] if part["type"] == "output_text"]
+        assert len(parts) == len(messages)
+        assert [part["text"] for part in parts] == ["Let me search.", answer]
+        assert parts[0]["annotations"] == []
+        assert parts[1]["annotations"] == _expected_source_citations(answer)
 
     async def test_provider_background_keeps_private_token_under_outer_response(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -9947,7 +9882,11 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
         return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
 
-def _build_text_workflow_agent(text: str, *, finish_reason: FinishReasonLiteral | None = None) -> WorkflowAgent:
+def _build_text_workflow_agent(
+    text: str,
+    *,
+    finish_reason: FinishReasonLiteral | None = None,
+) -> WorkflowAgent:
     """Build a minimal ``WorkflowAgent`` whose inner agent emits a fixed text."""
 
     class _TextAgent(SupportsAgentRun):
@@ -10766,6 +10705,55 @@ class TestResilientBackgroundCheckpointing:
         assert final_text == "filtered by workflow"
         assert final_response["internal_metadata"][_INCOMPLETE_REASON_KEY] == "content_filter"
         assert final_response["status"] == "in_progress"
+
+    async def test_final_checkpoint_attaches_pending_tool_sources(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        workflow_agent = _build_text_workflow_agent("Final answer")
+        server = _make_server(
+            workflow_agent,
+            response_store=FileResponseStore(storage_dir=tmp_path),
+            options=ResponsesServerOptions(resilient_background=True),
+        )
+        checkpoint_storage = MagicMock()
+        checkpoint_storage.get_latest = AsyncMock(side_effect=[None, MagicMock(checkpoint_id="checkpoint-final")])
+        monkeypatch.setattr(
+            server._checkpoint_storage_provider, "get_store", MagicMock(return_value=checkpoint_storage)
+        )
+        monkeypatch.setattr(server._function_approval_storage_provider, "get_store", MagicMock(return_value=None))
+
+        async def no_updates() -> AsyncIterator[AgentResponseUpdate]:
+            if False:
+                yield AgentResponseUpdate(contents=[], role="assistant")
+
+        monkeypatch.setattr(workflow_agent, "run", MagicMock(return_value=no_updates()))
+        stream = ResponseEventStream(response_id="response-final-citations")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+        _ = [event async for event in tracker.handle(_web_search_result("call_web_search"))]
+        _ = [event async for event in tracker.handle(Content.from_text("Final answer"), message_id="msg_final")]
+
+        request = CreateResponse(model="m", input="hi", background=True, stream=True, store=True)
+        context = ResponseContext(response_id="response-final-citations", mode_flags=MagicMock())
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [
+                event
+                async for event in server._handle_inner_workflow(
+                    request,
+                    context,
+                    stream,
+                    tracker,
+                    asyncio.Event(),
+                    workflow_agent,
+                )
+            ]
+
+        checkpoints = [event for event in events if isinstance(event, ResponseCheckpointEvent)]
+        assert len(checkpoints) == 1
+        final_message = next(item for item in checkpoints[0].response["output"] if item["type"] == "message")
+        final_content = cast(dict[str, Any], final_message["content"][0])
+        assert final_content["annotations"] == _expected_source_citations("Final answer")
 
 
 # endregion

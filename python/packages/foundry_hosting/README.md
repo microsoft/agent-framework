@@ -29,7 +29,8 @@ general-purpose MCP approval policy.
 
 `FoundryToolbox` and generic MCP tools use the default `structured_first` result handling for Toolbox search results.
 When a result contains text content and `url_citation` annotations, the text stays visible to the model before the
-structured JSON, and the citations are attached to the tool result. Another `tool_result_content` mode or a custom
+structured JSON, and the citations are attached to the tool result. If the result has citations but no text content,
+they are attached without spans to the selected structured result. Another `tool_result_content` mode or a custom
 `parse_tool_results` replaces this handling, and hosted answers then receive no Toolbox citations.
 
 ## Agent instances and factories

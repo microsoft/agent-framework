@@ -198,7 +198,8 @@ Callers pick an explicit policy:
 - ``structured_first`` (default): use ``structuredContent`` when present, else ``content``. When the result
   has text content and ``url_citation`` entries in ``structuredContent.annotations`` or a content block's
   ``_meta.annotations`` (for example, Foundry Toolbox web search), the text content is kept before
-  ``structuredContent`` and the citations are attached as framework annotations.
+  ``structuredContent`` and the citations are attached as framework annotations. Without text content, citations
+  are attached without spans to the selected structured result, when present.
 - ``content_first``: use ``content`` when non-empty, else ``structuredContent``
 - ``content_only``: ignore ``structuredContent`` for the model-visible result
 - ``structured_only``: ignore ``content`` for the model-visible result
@@ -272,10 +273,11 @@ def _project_mcp_url_citations(
 ) -> list[Content] | None:
     """Keep cited text content before structured content and attach its URL citations as annotations.
 
-    Returns ``None`` when the result is an error, has no recognized ``url_citation`` entries, or has no text content.
-    ``content_items`` must hold exactly one parsed item per MCP content block.
+    When there is no text content, attach recognized citations without spans to the structured block, if present.
+    Returns ``None`` when the result is an error or has no recognized ``url_citation`` entries. ``content_items``
+    must hold exactly one parsed item per MCP content block.
     """
-    if mcp_type.is_error or not mcp_type.content:
+    if mcp_type.is_error:
         return None
     structured: Any = mcp_type.structured_content
     structured_values = (
@@ -288,8 +290,22 @@ def _project_mcp_url_citations(
         for value in [*structured_annotations, *(value for values in block_annotations for value in values)]
     ):
         return None
-    if not any(item.type == "text" and item.text for item in content_items):
-        return None
+    has_text_content = any(item.type == "text" and item.text for item in content_items)
+    if not has_text_content and structured_block is not None:
+        citations: list[Annotation] = []
+        seen: set[_MCPCitationKey] = set()
+        all_annotations = [
+            *structured_annotations,
+            *(value for values in block_annotations for value in values),
+        ]
+        for value in all_annotations:
+            parsed = _parse_mcp_url_citation(value)
+            if parsed is not None and parsed[1] not in seen:
+                citations.append(parsed[0])
+                seen.add(parsed[1])
+        if citations:
+            structured_block.annotations = [*(structured_block.annotations or []), *citations]
+        return [structured_block]
 
     # Match aggregate and block-owned occurrences without collapsing repeated citations.
     block_citations: dict[_MCPCitationKey, int] = {}

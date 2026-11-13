@@ -1457,6 +1457,25 @@ def test_structured_first_does_not_attach_url_citations_to_error_results():
     assert result[0].annotations is None
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        [],
+        [types.TextContent(type="text", text="")],
+    ],
+)
+def test_structured_first_attaches_unspanned_citations_without_search_text(content):
+    citation = {"type": "url_citation", "url": "https://example.test/source", "title": "Source"}
+    structured = {"annotations": [citation]}
+    mcp_result = types.CallToolResult(content=content, structured_content=structured)
+
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert len(result) == 1
+    assert result[0].text == json.dumps(structured)
+    assert result[0].annotations == [{"type": "citation", "url": "https://example.test/source", "title": "Source"}]
+
+
 async def test_generated_mcp_tool_preserves_complete_host_payload_once() -> None:
     """The generated FunctionTool path retains one complete, persistent Host payload."""
     file_meta = {
