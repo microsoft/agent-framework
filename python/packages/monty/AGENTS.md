@@ -74,9 +74,19 @@ Tool-management methods on both classes: `add_tools`, `get_tools`,
 - **`_execute_code_tool.py`** — `MontyExecuteCodeTool` plus tool / mount
   normalization, approval helpers, dynamic `description`/`instructions`
   builders, and the post-execution file-capture flow that surfaces files
-  written to `read-write` mounts as `Content.from_data` items. Runs on a tool
-  with a `read-write` mount hold a lock for the whole run, because captured
-  files are attributed by comparing the mount before and after.
+  written to `read-write` mounts as `Content.from_data` items. Captured files
+  are attributed by comparing the mount before and after a run, so calls on a
+  tool with a `read-write` mount take turns through a `MountGate`. The tool
+  hands its gate to every run-scoped copy from `create_run_tool()`, so all runs
+  of one provider share it. Tools and mounts are read once a call has its turn.
+- **`_mount_gate.py`** — `MountGate`, a first-in-first-out turn gate that works
+  across event loops and threads (a lock bound to one event loop would not). A
+  call that a host tool starts while its own call has the turn is part of that
+  call and does not wait (tracked with a context variable, so it needs no
+  explicit hand-off). A waiting call fails with `MountGateTimeoutError` after
+  `WAIT_TIMEOUT_SECS`, which `_run_code` turns into an error `Content` whose
+  message always shows. The gate does not cap how long a call holds its turn.
+  A copy of a tool shares the gate, and a pickled tool gets a fresh one.
 - **`_monty_bridge.py`** — `InlineCodeBridge` and `generate_type_stubs`,
   adapted from the reference Monty CodeAct repo. Runs guest code through the
   async pool (`AsyncMonty`) so it never blocks the event loop, and awaits every

@@ -12,8 +12,6 @@ scoped host directories, and the tool will capture files written under
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import json
 import logging
 import mimetypes
@@ -22,7 +20,7 @@ import stat
 from collections.abc import Callable, Iterator, Sequence
 from functools import partial
 from pathlib import Path, PurePosixPath
-from typing import Any, ClassVar, cast
+from typing import Any, cast
 
 from agent_framework import Content, FunctionTool
 from agent_framework._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
@@ -36,6 +34,7 @@ from agent_framework._tools import (
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
 from ._monty_bridge import InlineCodeBridge, generate_type_stubs
+from ._mount_gate import MountGate, MountGateTimeoutError
 from ._types import FileMount, FileMountInput
 
 logger = logging.getLogger("agent_framework")
@@ -268,18 +267,23 @@ class MontyExecuteCodeTool(FunctionTool):
     the same task/thread that owns the tool; they are not synchronized. Guest
     code runs in Monty worker processes and does not block the event loop, so
     concurrent ``execute_code`` calls overlap and each starts its own worker
-    process. Calls on a tool with a read-write mount (including ``workspace_root``)
-    run one at a time so written files are attributed to the right call.
+    process.
+
+    Calls on a tool that has a read-write mount (including ``workspace_root``)
+    take turns, so that written files are attributed to the right call. This
+    covers every run of one provider and works across event loops and threads.
+    A call waits at most 10 minutes for its turn and then returns an error. A call
+    that a host tool starts while its own call has the turn, such as a sub-agent
+    that uses the same provider, is part of that call and does not wait. Tools and
+    mounts are read when a call gets its turn. Separate tools or providers that
+    mount the same host directory do not take turns with each other, so give each
+    one its own directory.
 
     Keyword Args:
         include_detailed_errors: Include host exception types/messages and execution error details.
             Defaults to ``False``. Enable only for a trusted channel; diagnostics can contain secrets.
             This setting is independent of the outer client's error and sensitive-logging settings.
     """
-
-    # The lock binds to an event loop once it is contended, which makes it impossible to copy or pickle.
-    _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = FunctionTool._SHALLOW_COPY_FIELDS | {"_writable_mount_lock"}
-    _PICKLE_OMIT_FIELDS: ClassVar[set[str]] = FunctionTool._PICKLE_OMIT_FIELDS | {"_writable_mount_lock"}
 
     def __init__(
         self,
@@ -292,6 +296,7 @@ class MontyExecuteCodeTool(FunctionTool):
         tool_description_format: _ToolDescriptionFormat = "compact",
         include_detailed_errors: bool = False,
         _fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] | None = None,
+        _mount_gate: MountGate | None = None,
     ) -> None:
         if not isinstance(include_detailed_errors, bool):
             raise TypeError("include_detailed_errors must be a bool.")
@@ -314,7 +319,7 @@ class MontyExecuteCodeTool(FunctionTool):
         )
         self._file_mounts: dict[str, FileMount] = {}
         self._resource_limits: dict[str, Any] | None = dict(resource_limits) if resource_limits else None
-        self._writable_mount_lock: asyncio.Lock | None = None
+        self._mount_gate: MountGate = _mount_gate or MountGate()
 
         if tools is not None:
             self.add_tools(tools)
@@ -441,6 +446,7 @@ class MontyExecuteCodeTool(FunctionTool):
             resource_limits=self._resource_limits,
             tool_description_format=self._tool_description_format,
             include_detailed_errors=self._include_detailed_errors,
+            _mount_gate=self._mount_gate,
         )
 
     def build_serializable_state(self) -> dict[str, Any]:
@@ -517,13 +523,18 @@ class MontyExecuteCodeTool(FunctionTool):
         mounts.extend(self._file_mounts.values())
         return mounts
 
-    def _get_writable_mount_lock(self) -> asyncio.Lock:
-        # Created on first use because an unpickled tool restores this field as None.
-        if self._writable_mount_lock is None:
-            self._writable_mount_lock = asyncio.Lock()
-        return self._writable_mount_lock
-
     async def _run_code(self, *, code: str) -> list[Content]:
+        # Written files are attributed by comparing read-write mounts before and after the run, so calls that can
+        # write to the same host files take turns.
+        if not any(mount.mode == "read-write" for mount in self._effective_mounts()):
+            return await self._execute(code)
+        try:
+            async with self._mount_gate.hold():
+                return await self._execute(code)
+        except MountGateTimeoutError as exc:
+            return [Content.from_error(message=str(exc))]
+
+    async def _execute(self, code: str) -> list[Content]:
         include_detailed_errors = self._include_detailed_errors
         tools = list(self._managed_tools)
         mounts = self._effective_mounts()
@@ -533,35 +544,31 @@ class MontyExecuteCodeTool(FunctionTool):
         accepted_parameters = {tool_obj.name: tool_obj.parameters().get("properties", {}) for tool_obj in tools}
         type_stubs = generate_type_stubs(stub_map, accepted_parameters=accepted_parameters) if stub_map else None
 
-        # Written files are attributed by comparing read-write mounts before and
-        # after the run, so runs that can write to the same host files must not overlap.
-        has_writable_mount = any(mount.mode == "read-write" for mount in mounts)
-        async with self._get_writable_mount_lock() if has_writable_mount else contextlib.nullcontext():
-            # Snapshot mtimes of host files in read-write mounts so we can later
-            # identify which files the sandbox actually touched.
-            pre_state = _snapshot_writable_mounts(mounts)
+        # Snapshot mtimes of host files in read-write mounts so we can later
+        # identify which files the sandbox actually touched.
+        pre_state = _snapshot_writable_mounts(mounts)
 
-            bridge = InlineCodeBridge(
-                tool_map,
-                type_stubs=type_stubs,
-                mounts=[_to_monty_mount(mount) for mount in mounts] or None,
-                resource_limits=self._resource_limits,
-                include_detailed_errors=include_detailed_errors,
-            )
+        bridge = InlineCodeBridge(
+            tool_map,
+            type_stubs=type_stubs,
+            mounts=[_to_monty_mount(mount) for mount in mounts] or None,
+            resource_limits=self._resource_limits,
+            include_detailed_errors=include_detailed_errors,
+        )
 
-            try:
-                result = await bridge.run(code)
-            except Exception as exc:
-                return [
-                    Content.from_error(
-                        message="Execution error",
-                        error_details=f"{type(exc).__name__}: {exc}" if include_detailed_errors else None,
-                    ),
-                ]
+        try:
+            result = await bridge.run(code)
+        except Exception as exc:
+            return [
+                Content.from_error(
+                    message="Execution error",
+                    error_details=f"{type(exc).__name__}: {exc}" if include_detailed_errors else None,
+                ),
+            ]
 
-            contents = _build_execution_contents(result=result)
-            contents.extend(_capture_written_files(mounts, pre_state))
-            return contents
+        contents = _build_execution_contents(result=result)
+        contents.extend(_capture_written_files(mounts, pre_state))
+        return contents
 
 
 def _build_execution_contents(*, result: dict[str, Any]) -> list[Content]:

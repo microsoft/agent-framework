@@ -25,7 +25,8 @@ class MontyCodeActProvider(ContextProvider):
     ``tools``, ``approval_mode``, ``workspace_root``, ``file_mounts``, and
     ``resource_limits`` (Monty-only). ``resource_limits`` follows
     :class:`MontyExecuteCodeTool`, including its default 30-second guest
-    execution limit.
+    execution limit. Calls that can write to the same host files take turns
+    across every run of the provider, as described for :class:`MontyExecuteCodeTool`.
 
     ``tool_description_format`` controls parameter documentation in both
     injected instructions and the tool description. Pass ``"compact"`` (the

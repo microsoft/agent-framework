@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from agent_framework import FunctionTool
+from agent_framework import Content, FunctionTool
 from pydantic_monty import MontyRuntimeError, MountDir
 
 from agent_framework_monty import MontyExecuteCodeTool
 from agent_framework_monty import _monty_bridge as bridge_module
+from agent_framework_monty import _mount_gate as gate_module
 from agent_framework_monty._execute_code_tool import _make_tool_callback
 from agent_framework_monty._monty_bridge import InlineCodeBridge
 
@@ -178,17 +179,111 @@ async def test_concurrent_runs_without_a_writable_mount_overlap() -> None:
     assert not any(content.type == "error" for contents in results for content in contents)
 
 
-async def test_tool_state_leaves_out_the_writable_mount_lock_and_restores_usable(tmp_path: Path) -> None:
+async def test_runs_of_one_provider_take_turns_on_a_writable_mount(tmp_path: Path) -> None:
+    first_in_host_tool = asyncio.Event()
+    release_first = asyncio.Event()
+    second_reached_host_tool = asyncio.Event()
+
+    async def first_wait() -> None:
+        first_in_host_tool.set()
+        await release_first.wait()
+
+    async def second_wait() -> None:
+        second_reached_host_tool.set()
+
+    # A provider gives every agent run its own run-scoped tool.
+    execute_code = MontyExecuteCodeTool(tools=[first_wait, second_wait], workspace_root=tmp_path)
+    first_run = execute_code.create_run_tool()
+    second_run = execute_code.create_run_tool()
+    write_first = "from pathlib import Path\nPath('/input/first.txt').write_text('first')\nawait first_wait()\n"
+    write_second = "from pathlib import Path\nPath('/input/second.txt').write_text('second')\nawait second_wait()\n"
+
+    first = asyncio.create_task(first_run._run_code(code=write_first))
+    async with asyncio.timeout(30):
+        await first_in_host_tool.wait()
+    second = asyncio.create_task(second_run._run_code(code=write_second))
+    # A run that did not wait for its turn would have reached its host tool by now.
+    await asyncio.sleep(0.5)
+    assert not second_reached_host_tool.is_set()
+
+    release_first.set()
+    async with asyncio.timeout(30):
+        first_contents, second_contents = await asyncio.gather(first, second)
+
+    assert [(c.additional_properties or {}).get("path") for c in first_contents if c.type == "data"] == [
+        "/input/first.txt"
+    ]
+    assert [(c.additional_properties or {}).get("path") for c in second_contents if c.type == "data"] == [
+        "/input/second.txt"
+    ]
+
+
+async def test_host_tool_can_start_another_run_of_the_same_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A failure here would make the nested run wait for its caller, so keep it short.
+    monkeypatch.setattr(gate_module, "WAIT_TIMEOUT_SECS", 5.0)
     execute_code = MontyExecuteCodeTool(workspace_root=tmp_path)
-    await asyncio.gather(execute_code._run_code(code="1"), execute_code._run_code(code="2"))
+    outer_run = execute_code.create_run_tool()
+    inner_run = execute_code.create_run_tool()
 
-    # Use the pickle state hooks directly: copying or pickling the whole tool also depends on global telemetry state.
-    state = execute_code.__getstate__()
-    restored = MontyExecuteCodeTool.__new__(MontyExecuteCodeTool)
-    restored.__setstate__(state)
+    async def nested() -> str:
+        contents = await inner_run._run_code(code="1 + 1")
+        return contents[0].text or str(contents[0])
 
-    assert "_writable_mount_lock" not in state
-    assert not any(c.type == "error" for c in await restored._run_code(code="print('ok')"))
+    outer_run.add_tools(FunctionTool(name="nested", func=nested))
+
+    async with asyncio.timeout(30):
+        contents = await outer_run._run_code(code="print(await nested())")
+
+    assert [content.type for content in contents] == ["text"]
+    assert (contents[0].text or "").strip() == "2"
+
+
+async def test_call_that_waits_too_long_for_its_turn_returns_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gate_module, "WAIT_TIMEOUT_SECS", 0.3)
+    in_host_tool = asyncio.Event()
+    release = asyncio.Event()
+
+    async def block() -> None:
+        in_host_tool.set()
+        await release.wait()
+
+    execute_code = MontyExecuteCodeTool(tools=[block], workspace_root=tmp_path)
+    holder = asyncio.create_task(execute_code._run_code(code="await block()"))
+    async with asyncio.timeout(30):
+        await in_host_tool.wait()
+        waiting = await execute_code._run_code(code="1 + 1")
+
+    assert [content.type for content in waiting] == ["error"]
+    assert "waiting for another execute_code call" in str(waiting[0])
+
+    release.set()
+    async with asyncio.timeout(30):
+        assert not any(content.type == "error" for content in await holder)
+        assert not any(content.type == "error" for content in await execute_code._run_code(code="1 + 1"))
+
+
+async def test_tool_can_be_used_from_several_event_loops(tmp_path: Path) -> None:
+    async def pause() -> None:
+        await asyncio.sleep(0.05)
+
+    execute_code = MontyExecuteCodeTool(tools=[FunctionTool(name="pause", func=pause)], workspace_root=tmp_path)
+
+    async def two_overlapping_calls() -> tuple[list[Content], list[Content]]:
+        return await asyncio.gather(
+            execute_code._run_code(code="await pause()"),
+            execute_code._run_code(code="await pause()"),
+        )
+
+    def run_in_new_event_loop() -> tuple[list[Content], list[Content]]:
+        return asyncio.run(two_overlapping_calls())
+
+    results = [*await two_overlapping_calls(), *await asyncio.to_thread(run_in_new_event_loop)]
+
+    assert not any(content.type == "error" for contents in results for content in contents)
 
 
 @pytest.mark.parametrize("recording_host_tool", ["positional_or_keyword", "keyword_only"], indirect=True)

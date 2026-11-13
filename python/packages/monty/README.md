@@ -239,10 +239,21 @@ codeact = MontyCodeActProvider(
   `resource_limits` sets neither `max_feed_duration_secs` nor `max_duration_secs`,
   a **30-second** `max_feed_duration_secs` applies. Set it to another value, or to
   `None` (`resource_limits={"max_feed_duration_secs": None}`), to change or remove
-  the limit. Concurrent `execute_code` calls overlap and each starts its own
-  worker process, so bound concurrency in your application when serving many
-  callers. Calls on a tool with a `read-write` mount (including `workspace_root`)
-  run one at a time, so captured files stay attributed to the right call.
+  the limit. A call that reaches the limit returns an `Execution error`; with
+  `include_detailed_errors=True` its details name the limit
+  (`TimeoutError: feed time limit exceeded`). Concurrent `execute_code` calls
+  overlap and each starts its own worker process, so bound concurrency in your
+  application when serving many callers.
+- Calls that can write to the same host files take turns, so captured files stay
+  attributed to the right call. A tool with a `read-write` mount (including
+  `workspace_root`) serves one call at a time. This covers every run of one
+  provider and works across event loops and threads. A call waits at most 10
+  minutes for its turn and then returns an error, and a slow host tool holds up
+  the calls behind it. A call that a host tool starts while its own call has the
+  turn, such as a sub-agent that uses the same provider, is part of that call
+  and does not wait; the outer call also returns the files that the inner call
+  wrote. Separate tools or providers that mount the same host directory do not
+  take turns with each other, so give each one its own directory.
 
 ## DSL inside `execute_code`
 
