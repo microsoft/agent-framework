@@ -1,6 +1,1 @@
-﻿#nullable enable
-*REMOVED*Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler() -> void
-*REMOVED*Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler(System.Func<Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo!, System.Threading.CancellationToken, System.Threading.Tasks.Task<System.Net.Http.HttpClient?>!>? httpClientProvider) -> void
-*REMOVED*Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler(System.Net.Http.HttpClient! httpClient) -> void
-*REMOVED*Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DisposeAsync() -> System.Threading.Tasks.ValueTask
-Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler(System.Collections.Generic.IEnumerable<string!>! allowedHosts, System.Net.Http.IHttpMessageHandlerFactory! httpMessageHandlerFactory, string? httpClientName = null) -> void
+#nullable enable
