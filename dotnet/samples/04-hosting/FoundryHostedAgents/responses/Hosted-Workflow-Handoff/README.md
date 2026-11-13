@@ -1,6 +1,6 @@
 # Hosted-Workflow-Handoff
 
-A hosted triage handoff workflow: a triage agent routes each request to a specialist agent (a code expert or a creative writer) and hands control back when done. The sample also wires client-side and server-side MCP tools, and it uses a model deployment from its Foundry project. It is served over the Responses protocol.
+A hosted triage handoff workflow: a triage agent routes each request to a specialist agent (a code expert or a creative writer) and hands control back when done. The complete workflow is the one agent the container serves over the Responses protocol.
 
 This sample deploys to Foundry **directly from source (code / ZIP upload)**: the platform builds and runs your code with no container image. Source deploy is the default for .NET.
 
@@ -17,7 +17,7 @@ or later transitively.
 
 | File | Purpose |
 |------|---------|
-| `Program.cs` | Builds the triage + specialist agents and the handoff workflow, wires MCP tools, hosts it with the Responses protocol and serves demo pages. |
+| `Program.cs` | Builds the triage and specialist agents, serves the handoff workflow as the container's one agent, and maps the Responses protocol. |
 | `Pages.cs` | Static HTML demo pages. |
 | `ResponseStreamValidator.cs` | Validates captured SSE streams for the demo. |
 | `azure.yaml` | The unified `azd` project file: `codeConfiguration` (source/ZIP deploy), listen port, and selected Foundry project model. |
@@ -56,7 +56,7 @@ az login
 dotnet run
 ```
 
-The agent starts on `http://localhost:8088` and also serves demo pages at `/`, `/tool-demo` and `/workflow-demo`.
+The agent starts on `http://localhost:8088` and serves the workflow demo at `/` and `/workflow-demo`.
 
 ## Deploy to Foundry (source / ZIP)
 

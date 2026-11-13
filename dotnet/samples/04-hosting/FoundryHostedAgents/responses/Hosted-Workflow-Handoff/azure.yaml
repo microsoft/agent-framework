@@ -24,7 +24,7 @@ services:
                 cpu: "0.5"
                 memory: 1Gi
         description: |
-            A hosted triage handoff workflow routing to specialist agents, with client-side and server-side MCP tools, backed by a Foundry project model.
+            A hosted triage handoff workflow routing to specialist agents, backed by a Foundry project model.
         kind: hosted
         metadata:
             tags:
