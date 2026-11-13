@@ -5,7 +5,7 @@
 #     "agent-framework-tools",
 #     "agent-framework-monty",
 #     "mcp",
-#     "httpx",
+#     "httpx2",
 #     "textual>=6.2.1",
 #     "rich>=13.7.1",
 #     "python-dotenv",
@@ -55,7 +55,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-import httpx
+import httpx2 as httpx
 from agent_framework import (
     Agent,
     AgentModeProvider,
@@ -225,7 +225,7 @@ async def _connect_foundry_toolbox(stack: AsyncExitStack, url: str) -> ClientSes
             follow_redirects=True,
         )
     )
-    read, write, _ = await stack.enter_async_context(streamable_http_client(url=url, http_client=http_client))
+    read, write = await stack.enter_async_context(streamable_http_client(url=url, http_client=http_client))
     session = await stack.enter_async_context(ClientSession(read, write))
     await session.initialize()
     return session
