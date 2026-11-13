@@ -44,7 +44,10 @@ def _skip_quoted_token(formula: str, start: int) -> int:
     """Return the index after the quoted token starting at ``start``.
 
     Handles Power Fx escaped quotes (a doubled quote inside the literal).
-    Returns ``len(formula)`` for an unterminated literal.
+
+    Raises:
+        _UnsupportedExpressionError: If the literal is not terminated before
+            the end of the formula.
     """
     quote = formula[start]
     pos = start + 1
@@ -55,7 +58,7 @@ def _skip_quoted_token(formula: str, start: int) -> int:
                 continue
             return pos + 1
         pos += 1
-    return len(formula)
+    raise _UnsupportedExpressionError(f"unterminated string literal at position {start}")
 
 
 def _skip_comment(formula: str, start: int) -> int:
@@ -65,7 +68,9 @@ def _skip_comment(formula: str, start: int) -> int:
         return len(formula) if pos == -1 else pos + 1
     if formula.startswith("/*", start):
         pos = formula.find("*/", start + 2)
-        return len(formula) if pos == -1 else pos + 2
+        if pos == -1:
+            raise _UnsupportedExpressionError(f"unterminated block comment at position {start}")
+        return pos + 2
     return start
 
 
@@ -86,6 +91,7 @@ def _tokenize_formula(formula: str) -> list[tuple[str, Any]]:
     tokens: list[tuple[str, Any]] = []
     i = 0
     length = len(formula)
+    depth = 0
     while i < length:
         char = formula[i]
         if char.isspace():
@@ -93,8 +99,6 @@ def _tokenize_formula(formula: str) -> list[tuple[str, Any]]:
             continue
         if char in ('"', "'"):
             end = _skip_quoted_token(formula, i)
-            if end == length and formula[end - 1] != char:
-                raise _UnsupportedExpressionError(f"unterminated string literal at position {i}")
             tokens.append(("STR", formula[i + 1 : end - 1].replace(char + char, char)))
             i = end
             continue
@@ -102,13 +106,31 @@ def _tokenize_formula(formula: str) -> list[tuple[str, Any]]:
         if comment_end != i:
             i = comment_end
             continue
-        if char.isdigit():
+        if char.isdigit() or (char == "." and i + 1 < length and formula[i + 1].isdigit()):
             j = i
-            while j < length and (formula[j].isdigit() or formula[j] == "."):
-                j += 1
+            seen_dot = False
+            while j < length:
+                digit_char = formula[j]
+                if digit_char.isdigit():
+                    j += 1
+                elif digit_char == "." and not seen_dot:
+                    seen_dot = True
+                    j += 1
+                elif (
+                    digit_char in ("e", "E")
+                    and j > i
+                    and j + 1 < length
+                    and (
+                        formula[j + 1].isdigit()
+                        or (formula[j + 1] in "+-" and j + 2 < length and formula[j + 2].isdigit())
+                    )
+                ):
+                    j += 2 if formula[j + 1] in "+-" else 1
+                else:
+                    break
             text = formula[i:j]
             try:
-                value: Any = float(text) if "." in text else int(text)
+                value: Any = float(text) if ("." in text or "e" in text or "E" in text) else int(text)
             except ValueError:
                 raise _UnsupportedExpressionError(f"invalid numeric literal {text!r}") from None
             tokens.append(("NUM", value))
@@ -127,6 +149,14 @@ def _tokenize_formula(formula: str) -> list[tuple[str, Any]]:
             i += 2
             continue
         if char in "()<>=+-*/,!":
+            if char == "(":
+                depth += 1
+                if depth > _MAX_FORMULA_DEPTH:
+                    raise _UnsupportedExpressionError(
+                        f"formula nesting exceeds the fallback evaluator's maximum depth of {_MAX_FORMULA_DEPTH}"
+                    )
+            elif char == ")":
+                depth -= 1
             tokens.append(("OP", char))
             i += 1
             continue
@@ -138,6 +168,8 @@ def _tokenize_formula(formula: str) -> list[tuple[str, Any]]:
 
 
 _COMPARISON_OPS = ("=", "<>", "<", "<=", ">", ">=")
+_MAX_FORMULA_DEPTH = 64
+_RUNTIME_FAILED = object()
 
 
 class _SimpleFormulaEvaluator:
@@ -160,13 +192,21 @@ class _SimpleFormulaEvaluator:
         self._pos = 0
 
     def evaluate(self) -> Any:
-        """Evaluate the token stream and reject unconsumed trailing input."""
+        """Evaluate the token stream and reject unconsumed trailing input.
+
+        Runtime operand failures (failed conversions, function errors) do not
+        short-circuit the parse: they propagate the ``_RUNTIME_FAILED`` sentinel
+        so the whole formula stays structurally validated, and the documented
+        echo of the original formula is applied once here, at the boundary.
+        """
         result = self._parse_or()
         kind, value = self._peek()
         if kind != "EOF":
             raise _UnsupportedExpressionError(
                 f"unsupported syntax: unexpected {value!r} after a complete expression is outside the fallback subset"
             )
+        if result is _RUNTIME_FAILED:
+            return self._formula
         return result
 
     def _peek(self) -> tuple[str, Any]:
@@ -188,6 +228,9 @@ class _SimpleFormulaEvaluator:
         left = self._parse_and()
         while self._match_op("||", "Or") is not None:
             right = self._parse_and()
+            if left is _RUNTIME_FAILED or right is _RUNTIME_FAILED:
+                left = _RUNTIME_FAILED
+                continue
             left = bool(left) or bool(right)
         return left
 
@@ -195,6 +238,9 @@ class _SimpleFormulaEvaluator:
         left = self._parse_comparison()
         while self._match_op("And") is not None:
             right = self._parse_comparison()
+            if left is _RUNTIME_FAILED or right is _RUNTIME_FAILED:
+                left = _RUNTIME_FAILED
+                continue
             left = bool(left) and bool(right)
         return left
 
@@ -202,42 +248,57 @@ class _SimpleFormulaEvaluator:
         left = self._parse_additive()
         while (op := self._match_op(*_COMPARISON_OPS)) is not None:
             right = self._parse_additive()
+            if left is _RUNTIME_FAILED or right is _RUNTIME_FAILED:
+                left = _RUNTIME_FAILED
+                continue
             if op == "=":
                 left = left == right
             elif op == "<>":
                 left = left != right
-            elif op == "<":
-                left = left < right
-            elif op == "<=":
-                left = left <= right
-            elif op == ">":
-                left = left > right
+            elif left is None or right is None:
+                left = False
             else:
-                left = left >= right
+                try:
+                    if op == "<":
+                        left = left < right
+                    elif op == "<=":
+                        left = left <= right
+                    elif op == ">":
+                        left = left > right
+                    else:
+                        left = left >= right
+                except TypeError:
+                    left = _RUNTIME_FAILED
         return left
 
     def _parse_additive(self) -> Any:
-        left = self._parse_multiplicative()
+        left: Any = self._parse_multiplicative()
         while (op := self._match_op("+", "-")) is not None:
             right = self._parse_multiplicative()
+            if left is _RUNTIME_FAILED or right is _RUNTIME_FAILED:
+                left = _RUNTIME_FAILED
+                continue
             left_num = left if left is not None else 0
             right_num = right if right is not None else 0
             if op == "+":
                 try:
                     left = float(left_num) + float(right_num)
                 except (ValueError, TypeError):
-                    left = str(left) + str(right)
+                    left = str(left_num) + str(right_num)
             else:
                 try:
                     left = float(left_num) - float(right_num)
                 except (ValueError, TypeError):
-                    return self._formula
+                    left = _RUNTIME_FAILED
         return left
 
     def _parse_multiplicative(self) -> Any:
-        left = self._parse_unary()
+        left: Any = self._parse_unary()
         while (op := self._match_op("*", "/")) is not None:
             right = self._parse_unary()
+            if left is _RUNTIME_FAILED or right is _RUNTIME_FAILED:
+                left = _RUNTIME_FAILED
+                continue
             try:
                 if op == "*":
                     left = float(left if left is not None else 0) * float(right if right is not None else 0)
@@ -245,26 +306,32 @@ class _SimpleFormulaEvaluator:
                     right_float = float(right if right is not None else 0)
                     if right_float == 0:
                         logger.warning(f"Division by zero in expression: {self._formula}")
-                        return None
+                        left = None
+                        continue
                     left = float(left if left is not None else 0) / right_float
             except (ValueError, TypeError):
-                return self._formula
+                left = _RUNTIME_FAILED
         return left
 
     def _parse_unary(self) -> Any:
         kind, value = self._peek()
         if kind == "OP" and value == "!":
             self._advance()
-            return not bool(self._parse_unary())
+            operand = self._parse_unary()
+            if operand is _RUNTIME_FAILED:
+                return _RUNTIME_FAILED
+            return not bool(operand)
         if kind == "OP" and value == "-":
             self._advance()
             operand = self._parse_unary()
+            if operand is _RUNTIME_FAILED:
+                return _RUNTIME_FAILED
             if isinstance(operand, (int, float)) and not isinstance(operand, bool):
                 return -operand
             try:
                 return -float(operand if operand is not None else 0)
             except (ValueError, TypeError):
-                return self._formula
+                return _RUNTIME_FAILED
         return self._parse_primary()
 
     def _parse_primary(self) -> Any:
@@ -300,17 +367,21 @@ class _SimpleFormulaEvaluator:
                     break
                 raise _UnsupportedExpressionError(f"malformed argument list in call to {name}()")
         if name == "Not":
+            if any(arg is _RUNTIME_FAILED for arg in args):
+                return _RUNTIME_FAILED
             return not bool(args[0]) if args else True
         func = self._custom_functions.get(name)
         if func is None:
             raise _UnsupportedExpressionError(
                 f"function {name}() is not supported by the fallback; install/enable PowerFx for full Power Fx support"
             )
+        if any(arg is _RUNTIME_FAILED for arg in args):
+            return _RUNTIME_FAILED
         try:
             return func(*args)
         except Exception as e:
             logger.warning(f"Function {name} failed: {e}")
-            return self._formula
+            return _RUNTIME_FAILED
 
     def _resolve_identifier(self, path: str) -> Any:
         if path.startswith(("Local.", "Workflow.", "Agent.", "Conversation.", "System.")):
@@ -740,8 +811,12 @@ class WorkflowState:
         - Trivia: whitespace and ``//`` / ``/* */`` comments
 
         Unresolved references are returned as-is. ``None`` (Blank) is treated
-        as ``0`` in arithmetic, ``+`` falls back to string concatenation, and
-        division by zero returns ``None``.
+        as ``0`` in arithmetic, ``+`` falls back to string concatenation,
+        ordered comparisons against Blank are false, and division by zero
+        returns ``None``. Operands that fail at runtime (failed conversions,
+        function errors) keep the original formula: the failure propagates
+        through the parse and the formula is echoed once at the evaluation
+        boundary. Nesting deeper than 64 levels is rejected.
 
         Args:
             formula: The formula to evaluate (without leading '=')
