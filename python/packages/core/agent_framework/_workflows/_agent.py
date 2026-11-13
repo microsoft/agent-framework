@@ -756,6 +756,7 @@ class WorkflowAgent(BaseAgent):
                     agent_id=data.agent_id,
                     response_id=data.response_id,
                     message_id=data.message_id,
+                    merge_mode=data.merge_mode,
                     created_at=data.created_at,
                     # The attribute is typed wider than the constructor accepts (custom
                     # connectors may set any string); forward the value unchanged.
