@@ -106,13 +106,13 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
     # objects, so fall back to it when the list is absent.
     context_provider_names: list[str] = []
     providers = getattr(entity_object, "context_providers", None)
-    if providers:
-        for provider in providers:
-            if provider is not None and hasattr(provider, "__class__"):
+    if isinstance(providers, (list, tuple)):
+        for provider in cast("list[Any]", providers):
+            if provider is not None:
                 context_provider_names.append(type(provider).__name__)
     if not context_provider_names:
         single_provider = getattr(entity_object, "context_provider", None)
-        if single_provider is not None and hasattr(single_provider, "__class__"):
+        if single_provider is not None:
             context_provider_names = [type(single_provider).__name__]
     if context_provider_names:
         metadata["context_provider"] = context_provider_names  # type: ignore
