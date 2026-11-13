@@ -448,6 +448,15 @@ async def test_approval_wire_ids_bind_only_to_exact_pending_checkpoint() -> None
         assert not rejected["output"]
     wrong_scope = await _post(server, full, sandbox="other", previous_response_id=first["id"])
     assert wrong_scope["status"] == "failed"
+    rejected_options: list[dict[str, Any]] = [
+        {"additional_function_arguments": {"tenant_id": "forged"}},
+        {"extra_body": {"additional_function_arguments": None}},
+    ]
+    for payload in rejected_options:
+        rejected = await _post(server, full, previous_response_id=first["id"], **payload)
+        assert rejected["status"] == "failed"
+        assert "Native workflow preparation failed" in rejected["error"]["message"]
+        assert not rejected["output"]
     completed = await _post(server, full, previous_response_id=first["id"])
     assert completed["status"] == "completed", completed
     assert _texts(completed) == ["first:True", "second:False"]
@@ -645,6 +654,45 @@ async def test_streaming_framework_output_keeps_occurrence_relative_citation_off
     assert message["content"][0]["annotations"] == [_expected_url_citation(start_index=4, end_index=10)]
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"additional_function_arguments": {"tenant_id": "forged"}},
+        {"extra_body": {"additional_function_arguments": None}},
+        {"max_output_tokens": 30, "max_tokens": 999},
+        {"instructions": None},
+    ],
+)
+@pytest.mark.parametrize("stream", [False, True])
+async def test_unlisted_caller_fields_fail_before_workflow_factory_or_parser(
+    payload: dict[str, Any], stream: bool
+) -> None:
+    created: list[ResponsesRequest] = []
+    parsed: list[ResponsesRequest] = []
+
+    def create(request: ResponsesRequest) -> Workflow:
+        created.append(request)
+        return _build()
+
+    async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
+        parsed.append(request)
+        return await _parse(request)
+
+    server = _server(create, parser=parse)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server), base_url="http://test") as client:
+        response = await client.post("/responses", json={"input": '{"text":"one"}', "stream": stream, **payload})
+
+    assert response.status_code == 200
+    if stream:
+        assert "response.failed" in response.text
+        assert "Native workflow preparation failed" in response.text
+    else:
+        assert response.json()["status"] == "failed"
+        assert "Native workflow preparation failed" in response.json()["error"]["message"]
+    assert not created
+    assert not parsed
+
+
 async def test_native_agent_executor_applies_options_without_mutating_defaults_or_double_keywords() -> None:
     calls: list[dict[str, Any]] = []
     lifecycle: list[str] = []
@@ -662,13 +710,18 @@ async def test_native_agent_executor_applies_options_without_mutating_defaults_o
     async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
         return WorkflowTurn(input=[Message("user", await request.get_input_text() or "")])
 
-    server = _server(create, parser=parse)
-    first = await _post(server, "one", temperature=0.7, max_output_tokens=12, store=True)
+    def prepare_options(request: ResponsesRequest, options: dict[str, Any]) -> dict[str, Any]:
+        options["vendor_option"] = request.request["vendor_option"]
+        return options
+
+    server = _server(create, parser=parse, prepare_options=prepare_options)
+    first = await _post(server, "one", temperature=0.7, max_output_tokens=12, store=True, vendor_option="first")
     assert first["status"] == "completed", first
-    second = await _post(server, "two", temperature=0.4, store=False, call="call-two")
+    second = await _post(server, "two", temperature=0.4, store=False, call="call-two", vendor_option="second")
     assert second["status"] == "completed", second
     assert [call["options"]["store"] for call in calls] == [False, False]
     assert [call["options"]["temperature"] for call in calls] == [0.7, 0.4]
+    assert [call["options"]["vendor_option"] for call in calls] == ["first", "second"]
     assert calls[0]["options"]["max_tokens"] == 12
     assert all(
         agent.default_options["temperature"] == 0.2 and agent.default_options["store"] is True for agent in agents
