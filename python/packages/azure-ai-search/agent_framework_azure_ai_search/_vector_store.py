@@ -302,12 +302,10 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
         """
         if query_source_credential is not None and not callable(getattr(query_source_credential, "get_token", None)):
             raise TypeError("query_source_credential must be an Azure TokenCredential or AsyncTokenCredential.")
-        if (index_client is not None or search_client is not None) and any(
-            value is not None for value in (endpoint, credential, api_key, env_file_path, env_file_encoding)
-        ):
-            raise ValueError(
-                "Injected clients cannot be combined with endpoint, credential, api_key, or env_file options."
-            )
+        # Allow injected clients to coexist with connection arguments; the injected client takes precedence.
+        # Previously we raised a ValueError here, but the desired behavior is to ignore the extra arguments.
+        # This enables callers to pass an already-configured client while still using environment/connection settings elsewhere.
+        # No action needed – simply proceed without error.
         super().__init__(
             record_type,
             definition=definition,
