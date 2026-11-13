@@ -229,6 +229,18 @@ async def test_subclass_extra_request_options_are_forwarded(openai_unit_test_env
     assert call_kwargs["dimensions"] == 8
 
 
+async def test_serialize_with_timeout(openai_unit_test_env: dict[str, str]) -> None:
+    settings = {
+        "model": openai_unit_test_env["OPENAI_EMBEDDING_MODEL"],
+        "api_key": openai_unit_test_env["OPENAI_API_KEY"],
+        "timeout": 45.0,
+    }
+
+    client = OpenAIEmbeddingClient.from_dict(settings)
+    dumped_settings = client.to_dict()
+    assert dumped_settings["timeout"] == 45.0
+
+
 async def test_rejected_extra_request_options_send_nothing(openai_unit_test_env: dict[str, str]) -> None:
     class CompatibleEmbeddingClient(OpenAIEmbeddingClient):
         def _prepare_extra_request_options(self, options: Any) -> dict[str, Any]:
