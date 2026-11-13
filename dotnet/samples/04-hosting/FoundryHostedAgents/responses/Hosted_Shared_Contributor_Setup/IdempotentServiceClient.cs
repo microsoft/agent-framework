@@ -1,7 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable IDE0005 // This file is linked into projects with different implicit using sets.
+
 using System.Net.Http.Json;
 using System.Text.Json;
+
+#pragma warning restore IDE0005
 
 namespace Hosted_Shared_Contributor_Setup;
 

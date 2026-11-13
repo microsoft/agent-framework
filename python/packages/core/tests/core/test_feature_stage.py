@@ -10,7 +10,7 @@ from typing import Protocol, runtime_checkable
 
 import pytest
 
-from agent_framework import ComputerSafetyCheck, Content
+from agent_framework import ComputerSafetyCheck, Content, MemoryIndexEntry  # ty: ignore[deprecated]
 from agent_framework import ExperimentalFeature as PublicExperimentalFeature
 from agent_framework import ReleaseCandidateFeature as PublicReleaseCandidateFeature
 from agent_framework._feature_stage import (
@@ -133,6 +133,15 @@ def test_experimental_function_warns_on_call_and_not_on_definition() -> None:
     warning_index = next(i for i, line in enumerate(lines) if line == ".. warning:: Experimental")
     args_index = next(i for i, line in enumerate(lines) if line == "Args:")
     assert warning_index < args_index
+
+
+def test_deprecated_experimental_class_warnings_point_to_caller() -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        MemoryIndexEntry("topic", "topic", "summary", "2026-01-01")  # ty: ignore[deprecated]
+
+    assert {item.category for item in caught} == {ExperimentalWarning, DeprecationWarning}
+    assert all(item.filename == __file__ for item in caught)
 
 
 def test_experimental_class_warns_on_instantiation_and_not_on_definition() -> None:

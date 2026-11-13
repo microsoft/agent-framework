@@ -114,8 +114,7 @@ public sealed class HostedOutboundUserAgentTests : IAsyncDisposable
         IChatClient chatClient = projectResponsesClient.AsIChatClient(Deployment);
         AIAgent agent = new ChatClientAgent(chatClient);
 
-        builder.Services.AddFoundryResponses(agent, new InMemoryAgentSessionStore());
-        builder.Services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
+        builder.Services.AddFoundryResponses(agent, new TestAgentSessionStore());
         builder.Services.AddLogging();
 
         this._app = builder.Build();
@@ -166,7 +165,7 @@ public sealed class HostedOutboundUserAgentTests : IAsyncDisposable
         // Act
         for (int i = 0; i < 50; i++)
         {
-            FoundryHostingExtensions.TryApplyUserAgent(agent);
+            ServiceCollectionExtensions.TryApplyUserAgent(agent);
         }
 
         // Assert: exactly one HostedAgentUserAgentPolicy entry on the shared OpenAIRequestPolicies.
@@ -195,8 +194,8 @@ public sealed class HostedOutboundUserAgentTests : IAsyncDisposable
         // Act
         for (int i = 0; i < 10; i++)
         {
-            FoundryHostingExtensions.TryApplyUserAgent(a1);
-            FoundryHostingExtensions.TryApplyUserAgent(a2);
+            ServiceCollectionExtensions.TryApplyUserAgent(a1);
+            ServiceCollectionExtensions.TryApplyUserAgent(a2);
         }
 
         // Assert

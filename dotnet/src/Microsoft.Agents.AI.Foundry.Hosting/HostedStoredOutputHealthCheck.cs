@@ -2,14 +2,12 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -35,22 +33,22 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// readiness probe is the wrong place to turn an uncertainty into an outage.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
 {
     private readonly IServiceProvider _serviceProvider;
-    private readonly FoundryResponsesOptions _hostingOptions;
+    private readonly FoundryResponsesServerOptions _options;
     private readonly ILogger<HostedStoredOutputHealthCheck>? _logger;
 
     public HostedStoredOutputHealthCheck(
         IServiceProvider serviceProvider,
-        IOptions<FoundryResponsesOptions>? hostingOptions = null,
+        FoundryResponsesServerOptions hostingOptions,
         ILogger<HostedStoredOutputHealthCheck>? logger = null)
     {
         _ = Throw.IfNull(serviceProvider);
+        _ = Throw.IfNull(hostingOptions);
 
         this._serviceProvider = serviceProvider;
-        this._hostingOptions = hostingOptions?.Value ?? new FoundryResponsesOptions();
+        this._options = hostingOptions;
         this._logger = logger;
     }
 
@@ -58,28 +56,34 @@ internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
     {
         _ = Throw.IfNull(context);
 
-        if (this._hostingOptions.AllowStoredOutputEnabled)
+        if (this._options.InferenceStoredOutputAllowed)
         {
             return HealthCheckResult.Healthy(
-                "The hosted agent backend storage usage was detected and the stored output enabled setting is explicitly allowing it.");
+                "The hosted agent backend storage usage was detected and inference stored output is explicitly allowed.");
         }
 
         List<string> storingAgents = [];
         var checkedAgents = 0;
 
-        foreach (var agent in this.ResolveAgents())
+        // Agents may be registered as scoped or transient, so they are resolved from a scope that is
+        // disposed once the check is done, the same way the response handler resolves them per run.
+        AsyncServiceScope serviceScope = this._serviceProvider.CreateAsyncScope();
+        await using (serviceScope.ConfigureAwait(false))
         {
-            if (agent.GetService<ChatClientAgent>() is not { } chatClientAgent)
+            foreach (var agent in ServiceCollectionExtensions.ResolveRegisteredAgents(serviceScope.ServiceProvider))
             {
-                // Hosting only reaches the store setting through ChatClientAgent's chat options, so any
-                // other agent runs untouched and there is nothing to report.
-                continue;
-            }
+                if (agent.GetService<ChatClientAgent>() is not { } chatClientAgent)
+                {
+                    // Hosting only reaches the store setting through ChatClientAgent's chat options, so any
+                    // other agent runs untouched and there is nothing to report.
+                    continue;
+                }
 
-            checkedAgents++;
-            if (await this.StoresItsOwnResponsesAsync(agent, cancellationToken).ConfigureAwait(false))
-            {
-                storingAgents.Add(agent.Name ?? agent.Id);
+                checkedAgents++;
+                if (await this.StoresItsOwnResponsesAsync(agent, cancellationToken).ConfigureAwait(false))
+                {
+                    storingAgents.Add(agent.Name ?? agent.Id);
+                }
             }
         }
 
@@ -89,7 +93,7 @@ internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
                 status: context.Registration.FailureStatus,
                 description: string.Create(
                     CultureInfo.InvariantCulture,
-                    $"Stored output: {storingAgents.Count} registered agent(s) should not have server side storage enabled. This will produce a new untracked conversation/response in the server while the hosted agent will also generate a conversation for the request of the agent. This setting is only allowed when enabling the FoundryResponsesOptions.AllowStoredOutputEnabled flag, which leaves the agent's own storage setting untouched and keeps that second recording on purpose."),
+                    $"Stored output: {storingAgents.Count} registered agent(s) should not have server side storage enabled. This will produce a new untracked conversation/response in the server while the hosted agent will also generate a conversation for the request of the agent. This setting is only allowed when enabling the FoundryResponsesServerOptions.InferenceStoredOutputAllowed flag, which leaves the agent's own storage setting untouched and keeps that second recording on purpose."),
                 data: new Dictionary<string, object>(StringComparer.Ordinal) { ["storingAgents"] = storingAgents });
         }
 
@@ -157,17 +161,11 @@ internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
         return probe.StoredOutputEnabled is true;
     }
 
-    /// <summary>
-    /// Every agent this container can serve: the ones registered under a name, plus the default.
-    /// </summary>
-    private List<AIAgent> ResolveAgents() => FoundryHostingExtensions.ResolveRegisteredAgents(this._serviceProvider);
-
     [LoggerMessage(LogLevel.Debug, "Could not probe the stored output setting for agent '{AgentName}'.", EventId = 0)]
     private static partial void LogStoredOutputProbeFailed(
         ILogger logger,
         string? agentName,
         Exception exception);
-
     [LoggerMessage(LogLevel.Debug, "Agent '{AgentName}' builds a request whose stored output setting could not be determined.", EventId = 0)]
     private static partial void LogStoredOutputSettingUnknown(ILogger logger, string? agentName);
 }

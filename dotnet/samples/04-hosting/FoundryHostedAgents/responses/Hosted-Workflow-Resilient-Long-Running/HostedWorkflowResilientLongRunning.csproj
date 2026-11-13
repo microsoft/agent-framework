@@ -14,24 +14,24 @@
     <RootNamespace>HostedWorkflowResilientLongRunning</RootNamespace>
     <AssemblyName>HostedWorkflowResilientLongRunning</AssemblyName>
     <UserSecretsId>440f42c9-f64e-441e-9d92-ea814203075e</UserSecretsId>
-    <AgentFrameworkVersion>1.22.0-preview.260918.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.27.0-preview.261030.1</AgentFrameworkVersion>
     <LocalAgentFrameworkRoot>$(MSBuildThisFileDirectory)..\..\..\..\..\src</LocalAgentFrameworkRoot>
     <UseLocalAgentFramework Condition="'$(UseLocalAgentFramework)' == '' and Exists('$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj')">true</UseLocalAgentFramework>
+    <DefineConstants Condition="'$(UseLocalAgentFramework)' == 'true'">$(DefineConstants);USE_LOCAL_AGENT_FRAMEWORK_SOURCE</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Hosted_Shared_Contributor_Setup\Hosted_Shared_Contributor_Setup.csproj" />
+    <Compile Include="..\Hosted_Shared_Contributor_Setup\IdempotentServiceClient.cs"
+             Link="IdempotentServiceClient.cs"
+             Condition="Exists('..\Hosted_Shared_Contributor_Setup\IdempotentServiceClient.cs')" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(UseLocalAgentFramework)' == 'true'">
     <ProjectReference Include="$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj" />
-    <ProjectReference Include="$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(UseLocalAgentFramework)' != 'true'">
     <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="$(AgentFrameworkVersion)" />
-    <!-- Workflows ships as a stable package, so it has no -preview build matching AgentFrameworkVersion. -->
-    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.22.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -39,5 +39,6 @@
   </ItemGroup>
 
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.Web" />
+  <Import Project="..\..\scripts\SourceDeployment.targets" Condition="Exists('..\..\scripts\SourceDeployment.targets')" />
 
 </Project>

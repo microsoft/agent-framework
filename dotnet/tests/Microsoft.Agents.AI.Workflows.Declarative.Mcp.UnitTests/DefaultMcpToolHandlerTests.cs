@@ -19,23 +19,23 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests;
 public sealed class DefaultMcpToolHandlerTests
 {
     [Fact]
-    public void Constructor_WithNullHttpClientFactory_ShouldThrow()
+    public void Constructor_WithNullHttpMessageHandlerFactory_ShouldThrow()
     {
         // Act
-        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() => new DefaultMcpToolHandler(null!, "workflow-mcp"));
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() => new DefaultMcpToolHandler(["example.com"], null!, "workflow-mcp"));
 
         // Assert
-        Assert.Equal("httpClientFactory", exception.ParamName);
+        Assert.Equal("httpMessageHandlerFactory", exception.ParamName);
     }
 
     [Fact]
     public void Constructor_WithNullHttpClientName_ShouldThrow()
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new();
+        Mock<IHttpMessageHandlerFactory> factory = new();
 
         // Act
-        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() => new DefaultMcpToolHandler(factory.Object, null!));
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() => new DefaultMcpToolHandler(["example.com"], factory.Object, null!));
 
         // Assert
         Assert.Equal("httpClientName", exception.ParamName);
@@ -53,8 +53,8 @@ public sealed class DefaultMcpToolHandlerTests
         bool invalidName)
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
-        DefaultMcpToolHandler handler = new(factory.Object, "workflow-mcp");
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
+        DefaultMcpToolHandler handler = new(["example.com"], factory.Object, "workflow-mcp");
         Dictionary<string, string> headers = new()
         {
             [invalidName ? $"X-Test{invalidCharacter}" : "X-Test"] = invalidName ? "value" : $"value{invalidCharacter}"
@@ -66,15 +66,15 @@ public sealed class DefaultMcpToolHandlerTests
 
         // Assert
         Assert.Equal("headers", exception.ParamName);
-        factory.Verify(f => f.CreateClient(It.IsAny<string>()), Times.Never);
+        factory.Verify(f => f.CreateHandler(It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
     public async Task InvokeToolAsync_WithCancelledToken_ShouldRejectBeforeClientCreationAsync()
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
-        DefaultMcpToolHandler handler = new(factory.Object, "workflow-mcp");
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
+        DefaultMcpToolHandler handler = new(["example.com"], factory.Object, "workflow-mcp");
         using CancellationTokenSource cancellation = new();
         cancellation.Cancel();
 
@@ -83,7 +83,103 @@ public sealed class DefaultMcpToolHandlerTests
             "https://example.com/mcp", null, "ping", null, null, null, cancellation.Token));
 
         // Assert
-        factory.Verify(f => f.CreateClient(It.IsAny<string>()), Times.Never);
+        factory.Verify(f => f.CreateHandler(It.IsAny<string>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("ping")]
+    [InlineData(DefaultMcpToolHandler.ListToolsToolName)]
+    public async Task InvokeToolAsync_WithoutAllowedHosts_ShouldRejectBeforeClientCreationAsync(string toolName)
+    {
+        // Arrange
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
+        DefaultMcpToolHandler handler = new([], factory.Object, "workflow-mcp");
+
+        // Act
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(() => handler.InvokeToolAsync(
+            "https://example.com/mcp", null, toolName, null, null, null));
+
+        // Assert
+        Assert.Contains("allowed hosts", exception.Message);
+        factory.Verify(f => f.CreateHandler(It.IsAny<string>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("https://other.example/mcp")]
+    [InlineData("https://sub.example.com/mcp")]
+    [InlineData("https://example.com.other.example/mcp")]
+    [InlineData("https://example.com:8443/mcp")]
+    [InlineData("http://example.com/mcp")]
+    [InlineData("https://example.com@other.example/mcp")]
+    public async Task InvokeToolAsync_WithUnlistedDestination_ShouldRejectBeforeClientCreationAsync(string serverUrl)
+    {
+        // Arrange
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
+        DefaultMcpToolHandler handler = new(["example.com"], factory.Object, "workflow-mcp");
+
+        // Act
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(() => handler.InvokeToolAsync(
+            serverUrl, null, "ping", null, null, null));
+
+        // Assert
+        Assert.Contains("allowed hosts", exception.Message);
+        factory.Verify(f => f.CreateHandler(It.IsAny<string>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("Host")]
+    [InlineData("hOsT")]
+    public async Task InvokeToolAsync_WithHostHeader_ShouldRejectBeforeClientCreationAsync(string headerName)
+    {
+        // Arrange
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
+        DefaultMcpToolHandler handler = new(["example.com"], factory.Object, "workflow-mcp");
+        Dictionary<string, string> headers = new() { [headerName] = "other.example" };
+
+        // Act
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(() => handler.InvokeToolAsync(
+            "https://example.com/mcp", null, "ping", null, headers, null));
+
+        // Assert
+        Assert.Contains("Host header", exception.Message);
+        factory.Verify(f => f.CreateHandler(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public void Constructor_WithNullAllowedHosts_ShouldThrow()
+    {
+        // Arrange
+        Mock<IHttpMessageHandlerFactory> factory = new();
+
+        // Act
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            new DefaultMcpToolHandler(null!, factory.Object, "workflow-mcp"));
+
+        // Assert
+        Assert.Equal("allowedHosts", exception.ParamName);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("https://example.com")]
+    [InlineData("example.com/path")]
+    [InlineData("*.example.com")]
+    [InlineData("example.com:0")]
+    [InlineData("example.com:65536")]
+    [InlineData("example.com:invalid")]
+    public void Constructor_WithInvalidAllowedHost_ShouldThrow(string? allowedHost)
+    {
+        // Arrange
+        Mock<IHttpMessageHandlerFactory> factory = new();
+
+        // Act
+        ArgumentException exception = Assert.Throws<ArgumentException>(() =>
+            new DefaultMcpToolHandler([allowedHost!], factory.Object, "workflow-mcp"));
+
+        // Assert
+        Assert.Equal("allowedHosts", exception.ParamName);
     }
 
     #region Reserved Tools/List Tests
@@ -112,8 +208,8 @@ public sealed class DefaultMcpToolHandlerTests
     public async Task InvokeToolAsync_WithListToolsArguments_ShouldThrowArgumentExceptionAsync()
     {
         // Arrange
-        Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
-        DefaultMcpToolHandler handler = new(factory.Object, "workflow-mcp");
+        Mock<IHttpMessageHandlerFactory> factory = new(MockBehavior.Strict);
+        DefaultMcpToolHandler handler = new(["example.com"], factory.Object, "workflow-mcp");
 
         // Act
         ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(() => handler.InvokeToolAsync(
@@ -122,7 +218,7 @@ public sealed class DefaultMcpToolHandlerTests
 
         // Assert
         Assert.Contains("does not accept tool arguments", exception.Message);
-        factory.Verify(f => f.CreateClient(It.IsAny<string>()), Times.Never);
+        factory.Verify(f => f.CreateHandler(It.IsAny<string>()), Times.Never);
     }
 
     [Fact]

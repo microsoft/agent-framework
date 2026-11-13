@@ -11,6 +11,28 @@ informed: []
 
 Supersedes [ADR-0026](0026-hosted-session-identity-context.md).
 
+> **Update (2026-11-05):** `HostedFoundryMemoryProviderScopes` was removed during pre-stable
+> API cleanup. Hosted memory samples now read `session.GetFoundryHostedUserId()` directly when
+> constructing `FoundryMemoryProvider.State`, keeping the trusted identity-to-memory-scope mapping
+> visible without a memory-specific hosting helper.
+>
+> `HostedSessionIsolationKeyProvider` was also removed. The handler now reads
+> `ResponseContext.PlatformContext.UserIdKey` directly. Local requests without a user id run
+> unscoped, while tests or local clients that need distinct users can send `x-agent-user-id` for
+> AgentServer to populate `PlatformContext`.
+>
+> The public `HostedSessionContext` / `GetHostedContext()` surface was replaced by
+> `AgentSession.GetFoundryHostedUserId()`. The hosting layer persists the resolved user id as a plain string
+> in the session state bag, making clear that it is a user partition and not the Foundry hosted
+> session id.
+>
+> **Update (2026-11-11):** Option A for call id propagation was replaced. Foundry toolbox MCP connections are now
+> opened for each response, so the response handler passes `context.PlatformContext?.CallId` to that response's
+> toolbox scope, and each connection's `FoundryToolboxBearerTokenHandler` is created with that call id. Every request
+> of the connection's MCP session, including `initialize`, carries the call id that opened it, even when a tool runs
+> without the response's execution context. `HostedCallContext` and its re-application before each egress point were
+> removed, which also removes the "missed re-apply silently drops the header" consequence listed below.
+
 ## Context and Problem Statement
 
 [ADR-0026](0026-hosted-session-identity-context.md) sourced the hosted-agent end-user identity from `ResponseContext.Isolation` (an `IsolationContext` typed `UserIsolationKey` / `ChatIsolationKey`), injected by the platform as the `x-agent-user-isolation-key` and `x-agent-chat-isolation-key` headers.
