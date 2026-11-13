@@ -212,7 +212,7 @@ See the [consumer skills catalog](./skills/) for details.
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| Authentication errors when using Azure credentials | Not signed in to Azure CLI | Run `az login` before starting your app |
+| Authentication errors when using Azure credentials | No valid Azure credential is available | Run `az login` or configure another supported credential source |
 | API key errors | Wrong or missing API key | Verify the key and ensure it's for the correct resource/provider |
 
 > **Tip:** `DefaultAzureCredential` is convenient for development but in production, consider using a specific credential (e.g., `ManagedIdentityCredential`) to avoid latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
