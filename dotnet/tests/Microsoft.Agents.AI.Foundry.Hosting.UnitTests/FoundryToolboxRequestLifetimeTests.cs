@@ -336,6 +336,7 @@ public sealed class FoundryToolboxRequestLifetimeTests
         var recoveryExits = 0;
 
         // Act
+#pragma warning disable CA2025 // The handler is never disposed in this test, and the run is awaited below.
         var run = Task.Run(() => RunAsync(
             handler,
             callId: "call-a",
@@ -348,6 +349,7 @@ public sealed class FoundryToolboxRequestLifetimeTests
                     .Callback(() => Interlocked.Increment(ref recoveryExits))
                     .Returns(Task.CompletedTask);
             }));
+#pragma warning restore CA2025
         await opening.Task.WaitAsync(s_runTimeout);
         shutdown.Cancel();
         var events = await run.WaitAsync(s_shutdownTimeout);
@@ -404,9 +406,9 @@ public sealed class FoundryToolboxRequestLifetimeTests
     {
         var services = new ServiceCollection();
         services.AddSingleton(sessionStore ?? new TestAgentSessionStore());
-        services.AddSingleton(agent);
         return new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
+            new FoundryHostedAgentSource(agent),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
             options ?? new FoundryResponsesServerOptions(),
             service);

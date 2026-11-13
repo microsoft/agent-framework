@@ -34,7 +34,7 @@ public sealed class FoundryListenPortTests
         var services = CreateServices();
 
         // Act
-        services.AddFoundryResponses();
+        services.AddFoundryResponses(Mock.Of<AIAgent>());
 
         // Assert
         Assert.Equal("http://+:8088", GetConfiguredListenUrl(services));
@@ -63,7 +63,7 @@ public sealed class FoundryListenPortTests
         var services = CreateServices(hosted: false);
 
         // Act
-        services.AddFoundryResponses();
+        services.AddFoundryResponses(Mock.Of<AIAgent>());
 
         // Assert
         Assert.Null(GetConfiguredListenUrl(services));
@@ -82,7 +82,7 @@ public sealed class FoundryListenPortTests
         });
 
         // Act
-        services.AddFoundryResponses();
+        services.AddFoundryResponses(Mock.Of<AIAgent>());
 
         // Assert
         Assert.Equal("http://+:8088", GetConfiguredListenUrl(services));
@@ -98,7 +98,7 @@ public sealed class FoundryListenPortTests
         });
 
         // Act
-        services.AddFoundryResponses();
+        services.AddFoundryResponses(Mock.Of<AIAgent>());
 
         // Assert
         Assert.Equal("http://+:9099", GetConfiguredListenUrl(services));
@@ -115,26 +115,13 @@ public sealed class FoundryListenPortTests
         {
             [ServiceCollectionExtensions.ListenPortKey] = port,
         });
-        services.AddFoundryResponses();
+        services.AddFoundryResponses(Mock.Of<AIAgent>());
 
         // Act & Assert
         var exception = Assert.Throws<InvalidOperationException>(() => GetConfiguredListenUrl(services));
         Assert.Contains(port, exception.Message, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void AddFoundryResponses_CalledTwiceWhenHosted_ConfiguresFoundryUrlIdempotently()
-    {
-        // Arrange
-        var services = CreateServices();
-
-        // Act
-        services.AddFoundryResponses();
-        services.AddFoundryResponses();
-
-        // Assert
-        Assert.Equal("http://+:8088", GetConfiguredListenUrl(services));
-    }
 
     [Fact]
     public void AddFoundryResponses_WithStandaloneAgentServerCore_ListensOnFoundryPortOnce()
@@ -144,7 +131,7 @@ public sealed class FoundryListenPortTests
         services.AddAgentServerCore();
 
         // Act
-        services.AddFoundryResponses();
+        services.AddFoundryResponses(Mock.Of<AIAgent>());
 
         // Assert
         Assert.Equal("http://+:8088", GetConfiguredListenUrl(services));
@@ -159,7 +146,7 @@ public sealed class FoundryListenPortTests
         services.AddAgentServerCore();
 
         // Act
-        services.AddFoundryResponses();
+        services.AddFoundryResponses(Mock.Of<AIAgent>());
 
         // Assert
         Assert.Equal("http://+:8088", GetConfiguredListenUrl(services));

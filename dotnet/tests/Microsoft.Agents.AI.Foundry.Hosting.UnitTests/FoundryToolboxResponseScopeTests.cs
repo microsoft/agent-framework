@@ -99,17 +99,19 @@ public sealed class FoundryToolboxResponseScopeTests
         var agent = new ChatClientAgent(chatClient.Object);
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
         var handler = new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
+            new FoundryHostedAgentSource(agent),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
             new FoundryResponsesServerOptions(),
             toolboxService);
 
         // Act: two responses deliberately share the same public response id. Each must still open its
         // own toolbox connection under its own call id.
+#pragma warning disable CA2025 // The handler is never disposed in this test, and both runs are awaited together.
         var first = RunAsync(handler, CreateRequest(), CreateContext(callId: "call-a"));
         var second = RunAsync(handler, CreateRequest(), CreateContext(callId: "call-b"));
+#pragma warning restore CA2025
         await Task.WhenAll(first, second);
 
         // Assert: each response opened its own connection with its own call id, its agent saw only the tool

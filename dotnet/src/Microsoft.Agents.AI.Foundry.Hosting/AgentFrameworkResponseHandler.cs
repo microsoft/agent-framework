@@ -31,34 +31,40 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// with agent-framework <see cref="AIAgent"/> instances, enabling agent-framework agents and workflows
 /// to be hosted as Azure Foundry Hosted Agents.
 /// </summary>
-internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
+/// <remarks>
+/// Disposing the handler disposes the telemetry wrapper it added to an agent it reuses for every run. Dependency
+/// injection does this at shutdown, after AgentServer has stopped the runs still in flight.
+/// </remarks>
+internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler, IDisposable
 {
     private const string LatestWorkflowCheckpointIdMetadataKey = "_last_checkpoint_id";
     private const string UserPartitionName = "user";
     private const string ConsentLinkRejectedMessage = "The OAuth consent request was rejected by the consent link policy.";
 
     private readonly IServiceProvider _serviceProvider;
+    private readonly FoundryHostedAgentSource _agentSource;
     private readonly ILogger<AgentFrameworkResponseHandler> _logger;
     private readonly FoundryResponsesServerOptions _options;
     private readonly FoundryToolboxService? _toolboxService;
-
-    /// <summary>
-    /// The factory agent that answers requests without a matching agent name when no agent is registered
-    /// without a key. See <see cref="FoundryDefaultAgentName"/>.
-    /// </summary>
-    private readonly string? _defaultAgentName;
+    private readonly object _servedAgentGate = new();
+    private volatile AIAgent? _servedAgent;
+    private IDisposable? _hostingTelemetry;
+    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFrameworkResponseHandler"/> class
-    /// that resolves agents from keyed DI services.
+    /// that serves the agent supplied by <paramref name="agentSource"/>.
     /// </summary>
-    /// <param name="serviceProvider">The service provider for resolving agents.</param>
+    /// <param name="serviceProvider">The service provider each response run creates its DI scope from.</param>
+    /// <param name="agentSource">Supplies the agent this container serves.</param>
     /// <param name="logger">The logger instance.</param>
     public AgentFrameworkResponseHandler(
         IServiceProvider serviceProvider,
+        FoundryHostedAgentSource agentSource,
         ILogger<AgentFrameworkResponseHandler> logger)
         : this(
             serviceProvider,
+            agentSource,
             logger,
             new FoundryResponsesServerOptions())
     {
@@ -66,9 +72,10 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFrameworkResponseHandler"/> class
-    /// that resolves agents from keyed DI services.
+    /// that serves the agent supplied by <paramref name="agentSource"/>.
     /// </summary>
-    /// <param name="serviceProvider">The service provider for resolving agents.</param>
+    /// <param name="serviceProvider">The service provider each response run creates its DI scope from.</param>
+    /// <param name="agentSource">Supplies the agent this container serves.</param>
     /// <param name="logger">The logger instance.</param>
     /// <param name="foundryResponsesOptions">
     /// Hosting options, used to read whether resilient background responses are enabled.
@@ -76,19 +83,21 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
     /// <param name="toolboxService">Optional Foundry Toolbox service providing MCP tools.</param>
     public AgentFrameworkResponseHandler(
         IServiceProvider serviceProvider,
+        FoundryHostedAgentSource agentSource,
         ILogger<AgentFrameworkResponseHandler> logger,
         FoundryResponsesServerOptions foundryResponsesOptions,
         FoundryToolboxService? toolboxService = null)
     {
         _ = Throw.IfNull(serviceProvider);
+        _ = Throw.IfNull(agentSource);
         _ = Throw.IfNull(logger);
         _ = Throw.IfNull(foundryResponsesOptions);
 
         this._serviceProvider = serviceProvider;
+        this._agentSource = agentSource;
         this._logger = logger;
         this._options = foundryResponsesOptions;
         this._toolboxService = toolboxService;
-        this._defaultAgentName = serviceProvider.GetService<FoundryDefaultAgentName>()?.Name;
     }
 
     /// <inheritdoc/>
@@ -119,15 +128,20 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
                 "Ensure the x-agent-user-id header is present.");
         }
 
-        // 2. Resolve agent and session store from a DI scope owned by this response run. The scope
+        // 2. Get the agent and session store for a DI scope owned by this response run. The scope
         // covers the whole enumeration, not the HTTP request: background runs continue after the
-        // HTTP response is sent, and recovery runs have no HTTP request at all. Scoped and transient
-        // registrations are therefore created per run and disposed when the event stream ends.
+        // HTTP response is sent, and recovery runs have no HTTP request at all. A scoped or transient
+        // agent, and a scoped or transient session store, are therefore created per run and disposed
+        // when the event stream ends. The container serves one agent, so the request does not select it.
         AsyncServiceScope serviceScope = this._serviceProvider.CreateAsyncScope();
         await using var configuredServiceScope = serviceScope.ConfigureAwait(false);
         IServiceProvider services = serviceScope.ServiceProvider;
-        var (agent, sessionStoreKey) = this.ResolveAgent(request, services);
-        var sessionStore = this.ResolveSessionStore(sessionStoreKey, services);
+        FoundryHostedAgentSource.Lease agentLease = await this._agentSource.AcquireAsync(services).ConfigureAwait(false);
+        await using var configuredAgentLease = agentLease.ConfigureAwait(false);
+        ServedAgentLease servedAgentLease = this.GetServedAgent(agentLease.Agent);
+        using var configuredServedAgentLease = servedAgentLease;
+        AIAgent agent = servedAgentLease.Agent;
+        AgentSessionStore sessionStore = ResolveSessionStore(services);
 
         // When resolvedUserId is null here the container is NOT hosted by Foundry (local
         // development: docker run / dotnet run outside the platform, so no x-agent-user-id header).
@@ -868,140 +882,110 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
     private bool ShouldPersistForResilience(CreateResponse request)
         => this._options.ResilientBackground && request.Background == true && request.Store != false;
 
-    /// <summary>
-    /// Resolves an <see cref="AIAgent"/> from the request.
-    /// Tries <c>agent.name</c> first, then falls back to <c>metadata["entity_id"]</c>.
-    /// If neither matches a keyed agent, attempts to resolve a default (non-keyed) <see cref="AIAgent"/>, and
-    /// then the agent registered through the factory overload of <c>AddFoundryResponses</c> as the default.
-    /// </summary>
-    /// <param name="request">The incoming request.</param>
-    /// <param name="services">The service provider of the DI scope owned by the current response run.</param>
-    /// <returns>The prepared agent and the name to look its session store up with.</returns>
-    private (AIAgent Agent, string? SessionStoreKey) ResolveAgent(CreateResponse request, IServiceProvider services)
+    /// <inheritdoc/>
+    public void Dispose()
     {
-        var agentName = GetAgentName(request);
-
-        if (!string.IsNullOrEmpty(agentName))
+        IDisposable? hostingTelemetry;
+        lock (this._servedAgentGate)
         {
-            var agent = services.GetKeyedService<AIAgent>(agentName);
-            if (agent is not null)
-            {
-                // The default agent is looked up only after the requested agent, as before: the storage
-                // location depends on whether both registrations return the same object. The factory default
-                // has no non-keyed registration to compare against, so it is recognized by name. It keeps the
-                // location AddFoundryResponses(agent) uses for the default agent, unless a non-keyed agent took
-                // the default role.
-                var registeredDefaultAgent = services.GetService<AIAgent>();
-                string storageIdentity = registeredDefaultAgent is null
-                    && string.Equals(agentName, this._defaultAgentName, StringComparison.Ordinal)
-                        ? DefaultAgentStorageIdentity(agentName)
-                        : FoundryHostingAgent.ResolveSessionStorageIdentity(agent, agentName, registeredDefaultAgent);
-                return (this.PrepareResolvedAgent(agent, storageIdentity), agentName);
-            }
-
-            LogKeyedAgentNotFound(this._logger, agentName);
+            this._disposed = true;
+            hostingTelemetry = this._hostingTelemetry;
+            this._hostingTelemetry = null;
         }
 
-        var defaultAgent = services.GetService<AIAgent>();
-        if (defaultAgent is not null)
-        {
-            string storageIdentity = FoundryHostingAgent.ResolveSessionStorageIdentity(
-                defaultAgent,
-                registrationKey: null,
-                defaultAgent);
-
-            // The default agent uses the store registered under its own name, the same store a request
-            // naming that agent uses.
-            string? sessionStoreKey = string.IsNullOrWhiteSpace(defaultAgent.Name) ? null : defaultAgent.Name;
-            return (this.PrepareResolvedAgent(defaultAgent, storageIdentity), sessionStoreKey);
-        }
-
-        // The factory overload registers its agent only under its name, so that DI owns each created
-        // object once. Requests without a matching agent name reach it through the recorded default name.
-        if (this._defaultAgentName is { } defaultAgentName
-            && services.GetKeyedService<AIAgent>(defaultAgentName) is { } factoryDefaultAgent)
-        {
-            return (
-                this.PrepareResolvedAgent(factoryDefaultAgent, DefaultAgentStorageIdentity(defaultAgentName)),
-                defaultAgentName);
-        }
-
-        var errorMessage = string.IsNullOrEmpty(agentName)
-            ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AIAgent is registered."
-            : $"Agent '{agentName}' not found. Ensure it is registered via builder.AddFoundryResponses(agent), builder.AddFoundryResponses(\"{agentName}\", agentFactory, lifetime), or a keyed AIAgent service registration such as services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
-
-        throw new InvalidOperationException(errorMessage);
+        hostingTelemetry?.Dispose();
     }
 
     /// <summary>
-    /// The storage identity <c>AddFoundryResponses(agent)</c> gives the default agent, used for the factory
-    /// default whatever its lifetime.
+    /// Gets the agent to serve a run with: the agent supplied by the agent source, wrapped with what hosting
+    /// adds to every run.
     /// </summary>
-    private static string DefaultAgentStorageIdentity(string agentName) => $"name:{agentName}";
+    /// <remarks>
+    /// An agent reused for every run is wrapped once, telemetry included, and the wrapper is reused. Each
+    /// <see cref="OpenTelemetryAgent"/> registers a meter and an activity source for the whole process until it
+    /// is disposed. Hosting creates a separate wrapper for each per-run agent after applying its other wrappers,
+    /// then disposes that telemetry before the factory-created agent at the end of the run.
+    /// </remarks>
+    /// <param name="agent">The agent supplied by the agent source for the current run.</param>
+    /// <returns>A lease that disposes telemetry hosting added for this run.</returns>
+    private ServedAgentLease GetServedAgent(AIAgent agent)
+    {
+        if (this._agentSource.CreatesAgentPerRun)
+        {
+            AIAgent prepared = this.PrepareAgent(agent);
+            if (!this._options.RequireOpenTelemetryAgent)
+            {
+                return new ServedAgentLease(prepared);
+            }
 
-    private AIAgent PrepareResolvedAgent(AIAgent agent, string sessionStorageIdentity)
+            AIAgent instrumented = ServiceCollectionExtensions.ApplyOpenTelemetry(prepared);
+            IDisposable? ownedTelemetry = ReferenceEquals(instrumented, prepared) ? null : instrumented as IDisposable;
+            return new ServedAgentLease(instrumented, ownedTelemetry);
+        }
+
+        if (this._servedAgent is { } servedAgent)
+        {
+            return new ServedAgentLease(servedAgent);
+        }
+
+        lock (this._servedAgentGate)
+        {
+            ObjectDisposedException.ThrowIf(this._disposed, this);
+            if (this._servedAgent is null)
+            {
+                AIAgent prepared = this.PrepareAgent(agent);
+                AIAgent instrumented = ServiceCollectionExtensions.ApplyOpenTelemetry(prepared);
+
+                // An agent that brought its own telemetry is returned unchanged, and that telemetry is the
+                // caller's to dispose.
+                this._hostingTelemetry = ReferenceEquals(instrumented, prepared) ? null : instrumented as IDisposable;
+                this._servedAgent = instrumented;
+            }
+
+            return new ServedAgentLease(this._servedAgent);
+        }
+    }
+
+    /// <summary>
+    /// Wraps an agent with what hosting adds to every run apart from telemetry: the hosted-agent
+    /// <c>User-Agent</c>, Foundry workflow checkpointing, and its session storage identity.
+    /// </summary>
+    /// <param name="agent">The agent supplied by the agent source.</param>
+    /// <returns>The wrapped agent.</returns>
+    private FoundryHostingAgent PrepareAgent(AIAgent agent)
     {
         ServiceCollectionExtensions.TryApplyUserAgent(agent);
 
-        AIAgent prepared = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(
-            agent,
-            this._serviceProvider.GetService<ILoggerFactory>());
-        prepared = new FoundryHostingAgent(prepared, sessionStorageIdentity);
-
-        return ServiceCollectionExtensions.ApplyOpenTelemetry(prepared);
+        // Apply checkpoint storage before hosting adds telemetry. A factory-supplied wrapper is left unchanged,
+        // because only the workflow agent itself can be copied with different checkpoint storage.
+        AIAgent prepared = agent.WithFoundryCheckpointing(this._serviceProvider);
+        return new FoundryHostingAgent(prepared, FoundryHostingAgent.ResolveSessionStorageIdentity(agent));
     }
 
     /// <summary>
-    /// Resolves the <see cref="AgentSessionStore"/> registered under <paramref name="agentName"/>, or the
-    /// store registered for all agents (non-keyed) when there is none.
+    /// Resolves the <see cref="AgentSessionStore"/> for the current run. <c>AddFoundryResponses</c> registers
+    /// the default store unless the caller registered one, so this fails only for a handler built without it.
     /// </summary>
-    /// <param name="agentName">The key returned by <see cref="ResolveAgent"/>.</param>
     /// <param name="services">The service provider of the DI scope owned by the current response run.</param>
-    private AgentSessionStore ResolveSessionStore(string? agentName, IServiceProvider services)
+    private static AgentSessionStore ResolveSessionStore(IServiceProvider services) =>
+        services.GetService<AgentSessionStore>()
+            ?? throw new InvalidOperationException(
+                "No AgentSessionStore is registered. Register one with AddFoundryAgentSessionStore, or pass one to AddFoundryResponses.");
+
+    /// <summary>
+    /// Holds the agent served for one run and disposes a telemetry wrapper created for that run only.
+    /// </summary>
+    private sealed class ServedAgentLease(AIAgent agent, IDisposable? ownedTelemetry = null) : IDisposable
     {
-        if (!string.IsNullOrEmpty(agentName))
+        private IDisposable? _ownedTelemetry = ownedTelemetry;
+
+        internal AIAgent Agent { get; } = agent;
+
+        public void Dispose()
         {
-            var sessionStore = services.GetKeyedService<AgentSessionStore>(agentName);
-            if (sessionStore is not null)
-            {
-                return sessionStore;
-            }
-
-            LogKeyedSessionStoreNotFound(this._logger, agentName);
+            this._ownedTelemetry?.Dispose();
+            this._ownedTelemetry = null;
         }
-
-        // An agent without a store of its own uses the store registered for all agents.
-        var defaultSessionStore = services.GetService<AgentSessionStore>();
-        if (defaultSessionStore is not null)
-        {
-            return defaultSessionStore;
-        }
-
-        var errorMessage = string.IsNullOrEmpty(agentName)
-            ? "No agent name specified in the request (via agent.name or metadata[\"entity_id\"]) and no default AgentSessionStore is registered."
-            : $"AgentSessionStore for agent '{agentName}' not found. Ensure it is registered via services.AddFoundryAgentSessionStore(agentSessionStore, \"{agentName}\"), services.AddFoundryAgentSessionStore(agentSessionStore) for all agents, or builder.AddFoundryResponses(agent, agentSessionStore).";
-
-        throw new InvalidOperationException(errorMessage);
-    }
-
-    private static string? GetAgentName(CreateResponse request)
-    {
-        // Try agent.name from AgentReference
-        var agentName = request.AgentReference?.Name;
-
-        // Fall back to "model" field (OpenAI clients send the agent name as the model)
-        if (string.IsNullOrEmpty(agentName))
-        {
-            agentName = request.Model;
-        }
-
-        // Fall back to metadata["entity_id"]
-        if (string.IsNullOrEmpty(agentName) && request.Metadata?.AdditionalProperties is not null)
-        {
-            request.Metadata.AdditionalProperties.TryGetValue("entity_id", out agentName);
-        }
-
-        return agentName;
     }
 
     [LoggerMessage(
@@ -1044,9 +1028,4 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         string toolName,
         string toolboxName,
         string responseId);
-
-    [LoggerMessage(LogLevel.Warning, "Agent '{AgentName}' not found in keyed services. Attempting default resolution.", EventId = 0)]
-    private static partial void LogKeyedAgentNotFound(ILogger logger, string agentName);
-    [LoggerMessage(LogLevel.Debug, "No session store registered for agent '{AgentName}'. Using the store registered for all agents.", EventId = 0)]
-    private static partial void LogKeyedSessionStoreNotFound(ILogger logger, string agentName);
 }

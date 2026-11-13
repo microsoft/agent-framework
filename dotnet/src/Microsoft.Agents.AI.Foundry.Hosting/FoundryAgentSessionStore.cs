@@ -33,6 +33,12 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// back to its partition.
 /// </para>
 /// <para>
+/// Sessions an earlier release saved under a legacy agent identity are still read, see
+/// <see cref="FoundryHostingAgent.GetLegacySessionStorageIdentity(string)"/>. Such a session is read only when
+/// nothing is saved under the current identity, is saved back under the current identity, and is deleted
+/// together with it.
+/// </para>
+/// <para>
 /// Logical isolation is expressed through <see cref="AgentSessionStoreKey.Partitions"/> rather than
 /// through the state store's own <c>userIsolation</c> option. That option is fixed when the store is
 /// created, while session partitions may vary per request.
@@ -163,16 +169,25 @@ internal sealed partial class FoundryAgentSessionStore : AgentSessionStore
         _ = Throw.IfNull(agent);
         _ = Throw.IfNull(key);
 
-        string logicalKey = FoundryAgentSessionKeyEncoder.BuildLogicalKey(
-            FoundryHostingAgent.GetSessionStorageIdentity(agent),
-            key);
+        string agentIdentity = FoundryHostingAgent.GetSessionStorageIdentity(agent);
         FoundryStateStore store = await this.GetStoreAsync(cancellationToken).ConfigureAwait(false);
 
         // GetItemAsync already answers null for an item that is not there, which is exactly the
         // "nothing stored" result this method contracts to return.
-        StateStoreItem? item = await store.GetItemAsync(
-            FoundryAgentSessionKeyEncoder.BuildStorageKey(logicalKey),
-            cancellationToken).ConfigureAwait(false);
+        StateStoreItem? item = await GetItemAsync(store, agentIdentity, key, cancellationToken).ConfigureAwait(false);
+        if (item is null
+            && FoundryHostingAgent.GetLegacySessionStorageIdentity(agentIdentity) is { } legacyIdentity)
+        {
+            // A session saved by a release through 1.28.0 may sit under the legacy identity. It is read only
+            // when nothing is saved under the current identity, and the next save stores it under the current
+            // identity, so this read-through stops being reached for that session after one turn.
+            item = await GetItemAsync(store, legacyIdentity, key, cancellationToken).ConfigureAwait(false);
+            if (item is not null)
+            {
+                LogSessionReadFromLegacyIdentity(this._logger, key.SessionId, this.StoreName);
+            }
+        }
+
         if (!FoundryStateStoreJson.TryGetField(item, SessionField, out BinaryData? sessionData))
         {
             return null;
@@ -194,16 +209,26 @@ internal sealed partial class FoundryAgentSessionStore : AgentSessionStore
         _ = Throw.IfNull(agent);
         _ = Throw.IfNull(key);
 
-        string logicalKey = FoundryAgentSessionKeyEncoder.BuildLogicalKey(
-            FoundryHostingAgent.GetSessionStorageIdentity(agent),
-            key);
+        string agentIdentity = FoundryHostingAgent.GetSessionStorageIdentity(agent);
         FoundryStateStore store = await this.GetStoreAsync(cancellationToken).ConfigureAwait(false);
+
+        if (FoundryHostingAgent.GetLegacySessionStorageIdentity(agentIdentity) is { } legacyIdentity)
+        {
+            // Delete the fallback first. If cancellation interrupts the second delete, the authoritative
+            // current copy remains readable instead of the older fallback bringing the session back.
+            try
+            {
+                await DeleteItemAsync(store, legacyIdentity, key, cancellationToken).ConfigureAwait(false);
+            }
+            catch (FoundryStorageNotFoundException)
+            {
+                // Most sessions never had a legacy copy, so its absence is the expected case and is not logged.
+            }
+        }
 
         try
         {
-            await store.DeleteItemAsync(
-                FoundryAgentSessionKeyEncoder.BuildStorageKey(logicalKey),
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+            await DeleteItemAsync(store, agentIdentity, key, cancellationToken).ConfigureAwait(false);
         }
         catch (FoundryStorageNotFoundException ex)
         {
@@ -211,6 +236,24 @@ internal sealed partial class FoundryAgentSessionStore : AgentSessionStore
             LogSessionNotFound(this._logger, key.SessionId, this.StoreName, ex);
         }
     }
+
+    private static Task<StateStoreItem?> GetItemAsync(
+        FoundryStateStore store,
+        string agentIdentity,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken)
+        => store.GetItemAsync(
+            FoundryAgentSessionKeyEncoder.BuildStorageKey(FoundryAgentSessionKeyEncoder.BuildLogicalKey(agentIdentity, key)),
+            cancellationToken);
+
+    private static Task<DeletedStateStoreItem> DeleteItemAsync(
+        FoundryStateStore store,
+        string agentIdentity,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken)
+        => store.DeleteItemAsync(
+            FoundryAgentSessionKeyEncoder.BuildStorageKey(FoundryAgentSessionKeyEncoder.BuildLogicalKey(agentIdentity, key)),
+            cancellationToken: cancellationToken);
 
     /// <summary>
     /// Resolves the bound state store, creating it on the platform the first time. See
@@ -229,4 +272,10 @@ internal sealed partial class FoundryAgentSessionStore : AgentSessionStore
         string sessionId,
         string storeName,
         Exception exception);
+
+    [LoggerMessage(LogLevel.Debug, "Session '{SessionId}' was read from the location an earlier release saved it under in the Foundry state store '{StoreName}'. Its next save uses the current location.", EventId = 0)]
+    private static partial void LogSessionReadFromLegacyIdentity(
+        ILogger logger,
+        string sessionId,
+        string storeName);
 }

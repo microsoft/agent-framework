@@ -3,10 +3,8 @@
 // This sample demonstrates hosting agent-framework agents as Foundry Hosted Agents
 // using the Azure AI Responses Server SDK.
 //
-// Demos:
-//   /              - Homepage listing all demos
-//   /tool-demo     - Agent with local tools + remote MCP tools
-//   /workflow-demo - Triage workflow routing to specialist agents
+// Demo:
+//   / - Triage workflow routing to specialist agents
 //
 // Prerequisites:
 //   - Foundry project with a deployed model
@@ -15,16 +13,13 @@
 //   - FOUNDRY_PROJECT_ENDPOINT - your Foundry project endpoint
 //   - FOUNDRY_MODEL            - the model deployment name (default: "gpt-4o")
 
-using System.ComponentModel;
 using Azure.AI.Projects;
 using Azure.Identity;
 using DotNetEnv;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
-using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
-using ModelContextProtocol.Client;
 
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
@@ -50,35 +45,7 @@ IChatClient chatClient = new AIProjectClient(projectEndpoint, new DefaultAzureCr
     .AsIChatClient();
 
 // ---------------------------------------------------------------------------
-// 2. DEMO 1: Tool Agent — local tools + Microsoft Learn MCP
-// ---------------------------------------------------------------------------
-Console.WriteLine("Connecting to Microsoft Learn MCP server...");
-McpClient mcpClient = await McpClient.CreateAsync(new HttpClientTransport(new()
-{
-    Endpoint = new Uri("https://learn.microsoft.com/api/mcp"),
-    Name = "Microsoft Learn MCP",
-}));
-var mcpTools = await mcpClient.ListToolsAsync();
-Console.WriteLine($"MCP tools available: {string.Join(", ", mcpTools.Select(t => t.Name))}");
-
-builder.AddAIAgent(
-    name: "tool-agent",
-    instructions: """
-        You are a helpful assistant hosted as a Foundry Hosted Agent.
-        You have access to several tools - use them proactively:
-        - GetCurrentTime: Returns the current date/time in any timezone.
-        - GetWeather: Returns weather conditions for any location.
-        - Microsoft Learn MCP tools: Search and fetch Microsoft documentation.
-        When a user asks a technical question about Microsoft products, use the
-        documentation search tools to give accurate, up-to-date answers.
-        """,
-    chatClient: chatClient)
-    .WithAITool(AIFunctionFactory.Create(GetCurrentTime))
-    .WithAITool(AIFunctionFactory.Create(GetWeather))
-    .WithAITools(mcpTools.Cast<AITool>().ToArray());
-
-// ---------------------------------------------------------------------------
-// 3. DEMO 2: Triage Workflow — routes to specialist agents
+// 2. Triage Workflow — routes to specialist agents
 // ---------------------------------------------------------------------------
 ChatClientAgent triageAgent = new(
     chatClient,
@@ -115,32 +82,22 @@ Workflow triageWorkflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(triageAg
     .WithHandoffs([codeExpert, creativeWriter], triageAgent)
     .Build();
 
-builder.AddAIAgent("triage-workflow", (_, key) =>
-    triageWorkflow.AsAIAgent(name: key));
-
-// Register triage-workflow as the non-keyed default so azd invoke (no model) works
-builder.Services.AddSingleton(sp =>
-    sp.GetRequiredKeyedService<AIAgent>("triage-workflow"));
+AIAgent hostedAgent = triageWorkflow.AsAIAgent(name: "triage-workflow");
 
 // ---------------------------------------------------------------------------
-// 4. Wire up the agent-framework handler and Responses Server SDK
+// 3. Wire up the agent-framework handler and Responses Server SDK
 // ---------------------------------------------------------------------------
-builder.AddFoundryResponses();
+builder.AddFoundryResponses(hostedAgent);
 
 var app = builder.Build();
 
-// Dispose the MCP client on shutdown
-app.Lifetime.ApplicationStopping.Register(() =>
-    mcpClient.DisposeAsync().AsTask().GetAwaiter().GetResult());
-
 // ---------------------------------------------------------------------------
-// 5. Routes
+// 4. Routes
 // ---------------------------------------------------------------------------
 app.MapGet("/ready", () => Results.Ok("ready"));
 app.MapFoundryResponses();
 
-app.MapGet("/", () => Results.Content(Pages.Home, "text/html"));
-app.MapGet("/tool-demo", () => Results.Content(Pages.ToolDemo, "text/html"));
+app.MapGet("/", () => Results.Content(Pages.WorkflowDemo, "text/html"));
 app.MapGet("/workflow-demo", () => Results.Content(Pages.WorkflowDemo, "text/html"));
 app.MapGet("/js/sse-validator.js", () => Results.Content(Pages.ValidationScript, "application/javascript"));
 
@@ -161,36 +118,3 @@ app.Run();
 
 static string FirstNonBlank(params string?[] candidates) =>
     Array.Find(candidates, candidate => !string.IsNullOrWhiteSpace(candidate))!;
-
-// ---------------------------------------------------------------------------
-// Local tool definitions
-// ---------------------------------------------------------------------------
-
-[Description("Gets the current date and time in the specified timezone.")]
-static string GetCurrentTime(
-    [Description("IANA timezone (e.g. 'America/New_York', 'Europe/London', 'UTC'). Defaults to UTC.")]
-    string timezone = "UTC")
-{
-    try
-    {
-        var tz = TimeZoneInfo.FindSystemTimeZoneById(timezone);
-        return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).ToString("F");
-    }
-    catch
-    {
-        return DateTime.UtcNow.ToString("F") + " (UTC - unknown timezone: " + timezone + ")";
-    }
-}
-
-[Description("Gets the current weather for a location. Returns temperature, conditions, and humidity.")]
-static string GetWeather(
-    [Description("The city or location (e.g. 'Seattle', 'London, UK').")]
-    string location)
-{
-    // Simulated weather - deterministic per location for demo consistency
-    var rng = new Random(location.ToUpperInvariant().GetHashCode());
-    var temp = rng.Next(-5, 35);
-    string[] conditions = ["sunny", "partly cloudy", "overcast", "rainy", "snowy", "windy", "foggy"];
-    var condition = conditions[rng.Next(conditions.Length)];
-    return $"Weather in {location}: {temp}C, {condition}. Humidity: {rng.Next(30, 90)}%. Wind: {rng.Next(5, 30)} km/h.";
-}

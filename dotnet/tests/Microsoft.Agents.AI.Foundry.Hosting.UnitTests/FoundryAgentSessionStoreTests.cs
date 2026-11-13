@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -162,6 +163,254 @@ public sealed class FoundryAgentSessionStoreTests
         // Assert
         Assert.Null(supportSession);
         Assert.Equal(0, support.DeserializeCalls);
+    }
+
+    [Fact]
+    public async Task GetSessionAsync_SessionSavedUnderLegacyKeyIdentity_IsReadForTheAgentWithThatNameAsync()
+    {
+        // Arrange: a release through 1.28.0 saved this agent's session under its keyed registration.
+        var backing = new FakeStateStore();
+        var store = NewStore(backing);
+        var legacyAgent = new TestAgent("{\"owner\":\"legacy\"}", name: "Concierge");
+        var agent = new TestAgent(name: "Concierge");
+        var key = Key("conv-1", "user", "alice");
+        await store.SaveSessionAsync(new FoundryHostingAgent(legacyAgent, "key:Concierge"), key, new TestSession());
+
+        // Act
+        var session = await store.GetSessionAsync(agent, key);
+
+        // Assert
+        Assert.NotNull(session);
+        Assert.Equal("legacy", agent.LastDeserialized!.Value.GetProperty("owner").GetString());
+    }
+
+    [Fact]
+    public async Task GetSessionAsync_SessionUnderBothIdentities_ReadsTheCurrentOneAsync()
+    {
+        // Arrange
+        var backing = new FakeStateStore();
+        var store = NewStore(backing);
+        var key = Key("conv-1", "user", "alice");
+        await store.SaveSessionAsync(
+            new FoundryHostingAgent(new TestAgent("{\"owner\":\"legacy\"}", name: "Concierge"), "key:Concierge"),
+            key,
+            new TestSession());
+        await store.SaveSessionAsync(new TestAgent("{\"owner\":\"current\"}", name: "Concierge"), key, new TestSession());
+        var agent = new TestAgent(name: "Concierge");
+
+        // Act
+        var session = await store.GetSessionAsync(agent, key);
+
+        // Assert
+        Assert.NotNull(session);
+        Assert.Equal(1, agent.DeserializeCalls);
+        Assert.Equal("current", agent.LastDeserialized!.Value.GetProperty("owner").GetString());
+    }
+
+    [Fact]
+    public async Task GetSessionAsync_LegacySessionOfAnotherUser_IsNotReadAsync()
+    {
+        // Arrange: the legacy read-through keeps the user partition of the request.
+        var store = NewStore(new FakeStateStore());
+        await store.SaveSessionAsync(
+            new FoundryHostingAgent(new TestAgent(name: "Concierge"), "key:Concierge"),
+            Key("shared-conv", "user", "alice"),
+            new TestSession());
+        var agent = new TestAgent(name: "Concierge");
+
+        // Act
+        var bobSession = await store.GetSessionAsync(agent, Key("shared-conv", "user", "bob"));
+
+        // Assert
+        Assert.Null(bobSession);
+        Assert.Equal(0, agent.DeserializeCalls);
+    }
+
+    [Fact]
+    public async Task GetSessionAsync_LegacySessionUnderAnotherKey_IsNotReadAsync()
+    {
+        // Arrange
+        var store = NewStore(new FakeStateStore());
+        var key = Key("conv-1", "user", "alice");
+        await store.SaveSessionAsync(
+            new FoundryHostingAgent(new TestAgent(name: "Billing"), "key:Billing"),
+            key,
+            new TestSession());
+        var agent = new TestAgent(name: "Concierge");
+
+        // Act
+        var session = await store.GetSessionAsync(agent, key);
+
+        // Assert
+        Assert.Null(session);
+        Assert.Equal(0, agent.DeserializeCalls);
+    }
+
+    [Fact]
+    public async Task GetSessionAsync_AgentWithKeyIdentity_DoesNotReadAnyOtherIdentityAsync()
+    {
+        // Arrange: only a name identity has a legacy counterpart, so a key identity reads only itself.
+        var store = NewStore(new FakeStateStore());
+        var key = Key("conv-1", "user", "alice");
+        await store.SaveSessionAsync(new TestAgent(name: "Concierge"), key, new TestSession());
+        var leaf = new TestAgent(name: "Concierge");
+
+        // Act
+        var session = await store.GetSessionAsync(new FoundryHostingAgent(leaf, "key:Concierge"), key);
+
+        // Assert
+        Assert.Null(session);
+        Assert.Equal(0, leaf.DeserializeCalls);
+    }
+
+    [Fact]
+    public async Task GetSessionAsync_SessionReadFromLegacyIdentity_LogsAtDebugAsync()
+    {
+        // Arrange
+        var logs = new RecordingLoggerFactory();
+        var store = NewStore(new FakeStateStore(), logs);
+        var key = Key("conv-1", "user", "alice");
+        await store.SaveSessionAsync(
+            new FoundryHostingAgent(new TestAgent(name: "Concierge"), "key:Concierge"),
+            key,
+            new TestSession());
+
+        // Act
+        _ = await store.GetSessionAsync(new TestAgent(name: "Concierge"), key);
+
+        // Assert
+        var entry = Assert.Single(logs.Entries);
+        Assert.Equal(LogLevel.Debug, entry.Level);
+        Assert.Equal("LogSessionReadFromLegacyIdentity", entry.EventId.Name);
+        AssertProperty(entry.Properties, "SessionId", "conv-1");
+        AssertProperty(entry.Properties, "StoreName", FoundryAgentSessionStore.DefaultStoreName);
+    }
+
+    [Fact]
+    public async Task SaveSessionAsync_AfterLegacyRead_SavesUnderTheCurrentIdentityAsync()
+    {
+        // Arrange
+        var backing = new FakeStateStore();
+        var store = NewStore(backing);
+        var key = Key("conv-1", "user", "alice");
+        await store.SaveSessionAsync(
+            new FoundryHostingAgent(new TestAgent(name: "Concierge"), "key:Concierge"),
+            key,
+            new TestSession());
+        var agent = new TestAgent(name: "Concierge");
+        var session = await store.GetSessionAsync(agent, key);
+
+        // Act
+        await store.SaveSessionAsync(agent, key, session!);
+
+        // Assert
+        Assert.Equal(
+            ["\"a13:key:Concierge|s6:conv-1|n4:user|v5:alice\"", "\"a14:name:Concierge|s6:conv-1|n4:user|v5:alice\""],
+            backing.Items.Select(item => item["key"].ToString()).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_SessionWithLegacyCopy_DeletesBothSoNeitherIsReadAgainAsync()
+    {
+        // Arrange
+        var backing = new FakeStateStore();
+        var logs = new RecordingLoggerFactory();
+        var store = NewStore(backing, logs);
+        var key = Key("conv-1", "user", "alice");
+        await store.SaveSessionAsync(
+            new FoundryHostingAgent(new TestAgent(name: "Concierge"), "key:Concierge"),
+            key,
+            new TestSession());
+        var agent = new TestAgent(name: "Concierge");
+        await store.SaveSessionAsync(agent, key, new TestSession());
+
+        // Act
+        await store.DeleteSessionAsync(agent, key);
+
+        // Assert
+        Assert.Empty(backing.Items);
+        Assert.Null(await store.GetSessionAsync(agent, key));
+        Assert.Empty(logs.Entries);
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_OnlyLegacyCopyStored_DeletesItAsync()
+    {
+        // Arrange
+        var backing = new FakeStateStore();
+        var store = NewStore(backing);
+        var key = Key("conv-1", "user", "alice");
+        await store.SaveSessionAsync(
+            new FoundryHostingAgent(new TestAgent(name: "Concierge"), "key:Concierge"),
+            key,
+            new TestSession());
+        var agent = new TestAgent(name: "Concierge");
+
+        // Act
+        await store.DeleteSessionAsync(agent, key);
+
+        // Assert
+        Assert.Empty(backing.Items);
+        Assert.Null(await store.GetSessionAsync(agent, key));
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_CancelledAfterFirstDelete_KeepsCurrentCopyReadableAsync()
+    {
+        // Arrange
+        using var cancellation = new CancellationTokenSource();
+        var backing = new FakeStateStore { AfterDelete = _ => cancellation.Cancel() };
+        var store = NewStore(backing);
+        var key = Key("conv-1", "user", "alice");
+        await store.SaveSessionAsync(
+            new FoundryHostingAgent(new TestAgent("{\"owner\":\"legacy\"}", name: "Concierge"), "key:Concierge"),
+            key,
+            new TestSession());
+        var agent = new TestAgent("{\"owner\":\"current\"}", name: "Concierge");
+        await store.SaveSessionAsync(agent, key, new TestSession());
+
+        // Act
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await store.DeleteSessionAsync(agent, key, cancellation.Token));
+        AgentSession? session = await store.GetSessionAsync(agent, key);
+
+        // Assert: the interrupted delete leaves the authoritative current state, not the legacy fallback.
+        Assert.NotNull(session);
+        Assert.Equal("current", agent.LastDeserialized!.Value.GetProperty("owner").GetString());
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_LegacyCopyOfAnotherUser_IsKeptAsync()
+    {
+        // Arrange
+        var backing = new FakeStateStore();
+        var store = NewStore(backing);
+        await store.SaveSessionAsync(
+            new FoundryHostingAgent(new TestAgent(name: "Concierge"), "key:Concierge"),
+            Key("shared-conv", "user", "bob"),
+            new TestSession());
+
+        // Act
+        await store.DeleteSessionAsync(new TestAgent(name: "Concierge"), Key("shared-conv", "user", "alice"));
+
+        // Assert
+        var item = Assert.Single(backing.Items);
+        Assert.Equal("\"a13:key:Concierge|s11:shared-conv|n4:user|v3:bob\"", item["key"].ToString());
+    }
+
+    [Theory]
+    [InlineData("name:Concierge", "key:Concierge")]
+    [InlineData("name:a:b", "key:a:b")]
+    [InlineData("key:Concierge", null)]
+    [InlineData("default", null)]
+    [InlineData("id:123", null)]
+    public void GetLegacySessionStorageIdentity_OnlyANameIdentityHasALegacyCounterpart(string identity, string? expected)
+    {
+        // Act
+        string? legacy = FoundryHostingAgent.GetLegacySessionStorageIdentity(identity);
+
+        // Assert
+        Assert.Equal(expected, legacy);
     }
 
     [Fact]
@@ -504,6 +753,8 @@ public sealed class FoundryAgentSessionStoreTests
     {
         private readonly ConcurrentDictionary<string, IDictionary<string, BinaryData>> _items = new(StringComparer.Ordinal);
 
+        public Action<string>? AfterDelete { get; init; }
+
         public IReadOnlyCollection<IDictionary<string, BinaryData>> Items => (IReadOnlyCollection<IDictionary<string, BinaryData>>)this._items.Values;
 
         public override string Name => FoundryAgentSessionStore.DefaultStoreName;
@@ -527,11 +778,14 @@ public sealed class FoundryAgentSessionStoreTests
 
         public override Task<DeletedStateStoreItem> DeleteItemAsync(string key, ETag ifMatch = default, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (!this._items.TryRemove(key, out _))
             {
                 throw new FoundryStorageNotFoundException("not found");
             }
 
+            this.AfterDelete?.Invoke(key);
             return Task.FromResult(AzureAIAgentServerCoreStorageModelFactory.DeletedStateStoreItem(id: key, deleted: true));
         }
     }

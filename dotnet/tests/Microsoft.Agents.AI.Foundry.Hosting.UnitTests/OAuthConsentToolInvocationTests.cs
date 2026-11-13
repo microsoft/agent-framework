@@ -66,7 +66,7 @@ public sealed class OAuthConsentToolInvocationTests
             ChatHistoryProvider = customHistory ? new InMemoryChatHistoryProvider() : null,
         });
         using var provider = CreateProvider(agent);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
+        var handler = new AgentFrameworkResponseHandler(provider, provider.GetRequiredService<FoundryHostedAgentSource>(), NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
         var history = new List<OutputItem>();
         var consentTurns = new List<List<ResponseStreamEvent>>();
 
@@ -191,7 +191,7 @@ public sealed class OAuthConsentToolInvocationTests
             ChatOptions = new ChatOptions { Tools = [sibling, CreateTool(client, "call_tool")] },
         });
         using var provider = CreateProvider(agent);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
+        var handler = new AgentFrameworkResponseHandler(provider, provider.GetRequiredService<FoundryHostedAgentSource>(), NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
 
         // Act
         var first = await RunTurnAsync(handler, [], 0, timeout.Token);
@@ -301,7 +301,7 @@ public sealed class OAuthConsentToolInvocationTests
             agent,
             inferenceStoredOutputAllowed: true,
             oauthConsentInterruptedToolResult: CustomInterruptedResult);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
+        var handler = new AgentFrameworkResponseHandler(provider, provider.GetRequiredService<FoundryHostedAgentSource>(), NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
 
         // Act
         var events = await RunTurnAsync(handler, [], 0, timeout.Token);
@@ -381,7 +381,7 @@ public sealed class OAuthConsentToolInvocationTests
         using var provider = CreateProvider(
             agent,
             oauthConsentInterruptedToolResult: CustomInterruptedResult);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
+        var handler = new AgentFrameworkResponseHandler(provider, provider.GetRequiredService<FoundryHostedAgentSource>(), NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
 
         // Act
         var first = await RunTurnAsync(
@@ -468,7 +468,7 @@ public sealed class OAuthConsentToolInvocationTests
             ChatOptions = new ChatOptions { Tools = [CreateTool(client, "call_tool")] },
         });
         using var provider = CreateProvider(agent);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
+        var handler = new AgentFrameworkResponseHandler(provider, provider.GetRequiredService<FoundryHostedAgentSource>(), NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
 
         // Act
         var events = await RunTurnAsync(handler, [], 0, timeout.Token);
@@ -534,7 +534,7 @@ public sealed class OAuthConsentToolInvocationTests
             },
         });
         using var provider = CreateProvider(agent);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
+        var handler = new AgentFrameworkResponseHandler(provider, provider.GetRequiredService<FoundryHostedAgentSource>(), NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
 
         // Act
         var events = await RunTurnAsync(handler, [], 0, timeout.Token);
@@ -599,7 +599,7 @@ public sealed class OAuthConsentToolInvocationTests
             ChatOptions = new ChatOptions { Tools = [new ApprovalRequiredAIFunction(CreateTool(client, "call_tool"))] },
         });
         using var provider = CreateProvider(agent);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
+        var handler = new AgentFrameworkResponseHandler(provider, provider.GetRequiredService<FoundryHostedAgentSource>(), NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
 
         // Act
         var first = await RunTurnAsync(handler, [], 0, timeout.Token);
@@ -795,7 +795,7 @@ public sealed class OAuthConsentToolInvocationTests
     {
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton(agent);
+        services.AddSingleton(new FoundryHostedAgentSource(agent));
         var options = new FoundryResponsesServerOptions
         {
             InferenceStoredOutputAllowed = inferenceStoredOutputAllowed,
@@ -913,7 +913,7 @@ public sealed class OAuthConsentToolInvocationTests
             ChatOptions = new ChatOptions { Tools = [tool] },
         });
         using var provider = CreateProvider(agent);
-        var handler = new AgentFrameworkResponseHandler(provider, NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
+        var handler = new AgentFrameworkResponseHandler(provider, provider.GetRequiredService<FoundryHostedAgentSource>(), NullLogger<AgentFrameworkResponseHandler>.Instance, provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value);
         var context = new Mock<ResponseContext>(MockBehavior.Loose, "resp_" + new string('0', 46)) { CallBase = true };
         context.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<OutputItem>());
         context.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<Item>());

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Azure.AI.AgentServer.Responses;
+using Microsoft.Extensions.DependencyInjection;
 
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -89,4 +90,31 @@ public sealed class FoundryResponsesServerOptions : ResponsesServerOptions
     /// </value>
     public bool ExcludeReasoningEncryptedContent { get; set; }
 
+    /// <summary>
+    /// Gets or sets a value indicating whether hosting adds an <see cref="OpenTelemetryAgent"/> to an agent
+    /// created for each response.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Hosting adds an <see cref="OpenTelemetryAgent"/> to an agent it reuses for every response, one passed
+    /// as an instance or created by a factory with <see cref="ServiceLifetime.Singleton"/>, unless the agent
+    /// already has one. It builds that wrapper once and disposes it at shutdown.
+    /// </para>
+    /// <para>
+    /// For an agent created per response by a factory with <see cref="ServiceLifetime.Scoped"/> or
+    /// <see cref="ServiceLifetime.Transient"/>, hosting adds the wrapper after applying Foundry workflow
+    /// checkpointing and disposes it before disposing the factory-created agent when the response ends.
+    /// Return the agent without an <see cref="OpenTelemetryAgent"/> to let hosting own and dispose both lifetimes.
+    /// When a factory supplies its own wrapper, hosting uses and disposes that wrapper but the factory must arrange
+    /// the lifetime of the agent inside it independently, because <see cref="OpenTelemetryAgent"/> does not own it.
+    /// </para>
+    /// <para>
+    /// Set this option to <see langword="false"/> to serve an agent created per response without agent telemetry.
+    /// It has no effect on an agent reused for every response.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="true"/>.
+    /// </value>
+    public bool RequireOpenTelemetryAgent { get; set; } = true;
 }

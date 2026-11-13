@@ -71,34 +71,56 @@ AZURE_TOKEN_CREDENTIALS=dev
 
 ## Agent lifetime
 
-`builder.AddFoundryResponses(agent)` registers one agent object that serves every request for the
-life of the process. When the agent needs services that should not live that long, for example a
-database context, register a factory with a DI lifetime instead:
+Foundry publishes a dedicated endpoint for each hosted agent, so a container serves exactly one agent.
+`builder.AddFoundryResponses(agent)` registers the agent object that answers every request for the
+life of the process; the request's agent name or `model` does not select a different one, and
+`AddFoundryResponses` can be called only once. Hosting never disposes an agent you pass in, because you
+created it. Dispose what the agent uses, such as MCP clients or `HttpClient`s, with `await using` at the top
+of `Program.cs`: `app.Run()` returns only after the host has stopped the responses still running, so those
+objects outlive every response.
+
+When the agent needs services that should not live that long, for example a database context, pass a
+factory and a lifetime instead:
 
 ```csharp
 builder.AddFoundryResponses(
-    agentName,
     sp => new MyAgent(sp.GetRequiredService<MyDbContext>()),
     ServiceLifetime.Scoped);
 ```
 
-Each response run (streaming, background, or resumed after a restart) gets its own DI scope, which is
-disposed when that run's event stream ends. A `Scoped` agent is therefore created once per response and
-disposed afterwards, even when a background response keeps running after the HTTP request has returned.
-Conversation state is not kept on the agent object; each turn loads the saved session, and sessions are
-stored under `agentName`, so switching from the instance overload keeps existing conversations.
+The agent is never registered in dependency injection, but the factory receives a service provider to
+resolve its dependencies from. Each response run (streaming, background, or resumed after a restart)
+gets its own DI scope, which is disposed when that run's event stream ends. A `Scoped` (or `Transient`)
+agent is therefore created once per response and disposed afterwards, even when a background response
+keeps running after the HTTP request has returned. Conversation state is not kept on the agent object;
+each turn loads the saved session, and sessions are stored under the agent's `Name`, so give every agent
+the factory creates the same name. Switching from the instance overload then keeps existing conversations.
 
-The session store has its own registration and lifetime, independent of the agent. Without one, every
-agent uses the default store, a single shared instance. A store passed to `AddFoundryResponses(agent, store)`
-is used only by that agent. Each store keeps its own sessions, so moving an agent to a different store
-means the sessions it saved in the old store are no longer found:
+Hosting adds OpenTelemetry to an agent it reuses for every response, one you pass in or a `Singleton`
+created by a factory, unless the agent already has it. It builds that wrapper once and disposes it at
+shutdown. For a `Scoped` or `Transient` agent, hosting applies Foundry workflow checkpointing first, then
+adds a telemetry wrapper for that response. It disposes the wrapper before disposing the factory-created
+agent. The factory must return the unwrapped agent:
 
 ```csharp
-// For every agent that has no store of its own. A store object you pass in is never disposed by DI.
-builder.AddFoundryAgentSessionStore(sp => new MySessionStore(sp.GetRequiredService<MyDbContext>()), ServiceLifetime.Scoped);
+builder.AddFoundryResponses(
+    _ => workflow.AsAIAgent(name: "triage"),
+    ServiceLifetime.Scoped);
+```
 
-// Or for one agent only.
-builder.AddFoundryAgentSessionStore(mySessionStore, agentName);
+Return an unwrapped scoped or transient agent to let hosting own both lifetimes. If the factory supplies
+its own telemetry wrapper, it must arrange the inner agent's lifetime independently. To serve those agents
+without agent telemetry, set `FoundryResponsesServerOptions.RequireOpenTelemetryAgent` to `false`.
+
+The session store has its own registration and lifetime, independent of the agent. Without one, the agent
+uses the default store, a single shared instance. The store registered last is used, whether it was passed
+to `AddFoundryResponses(agent, store)` or registered with `AddFoundryAgentSessionStore`. Each store keeps
+its own sessions, so moving the agent to a different store means the sessions it saved in the old store
+are no longer found:
+
+```csharp
+// A store object you pass in is never disposed by DI; one created by a factory is disposed per its lifetime.
+builder.AddFoundryAgentSessionStore(sp => new MySessionStore(sp.GetRequiredService<MyDbContext>()), ServiceLifetime.Scoped);
 ```
 
 ## Run and test locally

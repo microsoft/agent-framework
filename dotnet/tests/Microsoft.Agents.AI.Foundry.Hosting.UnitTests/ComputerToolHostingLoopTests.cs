@@ -180,8 +180,7 @@ public sealed class ComputerToolHostingLoopTests
 
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
-        return new AgentFrameworkResponseHandler(services.BuildServiceProvider(), NullLogger<AgentFrameworkResponseHandler>.Instance);
+        return new AgentFrameworkResponseHandler(services.BuildServiceProvider(), new FoundryHostedAgentSource(agent), NullLogger<AgentFrameworkResponseHandler>.Instance);
     }
 
     private static CreateResponse NewRequest(object[] input) =>

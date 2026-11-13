@@ -23,6 +23,8 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 /// </summary>
 public class AgentFrameworkResponseHandlerWorkflowTests
 {
+    private const string TelemetrySourceName = "Microsoft.Agents.AI.Foundry.Hosting.UnitTests.Workflow";
+
     [Fact]
     public async Task SequentialWorkflow_SingleAgent_ProducesTextOutputAsync()
     {
@@ -130,33 +132,81 @@ public class AgentFrameworkResponseHandlerWorkflowTests
             $"Expected at least 1 output item added event, got {addedEvents.Count}");
     }
 
-    [Fact]
-    public async Task WorkflowAgent_RegisteredWithKey_ResolvesCorrectlyAsync()
+    [Theory]
+    [InlineData(ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient)]
+    public async Task WorkflowAgent_CreatedByFactory_HostingAppliesCheckpointingBeforeTelemetryAsync(ServiceLifetime lifetime)
     {
-        // Arrange: workflow agent registered with a keyed service name
-        var agent = new StreamingTextAgent("inner", "Keyed workflow response");
-        var workflow = AgentWorkflowBuilder.BuildSequential("keyed-wf", agent);
-        var workflowAgent = workflow.AsAIAgent(
-            id: "keyed-workflow",
-            name: "Keyed Workflow",
-            executionEnvironment: InProcessExecution.OffThread);
-
-        var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddKeyedSingleton("my-workflow", workflowAgent);
-        var sp = services.BuildServiceProvider();
-
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-        var request = new CreateResponse { Model = "test", AgentReference = new AgentReference("my-workflow") };
-        request.Input = CreateUserInput("Test keyed workflow");
-        var mockContext = CreateMockContext();
+        // Arrange
+        var (handler, store) = CreateFactoryHandler(_ => BuildFactoryWorkflowAgent(), lifetime);
 
         // Act
-        var events = await CollectEventsAsync(handler, request, mockContext.Object);
+        var events = await CollectEventsAsync(handler, CreateRequest("Test factory workflow"), CreateMockContext().Object);
+
+        // Assert: the response ran with an agent that stores its checkpoints in Foundry.
+        Assert.IsType<ResponseCreatedEvent>(events[0]);
+        Assert.True(events.Count >= 3, $"Expected at least 3 events, got {events.Count}");
+        Assert.NotEmpty(store.Agents);
+        Assert.All(store.Agents, agent =>
+        {
+            Assert.IsType<OpenTelemetryAgent>(agent);
+            Assert.True(WorkflowAgentExtensions.UsesFoundryCheckpointing(agent));
+        });
+    }
+
+    [Fact]
+    public async Task WorkflowAgent_CreatedByFactoryWrappedBeforeFoundryCheckpointing_IsRejectedAsync()
+    {
+        // Arrange: the telemetry wrapper hides the workflow agent, so its checkpoints cannot be moved to Foundry.
+        var (handler, _) = CreateFactoryHandler(
+            _ => BuildFactoryWorkflowAgent().AsBuilder().UseOpenTelemetry(sourceName: TelemetrySourceName).Build(),
+            ServiceLifetime.Scoped);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => CollectEventsAsync(handler, CreateRequest("Test factory workflow"), CreateMockContext().Object));
+
+        // Assert
+        Assert.Contains("wrapped before WithFoundryCheckpointing", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WorkflowAgent_CreatedByFactoryWhenTelemetryIsNotRequired_StoresItsCheckpointsInFoundryAsync()
+    {
+        // Arrange: without the telemetry requirement, a bare workflow agent is served and hosting moves its checkpoints.
+        var (handler, store) = CreateFactoryHandler(
+            _ => BuildFactoryWorkflowAgent(),
+            ServiceLifetime.Scoped,
+            requireOpenTelemetryAgent: false);
+
+        // Act
+        var events = await CollectEventsAsync(handler, CreateRequest("Test factory workflow"), CreateMockContext().Object);
 
         // Assert
         Assert.IsType<ResponseCreatedEvent>(events[0]);
-        Assert.True(events.Count >= 3, $"Expected at least 3 events, got {events.Count}");
+        Assert.NotEmpty(store.Agents);
+        Assert.All(store.Agents, agent => Assert.True(WorkflowAgentExtensions.UsesFoundryCheckpointing(agent)));
+    }
+
+    [Fact]
+    public async Task WorkflowAgent_Instance_IsServedThroughWithFoundryCheckpointingAsync()
+    {
+        // Arrange: hosting takes the same path for an agent it reuses, then adds its own telemetry around it.
+        var store = new ServedAgentRecordingStore();
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(store);
+        var handler = new AgentFrameworkResponseHandler(
+            services.BuildServiceProvider(),
+            new FoundryHostedAgentSource(BuildFactoryWorkflowAgent()),
+            NullLogger<AgentFrameworkResponseHandler>.Instance);
+
+        // Act
+        await CollectEventsAsync(handler, CreateRequest("Test instance workflow"), CreateMockContext().Object);
+
+        // Assert
+        AIAgent served = Assert.Single(store.Agents.Distinct());
+        Assert.IsType<OpenTelemetryAgent>(served);
+        Assert.True(WorkflowAgentExtensions.UsesFoundryCheckpointing(served));
     }
 
     [Fact]
@@ -201,12 +251,12 @@ public class AgentFrameworkResponseHandlerWorkflowTests
     {
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton(agent);
         services.AddSingleton<ILogger<AgentFrameworkResponseHandler>>(NullLogger<AgentFrameworkResponseHandler>.Instance);
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(
             sp,
+            new FoundryHostedAgentSource(agent),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
             new FoundryResponsesServerOptions
             {
@@ -223,6 +273,36 @@ public class AgentFrameworkResponseHandlerWorkflowTests
 
         return (handler, request, mockContext.Object);
     }
+
+    private static (AgentFrameworkResponseHandler Handler, ServedAgentRecordingStore Store) CreateFactoryHandler(
+        Func<IServiceProvider, AIAgent> agentFactory,
+        ServiceLifetime lifetime,
+        bool requireOpenTelemetryAgent = true)
+    {
+        var store = new ServedAgentRecordingStore();
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(store);
+        var sp = services.BuildServiceProvider();
+        var handler = new AgentFrameworkResponseHandler(
+            sp,
+            new FoundryHostedAgentSource(agentFactory, lifetime, sp),
+            NullLogger<AgentFrameworkResponseHandler>.Instance,
+            new FoundryResponsesServerOptions { RequireOpenTelemetryAgent = requireOpenTelemetryAgent });
+        return (handler, store);
+    }
+
+    private static AIAgent BuildFactoryWorkflowAgent()
+    {
+        var agent = new StreamingTextAgent("inner", "Factory workflow response");
+        var workflow = AgentWorkflowBuilder.BuildSequential("factory-wf", agent);
+        return workflow.AsAIAgent(
+            id: "factory-workflow",
+            name: "Factory Workflow",
+            executionEnvironment: InProcessExecution.OffThread);
+    }
+
+    private static CreateResponse CreateRequest(string userMessage) =>
+        new() { Model = "test", Input = CreateUserInput(userMessage) };
 
     private static BinaryData CreateUserInput(string text)
     {

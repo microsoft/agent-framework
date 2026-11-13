@@ -24,17 +24,16 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public class AgentFrameworkResponseHandlerTests
 {
     [Fact]
-    public async Task CreateAsync_WithDefaultAgent_ProducesStreamEventsAsync()
+    public async Task CreateAsync_WithAgent_ProducesStreamEventsAsync()
     {
         // Arrange
         var agent = CreateTestAgent("Hello from the agent!");
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
         services.AddSingleton<ILogger<AgentFrameworkResponseHandler>>(NullLogger<AgentFrameworkResponseHandler>.Instance);
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(agent), NullLogger<AgentFrameworkResponseHandler>.Instance);
 
         var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
@@ -62,19 +61,37 @@ public class AgentFrameworkResponseHandlerTests
         Assert.IsType<ResponseInProgressEvent>(events[1]);
     }
 
-    [Fact]
-    public async Task CreateAsync_WithKeyedAgent_ResolvesCorrectAgentAsync()
+    [Theory]
+    [InlineData("agent_reference")]
+    [InlineData("model")]
+    [InlineData("entity_id")]
+    public async Task CreateAsync_RequestNamesAnotherAgent_IsAnsweredByTheHostedAgentAsync(string selector)
     {
-        // Arrange
-        var agent = CreateTestAgent("Keyed agent response");
+        // Arrange: the container serves one agent, so neither the request nor an agent registered in DI under
+        // the requested name changes which agent answers.
+        var agent = new CapturingAgent();
+        var registeredAgent = new CapturingAgent();
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddKeyedSingleton<AIAgent>("my-agent", agent);
+        services.AddKeyedSingleton<AIAgent>("other-agent", registeredAgent);
+        services.AddSingleton<AIAgent>(registeredAgent);
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(agent), NullLogger<AgentFrameworkResponseHandler>.Instance);
 
-        var request = new CreateResponse { Model = "test", AgentReference = new AgentReference("my-agent") };
+        var request = new CreateResponse { Model = string.Equals(selector, "model", StringComparison.Ordinal) ? "other-agent" : "test" };
+        if (string.Equals(selector, "agent_reference", StringComparison.Ordinal))
+        {
+            request.AgentReference = new AgentReference("other-agent");
+        }
+
+        if (string.Equals(selector, "entity_id", StringComparison.Ordinal))
+        {
+            var metadata = new Metadata();
+            metadata.AdditionalProperties["entity_id"] = "other-agent";
+            request.Metadata = metadata;
+        }
+
         request.Input = BinaryData.FromObjectAsJson(new[]
         {
             new { type = "message", id = "msg_1", status = "completed", role = "user",
@@ -94,48 +111,25 @@ public class AgentFrameworkResponseHandlerTests
             events.Add(evt);
         }
 
-        // Assert - should have produced events from the keyed agent
-        Assert.True(events.Count >= 4);
+        // Assert
         Assert.IsType<ResponseCreatedEvent>(events[0]);
-    }
-
-    [Fact]
-    public async Task CreateAsync_NoAgentRegistered_ThrowsInvalidOperationExceptionAsync()
-    {
-        // Arrange
-        var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        var sp = services.BuildServiceProvider();
-
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-
-        var request = new CreateResponse { Model = "test" };
-        request.Input = BinaryData.FromObjectAsJson(new[]
-        {
-            new { type = "message", id = "msg_1", status = "completed", role = "user",
-                  content = new[] { new { type = "input_text", text = "Hello" } } }
-        });
-
-        var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
-        mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<Item>());
-
-        // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            await foreach (var _ in handler.CreateAsync(request, mockContext.Object, CancellationToken.None))
-            {
-            }
-        });
+        Assert.NotNull(agent.CapturedMessages);
+        Assert.Null(registeredAgent.CapturedMessages);
     }
 
     [Fact]
     public void Constructor_NullServiceProvider_ThrowsArgumentNullException()
     {
         Assert.Throws<ArgumentNullException>(
-            () => new AgentFrameworkResponseHandler(null!, NullLogger<AgentFrameworkResponseHandler>.Instance));
+            () => new AgentFrameworkResponseHandler(null!, new FoundryHostedAgentSource(CreateTestAgent("unused")), NullLogger<AgentFrameworkResponseHandler>.Instance));
+    }
+
+    [Fact]
+    public void Constructor_NullAgentSource_ThrowsArgumentNullException()
+    {
+        var sp = new ServiceCollection().BuildServiceProvider();
+        Assert.Throws<ArgumentNullException>(
+            () => new AgentFrameworkResponseHandler(sp, null!, NullLogger<AgentFrameworkResponseHandler>.Instance));
     }
 
     [Fact]
@@ -143,200 +137,46 @@ public class AgentFrameworkResponseHandlerTests
     {
         var sp = new ServiceCollection().BuildServiceProvider();
         Assert.Throws<ArgumentNullException>(
-            () => new AgentFrameworkResponseHandler(sp, null!));
+            () => new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(CreateTestAgent("unused")), null!));
     }
 
     [Fact]
-    public async Task CreateAsync_ResolvesAgentByModelFieldAsync()
+    public async Task CreateAsync_NoSessionStoreRegistered_ThrowsBeforeEmitCreatedAsync()
     {
-        // Arrange
-        var agent = CreateTestAgent("model agent");
-        var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddKeyedSingleton<AIAgent>("my-agent", agent);
-        var sp = services.BuildServiceProvider();
-
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-
-        var request = new CreateResponse { Model = "my-agent" };
-        request.Input = BinaryData.FromObjectAsJson(new[]
-        {
-            new { type = "message", id = "msg_1", status = "completed", role = "user",
-                  content = new[] { new { type = "input_text", text = "Hello" } } }
-        });
-
+        // Arrange: AddFoundryResponses always registers a store, so only a handler built without it lacks one.
+        var sp = new ServiceCollection().BuildServiceProvider();
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(CreateTestAgent("unused")), NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var request = new CreateResponse { Model = "test" };
         var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
-        mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<Item>());
 
         // Act
         var events = new List<ResponseStreamEvent>();
-        await foreach (var evt in handler.CreateAsync(request, mockContext.Object, CancellationToken.None))
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
-            events.Add(evt);
-        }
-
-        // Assert
-        Assert.True(events.Count >= 4);
-        Assert.IsType<ResponseCreatedEvent>(events[0]);
-    }
-
-    [Fact]
-    public async Task CreateAsync_ResolvesAgentByEntityIdMetadataAsync()
-    {
-        // Arrange
-        var agent = CreateTestAgent("entity agent");
-        var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddKeyedSingleton<AIAgent>("entity-agent", agent);
-        var sp = services.BuildServiceProvider();
-
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-
-        var request = new CreateResponse { Model = "" };
-        var metadata = new Metadata();
-        metadata.AdditionalProperties["entity_id"] = "entity-agent";
-        request.Metadata = metadata;
-        request.Input = BinaryData.FromObjectAsJson(new[]
-        {
-            new { type = "message", id = "msg_1", status = "completed", role = "user",
-                  content = new[] { new { type = "input_text", text = "Hello" } } }
-        });
-
-        var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
-        mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<Item>());
-
-        // Act
-        var events = new List<ResponseStreamEvent>();
-        await foreach (var evt in handler.CreateAsync(request, mockContext.Object, CancellationToken.None))
-        {
-            events.Add(evt);
-        }
-
-        // Assert
-        Assert.True(events.Count >= 4);
-        Assert.IsType<ResponseCreatedEvent>(events[0]);
-    }
-
-    [Fact]
-    public async Task CreateAsync_NamedAgentNotFound_FallsBackToDefaultAsync()
-    {
-        // Arrange
-        var agent = CreateTestAgent("default agent");
-        var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
-        var sp = services.BuildServiceProvider();
-
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-
-        var request = new CreateResponse { Model = "test", AgentReference = new AgentReference("nonexistent-agent") };
-        request.Input = BinaryData.FromObjectAsJson(new[]
-        {
-            new { type = "message", id = "msg_1", status = "completed", role = "user",
-                  content = new[] { new { type = "input_text", text = "Hello" } } }
-        });
-
-        var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
-        mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<Item>());
-
-        // Act
-        var events = new List<ResponseStreamEvent>();
-        await foreach (var evt in handler.CreateAsync(request, mockContext.Object, CancellationToken.None))
-        {
-            events.Add(evt);
-        }
-
-        // Assert
-        Assert.True(events.Count >= 4);
-        Assert.IsType<ResponseCreatedEvent>(events[0]);
-    }
-
-    [Fact]
-    public async Task CreateAsync_NoAgentFound_ErrorMessageIncludesAgentNameAsync()
-    {
-        // Arrange
-        var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        var sp = services.BuildServiceProvider();
-
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-
-        var request = new CreateResponse { Model = "test", AgentReference = new AgentReference("missing-agent") };
-        request.Input = BinaryData.FromObjectAsJson(new[]
-        {
-            new { type = "message", id = "msg_1", status = "completed", role = "user",
-                  content = new[] { new { type = "input_text", text = "Hello" } } }
-        });
-
-        var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
-        mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<Item>());
-
-        // Act & Assert
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            await foreach (var _ in handler.CreateAsync(request, mockContext.Object, CancellationToken.None))
+            await foreach (var evt in handler.CreateAsync(request, mockContext.Object, CancellationToken.None))
             {
+                events.Add(evt);
             }
         });
 
-        Assert.Contains("missing-agent", ex.Message);
+        // Assert
+        Assert.Contains(nameof(AgentSessionStore), exception.Message, StringComparison.Ordinal);
+        Assert.Empty(events);
     }
 
     [Fact]
-    public async Task CreateAsync_NoAgentNoName_ErrorMessageIsGenericAsync()
+    public async Task CreateAsync_AgentFactoryThrows_ExceptionHasNoEventsAsync()
     {
         // Arrange
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         var sp = services.BuildServiceProvider();
+        var agentSource = new FoundryHostedAgentSource(
+            _ => throw new InvalidOperationException("factory failed"),
+            ServiceLifetime.Scoped,
+            sp);
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-
-        var request = new CreateResponse { Model = "" };
-        request.Input = BinaryData.FromObjectAsJson(new[]
-        {
-            new { type = "message", id = "msg_1", status = "completed", role = "user",
-                  content = new[] { new { type = "input_text", text = "Hello" } } }
-        });
-
-        var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
-        mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<Item>());
-
-        // Act & Assert
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            await foreach (var _ in handler.CreateAsync(request, mockContext.Object, CancellationToken.None))
-            {
-            }
-        });
-
-        Assert.Contains("No agent name specified", ex.Message);
-    }
-
-    [Fact]
-    public async Task CreateAsync_AgentResolvedBeforeEmitCreated_ExceptionHasNoEventsAsync()
-    {
-        // Arrange
-        var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        var sp = services.BuildServiceProvider();
-
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(sp, agentSource, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
         var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
@@ -353,21 +193,16 @@ public class AgentFrameworkResponseHandlerTests
 
         // Act
         var events = new List<ResponseStreamEvent>();
-        bool threw = false;
-        try
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
             await foreach (var evt in handler.CreateAsync(request, mockContext.Object, CancellationToken.None))
             {
                 events.Add(evt);
             }
-        }
-        catch (InvalidOperationException)
-        {
-            threw = true;
-        }
+        });
 
         // Assert
-        Assert.True(threw);
+        Assert.Equal("factory failed", exception.Message);
         Assert.Empty(events);
     }
 
@@ -378,10 +213,9 @@ public class AgentFrameworkResponseHandlerTests
         var agent = new CapturingAgent();
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(agent), NullLogger<AgentFrameworkResponseHandler>.Instance);
 
         var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
@@ -427,10 +261,9 @@ public class AgentFrameworkResponseHandlerTests
         var agent = new CapturingAgent();
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(agent), NullLogger<AgentFrameworkResponseHandler>.Instance);
 
         var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
@@ -470,10 +303,9 @@ public class AgentFrameworkResponseHandlerTests
         var agent = new CapturingAgent();
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(agent), NullLogger<AgentFrameworkResponseHandler>.Instance);
 
         var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
@@ -509,10 +341,9 @@ public class AgentFrameworkResponseHandlerTests
         var agent = new CapturingAgent();
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(agent), NullLogger<AgentFrameworkResponseHandler>.Instance);
 
         var request = new CreateResponse
         {
@@ -551,10 +382,9 @@ public class AgentFrameworkResponseHandlerTests
         var agent = new ThrowingAgent(new InvalidOperationException("Agent crashed"));
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(agent), NullLogger<AgentFrameworkResponseHandler>.Instance);
 
         var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
@@ -584,55 +414,15 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_MultipleKeyedAgents_ResolvesCorrectOneAsync()
-    {
-        // Arrange
-        var agent1 = CreateTestAgent("Agent 1 response");
-        var agent2 = CreateTestAgent("Agent 2 response");
-        var services = new ServiceCollection();
-        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddKeyedSingleton<AIAgent>("agent-1", agent1);
-        services.AddKeyedSingleton<AIAgent>("agent-2", agent2);
-        var sp = services.BuildServiceProvider();
-
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-
-        var request = new CreateResponse { Model = "test", AgentReference = new AgentReference("agent-2") };
-        request.Input = BinaryData.FromObjectAsJson(new[]
-        {
-            new { type = "message", id = "msg_1", status = "completed", role = "user",
-                  content = new[] { new { type = "input_text", text = "Hello" } } }
-        });
-
-        var mockContext = new Mock<ResponseContext>("resp_" + new string('0', 46)) { CallBase = true };
-        mockContext.Setup(x => x.GetHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<OutputItem>());
-        mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<Item>());
-
-        // Act
-        var events = new List<ResponseStreamEvent>();
-        await foreach (var evt in handler.CreateAsync(request, mockContext.Object, CancellationToken.None))
-        {
-            events.Add(evt);
-        }
-
-        // Assert
-        Assert.True(events.Count >= 4);
-        Assert.IsType<ResponseCreatedEvent>(events[0]);
-    }
-
-    [Fact]
     public async Task CreateAsync_CancellationDuringExecution_PropagatesOperationCanceledExceptionAsync()
     {
         // Arrange
         var agent = new CancellationCheckingAgent();
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(agent), NullLogger<AgentFrameworkResponseHandler>.Instance);
 
         var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
@@ -677,10 +467,9 @@ public class AgentFrameworkResponseHandlerTests
         var agent = CreateTestAgent("otel test response");
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
-        services.AddSingleton<AIAgent>(agent);
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(agent), NullLogger<AgentFrameworkResponseHandler>.Instance);
 
         var request = new CreateResponse { Model = "test" };
         request.Input = BinaryData.FromObjectAsJson(new[]
@@ -1100,7 +889,7 @@ public class AgentFrameworkResponseHandlerTests
 
         var storageAgent = new FoundryHostingAgent(
             agent,
-            FoundryHostingAgent.ResolveSessionStorageIdentity(agent, registrationKey: null, defaultAgent: agent));
+            FoundryHostingAgent.ResolveSessionStorageIdentity(agent));
         var storageKey = new AgentSessionStoreKey("conv-harness-local")
             .WithPartition("user", "alice");
         var savedSession = Assert.IsType<ChatClientAgentSession>(
@@ -1508,7 +1297,7 @@ public class AgentFrameworkResponseHandlerTests
         var sessionKey = HostedConversationKey.Resolve(conversationId: null, previousResponseId: null, responseId);
         AIAgent storageAgent = new FoundryHostingAgent(
             agent,
-            FoundryHostingAgent.ResolveSessionStorageIdentity(agent, registrationKey: null, defaultAgent: agent));
+            FoundryHostingAgent.ResolveSessionStorageIdentity(agent));
         var storageKey = new AgentSessionStoreKey(sessionKey!)
             .WithPartition("user", "alice");
         var session = await store.GetSessionAsync(storageAgent, storageKey, CancellationToken.None);
@@ -1871,10 +1660,10 @@ public class AgentFrameworkResponseHandlerTests
     {
         var services = new ServiceCollection();
         services.AddSingleton(store);
-        services.AddSingleton(agent);
 
         return new AgentFrameworkResponseHandler(
             services.BuildServiceProvider(),
+            new FoundryHostedAgentSource(agent),
             NullLogger<AgentFrameworkResponseHandler>.Instance,
             hostingOptions ?? new FoundryResponsesServerOptions());
     }
