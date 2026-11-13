@@ -1601,7 +1601,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     )
                 text = "\n".join(c.text for c in result if c.type == "text" and c.text)
                 return ToolResult(
-                    text_result_for_llm=text or str(result),
+                    text_result_for_llm=text,
                     result_type="success",
                 )
             except Exception as e:
