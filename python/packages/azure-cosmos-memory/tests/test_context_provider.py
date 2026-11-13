@@ -349,17 +349,50 @@ class TestInit:
             _, kwargs = mock_client_class.call_args
             assert kwargs["cadence_thresholds"] is None
 
-    def test_processor_config_with_supplied_client_raises(self, mock_memory_client: AsyncMock) -> None:
-        """Cadence config cannot apply to a caller-supplied client, so combining them raises."""
-        with pytest.raises(ValueError, match="processor_config"):
-            CosmosMemoryContextProvider(
-                memory_client=mock_memory_client, processor_config={"FACT_EXTRACTION_EVERY_N": 10}
+    @pytest.mark.parametrize("auto_extract", [True, False])
+    def test_supplied_client_ignores_construction_options(
+        self, mock_memory_client: AsyncMock, auto_extract: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Injected clients bypass connection resolution and cadence configuration."""
+        for name in (
+            "COSMOS_ENDPOINT",
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "FOUNDRY_ENDPOINT",
+            "EMBEDDING_MODEL",
+            "CHAT_MODEL",
+        ):
+            monkeypatch.delenv(name, raising=False)
+        with (
+            patch("agent_framework_azure_cosmos_memory._context_provider.load_settings") as mock_load_settings,
+            patch("agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient") as mock_client_class,
+        ):
+            provider = CosmosMemoryContextProvider(
+                memory_client=mock_memory_client,
+                processor_config={"FACT_EXTRACTION_EVERY_N": 2},
+                auto_extract=auto_extract,
+                top_k=7,
+                min_confidence=0.8,
+                memory_types=["episodic"],
+                context_prompt="Selected memories:",
             )
 
-    def test_auto_extract_false_with_supplied_client_raises(self, mock_memory_client: AsyncMock) -> None:
-        """auto_extract=False cannot apply to a caller-supplied client, so combining them raises."""
-        with pytest.raises(ValueError, match="processor_config"):
-            CosmosMemoryContextProvider(memory_client=mock_memory_client, auto_extract=False)
+        assert provider.memory_client is mock_memory_client
+        assert provider.top_k == 7
+        assert provider.min_confidence == 0.8
+        assert provider.memory_types == ["episodic"]
+        assert provider.context_prompt == "Selected memories:"
+        mock_load_settings.assert_not_called()
+        mock_client_class.assert_not_called()
+
+    def test_supplied_client_does_not_parse_cadence(self, mock_memory_client: AsyncMock) -> None:
+        """Construction-only cadence values are not evaluated for injected clients."""
+        cadence = MagicMock()
+        cadence.items.side_effect = AssertionError("cadence should not be inspected")
+
+        provider = CosmosMemoryContextProvider(memory_client=mock_memory_client, processor_config=cadence)
+
+        assert provider.memory_client is mock_memory_client
+        cadence.items.assert_not_called()
 
 
 # -- before_run tests ----------------------------------------------------------
@@ -955,9 +988,12 @@ class TestContextManager:
         """When client is provided externally, provider should not close it."""
         provider = CosmosMemoryContextProvider(memory_client=mock_memory_client)
 
-        async with provider:
-            pass
+        with patch.object(provider, "flush", new_callable=AsyncMock) as mock_flush:
+            async with provider:
+                pass
 
+        mock_flush.assert_awaited_once()
+        mock_memory_client.close.assert_not_awaited()
         # Should still enter the client
         mock_memory_client.__aenter__.assert_awaited_once()
         # But should NOT exit it (caller owns it)
@@ -1052,12 +1088,19 @@ class TestCustomPromptsDir:
         # _get_pipeline is synchronous on the toolkit client; return our stand-in pipeline.
         mock_memory_client._get_pipeline = MagicMock(return_value=mock_pipeline)
 
-        provider = CosmosMemoryContextProvider(
-            memory_client=mock_memory_client,
-            prompts_dir="/custom/prompts",
-        )
-        async with provider:
-            pass
+        with patch(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient",
+            return_value=mock_memory_client,
+        ):
+            provider = CosmosMemoryContextProvider(
+                cosmos_endpoint="https://test.documents.azure.com:443/",
+                foundry_endpoint="https://test.ai.azure.com",
+                embedding_model="text-embedding-3-large",
+                chat_model="gpt-4o-mini",
+                prompts_dir="/custom/prompts",
+            )
+            async with provider:
+                pass
 
         from azure.cosmos.agent_memory.services._pipeline_helpers import PromptyLoader
 
@@ -1074,3 +1117,15 @@ class TestCustomPromptsDir:
             pass
 
         mock_memory_client._get_pipeline.assert_not_called()
+
+    async def test_supplied_client_ignores_prompts_dir(self, mock_memory_client: AsyncMock) -> None:
+        """Custom templates must not replace the caller's existing pipeline loader."""
+        mock_memory_client._get_pipeline = MagicMock()
+        provider = CosmosMemoryContextProvider(memory_client=mock_memory_client, prompts_dir="/custom/prompts")
+
+        async with provider:
+            pass
+
+        mock_memory_client._get_pipeline.assert_not_called()
+        mock_memory_client.__aexit__.assert_not_awaited()
+        mock_memory_client.close.assert_not_awaited()

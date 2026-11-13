@@ -335,9 +335,22 @@ class TestEmulatorCustomExtractionPrompt:
         custom_dir = _make_custom_prompts_dir(tmp_path / "prompts", marker)
 
         chat = _FakeChat()
-        client = _build_emulator_client(monkeypatch, chat)
+
+        def _create_emulator_client(**kwargs: Any) -> AsyncCosmosMemoryClient:
+            return _build_emulator_client(monkeypatch, chat)
+
+        # Keep the real emulator-backed toolkit client, but let the provider create and own it
+        # so its prompts_dir option applies. Foundry calls still use the deterministic fakes.
+        monkeypatch.setattr(
+            "agent_framework_azure_cosmos_memory._context_provider.AsyncCosmosMemoryClient",
+            _create_emulator_client,
+        )
         provider = CosmosMemoryContextProvider(
-            memory_client=client,
+            cosmos_endpoint=_EMULATOR_ENDPOINT,
+            cosmos_database="test_af_mem",
+            foundry_endpoint="https://test.ai.azure.com",
+            embedding_model="test-embedding",
+            chat_model="test-chat",
             top_k=5,
             min_confidence=0.0,
             memory_types=["fact"],
@@ -346,7 +359,7 @@ class TestEmulatorCustomExtractionPrompt:
         try:
             await provider.__aenter__()
         except Exception as exc:  # noqa: BLE001 - clear skip on any connectivity/setup failure
-            await client.close()
+            await provider.memory_client.close()
             pytest.skip(f"Cosmos DB emulator not reachable or vector search unavailable at {_EMULATOR_ENDPOINT}: {exc}")
 
         try:
@@ -372,4 +385,3 @@ class TestEmulatorCustomExtractionPrompt:
         # in the overridden template, so its presence proves prompts_dir was honored end to end.
         sent = "\n".join(str(msg.get("content", "")) for call in chat.calls for msg in call)
         assert marker in sent, "custom extract_memories.prompty was not used by the extraction pipeline"
-        await client.close()

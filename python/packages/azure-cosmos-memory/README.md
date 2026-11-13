@@ -420,8 +420,10 @@ For fine-grained control over memory processing:
 from azure.cosmos.agent_memory.aio import AsyncCosmosMemoryClient
 
 # Create a custom memory client. To disable automatic extraction, zero the cadence thresholds
-# on the client you build - the provider cannot reconfigure a client you pass in, so supplying
-# a memory_client together with auto_extract=False or processor_config raises ValueError.
+# on the client you build. When memory_client is supplied, the provider ignores its connection,
+# credential, auto_extract, processor_config and prompts_dir options and preserves the client's
+# configuration. Retrieval options (top_k, min_confidence, memory_types and context_prompt) still apply.
+# The caller is responsible for closing the supplied client.
 memory_client = AsyncCosmosMemoryClient(
     cosmos_endpoint=cosmos_endpoint,
     cosmos_database="ai_memory",
