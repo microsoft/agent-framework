@@ -31,6 +31,368 @@ except (ImportError, RuntimeError):
 logger = logging.getLogger("agent_framework.declarative")
 
 
+class _UnsupportedExpressionError(ValueError):
+    """A formula uses syntax outside the simple fallback evaluator's subset.
+
+    Raised by :meth:`WorkflowState._eval_simple` instead of silently returning
+    an unevaluated formula, so callers can distinguish "evaluated" from
+    "not supported".
+    """
+
+
+def _skip_quoted_token(formula: str, start: int) -> int:
+    """Return the index after the quoted token starting at ``start``.
+
+    Handles Power Fx escaped quotes (a doubled quote inside the literal).
+
+    Raises:
+        _UnsupportedExpressionError: If the literal is not terminated before
+            the end of the formula.
+    """
+    quote = formula[start]
+    pos = start + 1
+    while pos < len(formula):
+        if formula[pos] == quote:
+            if pos + 1 < len(formula) and formula[pos + 1] == quote:
+                pos += 2
+                continue
+            return pos + 1
+        pos += 1
+    raise _UnsupportedExpressionError(f"unterminated string literal at position {start}")
+
+
+def _skip_comment(formula: str, start: int) -> int:
+    """Return the index after the ``//`` or ``/* */`` comment at ``start``, or ``start``."""
+    if formula.startswith("//", start):
+        pos = formula.find("\n", start)
+        return len(formula) if pos == -1 else pos + 1
+    if formula.startswith("/*", start):
+        pos = formula.find("*/", start + 2)
+        if pos == -1:
+            raise _UnsupportedExpressionError(f"unterminated block comment at position {start}")
+        return pos + 2
+    return start
+
+
+def _tokenize_formula(formula: str) -> list[tuple[str, Any]]:
+    """Split a formula into ``(kind, value)`` tokens.
+
+    Operator text is only recognized outside string literals and comments, so
+    ``"a And b"`` tokenizes as one string literal. Comments are skipped as
+    trivia, matching ``whole_call_args``.
+
+    Returns:
+        Tokens ending with a final ``("EOF", None)`` marker.
+
+    Raises:
+        _UnsupportedExpressionError: If the formula contains characters or
+            literals outside the supported subset.
+    """
+    tokens: list[tuple[str, Any]] = []
+    i = 0
+    length = len(formula)
+    depth = 0
+    while i < length:
+        char = formula[i]
+        if char.isspace():
+            i += 1
+            continue
+        if char in ('"', "'"):
+            end = _skip_quoted_token(formula, i)
+            tokens.append(("STR", formula[i + 1 : end - 1].replace(char + char, char)))
+            i = end
+            continue
+        comment_end = _skip_comment(formula, i)
+        if comment_end != i:
+            i = comment_end
+            continue
+        if char.isdigit() or (char == "." and i + 1 < length and formula[i + 1].isdigit()):
+            j = i
+            seen_dot = False
+            while j < length:
+                digit_char = formula[j]
+                if digit_char.isdigit():
+                    j += 1
+                elif digit_char == "." and not seen_dot:
+                    seen_dot = True
+                    j += 1
+                elif (
+                    digit_char in ("e", "E")
+                    and j > i
+                    and j + 1 < length
+                    and (
+                        formula[j + 1].isdigit()
+                        or (formula[j + 1] in "+-" and j + 2 < length and formula[j + 2].isdigit())
+                    )
+                ):
+                    j += 2 if formula[j + 1] in "+-" else 1
+                else:
+                    break
+            text = formula[i:j]
+            try:
+                value: Any = float(text) if ("." in text or "e" in text or "E" in text) else int(text)
+            except ValueError:
+                raise _UnsupportedExpressionError(f"invalid numeric literal {text!r}") from None
+            tokens.append(("NUM", value))
+            i = j
+            continue
+        if char.isalpha() or char == "_":
+            j = i
+            while j < length and (formula[j].isalnum() or formula[j] in "_."):
+                j += 1
+            tokens.append(("IDENT", formula[i:j]))
+            i = j
+            continue
+        two = formula[i : i + 2]
+        if two in ("<>", "<=", ">=", "||"):
+            tokens.append(("OP", two))
+            i += 2
+            continue
+        if char in "()<>=+-*/,!":
+            if char == "(":
+                depth += 1
+                if depth > _MAX_FORMULA_DEPTH:
+                    raise _UnsupportedExpressionError(
+                        f"formula nesting exceeds the fallback evaluator's maximum depth of {_MAX_FORMULA_DEPTH}"
+                    )
+            elif char == ")":
+                depth -= 1
+            tokens.append(("OP", char))
+            i += 1
+            continue
+        raise _UnsupportedExpressionError(
+            f"unsupported syntax: character {char!r} at position {i} is outside the fallback subset"
+        )
+    tokens.append(("EOF", None))
+    return tokens
+
+
+_COMPARISON_OPS = ("=", "<>", "<", "<=", ">", ">=")
+_MAX_FORMULA_DEPTH = 64
+_RUNTIME_FAILED = object()
+
+
+class _SimpleFormulaEvaluator:
+    """Precedence-climbing evaluator for the fallback's supported subset.
+
+    Operator precedence (tightest binding last)::
+
+        Or / ||  <  And  <  = <> < > <= >=  <  + -  <  * /  <  ! / Not() / unary -
+
+    Operators at the same level are left-associative; ``( ... )`` groups.
+    """
+
+    def __init__(self, formula: str, state: WorkflowState) -> None:
+        from ._powerfx_functions import CUSTOM_FUNCTIONS
+
+        self._formula = formula
+        self._state = state
+        self._custom_functions = CUSTOM_FUNCTIONS
+        self._tokens = _tokenize_formula(formula)
+        self._pos = 0
+
+    def evaluate(self) -> Any:
+        """Evaluate the token stream and reject unconsumed trailing input.
+
+        Runtime operand failures (failed conversions, function errors) do not
+        short-circuit the parse: they propagate the ``_RUNTIME_FAILED`` sentinel
+        so the whole formula stays structurally validated, and the documented
+        echo of the original formula is applied once here, at the boundary.
+        """
+        result = self._parse_or()
+        kind, value = self._peek()
+        if kind != "EOF":
+            raise _UnsupportedExpressionError(
+                f"unsupported syntax: unexpected {value!r} after a complete expression is outside the fallback subset"
+            )
+        if result is _RUNTIME_FAILED:
+            return self._formula
+        return result
+
+    def _peek(self) -> tuple[str, Any]:
+        return self._tokens[self._pos]
+
+    def _advance(self) -> tuple[str, Any]:
+        token = self._tokens[self._pos]
+        self._pos += 1
+        return token
+
+    def _match_op(self, *ops: str) -> str | None:
+        kind, value = self._peek()
+        if kind in ("OP", "IDENT") and value in ops:
+            self._pos += 1
+            return str(value)
+        return None
+
+    def _parse_or(self) -> Any:
+        left = self._parse_and()
+        while self._match_op("||", "Or") is not None:
+            right = self._parse_and()
+            if left is _RUNTIME_FAILED or right is _RUNTIME_FAILED:
+                left = _RUNTIME_FAILED
+                continue
+            left = bool(left) or bool(right)
+        return left
+
+    def _parse_and(self) -> Any:
+        left = self._parse_comparison()
+        while self._match_op("And") is not None:
+            right = self._parse_comparison()
+            if left is _RUNTIME_FAILED or right is _RUNTIME_FAILED:
+                left = _RUNTIME_FAILED
+                continue
+            left = bool(left) and bool(right)
+        return left
+
+    def _parse_comparison(self) -> Any:
+        left = self._parse_additive()
+        while (op := self._match_op(*_COMPARISON_OPS)) is not None:
+            right = self._parse_additive()
+            if left is _RUNTIME_FAILED or right is _RUNTIME_FAILED:
+                left = _RUNTIME_FAILED
+                continue
+            if op == "=":
+                left = left == right
+            elif op == "<>":
+                left = left != right
+            elif left is None or right is None:
+                left = False
+            else:
+                try:
+                    if op == "<":
+                        left = left < right
+                    elif op == "<=":
+                        left = left <= right
+                    elif op == ">":
+                        left = left > right
+                    else:
+                        left = left >= right
+                except TypeError:
+                    left = _RUNTIME_FAILED
+        return left
+
+    def _parse_additive(self) -> Any:
+        left: Any = self._parse_multiplicative()
+        while (op := self._match_op("+", "-")) is not None:
+            right = self._parse_multiplicative()
+            if left is _RUNTIME_FAILED or right is _RUNTIME_FAILED:
+                left = _RUNTIME_FAILED
+                continue
+            left_num = left if left is not None else 0
+            right_num = right if right is not None else 0
+            if op == "+":
+                try:
+                    left = float(left_num) + float(right_num)
+                except (ValueError, TypeError):
+                    left = str(left_num) + str(right_num)
+            else:
+                try:
+                    left = float(left_num) - float(right_num)
+                except (ValueError, TypeError):
+                    left = _RUNTIME_FAILED
+        return left
+
+    def _parse_multiplicative(self) -> Any:
+        left: Any = self._parse_unary()
+        while (op := self._match_op("*", "/")) is not None:
+            right = self._parse_unary()
+            if left is _RUNTIME_FAILED or right is _RUNTIME_FAILED:
+                left = _RUNTIME_FAILED
+                continue
+            try:
+                if op == "*":
+                    left = float(left if left is not None else 0) * float(right if right is not None else 0)
+                else:
+                    right_float = float(right if right is not None else 0)
+                    if right_float == 0:
+                        logger.warning(f"Division by zero in expression: {self._formula}")
+                        left = None
+                        continue
+                    left = float(left if left is not None else 0) / right_float
+            except (ValueError, TypeError):
+                left = _RUNTIME_FAILED
+        return left
+
+    def _parse_unary(self) -> Any:
+        kind, value = self._peek()
+        if kind == "OP" and value == "!":
+            self._advance()
+            operand = self._parse_unary()
+            if operand is _RUNTIME_FAILED:
+                return _RUNTIME_FAILED
+            return not bool(operand)
+        if kind == "OP" and value == "-":
+            self._advance()
+            operand = self._parse_unary()
+            if operand is _RUNTIME_FAILED:
+                return _RUNTIME_FAILED
+            if isinstance(operand, (int, float)) and not isinstance(operand, bool):
+                return -operand
+            try:
+                return -float(operand if operand is not None else 0)
+            except (ValueError, TypeError):
+                return _RUNTIME_FAILED
+        return self._parse_primary()
+
+    def _parse_primary(self) -> Any:
+        kind, value = self._advance()
+        if kind in ("NUM", "STR"):
+            return value
+        if kind == "OP" and value == "(":
+            inner = self._parse_or()
+            kind_close, value_close = self._advance()
+            if not (kind_close == "OP" and value_close == ")"):
+                raise _UnsupportedExpressionError("unbalanced parentheses in formula")
+            return inner
+        if kind == "IDENT" and isinstance(value, str) and value:
+            if value.lower() in ("true", "false"):
+                return value.lower() == "true"
+            if self._peek() == ("OP", "("):
+                return self._parse_call(value)
+            return self._resolve_identifier(value)
+        raise _UnsupportedExpressionError(f"unsupported syntax near {value!r}: outside the fallback subset")
+
+    def _parse_call(self, name: str) -> Any:
+        self._advance()
+        args: list[Any] = []
+        if self._peek() == ("OP", ")"):
+            self._advance()
+        else:
+            while True:
+                args.append(self._parse_or())
+                kind, value = self._advance()
+                if kind == "OP" and value == ",":
+                    continue
+                if kind == "OP" and value == ")":
+                    break
+                raise _UnsupportedExpressionError(f"malformed argument list in call to {name}()")
+        if name == "Not":
+            if any(arg is _RUNTIME_FAILED for arg in args):
+                return _RUNTIME_FAILED
+            return not bool(args[0]) if args else True
+        func = self._custom_functions.get(name)
+        if func is None:
+            raise _UnsupportedExpressionError(
+                f"function {name}() is not supported by the fallback; install/enable PowerFx for full Power Fx support"
+            )
+        if any(arg is _RUNTIME_FAILED for arg in args):
+            return _RUNTIME_FAILED
+        try:
+            return func(*args)
+        except Exception as e:
+            logger.warning(f"Function {name} failed: {e}")
+            return _RUNTIME_FAILED
+
+    def _resolve_identifier(self, path: str) -> Any:
+        if path.startswith(("Local.", "Workflow.", "Agent.", "Conversation.", "System.")):
+            return self._state.get(path)
+        not_found = object()
+        value = self._state.get(path, default=not_found)
+        if value is not not_found:
+            return value
+        return path
+
+
 class WorkflowState:
     """Manages standalone workflow state and expression evaluation.
 
@@ -393,6 +755,10 @@ class WorkflowState:
         Its state references follow :meth:`get`'s object-member rules.
         State-budget errors propagate without falling back.
 
+        The simple evaluator supports a documented subset of Power Fx (see
+        :meth:`_eval_simple`) and raises ``_UnsupportedExpressionError`` (a
+        ``ValueError``) for formulas outside that subset.
+
         Args:
             expression: The expression to evaluate
 
@@ -400,7 +766,8 @@ class WorkflowState:
             The evaluated result, or the original expression if not a PowerFx expression
 
         Raises:
-            ValueError: If symbol construction exceeds the PowerFx state budget.
+            ValueError: If symbol construction exceeds the PowerFx state budget,
+                or the formula is outside the simple evaluator's subset.
         """
         if not expression:
             return expression
@@ -428,218 +795,42 @@ class WorkflowState:
     def _eval_simple(self, formula: str) -> Any:
         """Simple expression evaluation when PowerFx is not available.
 
-        Supports:
-        - Variable references: Local.X, System.X, Workflow.Inputs.X
-        - Simple function calls: IsBlank(x), Find(a, b), etc.
-        - Simple comparisons: x < 4, x = "value"
-        - Logical operators: And, Or, Not, ||, !
-        - Negation: !expression
+        Evaluates a documented subset of Power Fx; results are best-effort and
+        may differ from full Power Fx semantics. Supported:
+
+        - Variable references: Local.X, System.X, Workflow.Inputs.X, Agent.X,
+          Conversation.X, and custom namespaces (resolved through :meth:`get`)
+        - Literals: "text" / 'text' (doubled-quote escapes), numbers,
+          true / false (case-insensitive)
+        - Operators, tightest binding last: ``Or`` / ``||``, ``And``,
+          comparisons ``= <> < > <= >=``, ``+ -``, ``* /``, and
+          ``!`` / ``Not()`` / unary ``-``, with left-to-right associativity
+          and ``( ... )`` grouping
+        - Custom function calls: If, IsBlank, Concat, Upper, Lower, ...
+          (dispatched through CUSTOM_FUNCTIONS)
+        - Trivia: whitespace and ``//`` / ``/* */`` comments
+
+        Unresolved references are returned as-is. ``None`` (Blank) is treated
+        as ``0`` in arithmetic, ``+`` falls back to string concatenation,
+        ordered comparisons against Blank are false, and division by zero
+        returns ``None``. Operands that fail at runtime (failed conversions,
+        function errors) keep the original formula: the failure propagates
+        through the parse and the formula is echoed once at the evaluation
+        boundary. Nesting deeper than 64 levels is rejected.
 
         Args:
             formula: The formula to evaluate (without leading '=')
 
         Returns:
             The evaluated result
-        """
-        from ._powerfx_functions import CUSTOM_FUNCTIONS, whole_call_args
 
+        Raises:
+            _UnsupportedExpressionError: If the formula uses syntax outside
+                the supported subset, such as unknown operators (``&``),
+                unknown function calls, or malformed expressions.
+        """
         formula = formula.strip()
-
-        # Handle negation prefix
-        if formula.startswith("!"):
-            inner = formula[1:].strip()
-            result = self._eval_simple(inner)
-            return not bool(result)
-
-        # Handle Not() function
-        not_args = whole_call_args(formula, "Not")
-        if not_args is not None:
-            result = self._eval_simple(not_args.strip())
-            return not bool(result)
-
-        # Handle function calls
-        for func_name, func in CUSTOM_FUNCTIONS.items():
-            args_str = whole_call_args(formula, func_name)
-            if args_str is not None:
-                # Simple argument parsing (doesn't handle nested calls well)
-                args = self._parse_function_args(args_str)
-                evaluated_args = [self._eval_simple(arg) if isinstance(arg, str) else arg for arg in args]
-                try:
-                    return func(*evaluated_args)
-                except Exception as e:
-                    logger.warning(f"Function {func_name} failed: {e}")
-                    return formula
-
-        # Handle And operator
-        if " And " in formula:
-            parts = formula.split(" And ", 1)
-            left = self._eval_simple(parts[0])
-            right = self._eval_simple(parts[1])
-            return bool(left) and bool(right)
-
-        # Handle Or operator (||)
-        if " || " in formula or " Or " in formula:
-            parts = formula.split(" || ", 1) if " || " in formula else formula.split(" Or ", 1)
-            left = self._eval_simple(parts[0])
-            right = self._eval_simple(parts[1])
-            return bool(left) or bool(right)
-
-        # Handle comparison operators
-        for op in [" < ", " > ", " <= ", " >= ", " <> ", " = "]:
-            if op in formula:
-                parts = formula.split(op, 1)
-                left = self._eval_simple(parts[0].strip())
-                right = self._eval_simple(parts[1].strip())
-                if op == " < ":
-                    return left < right
-                if op == " > ":
-                    return left > right
-                if op == " <= ":
-                    return left <= right
-                if op == " >= ":
-                    return left >= right
-                if op == " <> ":
-                    return left != right
-                if op == " = ":
-                    return left == right
-
-        # Handle arithmetic operators
-        if " + " in formula:
-            parts = formula.split(" + ", 1)
-            left = self._eval_simple(parts[0].strip())
-            right = self._eval_simple(parts[1].strip())
-            # Treat None as 0 for arithmetic (PowerFx behavior)
-            if left is None:
-                left = 0
-            if right is None:
-                right = 0
-            # Try numeric addition first, fall back to string concat
-            try:
-                return float(left) + float(right)
-            except (ValueError, TypeError):
-                return str(left) + str(right)
-
-        if " - " in formula:
-            parts = formula.split(" - ", 1)
-            left = self._eval_simple(parts[0].strip())
-            right = self._eval_simple(parts[1].strip())
-            # Treat None as 0 for arithmetic (PowerFx behavior)
-            if left is None:
-                left = 0
-            if right is None:
-                right = 0
-            try:
-                return float(left) - float(right)
-            except (ValueError, TypeError):
-                return formula
-
-        # Handle multiplication
-        if " * " in formula:
-            parts = formula.split(" * ", 1)
-            left = self._eval_simple(parts[0].strip())
-            right = self._eval_simple(parts[1].strip())
-            # Treat None as 0 for arithmetic (PowerFx behavior)
-            if left is None:
-                left = 0
-            if right is None:
-                right = 0
-            try:
-                return float(left) * float(right)
-            except (ValueError, TypeError):
-                return formula
-
-        # Handle division with div-by-zero protection
-        if " / " in formula:
-            parts = formula.split(" / ", 1)
-            left = self._eval_simple(parts[0].strip())
-            right = self._eval_simple(parts[1].strip())
-            # Treat None as 0 for arithmetic (PowerFx behavior)
-            if left is None:
-                left = 0
-            if right is None:
-                right = 0
-            try:
-                right_float = float(right)
-                if right_float == 0:
-                    # PowerFx returns Error for division by zero; we return None (Blank)
-                    logger.warning(f"Division by zero in expression: {formula}")
-                    return None
-                return float(left) / right_float
-            except (ValueError, TypeError):
-                return formula
-
-        # Handle string literals
-        if (formula.startswith('"') and formula.endswith('"')) or (formula.startswith("'") and formula.endswith("'")):
-            return formula[1:-1]
-
-        # Handle numeric literals
-        try:
-            if "." in formula:
-                return float(formula)
-            return int(formula)
-        except ValueError:
-            pass
-
-        # Handle boolean literals
-        if formula.lower() == "true":
-            return True
-        if formula.lower() == "false":
-            return False
-
-        # Handle variable references
-        if "." in formula:
-            # For known namespaces, return None if not found (PowerFx semantics)
-            # rather than the formula string
-            if formula.startswith(("Local.", "Workflow.", "Agent.", "Conversation.", "System.")):
-                return self.get(formula)
-            not_found = object()
-            value = self.get(formula, default=not_found)
-            if value is not not_found:
-                return value
-
-        # Return the formula as-is if we can't evaluate it
-        return formula
-
-    def _parse_function_args(self, args_str: str) -> list[str]:
-        """Parse function arguments, handling nested parentheses and strings.
-
-        Args:
-            args_str: The argument string (without outer parentheses)
-
-        Returns:
-            List of argument strings
-        """
-        args: list[str] = []
-        current = ""
-        depth = 0
-        in_string = False
-        string_char = None
-
-        for char in args_str:
-            if char in ('"', "'") and not in_string:
-                in_string = True
-                string_char = char
-                current += char
-            elif char == string_char and in_string:
-                in_string = False
-                string_char = None
-                current += char
-            elif char == "(" and not in_string:
-                depth += 1
-                current += char
-            elif char == ")" and not in_string:
-                depth -= 1
-                current += char
-            elif char == "," and depth == 0 and not in_string:
-                args.append(current.strip())
-                current = ""
-            else:
-                current += char
-
-        if current.strip():
-            args.append(current.strip())
-
-        return args
+        return _SimpleFormulaEvaluator(formula, self).evaluate()
 
     def eval_if_expression(self, value: Any) -> Any:
         """Evaluate a value if it's a PowerFx expression, otherwise return as-is.

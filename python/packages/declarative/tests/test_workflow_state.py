@@ -448,25 +448,25 @@ class TestWorkflowStateEvalSimpleCallExtent:
     remainder of the formula absorbed into its arguments.
     """
 
-    def test_trailing_operator_is_not_absorbed_into_arguments(self):
-        """The formula is left unclaimed instead of yielding a corrupted fragment.
+    def test_trailing_operator_raises(self):
+        """An out-of-subset ``&`` raises instead of echoing a corrupted formula.
 
-        ``_eval_simple`` echoes a formula it cannot evaluate, and ``eval``
-        reaches it only after PowerFx has already had its turn.
+        The fallback now rejects syntax outside its documented subset
+        rather than returning the formula unevaluated.
         """
         state = WorkflowState()
-        formula = 'Concat("a") & Lower("B")'
-        assert state._eval_simple(formula) == formula
+        with pytest.raises(ValueError, match="outside the fallback subset"):
+            state._eval_simple('Concat("a") & Lower("B")')
 
-    def test_not_with_trailing_operator_is_not_absorbed(self):
+    def test_not_with_trailing_operator_raises(self):
         """The Not() special case is bounded the same way.
 
         Previously the handler claimed this formula and returned a bool built
         from the mis-parsed fragment ``false) & Upper("x"``.
         """
         state = WorkflowState()
-        formula = 'Not(false) & Upper("x")'
-        assert state._eval_simple(formula) == formula
+        with pytest.raises(ValueError, match="outside the fallback subset"):
+            state._eval_simple('Not(false) & Upper("x")')
 
     def test_whole_not_call_still_dispatches(self):
         """A complete Not() call keeps negating its argument."""
@@ -504,44 +504,73 @@ class TestWorkflowStateEvalSimpleCallExtent:
         assert WorkflowState()._eval_simple('Upper("ab") // done') == "AB"
 
 
-class TestWorkflowStateParseFunctionArgs:
-    """Tests for _parse_function_args helper."""
+class TestWorkflowStateEvalSimplePrecedence:
+    """Precedence and associativity regression tests for the fallback subset.
 
-    def test_simple_args(self):
-        """Test parsing simple comma-separated args."""
-        state = WorkflowState()
-        args = state._parse_function_args("1, 2, 3")
-        assert args == ["1", "2", "3"]
+    ``_eval_simple`` previously split formulas with ``str.split`` from the
+    left, so every operator ran left-to-right.
+    """
 
-    def test_string_args_with_commas(self):
-        """Test parsing string args containing commas."""
+    def test_and_binds_tighter_than_or(self):
+        """And evaluates before Or."""
         state = WorkflowState()
-        args = state._parse_function_args('"hello, world", "another"')
-        assert args == ['"hello, world"', '"another"']
+        state.set("Local.a", True)
+        state.set("Local.b", False)
+        state.set("Local.c", False)
+        assert state._eval_simple("Local.a Or Local.b And Local.c") is True
 
-    def test_nested_function_args(self):
-        """Test parsing nested function calls."""
+    def test_operators_inside_string_literals_are_text(self):
+        """Operator keywords inside string literals are text, not operators."""
         state = WorkflowState()
-        args = state._parse_function_args("Concat(a, b), c")
-        assert args == ["Concat(a, b)", "c"]
+        state.set("Local.text", "a And b")
+        assert state._eval_simple('Local.text = "a And b"') is True
 
-    def test_empty_args(self):
-        """Test parsing empty args string."""
-        state = WorkflowState()
-        args = state._parse_function_args("")
-        assert args == []
+    def test_subtraction_is_left_associative(self):
+        assert WorkflowState()._eval_simple("10 - 2 - 3") == 5.0
 
-    def test_single_arg(self):
-        """Test parsing single argument."""
-        state = WorkflowState()
-        args = state._parse_function_args("single")
-        assert args == ["single"]
+    def test_division_is_left_associative(self):
+        assert WorkflowState()._eval_simple("100 / 10 / 2") == 5.0
 
-    def test_deeply_nested_parens(self):
-        """Test parsing deeply nested parentheses."""
+    def test_multiplication_binds_tighter_than_addition(self):
+        assert WorkflowState()._eval_simple("2 + 3 * 4") == 14.0
+
+    def test_negation_binds_tighter_than_and(self):
         state = WorkflowState()
-        args = state._parse_function_args("Func1(Func2(a, b)), c")
-        assert args == ["Func1(Func2(a, b))", "c"]
+        state.set("Local.a", True)
+        state.set("Local.b", False)
+        assert state._eval_simple("!Local.a And Local.b") is False
+
+    def test_parenthesized_grouping(self):
+        assert WorkflowState()._eval_simple("1 + (2 * 3)") == 7.0
+        assert WorkflowState()._eval_simple("(10 - 2) - 3") == 5.0
+
+
+class TestWorkflowStateEvalSimpleRejection:
+    """Structural rejection contract for the fallback subset."""
+
+    def test_double_ampersand_raises(self):
+        state = WorkflowState()
+        with pytest.raises(ValueError, match="outside the fallback subset"):
+            state._eval_simple("Local.a && Local.b")
+
+    def test_unknown_function_raises(self):
+        state = WorkflowState()
+        with pytest.raises(ValueError, match="not supported"):
+            state._eval_simple("Foo(Local.a)")
+
+    def test_unterminated_string_raises(self):
+        state = WorkflowState()
+        with pytest.raises(ValueError, match="unterminated string literal"):
+            state._eval_simple('"open string')
+
+    def test_unbalanced_parentheses_raise(self):
+        state = WorkflowState()
+        with pytest.raises(ValueError, match="unbalanced parentheses"):
+            state._eval_simple("(1 + 2")
+
+    def test_unresolved_reference_still_echoes(self):
+        """Unresolved identifiers keep the echo contract."""
+        assert WorkflowState()._eval_simple("unknown_identifier") == "unknown_identifier"
 
 
 class TestWorkflowStateEvalIfExpression:
@@ -750,3 +779,81 @@ class TestWorkflowStateConversationIdInit:
         state1 = WorkflowState()
         state2 = WorkflowState()
         assert state1.get("System.ConversationId") != state2.get("System.ConversationId")
+
+
+class TestWorkflowStateEvalSimpleRuntimeEcho:
+    """Runtime failures echo the formula once, at the evaluation boundary."""
+
+    def test_failed_subtraction_is_not_an_operand(self):
+        """A failed '-' must not turn into an echo operand for '='."""
+        state = WorkflowState()
+        formula = '"x" - 1 = "x" - 2'
+        assert state._eval_simple(formula) == formula
+
+    def test_failed_chain_is_fully_parsed(self):
+        """A runtime failure leaves no unconsumed operators behind."""
+        state = WorkflowState()
+        formula = '"x" - 1 - 2'
+        assert state._eval_simple(formula) == formula
+
+    def test_function_runtime_failure_echoes(self):
+        state = WorkflowState()
+        formula = 'If("x" - 1, "y", "z")'
+        assert state._eval_simple(formula) == formula
+
+    def test_runtime_failure_in_logical_operator_echoes(self):
+        state = WorkflowState()
+        formula = '"x" - 1 And true'
+        assert state._eval_simple(formula) == formula
+
+
+class TestWorkflowStateEvalSimpleLiteralsAndTrivia:
+    """Literal and trivia scanning edge cases for the fallback subset."""
+
+    def test_unterminated_string_raises(self):
+        state = WorkflowState()
+        with pytest.raises(ValueError, match="unterminated string literal"):
+            state._eval_simple('"')
+        with pytest.raises(ValueError, match="unterminated string literal"):
+            state._eval_simple('"open at end""')
+
+    def test_unterminated_block_comment_raises(self):
+        state = WorkflowState()
+        with pytest.raises(ValueError, match="unterminated block comment"):
+            state._eval_simple("1 /* unfinished")
+
+    def test_leading_decimal_and_exponent_literals(self):
+        state = WorkflowState()
+        assert state._eval_simple(".5 + 1") == 1.5
+        assert state._eval_simple("1e3 + 1") == 1001.0
+        assert state._eval_simple("2.5e-1") == 0.25
+        assert state._eval_simple("1 + 2 // trailing comment") == 3.0
+
+
+class TestWorkflowStateEvalSimpleBlankAndDepth:
+    """Blank semantics and structural limits for the fallback subset."""
+
+    def test_blank_concatenation_uses_normalized_operands(self):
+        state = WorkflowState()
+        assert state._eval_simple('Local.missing + "x"') == "0x"
+
+    def test_division_by_zero_chain_continues(self):
+        state = WorkflowState()
+        assert state._eval_simple("10 / 0") is None
+        assert state._eval_simple("10 / 0 / 2") == 0.0
+
+    def test_ordered_comparison_with_blank_is_false(self):
+        state = WorkflowState()
+        assert state._eval_simple("Local.missing < 5") is False
+        assert state._eval_simple("5 > Local.missing") is False
+
+    def test_incompatible_comparison_echoes_formula(self):
+        state = WorkflowState()
+        formula = '1 < "a"'
+        assert state._eval_simple(formula) == formula
+
+    def test_excessive_nesting_raises_instead_of_crashing(self):
+        state = WorkflowState()
+        formula = "1 + " + "(" * 200 + "1" + ")" * 200
+        with pytest.raises(ValueError, match="maximum depth"):
+            state._eval_simple(formula)
