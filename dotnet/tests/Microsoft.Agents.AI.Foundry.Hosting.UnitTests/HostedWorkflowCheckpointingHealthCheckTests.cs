@@ -107,17 +107,19 @@ public class HostedWorkflowCheckpointingHealthCheckTests
     }
 
     [Fact]
-    public void ApplyWorkflowCheckpointing_NotInAFoundryContainer_UsesTheSdkLocalFallback()
+    public async Task CheckHealthAsync_WorkflowAgentCheckpointedInFoundryBeforeWrapping_IsHealthyAsync()
     {
-        // Arrange
-        AIAgent agent = BuildWorkflowAgent(executionEnvironment: null);
+        // Arrange: the factory moved the checkpoints to Foundry, then added middleware, as hosting does.
+        AIAgent checkpointed = BuildWorkflowAgent(executionEnvironment: null)
+            .WithFoundryCheckpointing(new ServiceCollection().BuildServiceProvider());
+        using var telemetry = new OpenTelemetryAgent(checkpointed, "Microsoft.Agents.AI.Foundry.Hosting.UnitTests.Readiness");
+        var check = BuildCheckFor(new PassThroughAgent(telemetry));
 
         // Act
-        AIAgent result = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(agent);
+        var result = await check.CheckHealthAsync(NewContext(), CancellationToken.None);
 
-        // Assert: a redirected copy is returned even locally; the SDK chooses its local backend.
-        Assert.NotSame(agent, result);
-        Assert.True(result.GetService<WorkflowAgentMetadata>()?.UsesOwnCheckpointStorage);
+        // Assert
+        Assert.Equal(HealthStatus.Healthy, result.Status);
     }
 
     [Fact]
@@ -136,7 +138,8 @@ public class HostedWorkflowCheckpointingHealthCheckTests
                 return BuildWorkflowAgent(environment);
             },
             ServiceLifetime.Scoped,
-            provider);
+            provider,
+            requireOpenTelemetryAgent: false);
         var check = new HostedWorkflowCheckpointingHealthCheck(provider, agentSource)
         {
             IsHosted = true,

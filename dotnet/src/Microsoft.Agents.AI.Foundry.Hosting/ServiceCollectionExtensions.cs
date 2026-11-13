@@ -10,7 +10,6 @@ using Azure.AI.AgentServer.Core.Tasks;
 using Azure.AI.AgentServer.Responses;
 using Azure.Core;
 using Azure.Identity;
-using Microsoft.Agents.AI.Workflows;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.AI;
@@ -142,6 +141,14 @@ public static class ServiceCollectionExtensions
     /// disposed for each probe.
     /// </para>
     /// <para>
+    /// Hosting adds an <see cref="OpenTelemetryAgent"/> to a singleton agent, unless it already has one, and
+    /// disposes that wrapper at shutdown. It adds none to a scoped or transient agent, because that telemetry
+    /// must be disposed with the agent it wraps: the factory adds it, and by default a run or readiness probe
+    /// fails when the agent has none. A workflow agent must have
+    /// <see cref="WorkflowAgentExtensions.WithFoundryCheckpointing"/> applied before the wrapper is added.
+    /// See <see cref="FoundryResponsesServerOptions.RequireOpenTelemetryAgent"/>.
+    /// </para>
+    /// <para>
     /// The run's scope is not the ASP.NET Core request scope, so scoped services that middleware fills in for
     /// an HTTP request are new, empty instances here. Do not derive the caller's identity from such services
     /// in the factory; the per-request user identity is supplied by the platform and applied by the response
@@ -166,7 +173,10 @@ public static class ServiceCollectionExtensions
     /// Example:
     /// <code>
     /// builder.Services.AddFoundryResponses(
-    ///     sp => new MyAgent(sp.GetRequiredService&lt;MyDbContext&gt;()),
+    ///     sp => new MyAgent(sp.GetRequiredService&lt;MyDbContext&gt;())
+    ///         .AsBuilder()
+    ///         .UseOpenTelemetry(sourceName: "Azure.AI.AgentServer.Responses")
+    ///         .Build(),
     ///     ServiceLifetime.Scoped);
     /// </code>
     /// </para>
@@ -349,7 +359,11 @@ public static class ServiceCollectionExtensions
         _ = Throw.IfNull(agentFactory);
         FoundryHostedAgentSource.ValidateLifetime(lifetime);
 
-        return ServiceDescriptor.Singleton(serviceProvider => new FoundryHostedAgentSource(agentFactory, lifetime, serviceProvider));
+        return ServiceDescriptor.Singleton(serviceProvider => new FoundryHostedAgentSource(
+            agentFactory,
+            lifetime,
+            serviceProvider,
+            serviceProvider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value.RequireOpenTelemetryAgent));
     }
 
     /// <summary>
@@ -388,6 +402,7 @@ public static class ServiceCollectionExtensions
             ResilientBackground = source.ResilientBackground,
             SteerableConversations = source.SteerableConversations,
             ResponseAcceptor = source.ResponseAcceptor,
+            RequireOpenTelemetryAgent = source.RequireOpenTelemetryAgent,
         };
     }
 
@@ -427,6 +442,7 @@ public static class ServiceCollectionExtensions
             options.ResilientBackground = configuredOptions.ResilientBackground;
             options.SteerableConversations = configuredOptions.SteerableConversations;
             options.ResponseAcceptor = configuredOptions.ResponseAcceptor;
+            options.RequireOpenTelemetryAgent = configuredOptions.RequireOpenTelemetryAgent;
         });
 
         AddReadinessCheck(
@@ -720,9 +736,10 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// The ActivitySource name for the Responses hosting pipeline.
+    /// The ActivitySource and Meter name for the Responses hosting pipeline, which the Foundry telemetry
+    /// pipeline registered by <c>Azure.AI.AgentServer.Core</c> exports.
     /// </summary>
-    private const string ResponsesSourceName = "Azure.AI.AgentServer.Responses";
+    internal const string ResponsesSourceName = "Azure.AI.AgentServer.Responses";
 
     /// <summary>
     /// Wraps <paramref name="agent"/> with <see cref="OpenTelemetryAgent"/> instrumentation
@@ -743,70 +760,11 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Points a workflow-hosting agent at the Foundry durable state store for its checkpoints,
-    /// when running inside a Foundry container.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// This runs when the agent is resolved for a request rather than when it is registered,
-    /// because a host can register agents as factories that are only built later, and because a
-    /// registered agent is a finished object whose checkpoint storage is fixed at construction.
-    /// </para>
-    /// <para>
-    /// Without this, a hosted workflow keeps every checkpoint of a session inside the saved session
-    /// record, and the platform limits a single record to 1 MB, so a long workflow eventually stops
-    /// being able to save. With it, each checkpoint becomes its own record and the session keeps
-    /// only the pointer to the last one.
-    /// </para>
-    /// <para>
-    /// The method is a no-op when the agent does not host a workflow or when the workflow was built
-    /// with an explicit checkpoint manager. The AgentServer SDK selects the hosted or local
-    /// state-store backend. The redirected agent is cached against the agent it came from, so the
-    /// substitution happens once rather than on every request.
-    /// </para>
-    /// </remarks>
-    /// <param name="agent">The resolved agent.</param>
-    /// <param name="loggerFactory">Creates the logger the checkpoint store reports through.</param>
-    /// <returns>The agent to serve the request with.</returns>
-    internal static AIAgent ApplyWorkflowCheckpointing(AIAgent agent, ILoggerFactory? loggerFactory = null)
-    {
-        return s_workflowCheckpointingAgents.GetValue(
-            agent,
-            source => source.WithCheckpointing(GetFoundryWorkflowCheckpointManager(loggerFactory)));
-    }
-
-    /// <summary>
-    /// The single checkpoint manager shared by every hosted workflow in this process. It is created
-    /// on first use so that no credential is built and no platform call is made when the process is
-    /// not running on the platform, which also means the first caller supplies its logger.
-    /// </summary>
-    private static CheckpointManager GetFoundryWorkflowCheckpointManager(ILoggerFactory? loggerFactory)
-    {
-        lock (s_checkpointManagerGate)
-        {
-            return s_foundryWorkflowCheckpointManager ??= CheckpointManager.CreateJson(
-                new FoundryJsonCheckpointStore(
-                    credential: CreateStateStoreCredential(),
-                    loggerFactory: loggerFactory));
-        }
-    }
-
-    /// <summary>
     /// Creates the credential required by the hosted state-store backend. The beta.29 SDK requires
     /// no credential for its local fallback, so local development does not construct one.
     /// </summary>
-    private static DefaultAzureCredential? CreateStateStoreCredential() =>
+    internal static DefaultAzureCredential? CreateStateStoreCredential() =>
         FoundryEnvironment.IsHosted ? new DefaultAzureCredential() : null;
-
-    private static readonly object s_checkpointManagerGate = new();
-    private static CheckpointManager? s_foundryWorkflowCheckpointManager;
-
-    /// <summary>
-    /// Caches the redirected copy of each agent. Rebuilding it per request would restart the
-    /// agent's protocol validation and throw away the session identifiers it tracks, so the copy
-    /// has to live as long as the agent it was made from.
-    /// </summary>
-    private static readonly ConditionalWeakTable<AIAgent, AIAgent> s_workflowCheckpointingAgents = new();
 
     /// <summary>
     /// Registers the hosted-agent <c>User-Agent</c> supplement policy

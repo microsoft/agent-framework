@@ -74,7 +74,7 @@ internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
         AsyncServiceScope serviceScope = this._serviceProvider.CreateAsyncScope();
         await using (serviceScope.ConfigureAwait(false))
         {
-            FoundryHostedAgentSource.Lease agentLease = this._agentSource.Acquire(serviceScope.ServiceProvider);
+            FoundryHostedAgentSource.Lease agentLease = await this._agentSource.AcquireAsync(serviceScope.ServiceProvider).ConfigureAwait(false);
             await using (agentLease.ConfigureAwait(false))
             {
                 AIAgent agent = agentLease.Agent;

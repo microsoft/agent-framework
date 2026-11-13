@@ -97,6 +97,14 @@ public static class HostApplicationBuilderExtensions
     /// loads and saves sessions.
     /// </para>
     /// <para>
+    /// Hosting adds an <see cref="OpenTelemetryAgent"/> to a singleton agent, unless it already has one, and
+    /// disposes that wrapper at shutdown. It adds none to a scoped or transient agent, because that telemetry
+    /// must be disposed with the agent it wraps: the factory adds it, and by default a run or readiness probe
+    /// fails when the agent has none. A workflow agent must have
+    /// <see cref="WorkflowAgentExtensions.WithFoundryCheckpointing"/> applied before the wrapper is added.
+    /// See <see cref="FoundryResponsesServerOptions.RequireOpenTelemetryAgent"/>.
+    /// </para>
+    /// <para>
     /// The session store is registered separately with
     /// <see cref="AddFoundryAgentSessionStore(IHostApplicationBuilder, Func{IServiceProvider, AgentSessionStore}, ServiceLifetime)"/>,
     /// with its own lifetime. Without such a registration the agent uses the default store. Sessions are saved
@@ -107,7 +115,10 @@ public static class HostApplicationBuilderExtensions
     /// </para>
     /// <code>
     /// builder.AddFoundryResponses(
-    ///     sp => new MyAgent(sp.GetRequiredService&lt;MyDbContext&gt;()),
+    ///     sp => new MyAgent(sp.GetRequiredService&lt;MyDbContext&gt;())
+    ///         .AsBuilder()
+    ///         .UseOpenTelemetry(sourceName: "Azure.AI.AgentServer.Responses")
+    ///         .Build(),
     ///     ServiceLifetime.Scoped);
     /// </code>
     /// </remarks>

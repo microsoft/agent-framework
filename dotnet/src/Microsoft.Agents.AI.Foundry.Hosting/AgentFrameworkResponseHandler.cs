@@ -31,7 +31,11 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// with agent-framework <see cref="AIAgent"/> instances, enabling agent-framework agents and workflows
 /// to be hosted as Azure Foundry Hosted Agents.
 /// </summary>
-internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
+/// <remarks>
+/// Disposing the handler disposes the telemetry wrapper it added to an agent it reuses for every run. Dependency
+/// injection does this at shutdown, after AgentServer has stopped the runs still in flight.
+/// </remarks>
+internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler, IDisposable
 {
     private const string LatestWorkflowCheckpointIdMetadataKey = "_last_checkpoint_id";
     private const string UserPartitionName = "user";
@@ -42,6 +46,10 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
     private readonly ILogger<AgentFrameworkResponseHandler> _logger;
     private readonly FoundryResponsesServerOptions _options;
     private readonly FoundryToolboxService? _toolboxService;
+    private readonly object _servedAgentGate = new();
+    private volatile AIAgent? _servedAgent;
+    private IDisposable? _hostingTelemetry;
+    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFrameworkResponseHandler"/> class
@@ -128,9 +136,9 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         AsyncServiceScope serviceScope = this._serviceProvider.CreateAsyncScope();
         await using var configuredServiceScope = serviceScope.ConfigureAwait(false);
         IServiceProvider services = serviceScope.ServiceProvider;
-        FoundryHostedAgentSource.Lease agentLease = this._agentSource.Acquire(services);
+        FoundryHostedAgentSource.Lease agentLease = await this._agentSource.AcquireAsync(services).ConfigureAwait(false);
         await using var configuredAgentLease = agentLease.ConfigureAwait(false);
-        AIAgent agent = this.PrepareAgent(agentLease.Agent);
+        AIAgent agent = this.GetServedAgent(agentLease.Agent);
         AgentSessionStore sessionStore = ResolveSessionStore(services);
 
         // When resolvedUserId is null here the container is NOT hosted by Foundry (local
@@ -872,22 +880,78 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
     private bool ShouldPersistForResilience(CreateResponse request)
         => this._options.ResilientBackground && request.Background == true && request.Store != false;
 
+    /// <inheritdoc/>
+    public void Dispose()
+    {
+        IDisposable? hostingTelemetry;
+        lock (this._servedAgentGate)
+        {
+            this._disposed = true;
+            hostingTelemetry = this._hostingTelemetry;
+            this._hostingTelemetry = null;
+        }
+
+        hostingTelemetry?.Dispose();
+    }
+
     /// <summary>
-    /// Wraps the agent this container serves with what hosting adds to every run: the hosted-agent
-    /// <c>User-Agent</c>, Foundry workflow checkpointing, its session storage identity, and telemetry.
+    /// Gets the agent to serve a run with: the agent supplied by the agent source, wrapped with what hosting
+    /// adds to every run.
     /// </summary>
+    /// <remarks>
+    /// An agent reused for every run is wrapped once, telemetry included, and the wrapper is reused. Each
+    /// <see cref="OpenTelemetryAgent"/> registers a meter and an activity source for the whole process until it
+    /// is disposed, so a wrapper per run would leak them, and disposing one per run would end the metric streams
+    /// that runs still in flight share in the OpenTelemetry SDK. An agent created per run is wrapped per run
+    /// without telemetry: its factory supplies the telemetry, which is disposed with the agent, as
+    /// <see cref="FoundryResponsesServerOptions.RequireOpenTelemetryAgent"/> describes.
+    /// </remarks>
     /// <param name="agent">The agent supplied by the agent source for the current run.</param>
     /// <returns>The agent to serve the run with.</returns>
-    private AIAgent PrepareAgent(AIAgent agent)
+    private AIAgent GetServedAgent(AIAgent agent)
+    {
+        if (this._agentSource.CreatesAgentPerRun)
+        {
+            return this.PrepareAgent(agent);
+        }
+
+        if (this._servedAgent is { } servedAgent)
+        {
+            return servedAgent;
+        }
+
+        lock (this._servedAgentGate)
+        {
+            ObjectDisposedException.ThrowIf(this._disposed, this);
+            if (this._servedAgent is null)
+            {
+                AIAgent prepared = this.PrepareAgent(agent);
+                AIAgent instrumented = ServiceCollectionExtensions.ApplyOpenTelemetry(prepared);
+
+                // An agent that brought its own telemetry is returned unchanged, and that telemetry is the
+                // caller's to dispose.
+                this._hostingTelemetry = ReferenceEquals(instrumented, prepared) ? null : instrumented as IDisposable;
+                this._servedAgent = instrumented;
+            }
+
+            return this._servedAgent;
+        }
+    }
+
+    /// <summary>
+    /// Wraps an agent with what hosting adds to every run apart from telemetry: the hosted-agent
+    /// <c>User-Agent</c>, Foundry workflow checkpointing, and its session storage identity.
+    /// </summary>
+    /// <param name="agent">The agent supplied by the agent source.</param>
+    /// <returns>The wrapped agent.</returns>
+    private FoundryHostingAgent PrepareAgent(AIAgent agent)
     {
         ServiceCollectionExtensions.TryApplyUserAgent(agent);
 
-        AIAgent prepared = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(
-            agent,
-            this._serviceProvider.GetService<ILoggerFactory>());
-        prepared = new FoundryHostingAgent(prepared, FoundryHostingAgent.ResolveSessionStorageIdentity(agent));
-
-        return ServiceCollectionExtensions.ApplyOpenTelemetry(prepared);
+        // The same call a factory makes for a workflow agent it wraps itself. It changes nothing for an agent
+        // that is not a workflow, is wrapped, or already stores its checkpoints in Foundry.
+        AIAgent prepared = agent.WithFoundryCheckpointing(this._serviceProvider);
+        return new FoundryHostingAgent(prepared, FoundryHostingAgent.ResolveSessionStorageIdentity(agent));
     }
 
     /// <summary>

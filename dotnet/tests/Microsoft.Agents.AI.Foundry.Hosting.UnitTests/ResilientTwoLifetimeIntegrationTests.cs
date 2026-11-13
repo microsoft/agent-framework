@@ -253,7 +253,9 @@ public sealed class ResilientTwoLifetimeIntegrationTests
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        var options = new FoundryResponsesServerOptions { ResilientBackground = true };
+        // The countdown workflow brings a checkpoint store of its own, and these tests cover recovery, so an agent
+        // created per response is served without the agent telemetry hosting otherwise requires.
+        var options = new FoundryResponsesServerOptions { ResilientBackground = true, RequireOpenTelemetryAgent = false };
         if (factoryLifetime is { } lifetime)
         {
             builder.Services.AddFoundryResponses(_ => createAgent(), lifetime, options);

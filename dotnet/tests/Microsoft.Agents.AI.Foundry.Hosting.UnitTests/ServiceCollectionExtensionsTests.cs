@@ -160,6 +160,7 @@ public class ServiceCollectionExtensionsTests
             DefaultFetchHistoryCount = 42,
             ResilientBackground = true,
             SteerableConversations = true,
+            RequireOpenTelemetryAgent = false,
         };
 
         // Act
@@ -176,6 +177,7 @@ public class ServiceCollectionExtensionsTests
         Assert.Equal(42, registeredOptions.DefaultFetchHistoryCount);
         Assert.True(registeredOptions.ResilientBackground);
         Assert.True(registeredOptions.SteerableConversations);
+        Assert.False(registeredOptions.RequireOpenTelemetryAgent);
 
         ResponsesServerOptions serverOptions =
             provider.GetRequiredService<IOptions<ResponsesServerOptions>>().Value;
@@ -183,6 +185,22 @@ public class ServiceCollectionExtensionsTests
         Assert.Equal(42, serverOptions.DefaultFetchHistoryCount);
         Assert.True(serverOptions.ResilientBackground);
         Assert.True(serverOptions.SteerableConversations);
+    }
+
+    [Fact]
+    public void AddFoundryResponses_WithoutOptions_RequiresAnOpenTelemetryAgent()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        // Act
+        services.AddFoundryResponses(_ => Mock.Of<AIAgent>(), ServiceLifetime.Scoped);
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        // Assert
+        Assert.True(new FoundryResponsesServerOptions().RequireOpenTelemetryAgent);
+        Assert.True(provider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value.RequireOpenTelemetryAgent);
     }
 
     [Fact]

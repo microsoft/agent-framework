@@ -8,7 +8,6 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -26,6 +25,12 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// alone, because overriding an explicit choice silently would be worse. The result is a container
 /// whose workflow state goes somewhere hosting does not manage, which is reported here rather than
 /// discovered later.
+/// </para>
+/// <para>
+/// Hosting can only copy the workflow agent itself, so a workflow agent behind middleware is reported too,
+/// unless <see cref="WorkflowAgentExtensions.WithFoundryCheckpointing"/> was applied to it before the
+/// middleware was added. Hosting serves the agent through the same call, so an agent passes this check
+/// exactly when the agent hosting serves stores its checkpoints in Foundry.
 /// </para>
 /// <para>
 /// Only an agent that runs a workflow is considered. Everything else, a <see cref="ChatClientAgent"/>
@@ -72,18 +77,15 @@ internal sealed class HostedWorkflowCheckpointingHealthCheck : IHealthCheck
         AsyncServiceScope serviceScope = this._serviceProvider.CreateAsyncScope();
         await using (serviceScope.ConfigureAwait(false))
         {
-            FoundryHostedAgentSource.Lease agentLease = this._agentSource.Acquire(serviceScope.ServiceProvider);
+            FoundryHostedAgentSource.Lease agentLease = await this._agentSource.AcquireAsync(serviceScope.ServiceProvider).ConfigureAwait(false);
             await using (agentLease.ConfigureAwait(false))
             {
                 AIAgent agent = agentLease.Agent;
-                if (agent.GetService<WorkflowAgentMetadata>() is { } metadata)
+                if (agent.GetService<WorkflowAgentMetadata>() is not null)
                 {
                     checkedAgents++;
-                    AIAgent redirected = ServiceCollectionExtensions.ApplyWorkflowCheckpointing(
-                        agent,
-                        this._serviceProvider.GetService<ILoggerFactory>());
-
-                    if (metadata.UsesOwnCheckpointStorage || ReferenceEquals(redirected, agent))
+                    AIAgent served = agent.WithFoundryCheckpointing(this._serviceProvider);
+                    if (!WorkflowAgentExtensions.UsesFoundryCheckpointing(served))
                     {
                         incompatibleAgents.Add(agent.Name ?? agent.Id);
                     }
@@ -97,7 +99,7 @@ internal sealed class HostedWorkflowCheckpointingHealthCheck : IHealthCheck
                 status: context.Registration.FailureStatus,
                 description: string.Create(
                     CultureInfo.InvariantCulture,
-                    $"Workflow checkpointing: {incompatibleAgents.Count} registered workflow agent(s) cannot use the checkpoint store supplied by hosting. Remove a caller-configured checkpoint manager and register the workflow agent directly rather than behind middleware."),
+                    $"Workflow checkpointing: {incompatibleAgents.Count} registered workflow agent(s) cannot use the checkpoint store supplied by hosting. Remove a caller-configured checkpoint manager, and register the workflow agent directly or call WithFoundryCheckpointing on it before adding middleware such as UseOpenTelemetry."),
                 data: new Dictionary<string, object>(StringComparer.Ordinal) { ["incompatibleAgents"] = incompatibleAgents });
         }
 

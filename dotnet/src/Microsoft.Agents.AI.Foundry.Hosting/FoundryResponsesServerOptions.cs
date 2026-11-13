@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Azure.AI.AgentServer.Responses;
+using Microsoft.Extensions.DependencyInjection;
 
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -89,4 +90,44 @@ public sealed class FoundryResponsesServerOptions : ResponsesServerOptions
     /// </value>
     public bool ExcludeReasoningEncryptedContent { get; set; }
 
+    /// <summary>
+    /// Gets or sets a value indicating whether an agent created for each response must include an
+    /// <see cref="OpenTelemetryAgent"/> in its pipeline.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Hosting adds an <see cref="OpenTelemetryAgent"/> to an agent it reuses for every response, one passed
+    /// as an instance or created by a factory with
+    /// <see cref="ServiceLifetime.Singleton"/>, unless the agent already
+    /// has one. It builds that wrapper once and disposes it at shutdown.
+    /// </para>
+    /// <para>
+    /// Hosting adds no telemetry to an agent created per response by a factory with
+    /// <see cref="ServiceLifetime.Scoped"/> or
+    /// <see cref="ServiceLifetime.Transient"/>. Each
+    /// <see cref="OpenTelemetryAgent"/> registers its own meter and activity source for the whole process until
+    /// it is disposed, so its lifetime must follow the agent it wraps, and the factory that creates the agent
+    /// owns it. While this option is <see langword="true"/>, a response or readiness check fails when such a
+    /// factory returns an agent without an <see cref="OpenTelemetryAgent"/> in its pipeline. Add one in the
+    /// factory with <c>agent.AsBuilder().UseOpenTelemetry(sourceName: "Azure.AI.AgentServer.Responses").Build()</c>,
+    /// the source that Foundry hosting exports. Hosting disposes the agent the factory returns when the response
+    /// ends.
+    /// </para>
+    /// <para>
+    /// A workflow agent created per response must also have
+    /// <see cref="WorkflowAgentExtensions.WithFoundryCheckpointing"/> applied before the
+    /// <see cref="OpenTelemetryAgent"/> is added, so that its checkpoints are stored in Foundry rather than inside
+    /// its saved session: <c>agent.WithFoundryCheckpointing(sp).AsBuilder().UseOpenTelemetry(...).Build()</c>.
+    /// Hosting cannot move the checkpoints of a workflow agent that is already wrapped. This is the same order
+    /// hosting uses for an agent it reuses for every response.
+    /// </para>
+    /// <para>
+    /// Set this option to <see langword="false"/> to serve an agent created per response without requiring
+    /// agent telemetry. It has no effect on an agent reused for every response.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="true"/>.
+    /// </value>
+    public bool RequireOpenTelemetryAgent { get; set; } = true;
 }

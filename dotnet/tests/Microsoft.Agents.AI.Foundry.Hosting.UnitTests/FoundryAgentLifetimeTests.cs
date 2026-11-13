@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -32,6 +33,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public sealed class FoundryAgentLifetimeTests
 {
     private const string AgentName = "lifetime-agent";
+    private const string TelemetrySourceName = "Microsoft.Agents.AI.Foundry.Hosting.UnitTests.Lifetime";
 
     [Theory]
     [InlineData(ServiceLifetime.Scoped)]
@@ -286,7 +288,7 @@ public sealed class FoundryAgentLifetimeTests
         var factoryServices = new ServiceCollection();
         factoryServices.AddLogging();
         factoryServices.AddFoundryAgentSessionStore(factoryStore);
-        factoryServices.AddFoundryResponses(_ => new TrackingAgent(new AgentLifetimeLog()), lifetime);
+        factoryServices.AddFoundryResponses(_ => new TrackingAgent(new AgentLifetimeLog()), lifetime, LifetimeOnlyOptions());
         AgentFrameworkResponseHandler factoryHandler = ResolveHandler(factoryServices);
 
         // Act: one request names an agent and one does not; neither changes the storage location.
@@ -325,7 +327,7 @@ public sealed class FoundryAgentLifetimeTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddFoundryAgentSessionStore(new TestAgentSessionStore());
-        services.AddFoundryResponses(_ => new TrackingAgent(log), lifetime);
+        services.AddFoundryResponses(_ => new TrackingAgent(log), lifetime, LifetimeOnlyOptions());
         AgentFrameworkResponseHandler handler = ResolveHandler(services);
 
         // Act
@@ -400,7 +402,7 @@ public sealed class FoundryAgentLifetimeTests
         var stores = new ConcurrentQueue<RecordingSessionStore>();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses(_ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped);
+        services.AddFoundryResponses(_ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped, LifetimeOnlyOptions());
         services.AddFoundryAgentSessionStore(_ =>
         {
             var store = new RecordingSessionStore();
@@ -425,7 +427,7 @@ public sealed class FoundryAgentLifetimeTests
         var store = new RecordingSessionStore();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses(_ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped);
+        services.AddFoundryResponses(_ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped, LifetimeOnlyOptions());
         services.AddFoundryAgentSessionStore(store);
         ServiceProvider provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         var handler = Assert.IsType<AgentFrameworkResponseHandler>(provider.GetRequiredService<ResponseHandler>());
@@ -446,7 +448,7 @@ public sealed class FoundryAgentLifetimeTests
         // Arrange
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses(_ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped);
+        services.AddFoundryResponses(_ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped, LifetimeOnlyOptions());
         services.AddFoundryAgentSessionStore(_ => null!, ServiceLifetime.Scoped);
         AgentFrameworkResponseHandler handler = ResolveHandler(services);
 
@@ -624,7 +626,7 @@ public sealed class FoundryAgentLifetimeTests
         var stores = new ConcurrentQueue<RecordingSessionStore>();
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddFoundryResponses(_ => new TrackingAgent(log), lifetime);
+        services.AddFoundryResponses(_ => new TrackingAgent(log), lifetime, LifetimeOnlyOptions());
         services.AddFoundryAgentSessionStore(
             _ =>
             {
@@ -641,7 +643,7 @@ public sealed class FoundryAgentLifetimeTests
         await DrainAsync(handler);
         await using (AsyncServiceScope scope = provider.CreateAsyncScope())
         {
-            FoundryHostedAgentSource.Lease lease = provider.GetRequiredService<FoundryHostedAgentSource>().Acquire(scope.ServiceProvider);
+            FoundryHostedAgentSource.Lease lease = await provider.GetRequiredService<FoundryHostedAgentSource>().AcquireAsync(scope.ServiceProvider);
             await lease.DisposeAsync();
             await lease.DisposeAsync();
         }
@@ -723,24 +725,24 @@ public sealed class FoundryAgentLifetimeTests
         // Arrange
         var log = new AgentLifetimeLog();
         using var provider = new ServiceCollection().BuildServiceProvider();
-        var source = new FoundryHostedAgentSource(_ => new TrackingAgent(log), ServiceLifetime.Singleton, provider);
+        var source = new FoundryHostedAgentSource(_ => new TrackingAgent(log), ServiceLifetime.Singleton, provider, requireOpenTelemetryAgent: true);
 
         // Act
         await source.DisposeAsync();
 
         // Assert
-        Assert.Throws<ObjectDisposedException>(() => source.Acquire(provider));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => source.AcquireAsync(provider).AsTask());
         Assert.Empty(log.Created);
     }
 
     [Fact]
-    public void AgentSource_SyncDisposeOfAnAsyncOnlySingleton_Throws()
+    public async Task AgentSource_SyncDisposeOfAnAsyncOnlySingleton_ThrowsAsync()
     {
         // Arrange: dependency injection throws the same way for a service it can only dispose asynchronously.
         var log = new AgentLifetimeLog();
         using var provider = new ServiceCollection().BuildServiceProvider();
-        var source = new FoundryHostedAgentSource(_ => new TrackingAgent(log), ServiceLifetime.Singleton, provider);
-        _ = source.Acquire(provider);
+        var source = new FoundryHostedAgentSource(_ => new TrackingAgent(log), ServiceLifetime.Singleton, provider, requireOpenTelemetryAgent: true);
+        _ = await source.AcquireAsync(provider);
 
         // Act & Assert
         InvalidOperationException exception = Assert.Throws<InvalidOperationException>(source.Dispose);
@@ -748,17 +750,85 @@ public sealed class FoundryAgentLifetimeTests
     }
 
     [Fact]
-    public void AgentSource_InvalidArguments_Throw()
+    public async Task AgentSource_InvalidArguments_ThrowAsync()
     {
         // Arrange
         using var provider = new ServiceCollection().BuildServiceProvider();
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new FoundryHostedAgentSource(null!));
-        Assert.Throws<ArgumentNullException>(() => new FoundryHostedAgentSource(null!, ServiceLifetime.Scoped, provider));
-        Assert.Throws<ArgumentNullException>(() => new FoundryHostedAgentSource(_ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped, null!));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new FoundryHostedAgentSource(_ => new TrackingAgent(new AgentLifetimeLog()), (ServiceLifetime)42, provider));
-        Assert.Throws<ArgumentNullException>(() => new FoundryHostedAgentSource(new TrackingAgent(new AgentLifetimeLog())).Acquire(null!));
+        Assert.Throws<ArgumentNullException>(() => new FoundryHostedAgentSource(null!, ServiceLifetime.Scoped, provider, requireOpenTelemetryAgent: true));
+        Assert.Throws<ArgumentNullException>(() => new FoundryHostedAgentSource(_ => new TrackingAgent(new AgentLifetimeLog()), ServiceLifetime.Scoped, null!, requireOpenTelemetryAgent: true));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new FoundryHostedAgentSource(_ => new TrackingAgent(new AgentLifetimeLog()), (ServiceLifetime)42, provider, requireOpenTelemetryAgent: true));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => new FoundryHostedAgentSource(new TrackingAgent(new AgentLifetimeLog())).AcquireAsync(null!).AsTask());
+    }
+
+    [Theory]
+    [InlineData(ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient)]
+    public async Task AddFoundryResponses_PerRunAgentWithoutOpenTelemetry_FailsAndDisposesTheAgentAsync(ServiceLifetime lifetime)
+    {
+        // Arrange: the telemetry requirement is on by default.
+        var log = new AgentLifetimeLog();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddFoundryAgentSessionStore(new TestAgentSessionStore());
+        services.AddFoundryResponses(_ => new TrackingAgent(log), lifetime);
+        AgentFrameworkResponseHandler handler = ResolveHandler(services);
+
+        // Act
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(() => DrainAsync(handler));
+
+        // Assert: the agent never ran, it was disposed, and the message says how to fix it.
+        Assert.Contains(nameof(FoundryResponsesServerOptions.RequireOpenTelemetryAgent), exception.Message, StringComparison.Ordinal);
+        Assert.Contains("UseOpenTelemetry", exception.Message, StringComparison.Ordinal);
+        TrackingAgent agent = Assert.Single(log.Created);
+        Assert.Equal(0, agent.RunCount);
+        Assert.Equal(1, agent.DisposeCount);
+    }
+
+    [Theory]
+    [InlineData(ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient)]
+    public async Task AddFoundryResponses_PerRunAgentWithOpenTelemetry_IsServedAsync(ServiceLifetime lifetime)
+    {
+        // Arrange
+        var log = new AgentLifetimeLog();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddFoundryAgentSessionStore(new TestAgentSessionStore());
+        services.AddFoundryResponses(
+            _ => new TrackingAgent(log).AsBuilder().UseOpenTelemetry(sourceName: TelemetrySourceName).Build(),
+            lifetime);
+        AgentFrameworkResponseHandler handler = ResolveHandler(services);
+
+        // Act
+        await DrainAsync(handler);
+        await DrainAsync(handler);
+
+        // Assert
+        Assert.Equal(2, log.Created.Count);
+        Assert.All(log.Created, agent => Assert.Equal(1, agent.RunCount));
+    }
+
+    [Fact]
+    public async Task Readiness_PerRunAgentWithoutOpenTelemetry_IsReportedUnhealthyAsync()
+    {
+        // Arrange
+        var log = new AgentLifetimeLog();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddFoundryResponses(_ => new TrackingAgent(log), ServiceLifetime.Scoped);
+        await using ServiceProvider provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+
+        // Act
+        HealthReport report = await provider.GetRequiredService<HealthCheckService>().CheckHealthAsync();
+
+        // Assert: the container is not ready, and the agent the probe created was disposed.
+        HealthReportEntry entry = report.Entries["foundry-stored-output"];
+        Assert.Equal(HealthStatus.Unhealthy, entry.Status);
+        Assert.IsType<InvalidOperationException>(entry.Exception);
+        Assert.Equal(1, Assert.Single(log.Created).DisposeCount);
     }
 
     [Fact]
@@ -769,7 +839,7 @@ public sealed class FoundryAgentLifetimeTests
         var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddFoundryResponses(_ => new TrackingAgent(log, gate), ServiceLifetime.Scoped);
+        builder.Services.AddFoundryResponses(_ => new TrackingAgent(log, gate), ServiceLifetime.Scoped, LifetimeOnlyOptions());
         builder.Services.AddFoundryAgentSessionStore(_ => new TestAgentSessionStore(), ServiceLifetime.Scoped);
         builder.Services.AddLogging();
         await using WebApplication app = builder.Build();
@@ -799,12 +869,20 @@ public sealed class FoundryAgentLifetimeTests
         Func<IServiceProvider, AIAgent> agentFactory,
         ServiceLifetime lifetime)
     {
+        // These tests cover how agents are created and disposed. Their agents bring no telemetry, so the
+        // telemetry requirement, which has tests of its own, is turned off.
         ServiceProvider provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         return new(
             provider,
-            new FoundryHostedAgentSource(agentFactory, lifetime, provider),
+            new FoundryHostedAgentSource(agentFactory, lifetime, provider, requireOpenTelemetryAgent: false),
             NullLogger<AgentFrameworkResponseHandler>.Instance);
     }
+
+    /// <summary>
+    /// Options for tests that cover how agents are created and disposed. Their agents bring no telemetry, so
+    /// the telemetry requirement, which has tests of its own, is turned off.
+    /// </summary>
+    private static FoundryResponsesServerOptions LifetimeOnlyOptions() => new() { RequireOpenTelemetryAgent = false };
 
     private static AgentFrameworkResponseHandler ResolveHandler(IServiceCollection services) =>
         Assert.IsType<AgentFrameworkResponseHandler>(

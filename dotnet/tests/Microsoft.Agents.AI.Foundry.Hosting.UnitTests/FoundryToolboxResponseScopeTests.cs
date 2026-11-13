@@ -108,8 +108,10 @@ public sealed class FoundryToolboxResponseScopeTests
 
         // Act: two responses deliberately share the same public response id. Each must still open its
         // own toolbox connection under its own call id.
+#pragma warning disable CA2025 // The handler is never disposed in this test, and both runs are awaited together.
         var first = RunAsync(handler, CreateRequest(), CreateContext(callId: "call-a"));
         var second = RunAsync(handler, CreateRequest(), CreateContext(callId: "call-b"));
+#pragma warning restore CA2025
         await Task.WhenAll(first, second);
 
         // Assert: each response opened its own connection with its own call id, its agent saw only the tool

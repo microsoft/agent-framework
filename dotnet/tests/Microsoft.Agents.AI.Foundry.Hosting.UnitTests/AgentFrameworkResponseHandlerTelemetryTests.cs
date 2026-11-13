@@ -61,7 +61,7 @@ public class AgentFrameworkResponseHandlerTelemetryTests
     }
 
     [Fact]
-    public async Task CreateAsync_FactoryAgent_EmitsInvokeAgentSpanAsync()
+    public async Task CreateAsync_SingletonFactoryAgent_EmitsInvokeAgentSpanAsync()
     {
         // Arrange
         var activities = new ConcurrentActivityList();
@@ -73,7 +73,7 @@ public class AgentFrameworkResponseHandlerTelemetryTests
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         var sp = services.BuildServiceProvider();
-        var agentSource = new FoundryHostedAgentSource(_ => new TelemetryTestAgent(), ServiceLifetime.Scoped, sp);
+        var agentSource = new FoundryHostedAgentSource(_ => new TelemetryTestAgent(), ServiceLifetime.Singleton, sp, requireOpenTelemetryAgent: true);
 
         var handler = new AgentFrameworkResponseHandler(sp, agentSource, NullLogger<AgentFrameworkResponseHandler>.Instance);
         var (request, context) = BuildRequest();
@@ -157,6 +157,143 @@ public class AgentFrameworkResponseHandlerTelemetryTests
         Assert.Contains(TelemetryTestAgent.AgentName, mySpan.DisplayName, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task CreateAsync_ReusedAgent_IsWrappedOnceAndTheWrapperIsDisposedWithTheHandlerAsync()
+    {
+        // Arrange
+        var activities = new ConcurrentActivityList();
+        using var tracerProvider = Sdk.CreateTracerProviderBuilder()
+            .AddSource(ResponsesSourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        string agentName = UniqueAgentName();
+        var store = new ServedAgentRecordingStore();
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(store);
+        var sp = services.BuildServiceProvider();
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(new TelemetryTestAgent(agentName)), NullLogger<AgentFrameworkResponseHandler>.Instance);
+
+        // Act: two responses, then shutdown, then one more run through the agent hosting served.
+        await DrainAsync(handler);
+        await DrainAsync(handler);
+        AIAgent servedAgent = Assert.Single(store.Agents.Distinct());
+        int spansWhileServing = CountSpans(activities, agentName);
+        handler.Dispose();
+        await foreach (var _ in servedAgent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hello")])) { }
+
+        // Assert: one telemetry wrapper served both responses, and it stopped emitting once disposed.
+        Assert.IsType<OpenTelemetryAgent>(servedAgent);
+        Assert.Equal(2, spansWhileServing);
+        Assert.Equal(2, CountSpans(activities, agentName));
+    }
+
+    [Fact]
+    public async Task Dispose_AgentWithItsOwnTelemetry_LeavesThatTelemetryToTheCallerAsync()
+    {
+        // Arrange
+        var preWrapSource = Guid.NewGuid().ToString();
+        var activities = new ConcurrentActivityList();
+        using var tracerProvider = Sdk.CreateTracerProviderBuilder()
+            .AddSource(preWrapSource)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        string agentName = UniqueAgentName();
+        AIAgent preWrapped = new TelemetryTestAgent(agentName).AsBuilder()
+            .UseOpenTelemetry(sourceName: preWrapSource)
+            .Build();
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
+        var sp = services.BuildServiceProvider();
+        var handler = new AgentFrameworkResponseHandler(sp, new FoundryHostedAgentSource(preWrapped), NullLogger<AgentFrameworkResponseHandler>.Instance);
+
+        // Act
+        await DrainAsync(handler);
+        handler.Dispose();
+        await foreach (var _ in preWrapped.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hello")])) { }
+
+        // Assert: hosting added no wrapper of its own, and the caller's telemetry keeps working.
+        Assert.Equal(2, CountSpans(activities, agentName));
+    }
+
+    [Theory]
+    [InlineData(ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient)]
+    public async Task CreateAsync_PerRunAgentWithItsOwnTelemetry_IsNotWrappedByHostingAsync(ServiceLifetime lifetime)
+    {
+        // Arrange
+        var ownSource = Guid.NewGuid().ToString();
+        var ownActivities = new ConcurrentActivityList();
+        var responsesActivities = new ConcurrentActivityList();
+        using var ownProvider = Sdk.CreateTracerProviderBuilder()
+            .AddSource(ownSource)
+            .AddInMemoryExporter(ownActivities)
+            .Build();
+        using var responsesProvider = Sdk.CreateTracerProviderBuilder()
+            .AddSource(ResponsesSourceName)
+            .AddInMemoryExporter(responsesActivities)
+            .Build();
+
+        string agentName = UniqueAgentName();
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
+        var sp = services.BuildServiceProvider();
+        var agentSource = new FoundryHostedAgentSource(
+            _ => new TelemetryTestAgent(agentName).AsBuilder().UseOpenTelemetry(sourceName: ownSource).Build(),
+            lifetime,
+            sp,
+            requireOpenTelemetryAgent: true);
+        var handler = new AgentFrameworkResponseHandler(sp, agentSource, NullLogger<AgentFrameworkResponseHandler>.Instance);
+
+        // Act
+        await DrainAsync(handler);
+        await DrainAsync(handler);
+
+        // Assert: each response is traced once, by the telemetry the factory added.
+        Assert.Equal(2, CountSpans(ownActivities, agentName));
+        Assert.Equal(0, CountSpans(responsesActivities, agentName));
+    }
+
+    [Fact]
+    public async Task CreateAsync_PerRunAgentWhenTelemetryIsNotRequired_RunsWithoutAgentTelemetryAsync()
+    {
+        // Arrange
+        var activities = new ConcurrentActivityList();
+        using var tracerProvider = Sdk.CreateTracerProviderBuilder()
+            .AddSource(ResponsesSourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        string agentName = UniqueAgentName();
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
+        var sp = services.BuildServiceProvider();
+        var agentSource = new FoundryHostedAgentSource(
+            _ => new TelemetryTestAgent(agentName),
+            ServiceLifetime.Scoped,
+            sp,
+            requireOpenTelemetryAgent: false);
+        var handler = new AgentFrameworkResponseHandler(sp, agentSource, NullLogger<AgentFrameworkResponseHandler>.Instance);
+
+        // Act
+        await DrainAsync(handler);
+
+        // Assert: hosting adds no telemetry to an agent created per response.
+        Assert.Equal(0, CountSpans(activities, agentName));
+    }
+
+    private static string UniqueAgentName() => $"telemetry-agent-{Guid.NewGuid():N}";
+
+    private static int CountSpans(ConcurrentActivityList activities, string agentName) =>
+        activities.Snapshot().Count(a => agentName.Equals(a.GetTagItem("gen_ai.agent.name")));
+
+    private static async Task DrainAsync(AgentFrameworkResponseHandler handler)
+    {
+        var (request, context) = BuildRequest();
+        await foreach (var _ in handler.CreateAsync(request, context, CancellationToken.None)) { }
+    }
+
     private static (CreateResponse request, ResponseContext context) BuildRequest()
     {
         var request = new CreateResponse { Model = "test" };
@@ -180,7 +317,14 @@ public class AgentFrameworkResponseHandlerTelemetryTests
     {
         public const string AgentName = "TelemetryTestAgent";
 
-        public override string? Name => AgentName;
+        private readonly string _name;
+
+        public TelemetryTestAgent(string name = AgentName)
+        {
+            this._name = name;
+        }
+
+        public override string? Name => this._name;
 
         protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
