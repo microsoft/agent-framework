@@ -58,6 +58,7 @@ from ._feature_stage import ExperimentalFeature, experimental
 from ._tools import FunctionTool, normalize_tools
 from ._types import (
     _EVALUATION_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
+    LOOP_INJECTED_MESSAGE_PROPERTY,
     AgentResponse,
     Message,
 )
@@ -158,11 +159,26 @@ class ExpectedToolCall:
     arguments: dict[str, Any] | None = None
 
 
+def _is_loop_injected(message: Message) -> bool:
+    """Whether ``message`` was injected by the agent loop instead of sent by the user.
+
+    ``AgentLoopMiddleware`` injects ``user``-role messages (nudges, progress summaries) between
+    iterations of a single agent run.  They are part of the agent's own transcript, so they must not
+    be treated as the start of a new conversation turn.
+    """
+    properties = message.additional_properties
+    return bool(properties and properties.get(LOOP_INJECTED_MESSAGE_PROPERTY))
+
+
 def _split_last_turn(conversation: list[Message]) -> tuple[list[Message], list[Message]]:
-    """Split at the last user message (default strategy)."""
+    """Split at the last user message (default strategy).
+
+    Loop-injected messages are skipped: in a loop-aggregated conversation they are nudges between
+    iterations of one run, not real user turns.
+    """
     last_user_idx = -1
     for i, msg in enumerate(conversation):
-        if msg.role == "user":
+        if msg.role == "user" and not _is_loop_injected(msg):
             last_user_idx = i
     if last_user_idx >= 0:
         return conversation[: last_user_idx + 1], conversation[last_user_idx + 1 :]
@@ -172,7 +188,7 @@ def _split_last_turn(conversation: list[Message]) -> tuple[list[Message], list[M
 def _split_full(conversation: list[Message]) -> tuple[list[Message], list[Message]]:
     """Split after the first user message (evaluates whole trajectory)."""
     for i, msg in enumerate(conversation):
-        if msg.role == "user":
+        if msg.role == "user" and not _is_loop_injected(msg):
             return conversation[: i + 1], conversation[i + 1 :]
     return [], list(conversation)
 
@@ -265,7 +281,8 @@ class EvalItem:
     ) -> list[EvalItem]:
         """Split a multi-turn conversation into one ``EvalItem`` per turn.
 
-        Each user message starts a new turn.  The resulting ``EvalItem``
+        Each user message starts a new turn.  Loop-injected messages (nudges between iterations of
+        one agent run) are not user turns and do not start a new item.  The resulting ``EvalItem``
         has cumulative context: ``query_messages`` contains the full
         conversation up to and including that user message, and
         ``response_messages`` contains the agent's actions up to the next
@@ -280,7 +297,7 @@ class EvalItem:
         Returns:
             A list of ``EvalItem`` instances, one per user turn.
         """
-        user_indices = [i for i, m in enumerate(conversation) if m.role == "user"]
+        user_indices = [i for i, m in enumerate(conversation) if m.role == "user" and not _is_loop_injected(m)]
         if not user_indices:
             return []
 

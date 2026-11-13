@@ -41,6 +41,7 @@ from .._feature_stage import ExperimentalFeature, experimental
 from .._middleware import AgentContext, AgentMiddleware, MiddlewareTermination
 from .._sessions import SessionContext
 from .._types import (
+    LOOP_INJECTED_MESSAGE_PROPERTY,
     AgentResponse,
     AgentResponseUpdate,
     AgentRunInputs,
@@ -89,6 +90,22 @@ DEFAULT_JUDGE_INSTRUCTIONS = (
     f"when more work is still required."
     "{{criteria}}"
 )
+
+
+def _mark_loop_injected(messages: Sequence[Message]) -> None:
+    """Tag loop-injected messages in place.
+
+    The loop injects ``user``-role messages (nudges, progress summaries) between iterations of a
+    single agent run.  They are part of the agent's own transcript, not real user turns, so they
+    carry :data:`LOOP_INJECTED_MESSAGE_PROPERTY` in ``additional_properties`` to let consumers tell
+    them apart.
+    """
+    for message in messages:
+        properties = message.additional_properties
+        if properties is None:
+            message.additional_properties = {LOOP_INJECTED_MESSAGE_PROPERTY: True}
+        else:
+            properties[LOOP_INJECTED_MESSAGE_PROPERTY] = True
 
 
 def _render_criteria_block(criteria: Sequence[str] | None) -> str:
@@ -801,6 +818,7 @@ class AgentLoopMiddleware(AgentMiddleware):
             role=message.role,
             author_name=message.author_name,
             message_id=message.message_id,
+            additional_properties={LOOP_INJECTED_MESSAGE_PROPERTY: True},
         )
 
     @staticmethod
@@ -860,6 +878,11 @@ class AgentLoopMiddleware(AgentMiddleware):
             # the latest entry is injected to avoid duplication. Otherwise inject the full log.
             entries = progress if (session is None or self.fresh_context) else progress[-1:]
             progress_msg = self._render_progress(entries)
+
+        # Mark the injected messages so consumers can tell them apart from real user turns.
+        _mark_loop_injected(next_msgs)
+        if progress_msg is not None:
+            _mark_loop_injected([progress_msg])
 
         if self.fresh_context:
             result = list(original_messages)

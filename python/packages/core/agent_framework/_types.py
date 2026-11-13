@@ -2380,6 +2380,17 @@ Examples:
 """
 
 
+LOOP_INJECTED_MESSAGE_PROPERTY: Final[str] = "agent_framework_loop_injected"
+"""Key in ``Message.additional_properties`` marking a loop-injected message.
+
+``AgentLoopMiddleware`` injects ``user``-role messages (nudges, progress
+summaries) between iterations of a single agent run.  Those messages are not
+real conversation turns, so consumers that reason about turn boundaries — for
+example the evaluation checks that scope tool calls to the response side of a
+conversation — must not treat them as the start of a new turn.
+"""
+
+
 # region Message
 
 
