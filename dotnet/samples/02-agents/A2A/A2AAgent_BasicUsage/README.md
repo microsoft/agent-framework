@@ -11,6 +11,7 @@ It discovers the remote agent's card using `A2ACardResolver`, creates an `A2AAge
 
 If you do not have an A2A server, you can run the
 [local echo agent](https://github.com/a2aproject/a2a-dotnet/blob/main/samples/AgentServer/README.md).
+For this server, set `A2A_AGENT_HOST` to `http://localhost:5048`.
 
 ## Run the sample
 
@@ -18,7 +19,7 @@ From the repository root:
 
 ```powershell
 cd dotnet\samples\02-agents\A2A\A2AAgent_BasicUsage
-$env:A2A_AGENT_HOST="http://localhost:5000"  # Replace with your A2A server's base URL
+$env:A2A_AGENT_HOST="https://your-a2a-agent-host" # Replace with your A2A agent host endpoint
 dotnet run
 ```
 
