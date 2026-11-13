@@ -887,7 +887,10 @@ class TestWorkflowAgent:
         assert "first output" in texts
         assert "second output" in texts
 
-    async def test_workflow_as_agent_stream_preserves_response_update_metadata(self) -> None:
+    @pytest.mark.parametrize("merge_mode", [None, "append", "replace"])
+    async def test_workflow_as_agent_stream_preserves_response_update_metadata(
+        self, merge_mode: Literal["append", "replace"] | None
+    ) -> None:
         """Test that streaming forwards finish_reason, continuation_token, terminality, and additional properties.
 
         This validates the fix for issue #7952: AgentResponseUpdate metadata should be
@@ -902,6 +905,7 @@ class TestWorkflowAgent:
                 agent_id="source-agent",
                 response_id="source-response",
                 message_id="source-message",
+                merge_mode=merge_mode,
                 finish_reason="stop",
                 continuation_token=cast(Any, {"token": "resume-token"}),
                 additional_properties={"provider_marker": "preserve-me"},
@@ -921,10 +925,52 @@ class TestWorkflowAgent:
         update = metadata_updates[0]
         assert update.text == "payload"
         assert update.agent_id == "source-agent"
+        assert update.merge_mode == merge_mode
         assert update.finish_reason == "stop"
         assert update.continuation_token == {"token": "resume-token"}
         assert _get_operation_state(update) == "in_progress"
         assert update.additional_properties == {"provider_marker": "preserve-me"}
+
+    @pytest.mark.parametrize("with_uri", [False, True])
+    @pytest.mark.parametrize("result_source", ["stream", "history"])
+    async def test_workflow_as_agent_stream_replaces_logical_message_contents(
+        self, with_uri: bool, result_source: str
+    ) -> None:
+        """An authoritative update replaces old text and atomic content in output and history."""
+
+        @executor
+        async def snapshot_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:
+            draft = [Content.from_text("draft")]
+            final = [Content.from_text("final")]
+            if with_uri:
+                draft.append(Content.from_uri("https://example.com/draft.png", media_type="image/png"))
+                final.append(Content.from_uri("https://example.com/final.png", media_type="image/png"))
+            await ctx.yield_output(AgentResponseUpdate(contents=draft, role="assistant", message_id="message-1"))
+            await ctx.yield_output(
+                AgentResponseUpdate(contents=final, role="assistant", message_id="message-1", merge_mode="replace")
+            )
+
+        workflow = WorkflowBuilder(start_executor=snapshot_executor, output_from=[snapshot_executor]).build()
+        history = InMemoryHistoryProvider()
+        agent = workflow.as_agent(context_providers=[history])
+        session = AgentSession()
+
+        stream = agent.run("hello", stream=True, session=session)
+        updates = [update async for update in stream]
+        response = await stream.get_final_response()
+        if result_source == "history":
+            stored = await history.get_messages(session.session_id, state=session.state[history.source_id])
+            messages = [message for message in stored if message.role == "assistant"]
+        else:
+            messages = response.messages
+
+        assert len(messages) == 1
+        assert messages[0].message_id == "message-1"
+        assert messages[0].text == "final"
+        assert [content.uri for content in messages[0].contents if content.type == "uri"] == (
+            ["https://example.com/final.png"] if with_uri else []
+        )
+        assert updates[-1].merge_mode == "replace"
 
     async def test_workflow_as_agent_stream_preserves_response_metadata(self) -> None:
         """Test that streaming preserves metadata from an AgentResponse output."""
