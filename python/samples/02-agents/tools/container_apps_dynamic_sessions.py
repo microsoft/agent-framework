@@ -60,20 +60,28 @@ async def main() -> None:
         ) -> dict[str, Any]:
             """Run Python in the conversation's cloud sandbox and return its output and execution status."""
             token = await credential.get_token("https://dynamicsessions.io/.default")
-            response = await http_client.post(
-                f"{pool_endpoint}/executions",
-                params={"api-version": "2025-10-02-preview", "identifier": session_id},
-                headers={"Authorization": f"Bearer {token.token}"},
-                json={
-                    "codeInputType": "Inline",
-                    "executionType": "Synchronous",
-                    "code": code,
-                    "timeoutInSeconds": 30,
-                    "outputStreamsMaxLength": 4096,
-                },
-            )
-            response.raise_for_status()
-            return response.json()
+            try:
+                response = await http_client.post(
+                    f"{pool_endpoint}/executions",
+                    params={"api-version": "2025-10-02-preview", "identifier": session_id},
+                    headers={"Authorization": f"Bearer {token.token}"},
+                    json={
+                        "codeInputType": "Inline",
+                        "executionType": "Synchronous",
+                        "code": code,
+                        "timeoutInSeconds": 30,
+                        "outputStreamsMaxLength": 4096,
+                    },
+                )
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                # HTTPX errors include the request URL, which contains the session identifier.
+                raise RuntimeError(f"Session execution failed (HTTP {exc.response.status_code}).") from None
+            except httpx.RequestError:
+                raise RuntimeError("Session execution request failed.") from None
+            execution = response.json()
+            # Session and operation identifiers belong to the application, not the model.
+            return {"status": execution.get("status"), "result": execution.get("result")}
 
         async with Agent(
             client=FoundryChatClient(

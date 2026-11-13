@@ -91,3 +91,6 @@ take effect on the **next iteration** of the function-calling loop.
 > CodeAct setup in
 > [`../context_providers/code_act/`](../context_providers/code_act/), which adds
 > dynamic tool / capability management.
+
+The Dynamic Sessions tool returns only execution status and output to the model;
+session identifiers and HTTP request URLs remain application-owned.
