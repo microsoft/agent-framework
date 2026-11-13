@@ -161,9 +161,14 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
                 continue;
             }
 
-            string? body = httpResponse.Content is null
-                ? null
-                : await ReadResponseBodyAsStringAsync(httpResponse.Content, effectiveToken).ConfigureAwait(false);
+            effectiveToken.ThrowIfCancellationRequested();
+            string? body = null;
+            if (httpResponse.Content is not null)
+            {
+                body = httpRequest.Method == HttpMethod.Head || httpResponse.StatusCode == HttpStatusCode.NotModified
+                    ? string.Empty
+                    : await ReadResponseBodyAsStringAsync(httpResponse.Content, effectiveToken).ConfigureAwait(false);
+            }
 
             Dictionary<string, IReadOnlyList<string>> headers = new(StringComparer.OrdinalIgnoreCase);
             AppendHeaders(headers, httpResponse.Headers);
@@ -190,8 +195,10 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
         await content.LoadIntoBufferAsync(MaxResponseBodySize, cancellationToken).ConfigureAwait(false);
 #else
         Task readTask = content.LoadIntoBufferAsync(MaxResponseBodySize);
-        Task cancellationTask = Task.Delay(Timeout.Infinite, cancellationToken);
+        using CancellationTokenSource cancellationWaitCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task cancellationTask = Task.Delay(Timeout.Infinite, cancellationWaitCts.Token);
         Task completedTask = await Task.WhenAny(readTask, cancellationTask).ConfigureAwait(false);
+        cancellationWaitCts.Cancel();
         if (completedTask != readTask)
         {
             content.Dispose();

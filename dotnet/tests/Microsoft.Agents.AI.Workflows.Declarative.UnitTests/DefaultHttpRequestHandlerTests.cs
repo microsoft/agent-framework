@@ -1009,6 +1009,59 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Theory]
+    [InlineData("HEAD", HttpStatusCode.OK)]
+    [InlineData("GET", HttpStatusCode.NotModified)]
+    public async Task SendAsyncPreservesBodylessResponsesWithLargeContentLengthAsync(string method, HttpStatusCode statusCode)
+    {
+        // Arrange
+        const long ContentLength = (10 * 1024 * 1024) + 1;
+        using TrackingContent content = new(string.Empty);
+        content.Headers.ContentLength = ContentLength;
+        using HttpResponseMessage response = new(statusCode) { Content = content };
+#pragma warning disable CA2025
+        using TestHttpMessageHandler messageHandler = new((_, _) => Task.FromResult(response));
+#pragma warning restore CA2025
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(new HttpRequestInfo { Method = method, Url = TestUrl }, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal((int)statusCode, result.StatusCode);
+        Assert.Equal(string.Empty, result.Body);
+        Assert.NotNull(result.Headers);
+        Assert.Equal("10485761", Assert.Single(result.Headers["Content-Length"]));
+        Assert.False(content.WasRead);
+    }
+
+    [Theory]
+    [InlineData("HEAD", HttpStatusCode.OK)]
+    [InlineData("GET", HttpStatusCode.NotModified)]
+    public async Task SendAsyncHonorsCancellationForBodylessResponsesAsync(string method, HttpStatusCode statusCode)
+    {
+        // Arrange
+        using CancellationTokenSource cancellation = new();
+        using TrackingContent content = new(string.Empty);
+        content.Headers.ContentLength = (10 * 1024 * 1024) + 1;
+        using HttpResponseMessage response = new(statusCode) { Content = content };
+        using TestHttpMessageHandler messageHandler = new((_, _) =>
+        {
+            cancellation.Cancel();
+#pragma warning disable CA2025
+            return Task.FromResult(response);
+#pragma warning restore CA2025
+        });
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(new HttpRequestInfo { Method = method, Url = TestUrl }, cancellation.Token);
+
+        // Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(actAsync);
+        Assert.False(content.WasRead);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData(1L)]
     public async Task SendAsyncRejectsBufferedResponseBodyAboveLimitAsync(long? contentLength)
