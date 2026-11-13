@@ -691,6 +691,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         all_updates: list[AgentResponseUpdate] = []
         seen_user_input_request_ids: set[str] = set()
         streamed_artifact_ids_by_task: dict[str, set[str]] = {}
+        emitted_task_message_ids_by_task: dict[str, set[str]] = {}
         last_task_id: str | None = None
         last_context_id: str | None = None
         last_task_state: TaskState | None = None
@@ -717,6 +718,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     additional_properties=_a2a_metadata_properties(metadata),
                     raw_representation=msg,
                 )
+                if msg.task_id and msg.message_id and contents:
+                    emitted_task_message_ids_by_task.setdefault(msg.task_id, set()).add(msg.message_id)
                 all_updates.append(update)
                 yield update
             elif payload_type == "task":
@@ -732,6 +735,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     emit_intermediate=emit_intermediate,
                     input_request_occurrence_id=input_request_occurrence_id,
                     streamed_artifact_ids=streamed_artifact_ids_by_task.get(task.id),
+                    emitted_message_ids=emitted_task_message_ids_by_task.setdefault(task.id, set()),
                 )
                 updates = self._deduplicate_user_input_request_updates(updates, seen_user_input_request_ids)
                 if task.status.state in TERMINAL_TASK_STATES:
@@ -754,12 +758,28 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 if status_event.context_id:
                     last_context_id = status_event.context_id
                 last_task_state = status_event.status.state
+                terminal_message_id = (
+                    status_event.status.message.message_id
+                    if status_event.status.state in TERMINAL_TASK_STATES and status_event.status.HasField("message")
+                    else None
+                )
+                emitted_message_ids = emitted_task_message_ids_by_task.get(status_event.task_id)
+                is_duplicate_terminal_message = bool(
+                    terminal_message_id and emitted_message_ids and terminal_message_id in emitted_message_ids
+                )
                 updates = self._updates_from_task_update_event(
                     status_event,
                     background=background,
                     input_request_occurrence_id=input_request_occurrence_id,
                 )
                 updates = self._deduplicate_user_input_request_updates(updates, seen_user_input_request_ids)
+                if is_duplicate_terminal_message:
+                    for update in updates:
+                        update.contents = []
+                        # Preserve terminal metadata without replacing the previously emitted message.
+                        update.merge_mode = None
+                elif terminal_message_id and any(update.contents for update in updates):
+                    emitted_task_message_ids_by_task.setdefault(status_event.task_id, set()).add(terminal_message_id)
                 is_terminal = status_event.status.state in TERMINAL_TASK_STATES
                 is_input_required = status_event.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
                 if emit_intermediate:
@@ -887,10 +907,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         emit_intermediate: bool = False,
         input_request_occurrence_id: str | None = None,
         streamed_artifact_ids: set[str] | None = None,
+        emitted_message_ids: set[str] | None = None,
     ) -> list[AgentResponseUpdate]:
         """Convert an A2A Task into AgentResponseUpdate(s).
 
-        Terminal tasks produce updates from their artifacts/history.
+        Terminal tasks produce updates from their artifacts/history and status message.
         In-progress tasks produce a continuation token update when
         ``background=True``.  When ``emit_intermediate=True`` (typically
         set for streaming callers), any message content attached to an
@@ -922,44 +943,69 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         if status.state in TERMINAL_TASK_STATES:
             task_messages = self._parse_messages_from_task(task)
+            if status.HasField("message") and status.message.parts:
+                status_message = status.message
+                already_in_task_messages = bool(status_message.message_id) and any(
+                    isinstance(message.raw_representation, A2AMessage)
+                    and message.raw_representation.message_id == status_message.message_id
+                    for message in task_messages
+                )
+                contents = self._parse_contents_from_a2a(status_message.parts)
+                if contents and not already_in_task_messages:
+                    message_metadata = MessageToDict(status_message.metadata) if status_message.metadata else None
+                    task_messages.append(
+                        Message(
+                            role="assistant" if status_message.role == A2ARole.ROLE_AGENT else "user",
+                            contents=contents,
+                            message_id=status_message.message_id,
+                            additional_properties=message_metadata,
+                            raw_representation=status_message,
+                        )
+                    )
             if task.artifacts and streamed_artifact_ids:
                 task_messages = [
                     message
                     for message in task_messages
                     if getattr(message.raw_representation, "artifact_id", None) not in streamed_artifact_ids
                 ]
-            if task_messages:
-                updates = [
-                    AgentResponseUpdate(
-                        contents=message.contents,
-                        role=message.role,
-                        response_id=task.id,
-                        message_id=getattr(message.raw_representation, "artifact_id", None),
-                        additional_properties=_a2a_metadata_properties({
-                            **message.additional_properties,
-                            **(task_metadata or {}),
-                        }),
-                        raw_representation=task,
-                    )
-                    for message in task_messages
-                ]
-                _set_operation_state(updates[-1], "terminal")
-                return updates
-            if task.artifacts:
-                if not background:
-                    return []
-                return [
-                    _with_operation_state(
-                        AgentResponseUpdate(
-                            contents=[],
-                            role="assistant",
-                            response_id=task.id,
-                            additional_properties=_a2a_metadata_properties(task_metadata),
-                            raw_representation=task,
-                        ),
-                        "terminal",
-                    )
-                ]
+            task_updates: list[AgentResponseUpdate] = []
+            for message in task_messages:
+                raw_message = message.raw_representation
+                is_repeated_message = bool(
+                    emitted_message_ids is not None
+                    and isinstance(raw_message, A2AMessage)
+                    and raw_message.message_id
+                    and raw_message.message_id in emitted_message_ids
+                )
+                message_id = (
+                    raw_message.message_id
+                    if isinstance(raw_message, A2AMessage)
+                    else getattr(raw_message, "artifact_id", None)
+                )
+                task_update = AgentResponseUpdate(
+                    contents=[] if is_repeated_message else message.contents,
+                    role=message.role,
+                    response_id=task.id,
+                    message_id=message_id,
+                    additional_properties=_a2a_metadata_properties({
+                        **message.additional_properties,
+                        **(task_metadata or {}),
+                    }),
+                    raw_representation=task,
+                )
+                task_updates.append(task_update)
+                if (
+                    task_update.contents
+                    and isinstance(raw_message, A2AMessage)
+                    and raw_message.message_id
+                    and emitted_message_ids is not None
+                ):
+                    emitted_message_ids.add(raw_message.message_id)
+            if task_updates:
+                _set_operation_state(task_updates[-1], "terminal")
+                return task_updates
+            if task.artifacts and not background:
+                return []
             return [
                 _with_operation_state(
                     AgentResponseUpdate(
