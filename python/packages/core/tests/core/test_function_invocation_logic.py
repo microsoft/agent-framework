@@ -971,6 +971,225 @@ def _force_tool_content_tool_choice_none_stream(
     chat_client_base._get_streaming_response = _get_streaming_response
 
 
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("requires_approval", [False, True], ids=["immediate", "approved"])
+async def test_null_arguments_with_label_tracking_never_execute_the_tool(
+    chat_client_base: SupportsChatGetResponse, streaming: bool, requires_approval: bool
+) -> None:
+    """A null wrapper survives normalization and approval resume without executing the tool."""
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    calls: list[int] = []
+
+    @tool(name="null_target", approval_mode="always_require" if requires_approval else "never_require")
+    def null_target(limit: int = 0) -> str:
+        calls.append(limit)
+        return "unexpected execution"
+
+    function_call = Content.from_function_call("null-call", "null_target", arguments="null", id="null-occurrence")
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message("assistant", [function_call])),
+            ChatResponse(messages=Message("assistant", ["done"])),
+        ]
+
+    agent = Agent(client=chat_client_base, tools=[null_target], middleware=[LabelTrackingFunctionMiddleware()])
+    session = agent.create_session()
+
+    async def run(messages: str | list[Message]) -> list[Message]:
+        if streaming:
+            response_stream = agent.run(messages, session=session, stream=True)
+            updates = [update async for update in response_stream]
+            response = await response_stream.get_final_response()
+            assert [
+                (content.call_id, content.result)
+                for update in updates
+                for content in update.contents
+                if content.type == "function_result"
+            ] == [
+                (content.call_id, content.result)
+                for message in response.messages
+                for content in message.contents
+                if content.type == "function_result"
+            ]
+        else:
+            response = await agent.run(messages, session=session)
+        return response.messages
+
+    messages = await run("go")
+    if requires_approval:
+        requests = [
+            content
+            for message in messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        ]
+        assert len(requests) == 1
+        assert calls == []
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        messages = await run([Message("user", [requests[0].to_function_approval_response(approved=True)])])
+
+    assert calls == []
+    results = [content for message in messages for content in message.contents if content.type == "function_result"]
+    assert len(results) == 1
+    assert results[0].call_id == "null-call"
+    assert results[0].result == "Error: Argument parsing failed."
+    assert results[0].exception is not None
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("requires_approval", [False, True], ids=["immediate", "approved"])
+async def test_hidden_reference_expansion_inside_a_wrapper_never_executes_the_tool(
+    chat_client_base: SupportsChatGetResponse, streaming: bool, requires_approval: bool
+) -> None:
+    """A wrapper whose raw value is rewritten by hidden-reference expansion stays malformed.
+
+    The label-tracking middleware expands a variable reference inside the
+    synthetic ``raw`` entry, which rebuilds the value without repairing the
+    malformed structure. Provenance must survive that expansion - through the
+    streaming and non-streaming loops and through a serialized approval resume
+    - so the permissive tool never runs with the synthetic argument.
+    """
+    from agent_framework.security import ContentLabel, IntegrityLabel, LabelTrackingFunctionMiddleware
+
+    calls: list[dict[str, Any]] = []
+
+    @tool(name="expansion_target", approval_mode="always_require" if requires_approval else "never_require")
+    def expansion_target(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return "unexpected execution"
+
+    tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+
+    agent = Agent(client=chat_client_base, tools=[expansion_target], middleware=[tracker])
+    session = agent.create_session()
+    # Seed the hidden variable in the session-bound security scope: the
+    # middleware resolves references through the scope of the live session.
+    variable_id = tracker.get_variable_store(session).store(
+        "expanded external content",
+        ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+    )
+    function_call = Content.from_function_call(
+        "expansion-call",
+        "expansion_target",
+        arguments=f'["[{variable_id}]", "tail"]',
+        id="expansion-occurrence",
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message("assistant", [function_call])),
+            ChatResponse(messages=Message("assistant", ["done"])),
+        ]
+
+    async def run(messages: str | list[Message]) -> list[Message]:
+        if streaming:
+            response_stream = agent.run(messages, session=session, stream=True)
+            updates = [update async for update in response_stream]
+            response = await response_stream.get_final_response()
+            assert [
+                (content.call_id, content.result)
+                for update in updates
+                for content in update.contents
+                if content.type == "function_result"
+            ] == [
+                (content.call_id, content.result)
+                for message in response.messages
+                for content in message.contents
+                if content.type == "function_result"
+            ]
+        else:
+            response = await agent.run(messages, session=session)
+        return response.messages
+
+    messages = await run("go")
+    if requires_approval:
+        requests = [
+            content
+            for message in messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        ]
+        assert len(requests) == 1
+        assert calls == []
+        session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        # The variable must survive the session round-trip, otherwise the
+        # resumed replay would keep the original value and could not exercise
+        # the expansion bypass this regression guards against.
+        assert tracker.get_variable_store(session).exists(variable_id)
+        messages = await run([Message("user", [requests[0].to_function_approval_response(approved=True)])])
+
+    assert calls == []
+    results = [content for message in messages for content in message.contents if content.type == "function_result"]
+    assert len(results) == 1
+    assert results[0].call_id == "expansion-call"
+    assert "Invalid arguments for 'expansion_target'" in str(results[0].exception)
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("object_payload", [False, True], ids=["scalar", "object"])
+async def test_declared_raw_rewritten_by_middleware_reaches_the_tool_with_its_declared_type(
+    chat_client_base: SupportsChatGetResponse, streaming: bool, object_payload: bool
+) -> None:
+    """Both payload forms retain ordinary type preparation after middleware rewrites a value."""
+    observed_values: list[datetime] = []
+
+    class RewriteRaw(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            context.arguments = {"raw": "2025-02-03T00:00:00+00:00"}
+            await call_next()
+
+    @tool(name="raw_target", approval_mode="never_require")
+    def raw_target(raw: datetime) -> str:
+        observed_values.append(raw)
+        return raw.isoformat()
+
+    arguments = '{"raw":"2024-01-01T00:00:00+00:00"}' if object_payload else '"2024-01-01T00:00:00+00:00"'
+    function_call = Content.from_function_call("raw-call", "raw_target", arguments=arguments)
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message("assistant", [function_call])),
+            ChatResponse(messages=Message("assistant", ["done"])),
+        ]
+    agent = Agent(client=chat_client_base, tools=[raw_target], middleware=[RewriteRaw()])
+    if streaming:
+        response_stream = agent.run("go", stream=True)
+        updates = [update async for update in response_stream]
+        response = await response_stream.get_final_response()
+        assert [
+            content.result for update in updates for content in update.contents if content.type == "function_result"
+        ] == [
+            content.result
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_result"
+        ]
+    else:
+        response = await agent.run("go")
+
+    assert observed_values == [datetime(2025, 2, 3, tzinfo=timezone.utc)]
+    results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert len(results) == 1
+    assert results[0].exception is None
+    assert results[0].result == "2025-02-03T00:00:00+00:00"
+
+
 async def test_base_client_with_function_calling(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
 

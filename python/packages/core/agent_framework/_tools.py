@@ -139,6 +139,7 @@ _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY: Final[str] = "_function_result_payloa
 _APPROVED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_approved_function_arguments"
 _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: Final[str] = "_security_function_arguments"
 _PREPARED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_prepared_function_arguments"
+_MALFORMED_WRAPPER_CONTEXT_KEY: Final[str] = "_malformed_wrapper_provenance"
 _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: Final[str] = "_auto_prepare_function_arguments"
 _SECURITY_ARGUMENT_MATERIALIZATION_CONTEXT: Final[
     contextvars.ContextVar[tuple[Any, Callable[[Any], None], asyncio.Task[Any] | None] | None]
@@ -1060,7 +1061,20 @@ class FunctionTool(SerializationMixin):
             context.arguments = prepared_state.arguments
             return prepared_state.arguments
 
+        # A malformed payload provenance marker keeps the synthetic raw entry
+        # alive across schema validation: validation drops the undeclared key,
+        # which would otherwise erase the signal that the call is still the
+        # wrapped malformed payload rather than a middleware repair. Presence
+        # is tracked separately from the value so a wrapped JSON null - a
+        # legitimate malformed payload - is not mistaken for no wrapper.
+        preserved_wrapper: dict[str, Any] = {}
+        malformed_wrapper = context.metadata.get(_MALFORMED_WRAPPER_CONTEXT_KEY)
+        if malformed_wrapper is not None and isinstance(current_arguments, Mapping) and "raw" in current_arguments:
+            preserved_wrapper["raw"] = current_arguments["raw"]
+
         validated_arguments = self._prepare_arguments(arguments)
+        if preserved_wrapper:
+            validated_arguments = {**validated_arguments, **preserved_wrapper}
         context.arguments = validated_arguments
         context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
             arguments=validated_arguments,
@@ -2275,6 +2289,40 @@ def _finalize_function_result(
     return function_result
 
 
+def _tool_declares_parameter(tool: FunctionTool, name: str) -> bool:
+    """Return whether the tool's own schema declares a parameter with this name.
+
+    Schema-supplied tools declare through their JSON ``properties``; decorated
+    tools through their resolved input model. A ``**kwargs`` catch-all does not
+    declare anything: the model never agreed to such a parameter by name.
+    """
+    if tool._schema_supplied:  # pyright: ignore[reportPrivateUsage]
+        properties = tool._input_schema_cached.get("properties") if tool._input_schema_cached else None  # pyright: ignore[reportPrivateUsage]
+        return isinstance(properties, Mapping) and name in properties
+    return tool.input_model is not None and name in tool.input_model.model_fields
+
+
+def _function_call_payload_is_not_an_object(function_call: Content) -> bool:
+    """Return whether the model sent a payload that is not a JSON object.
+
+    `Content.parse_arguments()` wraps such a payload under a single "raw" key.
+    That is the right answer for a caller that wants to see what the model sent,
+    but not for a function call: the tool would run with an argument it never
+    declared, and the model would not learn that its call was malformed. The
+    wrapped mapping still reaches the function middleware, which can repair the
+    arguments the way it repairs any other invalid arguments; when it stays
+    unrepaired, the innermost handler answers the call instead of running it.
+    """
+    arguments = function_call.arguments
+    if isinstance(arguments, str) and arguments:
+        try:
+            decoded = json.loads(arguments)
+        except (json.JSONDecodeError, TypeError):
+            decoded = None
+        return not isinstance(decoded, dict)
+    return False
+
+
 async def _auto_invoke_function(
     function_call_content: Content,
     custom_args: dict[str, Any] | None = None,
@@ -2350,7 +2398,29 @@ async def _auto_invoke_function(
         approval_response = function_call_content
         function_call_content = approved_function_call
 
-    parsed_args: dict[str, Any] = dict(function_call_content.parse_arguments() or {})
+    # A payload that is not a JSON object still reaches middleware as the raw
+    # parsed mapping it wraps, so middleware has the same chance to repair it
+    # that it has for any other invalid arguments. If it is still unrepaired,
+    # the innermost handler answers it before the tool runs.
+    payload_is_not_an_object = _function_call_payload_is_not_an_object(function_call_content)
+    parsed_args = dict(function_call_content.parse_arguments() or {})
+    wrapped_raw_present = payload_is_not_an_object and set(parsed_args) == {"raw"}
+
+    def _unrepaired_wrapper(arguments: Any) -> bool:
+        """Return whether the arguments are still the wrapped malformed payload.
+
+        Provenance is structural, not value-based. The synthetic ``raw`` entry
+        the framework created for the malformed payload is the wrapper however
+        its contents are rewritten: hidden-reference expansion rebuilds the
+        wrapped value without repairing the structure, so value inequality
+        must not be read as a middleware repair. Keeping the ``raw`` entry -
+        which an argument-injecting middleware does - leaves the call
+        malformed, while arguments that no longer carry the entry - or a
+        ``raw`` entry the tool itself declares - are ordinary arguments.
+        """
+        if not wrapped_raw_present or _tool_declares_parameter(tool, "raw"):
+            return False
+        return isinstance(arguments, Mapping) and "raw" in arguments
 
     # Filter out internal framework kwargs before passing to tools.
     # conversation_id is an internal tracking ID that should not be forwarded to tools.
@@ -2389,6 +2459,15 @@ async def _auto_invoke_function(
         # No middleware - execute directly
         direct_context = None
         try:
+            if _unrepaired_wrapper(args):
+                # Without middleware there is nothing that could repair the
+                # wrapped payload, so answer it before the tool runs. A tool
+                # that declares ``raw`` receives the payload as ordinary
+                # arguments instead.
+                raise _FunctionArgumentValidationError(
+                    f"Invalid arguments for '{tool.name}': arguments are not a JSON object",
+                    redacted_message=f"Invalid arguments for '{tool.name}'.",
+                )
             if getattr(tool, "_context_parameter_name", None):
                 direct_context = FunctionInvocationContext(
                     function=tool,
@@ -2423,13 +2502,18 @@ async def _auto_invoke_function(
             return _function_execution_error_result(function_call_content, tool.name, exc, config, direct_context)
     # Execute through middleware pipeline if available
     arguments_prepared = False
-    try:
-        args = tool._prepare_arguments(args)  # pyright: ignore[reportPrivateUsage]
-        arguments_prepared = True
-    except _FunctionArgumentValidationError:
-        # Invalid provider arguments are intentionally exposed to middleware so
-        # it has a supported opportunity to repair them before final validation.
-        pass
+    if not payload_is_not_an_object or _tool_declares_parameter(tool, "raw"):
+        try:
+            args = tool._prepare_arguments(args)  # pyright: ignore[reportPrivateUsage]
+            arguments_prepared = True
+        except _FunctionArgumentValidationError:
+            # Invalid provider arguments are intentionally exposed to middleware so
+            # it has a supported opportunity to repair them before final validation.
+            pass
+    # Only a wrapped malformed payload that the tool does not accept as a
+    # declared ``raw`` argument skips preparation: preparation would silently
+    # drop that wrapper as an extra field, and middleware would never see what
+    # the model actually sent.
 
     middleware_context = FunctionInvocationContext(
         function=tool,
@@ -2443,6 +2527,11 @@ async def _auto_invoke_function(
     if host_payload_budget is not None:
         middleware_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
     middleware_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
+    if wrapped_raw_present and not _tool_declares_parameter(tool, "raw"):
+        # A tool that declares raw keeps the value validation produced, so the
+        # wrapper marker must not turn a middleware-rewritten declared raw into
+        # an unrepaired malformed payload.
+        middleware_context.metadata[_MALFORMED_WRAPPER_CONTEXT_KEY] = dict(parsed_args)
     if arguments_prepared:
         middleware_context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
             arguments=args,
@@ -2472,6 +2561,15 @@ async def _auto_invoke_function(
     async def final_function_handler(context_obj: Any) -> Any:
         nonlocal final_handler_started
         final_handler_started = True
+        if _unrepaired_wrapper(context_obj.arguments):
+            # Middleware left the wrapped payload in place - an argument-injecting
+            # middleware keeps its ``raw`` entry with the original value - so the
+            # arguments are still not arguments: answer it here, immediately
+            # before the tool runs.
+            raise _FunctionArgumentValidationError(
+                f"Invalid arguments for '{tool.name}': arguments are not a JSON object",
+                redacted_message=f"Invalid arguments for '{tool.name}'.",
+            )
         return await tool.invoke(
             arguments=context_obj.arguments,
             context=context_obj,
