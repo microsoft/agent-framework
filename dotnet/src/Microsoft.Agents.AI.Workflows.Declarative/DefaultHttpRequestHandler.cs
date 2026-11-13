@@ -42,6 +42,10 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// disables the client's independent timeout so longer workflow deadlines are honored.
 /// </para>
 /// <para>
+/// Response bodies are limited to 10 MiB after any decompression performed by the HTTP pipeline.
+/// Responses exceeding this limit throw <see cref="HttpRequestException"/> before string decoding.
+/// </para>
+/// <para>
 /// Redirects are handled explicitly so each destination is checked against the allowlist and workflow-supplied
 /// headers are not forwarded. Before sending, the pipeline must terminate in a supported HTTP transport with
 /// automatic redirects and cookies disabled. Unsupported transports are rejected. Application-owned delegating
@@ -51,6 +55,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
 {
     private const int MaxAutomaticRedirections = 50;
+    private const int MaxResponseBodySize = 10 * 1024 * 1024;
 
     private readonly AllowedHttpHosts _allowedHosts;
     private readonly IHttpMessageHandlerFactory _httpMessageHandlerFactory;
@@ -180,15 +185,22 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
 
     private static async Task<string> ReadResponseBodyAsStringAsync(HttpContent content, CancellationToken cancellationToken)
     {
-#if NET
+#if NET9_0_OR_GREATER
+        await content.LoadIntoBufferAsync(MaxResponseBodySize, cancellationToken).ConfigureAwait(false);
         return await content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 #else
-        Task<string> readTask = content.ReadAsStringAsync();
+        Task readTask = content.LoadIntoBufferAsync(MaxResponseBodySize);
         Task cancellationTask = Task.Delay(Timeout.Infinite, cancellationToken);
         Task completedTask = await Task.WhenAny(readTask, cancellationTask).ConfigureAwait(false);
         if (completedTask == readTask)
         {
-            return await readTask.ConfigureAwait(false);
+            await readTask.ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+#if NET
+            return await content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+#else
+            return await content.ReadAsStringAsync().ConfigureAwait(false);
+#endif
         }
 
         content.Dispose();

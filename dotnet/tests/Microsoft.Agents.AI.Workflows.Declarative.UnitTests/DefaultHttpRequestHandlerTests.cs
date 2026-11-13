@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
@@ -983,6 +984,77 @@ public sealed class DefaultHttpRequestHandlerTests
         Assert.Equal(1, requestCount);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1L)]
+    [InlineData((10L * 1024 * 1024) + (2 * 8192))]
+    public async Task SendAsyncRejectsResponseBodyAboveLimitAsync(long? contentLength)
+    {
+        // Arrange
+        const int BodyLength = (10 * 1024 * 1024) + (2 * 8192);
+        using SizedContent content = new(BodyLength);
+        content.Headers.ContentLength = contentLength;
+        using HttpResponseMessage response = new(HttpStatusCode.OK) { Content = content };
+#pragma warning disable CA2025
+        using TestHttpMessageHandler messageHandler = new((_, _) => Task.FromResult(response));
+#pragma warning restore CA2025
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(new HttpRequestInfo { Url = TestUrl }, TestContext.Current.CancellationToken);
+
+        // Assert
+        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.True(content.BytesWritten < BodyLength);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(10 * 1024 * 1024)]
+    public async Task SendAsyncAcceptsResponseBodyWithinLimitAsync(int bodyLength)
+    {
+        // Arrange
+        using SizedContent content = new(bodyLength);
+        using HttpResponseMessage response = new(HttpStatusCode.OK) { Content = content };
+#pragma warning disable CA2025
+        using TestHttpMessageHandler messageHandler = new((_, _) => Task.FromResult(response));
+#pragma warning restore CA2025
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(new HttpRequestInfo { Url = TestUrl }, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.NotNull(result.Body);
+        Assert.Equal(bodyLength, result.Body.Length);
+    }
+
+    [Fact]
+    public async Task SendAsyncRejectsDecodedResponseBodyAboveLimitAsync()
+    {
+        // Arrange
+        using MemoryStream compressed = new();
+        using (GZipStream compressor = new(compressed, CompressionMode.Compress, leaveOpen: true))
+        using (SizedContent source = new((10 * 1024 * 1024) + 1))
+        {
+            await source.CopyToAsync(compressor);
+        }
+
+        compressed.Position = 0;
+        using GZipStream decoded = new(compressed, CompressionMode.Decompress, leaveOpen: true);
+        using HttpResponseMessage response = new(HttpStatusCode.OK) { Content = new StreamContent(decoded) };
+#pragma warning disable CA2025
+        using TestHttpMessageHandler messageHandler = new((_, _) => Task.FromResult(response));
+#pragma warning restore CA2025
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(new HttpRequestInfo { Url = TestUrl }, TestContext.Current.CancellationToken);
+
+        // Assert
+        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+    }
+
     [Fact]
     public async Task SendAsyncTimeoutAppliesAcrossRedirectsAsync()
     {
@@ -1833,6 +1905,32 @@ public sealed class DefaultHttpRequestHandlerTests
                 stream.Write(responseBytes, 0, responseBytes.Length);
                 return Encoding.ASCII.GetString(rawRequest.ToArray());
             }
+        }
+    }
+
+    private sealed class SizedContent(int bodyLength) : HttpContent
+    {
+        public int BytesWritten { get; private set; }
+
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            byte[] buffer = Encoding.ASCII.GetBytes(new string('a', 8192));
+            while (this.BytesWritten < bodyLength)
+            {
+                int count = Math.Min(buffer.Length, bodyLength - this.BytesWritten);
+#if NET
+                await stream.WriteAsync(buffer.AsMemory(0, count)).ConfigureAwait(false);
+#else
+                await stream.WriteAsync(buffer, 0, count).ConfigureAwait(false);
+#endif
+                this.BytesWritten += count;
+            }
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = bodyLength;
+            return false;
         }
     }
 
