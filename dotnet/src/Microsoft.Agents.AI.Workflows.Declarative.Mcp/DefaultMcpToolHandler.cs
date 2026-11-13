@@ -61,6 +61,29 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
     public string? ProtocolVersion { get; init; }
 
     /// <summary>
+    /// Gets or initializes the maximum decoded size of an HTTP response other than an SSE stream, in bytes.
+    /// </summary>
+    /// <value>A positive byte count. The default is 4 MiB.</value>
+    public int MaxResponseBodyBytes
+    {
+        get;
+        init => field = value > 0 ? value : throw new ArgumentOutOfRangeException(nameof(value));
+    } = 4 * 1024 * 1024;
+
+    /// <summary>
+    /// Gets or initializes the maximum decoded size of an individual SSE event, including its framing, in bytes.
+    /// </summary>
+    /// <value>
+    /// A positive byte count. The default is 4 MiB. The limit resets at each empty line and does not
+    /// limit the aggregate size of a stream containing multiple events.
+    /// </value>
+    public int MaxSseEventBytes
+    {
+        get;
+        init => field = value > 0 ? value : throw new ArgumentOutOfRangeException(nameof(value));
+    } = 4 * 1024 * 1024;
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class with allowed hosts
     /// and an application-provided HTTP message handler factory.
     /// </summary>
@@ -210,7 +233,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
 
         HttpMessageHandler messageHandler = this._httpMessageHandlerFactory.CreateHandler(this._httpClientName);
         HttpTransportValidation.Validate(messageHandler);
-        HttpClient httpClient = new(messageHandler, disposeHandler: false);
+        HttpClient httpClient = new(new McpResponseLimitHandler(messageHandler, this.MaxResponseBodyBytes, this.MaxSseEventBytes));
         HttpClientTransport? transport = null;
         try
         {

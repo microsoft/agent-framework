@@ -26,6 +26,13 @@ public sealed class LocalShellExecutorOptions
     /// <c>AGENT_FRAMEWORK_SHELL</c> environment variable, then OS defaults.
     /// Mutually exclusive with <see cref="ShellArgv"/>.
     /// </summary>
+    /// <remarks>
+    /// The value (and the <c>AGENT_FRAMEWORK_SHELL</c> environment variable) must be a fully
+    /// qualified path, such as <c>/bin/bash</c> or <c>C:\Program Files\PowerShell\7\pwsh.exe</c>.
+    /// On Windows it must also include a file extension, such as <c>.exe</c>. Bare names such as
+    /// <c>pwsh</c> are rejected. When no override is set, the OS default shell is located by
+    /// searching only the fully qualified directories in <c>PATH</c>.
+    /// </remarks>
     public string? Shell { get; set; }
 
     /// <summary>
@@ -33,6 +40,10 @@ public sealed class LocalShellExecutorOptions
     /// subsequent elements are passed as a launch-time prefix. Mutually
     /// exclusive with <see cref="Shell"/>.
     /// </summary>
+    /// <remarks>
+    /// The first element must be a fully qualified path, and on Windows must include a
+    /// file extension, such as <c>.exe</c>.
+    /// </remarks>
     public IReadOnlyList<string>? ShellArgv { get; set; }
 
     /// <summary>
@@ -54,6 +65,15 @@ public sealed class LocalShellExecutorOptions
     /// Extra environment variables. Pass a <see langword="null"/> value to
     /// remove an inherited variable.
     /// </summary>
+    /// <remarks>
+    /// The shell always looks for programs only in the fully qualified directories of
+    /// <c>PATH</c>: empty and relative entries (such as <c>.</c>) are removed from the
+    /// <c>PATH</c> passed to the shell, including a <c>PATH</c> supplied here. On Windows,
+    /// <c>NoDefaultCurrentDirectoryInExePath</c> is also set, so <c>cmd.exe</c> does not run
+    /// programs from the working directory unless they are named with a path, such as
+    /// <c>.\tool.exe</c>. On Linux and macOS, the shell is not started if <c>PATH</c> is removed or
+    /// has no fully qualified directories left.
+    /// </remarks>
     public IReadOnlyDictionary<string, string?>? Environment { get; set; }
 
     /// <summary>

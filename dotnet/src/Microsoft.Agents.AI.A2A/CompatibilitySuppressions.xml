@@ -1,0 +1,93 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!-- https://learn.microsoft.com/dotnet/fundamentals/package-validation/diagnostic-ids -->
+<!--
+  Intentional preview API cleanup in https://github.com/microsoft/agent-framework/pull/10211:
+  A2AAgentCardExtensions was renamed to AgentCardExtensions, and factory return types now use A2AAgent.
+  Remove these baseline-only suppressions when the baseline includes that cleanup.
+-->
+<Suppressions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:A2A.A2AAgentCardExtensions</Target>
+    <Left>lib/net10.0/Microsoft.Agents.AI.A2A.dll</Left>
+    <Right>lib/net10.0/Microsoft.Agents.AI.A2A.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:A2A.A2AAgentCardExtensions</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.A2A.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.A2A.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0001</DiagnosticId>
+    <Target>T:A2A.A2AAgentCardExtensions</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.A2A.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.A2A.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:A2A.A2ACardResolverExtensions.GetAIAgentAsync(A2A.A2ACardResolver,Microsoft.Agents.AI.A2A.A2AAgentOptions,System.Net.Http.HttpClient,A2A.A2AClientOptions,Microsoft.Extensions.Logging.ILoggerFactory,System.Threading.CancellationToken)</Target>
+    <Left>lib/net10.0/Microsoft.Agents.AI.A2A.dll</Left>
+    <Right>lib/net10.0/Microsoft.Agents.AI.A2A.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:A2A.A2ACardResolverExtensions.GetAIAgentAsync(A2A.A2ACardResolver,System.Net.Http.HttpClient,A2A.A2AClientOptions,Microsoft.Extensions.Logging.ILoggerFactory,System.Threading.CancellationToken)</Target>
+    <Left>lib/net10.0/Microsoft.Agents.AI.A2A.dll</Left>
+    <Right>lib/net10.0/Microsoft.Agents.AI.A2A.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:A2A.A2AClientExtensions.AsAIAgent(A2A.IA2AClient,Microsoft.Agents.AI.A2A.A2AAgentOptions,Microsoft.Extensions.Logging.ILoggerFactory)</Target>
+    <Left>lib/net10.0/Microsoft.Agents.AI.A2A.dll</Left>
+    <Right>lib/net10.0/Microsoft.Agents.AI.A2A.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:A2A.A2ACardResolverExtensions.GetAIAgentAsync(A2A.A2ACardResolver,Microsoft.Agents.AI.A2A.A2AAgentOptions,System.Net.Http.HttpClient,A2A.A2AClientOptions,Microsoft.Extensions.Logging.ILoggerFactory,System.Threading.CancellationToken)</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.A2A.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.A2A.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:A2A.A2ACardResolverExtensions.GetAIAgentAsync(A2A.A2ACardResolver,System.Net.Http.HttpClient,A2A.A2AClientOptions,Microsoft.Extensions.Logging.ILoggerFactory,System.Threading.CancellationToken)</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.A2A.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.A2A.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:A2A.A2AClientExtensions.AsAIAgent(A2A.IA2AClient,Microsoft.Agents.AI.A2A.A2AAgentOptions,Microsoft.Extensions.Logging.ILoggerFactory)</Target>
+    <Left>lib/net8.0/Microsoft.Agents.AI.A2A.dll</Left>
+    <Right>lib/net8.0/Microsoft.Agents.AI.A2A.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:A2A.A2ACardResolverExtensions.GetAIAgentAsync(A2A.A2ACardResolver,Microsoft.Agents.AI.A2A.A2AAgentOptions,System.Net.Http.HttpClient,A2A.A2AClientOptions,Microsoft.Extensions.Logging.ILoggerFactory,System.Threading.CancellationToken)</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.A2A.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.A2A.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:A2A.A2ACardResolverExtensions.GetAIAgentAsync(A2A.A2ACardResolver,System.Net.Http.HttpClient,A2A.A2AClientOptions,Microsoft.Extensions.Logging.ILoggerFactory,System.Threading.CancellationToken)</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.A2A.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.A2A.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+  <Suppression>
+    <DiagnosticId>CP0002</DiagnosticId>
+    <Target>M:A2A.A2AClientExtensions.AsAIAgent(A2A.IA2AClient,Microsoft.Agents.AI.A2A.A2AAgentOptions,Microsoft.Extensions.Logging.ILoggerFactory)</Target>
+    <Left>lib/net9.0/Microsoft.Agents.AI.A2A.dll</Left>
+    <Right>lib/net9.0/Microsoft.Agents.AI.A2A.dll</Right>
+    <IsBaselineSuppression>true</IsBaselineSuppression>
+  </Suppression>
+</Suppressions>

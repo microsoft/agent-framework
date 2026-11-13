@@ -31,7 +31,7 @@ from agent_framework_tools.shell._executor import _popen_kwargs_for_group, run_s
 from agent_framework_tools.shell._truncate import _OutputBuffer
 from agent_framework_tools.shell._types import ShellMode
 
-_TEST_SHELL = "/opt/agent-framework-test-shell"
+_TEST_SHELL = r"C:\agent-framework\test-shell.exe" if sys.platform == "win32" else "/opt/agent-framework-test-shell"
 _APPROVED_COMMAND = "printf '%s' approved-value"
 _ALTERNATE_COMMAND = "printf '%s' alternate-value"
 _POWERSHELL = shutil.which("pwsh") or (shutil.which("powershell") if sys.platform == "win32" else None)
@@ -547,14 +547,70 @@ def test_local_shell_tool_handles_mode_and_environment_variants(monkeypatch: pyt
         mode="stateless",
         approval_mode="never_require",
         acknowledge_unsafe=True,
-        env={"ONLY": "2"},
+        env={"ONLY": "2", "PATH": os.environ["PATH"]},
         clean_env=True,
     )
 
-    assert inherited._env is not None
-    assert inherited._env["INHERITED"] == "yes"
-    assert inherited._env["EXTRA"] == "1"
-    assert clean._env == {"ONLY": "2"}
+    inherited_env = inherited._launch_env()
+    clean_env = clean._launch_env()
+    assert inherited_env["INHERITED"] == "yes"
+    assert inherited_env["EXTRA"] == "1"
+    assert clean_env["ONLY"] == "2"
+    assert "INHERITED" not in clean_env
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell syntax")
+async def test_environment_changes_after_construction_are_inherited(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AF_LATE_VALUE", raising=False)
+    tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
+    monkeypatch.setenv("AF_LATE_VALUE", "late")
+
+    result = await tool.run('echo "$AF_LATE_VALUE"')
+
+    assert result.stdout.strip() == "late"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX PATH search")
+@pytest.mark.parametrize("mode", ["stateless", "persistent"])
+@pytest.mark.parametrize(
+    ("env", "clean_env"),
+    [({"PATH": "."}, False), ({"PATH": "bin"}, False), ({"PATH": ""}, False), ({"ONLY": "1"}, True)],
+)
+def test_shell_path_without_full_directories_is_rejected(mode: ShellMode, env: dict[str, str], clean_env: bool) -> None:
+    with pytest.raises(ValueError, match="at least one full directory path"):
+        LocalShellTool(mode=mode, env=env, clean_env=clean_env, approval_mode="never_require", acknowledge_unsafe=True)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX PATH search")
+@pytest.mark.parametrize("mode", ["stateless", "persistent"])
+@pytest.mark.parametrize("path_source", ["env", "inherited"])
+async def test_relative_path_entries_are_not_searched_by_the_shell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: ShellMode, path_source: str
+) -> None:
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    marker = tmp_path / "planted-ran"
+    planted = workdir / "af-planted-tool"
+    planted.write_text(f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\n")
+    planted.chmod(0o755)
+    unsafe_path = os.pathsep.join(["", ".", os.environ.get("PATH", "")])
+    env: dict[str, str] | None = None
+    if path_source == "env":
+        env = {"PATH": unsafe_path}
+    else:
+        monkeypatch.setenv("PATH", unsafe_path)
+
+    async with LocalShellTool(
+        mode=mode,
+        workdir=workdir,
+        env=env,
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+    ) as tool:
+        result = await tool.run("af-planted-tool")
+
+    assert result.exit_code != 0
+    assert not marker.exists()
 
 
 async def test_local_shell_tool_stateless_start_is_noop() -> None:
@@ -585,7 +641,7 @@ async def test_local_shell_tool_as_function_returns_policy_errors() -> None:
 def test_local_shell_tool_reanchors_powershell_paths() -> None:
     tool = LocalShellTool(
         mode="persistent",
-        shell="/usr/bin/pwsh",
+        shell=[r"C:\Program Files\PowerShell\7\pwsh.exe"] if sys.platform == "win32" else ["/usr/bin/pwsh"],
         workdir="C:\\repo",
         approval_mode="never_require",
         acknowledge_unsafe=True,
