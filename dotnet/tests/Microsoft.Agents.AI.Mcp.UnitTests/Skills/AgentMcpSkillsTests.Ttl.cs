@@ -1,0 +1,801 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
+using ModelContextProtocol;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
+using Moq;
+
+namespace Microsoft.Agents.AI.Skills.Mcp.UnitTests;
+
+public sealed partial class AgentMcpSkillsTests
+{
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_PositiveTtl_ReusesCatalogUntilExactExpirationAsync(bool empty)
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        int calls = 0;
+        var client = CreateTtlClient((_, _) =>
+        {
+            calls++;
+            long ttl = calls == 1 ? 1000 : 2000;
+            return Task.FromResult(empty ? TtlListResult(ttl) : TtlListResult(ttl, Entry()));
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+
+        // Act
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        clock.Advance(TimeSpan.FromMilliseconds(999));
+        var fresh = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.Equal(first, fresh);
+        Assert.False(first.IsReadOnly);
+        Assert.Equal(empty ? 0 : 1, fresh.Count);
+        Assert.Equal(1, calls);
+
+        // Act
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        var refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.NotSame(first, refreshed);
+        Assert.False(refreshed.IsReadOnly);
+        Assert.Equal(2, calls);
+
+        // Act
+        clock.Advance(TimeSpan.FromMilliseconds(1999));
+        var stillFresh = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.Equal(refreshed, stillFresh);
+        Assert.Equal(2, calls);
+
+        // Act
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        var expired = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.NotSame(refreshed, expired);
+        Assert.Equal(3, calls);
+        client.Verify(c => c.SendRequestAsync(It.Is<JsonRpcRequest>(request => request.Method == "skills/list"), It.IsAny<CancellationToken>()), Times.Exactly(3));
+        client.VerifyGet(c => c.ServerCapabilities, Times.Exactly(5));
+        client.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("null")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("-9223372036854775808")]
+    public async Task GetSkillsAsync_MissingNullOrNonpositiveTtl_RefetchesOnEveryAccessAsync(string? ttl)
+    {
+        // Arrange
+        int calls = 0;
+        var client = CreateTtlClient((_, _) =>
+        {
+            calls++;
+            JsonObject result = TtlListResult(null, Entry());
+            if (ttl is not null)
+            {
+                result["ttlMs"] = JsonNode.Parse(ttl);
+            }
+
+            return Task.FromResult(result);
+        });
+        using var source = new AgentMcpSkillsSource(client.Object);
+
+        // Act
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        var second = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.NotSame(first, second);
+        Assert.Equal(2, calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_ExtremelyLargeTtl_DoesNotOverflowFreshnessCalculationAsync(bool paginated)
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        int calls = 0;
+        var client = CreateTtlClient((request, _) =>
+        {
+            calls++;
+            JsonObject result = TtlListResult(long.MaxValue, Entry());
+            if (paginated && request.Params?["cursor"] is null)
+            {
+                result["nextCursor"] = "next";
+            }
+
+            return Task.FromResult(result);
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+
+        // Act
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        clock.Advance(TimeSpan.FromDays(365));
+        var second = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.Equal(first, second);
+        Assert.Equal(paginated ? 2 : 1, calls);
+    }
+
+    [Theory]
+    [InlineData(1000L, 5000L, 5000L, 600L)]
+    [InlineData(5000L, 1000L, 5000L, 800L)]
+    [InlineData(5000L, 5000L, 1000L, 1000L)]
+    [InlineData(1000L, 900L, 800L, 600L)]
+    public async Task GetSkillsAsync_PaginatedTtl_ExpiresWhenAnyPageExpiresAsync(long firstTtl, long secondTtl, long thirdTtl, long remaining)
+    {
+        // Arrange
+        var clock = new ManualTimeProvider(timestampFrequency: 1000);
+        List<string?> cursors = [];
+        var client = CreateTtlClient((request, _) =>
+        {
+            string? cursor = request.Params?["cursor"]?.GetValue<string>();
+            cursors.Add(cursor);
+            JsonObject result;
+            if (cursor is null)
+            {
+                result = TtlListResult(firstTtl, Entry("skill://first/unit-converter/"));
+                result["nextCursor"] = "second";
+            }
+            else if (cursor == "second")
+            {
+                clock.Advance(TimeSpan.FromMilliseconds(200));
+                result = TtlListResult(secondTtl, Entry("skill://second/unit-converter/"));
+                result["nextCursor"] = "third";
+            }
+            else
+            {
+                clock.Advance(TimeSpan.FromMilliseconds(200));
+                result = TtlListResult(thirdTtl, Entry("skill://third/unit-converter/"));
+            }
+
+            return Task.FromResult(result);
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+
+        // Act
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        clock.Advance(TimeSpan.FromMilliseconds(remaining - 1));
+        var fresh = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.Equal(first, fresh);
+        Assert.Equal(3, first.Count);
+        Assert.Equal(3, cursors.Count);
+
+        // Act
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        var refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.NotSame(first, refreshed);
+        Assert.Equal([null, "second", "third", null, "second", "third"], cursors);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(null, true)]
+    [InlineData(0L, false)]
+    [InlineData(0L, true)]
+    [InlineData(-1L, false)]
+    [InlineData(-1L, true)]
+    public async Task GetSkillsAsync_StaleEmptyPage_PreventsCachingWholeCatalogAsync(long? ttl, bool emptyFirstPage)
+    {
+        // Arrange
+        int calls = 0;
+        var client = CreateTtlClient((request, _) =>
+        {
+            calls++;
+            bool firstPage = request.Params?["cursor"] is null;
+            JsonObject result = firstPage == emptyFirstPage ? TtlListResult(ttl) : TtlListResult(1000, Entry());
+            if (firstPage)
+            {
+                result["nextCursor"] = "next";
+            }
+
+            return Task.FromResult(result);
+        });
+        using var source = new AgentMcpSkillsSource(client.Object);
+
+        // Act
+        await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.Equal(4, calls);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_PageExpiresDuringPagination_DoesNotRestartItsClockAsync()
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        int calls = 0;
+        var client = CreateTtlClient((request, _) =>
+        {
+            calls++;
+            JsonObject result = TtlListResult(1000);
+            if (request.Params?["cursor"] is null)
+            {
+                result["nextCursor"] = "next";
+            }
+            else
+            {
+                clock.Advance(TimeSpan.FromSeconds(2));
+            }
+
+            return Task.FromResult(result);
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+
+        // Act
+        await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.Equal(4, calls);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_SlowRequest_TtlStartsAtResponseReceiptAsync()
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        int calls = 0;
+        var client = CreateTtlClient((_, _) =>
+        {
+            calls++;
+            clock.Advance(TimeSpan.FromSeconds(2));
+            return Task.FromResult(TtlListResult(1000));
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+
+        // Act
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        var second = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.Equal(first, second);
+        Assert.Equal(1, calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_ConcurrentCalls_ShareSuccessfulFreshDiscoveryAsync(bool refresh)
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        var release = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int calls = 0;
+        var client = CreateTtlClient((_, _) =>
+        {
+            calls++;
+            return refresh && calls == 1 ? Task.FromResult(TtlListResult(1000, Entry())) : release.Task;
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        if (refresh)
+        {
+            await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        // Act
+        Task<IList<AgentSkill>>[] pending = Enumerable.Range(0, 8)
+            .Select(_ => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None)).ToArray();
+        release.SetResult(TtlListResult(1000, Entry()));
+        var results = await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Assert
+        Assert.All(results, result => Assert.Equal(results[0], result));
+        Assert.Equal(refresh ? 2 : 1, calls);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ConcurrentCalls_ZeroTtlDoesNotShareStaleCatalogAsync()
+    {
+        // Arrange
+        var release = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int calls = 0;
+        var client = CreateTtlClient((_, _) =>
+            ++calls == 1 ? release.Task : Task.FromResult(TtlListResult(0, Entry())));
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: new ManualTimeProvider());
+
+        // Act
+        Task<IList<AgentSkill>>[] pending = Enumerable.Range(0, 8)
+            .Select(_ => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None)).ToArray();
+
+        // Assert
+        Assert.Equal(1, calls);
+
+        // Act
+        release.SetResult(TtlListResult(0, Entry()));
+        var results = await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Assert
+        Assert.Equal(pending.Length, calls);
+        for (int i = 1; i < results.Length; i++)
+        {
+            Assert.NotSame(results[0], results[i]);
+        }
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_CanceledWaiter_DoesNotCancelSharedDiscoveryAsync()
+    {
+        // Arrange
+        var release = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int calls = 0;
+        var client = CreateTtlClient((_, token) =>
+        {
+            calls++;
+            return release.Task.WaitAsync(token);
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: new ManualTimeProvider());
+        using var cts = new CancellationTokenSource();
+
+        // Act
+        var initiating = source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        var waiting = source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), cts.Token);
+        await cts.CancelAsync();
+        try
+        {
+            // Assert
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting.WaitAsync(TimeSpan.FromSeconds(10)));
+        }
+        finally
+        {
+            release.SetResult(TtlListResult(1000, Entry()));
+        }
+
+        var first = await initiating.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(first, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_CanceledInitiator_WaiterRetriesDiscoveryAsync()
+    {
+        // Arrange
+        var release = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int calls = 0;
+        var client = CreateTtlClient((_, token) =>
+            ++calls == 1 ? release.Task.WaitAsync(token) : Task.FromResult(TtlListResult(1000, Entry())));
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: new ManualTimeProvider());
+        using var cts = new CancellationTokenSource();
+
+        // Act
+        var initiating = source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), cts.Token);
+        var waiting = source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        await cts.CancelAsync();
+
+        // Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => initiating.WaitAsync(TimeSpan.FromSeconds(10)));
+        var skills = await waiting.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Single(skills);
+        Assert.Equal(skills, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(2, calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_CanceledToken_DoesNotDiscoverOrReturnFreshCacheAsync(bool cached)
+    {
+        // Arrange
+        var client = CreateTtlClient((_, _) => Task.FromResult(TtlListResult(1000, Entry())));
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: new ManualTimeProvider());
+        if (cached)
+        {
+            await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        }
+
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), cts.Token));
+        client.Verify(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(cached ? 1 : 0));
+    }
+
+    [Theory]
+    [InlineData("request", typeof(McpException))]
+    [InlineData("page", typeof(JsonException))]
+    [InlineData("entry", typeof(InvalidOperationException))]
+    [InlineData("manifest", typeof(InvalidOperationException))]
+    public async Task GetSkillsAsync_FailedRefresh_PropagatesAndRetriesWithoutServingStaleCatalogAsync(string failure, Type exceptionType)
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        int calls = 0;
+        var client = CreateTtlClient((_, _) =>
+        {
+            if (++calls == 2)
+            {
+                JsonObject invalidManifest = Entry();
+                invalidManifest["resources"]![0]!["digest"] = "invalid";
+                return failure switch
+                {
+                    "request" => Task.FromException<JsonObject>(new McpException("Discovery unavailable.")),
+                    "page" => Task.FromResult(new JsonObject { ["ttlMs"] = 1000 }),
+                    "entry" => Task.FromResult(TtlListResult(1000, Entry(), Entry("skill://invalid-name/"))),
+                    "manifest" => Task.FromResult(TtlListResult(1000, Entry(), invalidManifest)),
+                    _ => throw new ArgumentOutOfRangeException(nameof(failure)),
+                };
+            }
+
+            return Task.FromResult(TtlListResult(1000, Entry()));
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        // Act & Assert
+        await Assert.ThrowsAsync(exceptionType, () => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        var refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        Assert.NotSame(first, refreshed);
+        Assert.Equal(3, calls);
+        Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_CanceledRefreshAfterResponse_DoesNotCacheReplacementAsync(bool laterPage)
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        using var cts = new CancellationTokenSource();
+        int calls = 0;
+        List<string?> cursors = [];
+        var client = CreateTtlClient((request, _) =>
+        {
+            string? cursor = request.Params?["cursor"]?.GetValue<string>();
+            cursors.Add(cursor);
+            if (++calls == (laterPage ? 4 : 2))
+            {
+                cts.Cancel();
+            }
+
+            JsonObject result = TtlListResult(1000, Entry());
+            if (laterPage && cursor is null)
+            {
+                result["nextCursor"] = "next";
+            }
+
+            return Task.FromResult(result);
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), cts.Token));
+        var refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        Assert.NotSame(first, refreshed);
+        Assert.Equal(laterPage ? 6 : 3, calls);
+        Assert.Equal(laterPage ? [null, "next", null, "next", null, "next"] : new string?[] { null, null, null }, cursors);
+        Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_TtlRefresh_ReplacesCatalogAsync(bool empty)
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        int calls = 0;
+        var client = CreateTtlClient((_, _) =>
+        {
+            if (++calls == 1)
+            {
+                return Task.FromResult(TtlListResult(1000, Entry(), Entry("skill://removed/unit-converter/")));
+            }
+
+            JsonObject updated = Entry();
+            updated["frontmatter"]!["description"] = "Updated description.";
+            JsonObject added = Entry("skill://added/unit-converter/");
+            added["frontmatter"]!["description"] = "Added skill.";
+            return Task.FromResult(empty ? TtlListResult(1000) : TtlListResult(1000, updated, added));
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Act
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+
+        // Assert
+        Assert.NotSame(first, refreshed);
+        Assert.Equal(2, first.Count);
+        Assert.All(first, skill => Assert.Equal("Convert units.", skill.Frontmatter.Description));
+        if (empty)
+        {
+            Assert.Empty(refreshed);
+        }
+        else
+        {
+            Assert.Equal(["Updated description.", "Added skill."], refreshed.Select(skill => skill.Frontmatter.Description));
+            Assert.All(refreshed, skill => Assert.DoesNotContain(skill, first));
+        }
+
+        Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_InvalidLaterRefreshPage_DoesNotCachePartialCatalogAsync()
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        List<string?> cursors = [];
+        var client = CreateTtlClient((request, _) =>
+        {
+            string? cursor = request.Params?["cursor"]?.GetValue<string>();
+            cursors.Add(cursor);
+            JsonObject result = cursor is null ? TtlListResult(1000, Entry()) : TtlListResult(1000);
+            if (cursor is null)
+            {
+                result["nextCursor"] = "next";
+            }
+            else if (cursors.Count == 4)
+            {
+                result.Remove("skills");
+            }
+
+            return Task.FromResult(result);
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        var first = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<JsonException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        var refreshed = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        Assert.Single(refreshed);
+        Assert.NotSame(first, refreshed);
+        Assert.Equal([null, "next", null, "next", null, "next"], cursors);
+        Assert.Equal(refreshed, await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_TtlRefresh_PreservesPreviouslyReturnedManifestAsync()
+    {
+        // Arrange
+        var clock = new ManualTimeProvider();
+        int calls = 0;
+        var client = CreateTtlClient((_, _) =>
+        {
+            JsonObject entry = Entry();
+            if (++calls > 1)
+            {
+                entry["resources"]![1]!["uri"] = "skill://unit-converter/references/updated.md";
+            }
+
+            return Task.FromResult(TtlListResult(1000, entry));
+        });
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: clock);
+        var first = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+
+        // Act
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var updated = Assert.Single(await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+
+        // Assert
+        Assert.NotSame(first, updated);
+        Assert.Null(await first.GetResourceAsync("references/updated.md"));
+        Assert.Null(await updated.GetResourceAsync("references/checklist.md"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetSkillsAsync_DisposedSource_ThrowsWithoutDisposingClientAsync(bool cached)
+    {
+        // Arrange
+        var client = CreateTtlClient((_, _) => Task.FromResult(TtlListResult(1000, Entry())));
+        using var source = new AgentMcpSkillsSource(client.Object, options: null, loggerFactory: null, timeProvider: new ManualTimeProvider());
+        if (cached)
+        {
+            await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
+        }
+
+        // Act
+        source.Dispose();
+        source.Dispose();
+
+        // Assert
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None));
+        client.Verify(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(cached ? 1 : 0));
+        client.VerifyGet(c => c.ServerCapabilities, Times.Exactly(cached ? 2 : 1));
+        client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_DisposedSource_DisposesCacheButNotClientAsync()
+    {
+        // Arrange
+        int calls = 0;
+        await using var server = CreateServer((_, _) =>
+        {
+            calls++;
+            return ValueTask.FromResult<JsonNode?>(TtlListResult(60000, Entry()));
+        });
+        await using var client = await server.CreateClientAsync();
+        using var source = new AgentMcpSkillsSource(client);
+        await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Act
+        source.Dispose();
+
+        // Assert
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        using var anotherSource = new AgentMcpSkillsSource(client);
+        Assert.Single(await anotherSource.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create()));
+        Assert.Equal(2, calls);
+    }
+
+    [Theory]
+    [InlineData(true, 60000L, 1)]
+    [InlineData(true, 0L, 2)]
+    [InlineData(false, 0L, 1)]
+    public async Task UseMcpSkills_DisableCaching_LetsSourceApplyTtlAsync(bool disableCaching, long ttl, int expectedCalls)
+    {
+        // Arrange
+        int calls = 0;
+        List<string> reads = [];
+        await using var server = CreateServer((_, _) =>
+        {
+            calls++;
+            return ValueTask.FromResult<JsonNode?>(TtlListResult(ttl, Entry()));
+        }, (uri, _) =>
+        {
+            reads.Add(uri);
+            return ValueTask.FromResult(Text(uri, SkillContent));
+        });
+        await using var client = await server.CreateClientAsync();
+        var builder = new AgentSkillsProviderBuilder().UseMcpSkills(client);
+        if (disableCaching)
+        {
+            builder.DisableCaching();
+        }
+
+        using var provider = builder.Build();
+        var context = new AIContextProvider.InvokingContext(TestAgentSkillsSourceContextFactory.Create().Agent, session: null, new AIContext());
+
+        // Act
+        var first = await provider.InvokingAsync(context, CancellationToken.None);
+        var second = await provider.InvokingAsync(context, CancellationToken.None);
+
+        // Assert
+        Assert.Contains("unit-converter", first.Instructions);
+        Assert.Contains("unit-converter", second.Instructions);
+        Assert.Equal(expectedCalls, calls);
+        Assert.Empty(reads);
+    }
+
+    [Theory]
+    [InlineData(60000L, 1)]
+    [InlineData(0L, 2)]
+    [InlineData(null, 2)]
+    public async Task AgentSkillsProvider_MixedSources_CachesDecoratedSourceAndHonorsMcpTtlAsync(long? ttl, int expectedCalls)
+    {
+        // Arrange
+        int calls = 0;
+        await using var server = CreateServer((_, _) =>
+        {
+            calls++;
+            return ValueTask.FromResult<JsonNode?>(TtlListResult(ttl, Entry()));
+        });
+        await using var client = await server.CreateClientAsync();
+        var otherSource = new Mock<AgentSkillsSource>();
+        otherSource.Setup(source => source.GetSkillsAsync(It.IsAny<AgentSkillsSourceContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new AgentInlineSkill("local-skill", "A local skill.", "Local instructions.")]);
+        var source = new AggregatingAgentSkillsSource(
+        [
+            new CachingAgentSkillsSource(otherSource.Object),
+            new AgentMcpSkillsSource(client),
+        ]);
+        using var provider = new AgentSkillsProvider(source, ownsSource: true);
+        var context = new AIContextProvider.InvokingContext(TestAgentSkillsSourceContextFactory.Create().Agent, session: null, new AIContext());
+
+        // Act
+        var first = await provider.InvokingAsync(context, CancellationToken.None);
+        var second = await provider.InvokingAsync(context, CancellationToken.None);
+
+        // Assert
+        Assert.Contains("local-skill", first.Instructions);
+        Assert.Contains("unit-converter", first.Instructions);
+        Assert.Contains("local-skill", second.Instructions);
+        Assert.Contains("unit-converter", second.Instructions);
+        Assert.Equal(expectedCalls, calls);
+        otherSource.Verify(source => source.GetSkillsAsync(It.IsAny<AgentSkillsSourceContext>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Creates a listing response with an optional TTL.
+    /// </summary>
+    private static JsonObject TtlListResult(long? ttl, params JsonNode?[] entries)
+    {
+        JsonObject result = ListResult(entries);
+        if (ttl is not null)
+        {
+            result["ttlMs"] = ttl.Value;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Creates a client whose server declares support for skills.
+    /// </summary>
+    private static Mock<McpClient> CreateSkillsClient()
+    {
+        var client = new Mock<McpClient>();
+        client.SetupGet(c => c.ServerCapabilities).Returns(new ServerCapabilities
+        {
+            Extensions = new Dictionary<string, object>
+            {
+                ["io.modelcontextprotocol/skills"] = new JsonObject(),
+            },
+        });
+        return client;
+    }
+
+    /// <summary>
+    /// Creates a client that forwards requests to the test handler.
+    /// </summary>
+    private static Mock<McpClient> CreateTtlClient(Func<JsonRpcRequest, CancellationToken, Task<JsonObject>> handler)
+    {
+        var client = CreateSkillsClient();
+        client.Setup(c => c.SendRequestAsync(It.IsAny<JsonRpcRequest>(), It.IsAny<CancellationToken>()))
+            .Returns((JsonRpcRequest request, CancellationToken token) => RespondAsync(request, token));
+        return client;
+
+        async Task<JsonRpcResponse> RespondAsync(JsonRpcRequest request, CancellationToken token) =>
+            new() { Id = request.Id, Result = await handler(request, token) };
+    }
+
+    /// <summary>
+    /// Provides a test-controlled clock with a configurable timestamp frequency.
+    /// </summary>
+    private sealed class ManualTimeProvider(long timestampFrequency = TimeSpan.TicksPerSecond) : TimeProvider
+    {
+        private long _timestamp;
+
+        public Action? AfterTimestampRead { get; set; }
+
+        public override long TimestampFrequency => timestampFrequency;
+
+        public override DateTimeOffset GetUtcNow() =>
+            DateTimeOffset.UnixEpoch + TimeSpan.FromSeconds((double)Interlocked.Read(ref this._timestamp) / this.TimestampFrequency);
+
+        public override long GetTimestamp()
+        {
+            long timestamp = Interlocked.Read(ref this._timestamp);
+            this.AfterTimestampRead?.Invoke();
+            return timestamp;
+        }
+
+        public void Advance(TimeSpan duration) => Interlocked.Add(ref this._timestamp, (long)(duration.TotalSeconds * this.TimestampFrequency));
+    }
+}

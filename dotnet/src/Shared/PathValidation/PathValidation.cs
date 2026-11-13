@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 #if !NET
@@ -83,6 +84,63 @@ internal static class PathValidation
         {
             throw new ArgumentException($"The {fileDescription} path must be fully qualified.", paramName);
         }
+    }
+
+    /// <summary>
+    /// Searches the fully qualified directories in <paramref name="pathEnv"/> for <paramref name="fileName"/>.
+    /// Empty and relative entries are skipped so the result never depends on the current directory.
+    /// </summary>
+    /// <param name="pathEnv">A list of directories separated by <see cref="Path.PathSeparator"/>, such as the value of <c>PATH</c>.</param>
+    /// <param name="fileName">The exact file name to look for, including any extension, such as <c>pwsh.exe</c>.</param>
+    /// <param name="fullPath">When this method returns <see langword="true"/>, the fully qualified path of the first match.</param>
+    /// <returns><see langword="true"/> if the file was found in a fully qualified directory; otherwise <see langword="false"/>.</returns>
+    public static bool TryFindOnPath(string? pathEnv, string fileName, [NotNullWhen(true)] out string? fullPath)
+    {
+        if (!string.IsNullOrEmpty(pathEnv))
+        {
+            foreach (var dir in pathEnv!.Split(Path.PathSeparator))
+            {
+                if (!IsFullyQualifiedPath(dir))
+                {
+                    continue;
+                }
+
+                var candidate = Path.Combine(dir, fileName);
+                if (File.Exists(candidate))
+                {
+                    fullPath = candidate;
+                    return true;
+                }
+            }
+        }
+
+        fullPath = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Returns <paramref name="pathEnv"/> with only its fully qualified directories, in their original order.
+    /// Empty and relative entries are removed so a search of the result never depends on the current directory.
+    /// </summary>
+    /// <param name="pathEnv">A list of directories separated by <see cref="Path.PathSeparator"/>, such as the value of <c>PATH</c>.</param>
+    /// <returns>The remaining directories joined by <see cref="Path.PathSeparator"/>; an empty string if none remain.</returns>
+    public static string RemoveRelativePathEntries(string? pathEnv)
+    {
+        if (string.IsNullOrEmpty(pathEnv))
+        {
+            return string.Empty;
+        }
+
+        var kept = new List<string>();
+        foreach (var dir in pathEnv!.Split(Path.PathSeparator))
+        {
+            if (IsFullyQualifiedPath(dir))
+            {
+                kept.Add(dir);
+            }
+        }
+
+        return string.Join(Path.PathSeparator.ToString(), kept);
     }
 
     /// <summary>

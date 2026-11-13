@@ -5,11 +5,15 @@ This sample demonstrates how to discover **Agent Skills served over MCP** with a
 ## What it demonstrates
 
 - Hosting a small MCP server (in this same executable, launched with `--server`) that
-  exposes skill resources following the SEP-2640 convention.
+  advertises the `io.modelcontextprotocol/skills` extension and exposes `skills/list`.
 - Connecting an `McpClient` to the embedded server via stdio transport.
-- Building an `AgentSkillsProvider` via `UseMcpSkills(client)`, which reads
-  `skill://index.json` (SEP-2640 canonical discovery) and constructs skills from the
-  index entries.
+- Building an `AgentSkillsProvider` via `UseMcpSkills(client)`, which discovers skills
+  through `skills/list` and reads their instructions through `resources/read`.
+- Returning a complete skill list with frontmatter, resource URIs, SHA-256 digests, and byte sizes for
+  `SKILL.md` and `references/conversion-table.md`.
+- Verifying fetched skill instructions and supporting resources against their listed digests and byte sizes.
+- Serving the conversion-table resource from the file-based skills sample, which the
+  skill instructions tell the agent to read before performing a conversion.
 - The progressive disclosure pattern across MCP: advertise → load → read resources, exactly
   as for filesystem-backed skills.
 
@@ -27,17 +31,139 @@ $env:FOUNDRY_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.co
 $env:FOUNDRY_MODEL="gpt-5.4-mini"
 ```
 
+Authenticate with `az login`.
+
 ### Run
 
 ```powershell
 dotnet run
 ```
 
+## Configuring Cache Durations
+
+The MCP source caches the skill list and each resource separately using the server's time to live (TTL).
+The MCP specification requires a TTL, but some servers may not provide it. By default, a missing,
+zero, or negative TTL causes a fetch on every access. A positive TTL allows reuse for that duration,
+starting when the response arrives.
+
+Set `AgentMcpSkillsSourceOptions.TtlResolver` to override TTLs for the skill list, refreshed skill metadata,
+and resources.
+For example, use five minutes for missing, zero, or negative TTLs, and keep positive server TTLs unchanged:
+
+```csharp
+var options = new AgentMcpSkillsSourceOptions
+{
+    TtlResolver = static ttl =>
+        ttl is null || ttl.Value <= TimeSpan.Zero
+            ? TimeSpan.FromMinutes(5)
+            : ttl.Value,
+};
+
+var provider = new AgentSkillsProviderBuilder()
+    .UseMcpSkills(client, options)
+    .DisableCaching()
+    .Build();
+```
+
+The resolver receives the server TTL (`null` if missing) and returns a `TimeSpan`.
+A positive result sets the cache duration; zero or a negative result causes a fetch on the next access.
+Leaving `TtlResolver` unset keeps the default behavior.
+
+Use `.DisableCaching()`, as above, so the builder's cache does not prevent the MCP source from
+checking expiration. Longer cache durations delay observing server changes, but resource validation
+still applies.
+
 ## Security Considerations
 
+### Sharing a source across authorization contexts
+
+According to the MCP specification, each `skills/list`, `skills/get`, and `resources/read` response must include
+a `cacheScope` field that tells the client who may reuse the cached response:
+
+- `public` - the response is the same for every caller and may be shared between them.
+- `private` - the response is specific to the caller's credentials (for example, a user or tenant)
+  and must not be shared with other callers.
+
+Not all servers follow the specification yet, so a missing or `null` `cacheScope` is treated as `public`.
+
+To keep private responses from leaking between callers, the source needs to know who the current caller is.
+By default, it doesn't: all callers share one cache, so the source accepts only public responses and throws
+`InvalidOperationException` for a private one. Each response is checked on its own, so a skill from a public
+list can still fail if its `SKILL.md` or another file is returned as private.
+
+To accept private responses, set `CacheIsolationKeySelector` to return a key for the current caller, such as
+a user or tenant ID. Each key gets its own cache partition, so cached skills are never shared between keys.
+Set it whenever the server can return private responses, even if your app has only one user:
+
+```csharp
+var options = new AgentMcpSkillsSourceOptions
+{
+    CacheIsolationKeySelector = (context, _) => new ValueTask<string>(GetApplicationAuthorizationKey(context)),
+    MaxCachedPartitions = 1000,
+    PartitionSlidingExpiration = TimeSpan.FromMinutes(30),
+    PartitionAbsoluteExpiration = TimeSpan.FromHours(8),
+};
+
+using var provider = new AgentSkillsProviderBuilder()
+    .UseMcpSkills(sharedMcpClient, options)
+    .DisableCaching()
+    .Build();
+```
+
+The builder adds a separate cache for the resolved skill list. `CacheIsolationKeySelector` above
+configures only the MCP source's internal caches, not the builder's cache. By default, the builder's
+cache can return one caller's skills to another without invoking the MCP source or its key selector.
+`DisableCaching()` removes only that outer cache; the MCP source still caches skills and resources
+within each partition. Every call reaches the source so it can select the caller's partition and
+check MCP response expiration.
+
+`GetApplicationAuthorizationKey` is your own helper, not a framework API. It should return a non-empty ID
+for the caller whose credentials the MCP client sends, for example a user or tenant ID.
+Use an opaque ID, not an access token.
+
+If resolving the key requires asynchronous work, the selector can await it and use the supplied
+cancellation token:
+
+```csharp
+options.CacheIsolationKeySelector = async (context, cancellationToken) =>
+    await ResolveAuthorizationKeyAsync(context, cancellationToken);
+```
+
+`ResolveAuthorizationKeyAsync` is an application helper, just like `GetApplicationAuthorizationKey`.
+
+The source only separates caches; it does not handle authentication. Your app is responsible for:
+
+- configuring the MCP client to send the current caller's credentials;
+- keeping the same caller's credentials when a returned skill later reads `SKILL.md` or other files;
+- not sharing returned skills between callers.
+
+By default, the source keeps up to 100 cache partitions. Adjust the limit or configure expiration
+to control how many partitions are kept and for how long:
+
+- `MaxCachedPartitions` - the maximum number of partitions to keep. Defaults to 100; set to `null` for no partition-count limit or `0` to disable partition caching. When full, expired and least recently used partitions are removed to make room for a new key.
+- `PartitionSlidingExpiration` - removes a partition that has not been used for this long.
+- `PartitionAbsoluteExpiration` - removes a partition this long after it was created, even if it is still in use.
+
+When a partition is removed, the next call for its key fetches skills from the server again.
+Skills that were already returned keep working. These options don't change how long MCP responses
+are cached; use `TtlResolver` for that.
+
+### Trust and size limits
+
 Discovering skills over MCP means an external MCP server controls what skill content (including
-instructions and, for archive-type entries, extracted files) reaches the agent. A compromised or
+instructions and supporting resources) reaches the agent. A compromised or
 untrustworthy server could return adversarial content designed to manipulate the agent (indirect
 prompt injection) or to exfiltrate data through skill instructions/scripts. Only connect `UseMcpSkills`
-to MCP servers you have vetted and trust, and keep the conservative archive size/file-count limits in
-`AgentMcpSkillsSourceOptions` unless you have a specific reason to raise them.
+to MCP servers you have vetted and trust.
+
+By default, each skill can have at most **512 resources**, including `SKILL.md`. Their combined size defaults to
+a maximum of **16 MiB (16,777,216 bytes)**. Discovery rejects resource lists that exceed either limit
+before reading any resource. Reads check actual UTF-8 text and decoded binary sizes before encoding
+text or decoding blobs for integrity verification.
+
+A read that would exceed either limit fails.
+
+Configure the resource count and combined size limits with `AgentMcpSkillsSourceOptions.ResourceMaxCount`
+and `MaxResourceSizeBytes` passed to `UseMcpSkills`; both limits must be positive.
+
+These checks do not limit incoming messages before the supplied client receives and parses them.

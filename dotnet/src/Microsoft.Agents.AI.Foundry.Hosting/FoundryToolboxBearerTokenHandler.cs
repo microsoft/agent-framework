@@ -17,6 +17,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <list type="bullet">
 ///   <item>Acquires a fresh Azure bearer token with the configured scope for requests to the configured toolbox origin, per <c>tools-integration-spec.md</c> §4.</item>
 ///   <item>Injects the mandatory <c>Foundry-Features: Toolboxes=V1Preview</c> header on that origin per spec §2, merging any additional flags from <c>FOUNDRY_AGENT_TOOLSET_FEATURES</c>.</item>
+///   <item>Forwards the platform call id (<c>x-agent-foundry-call-id</c>) of the response that opened the connection on that origin, so every request of the connection's MCP session carries the same caller identity.</item>
 ///   <item>Propagates W3C trace context (<c>traceparent</c>, <c>tracestate</c>, <c>baggage</c>) from <see cref="Activity.Current"/> per spec §6.3.</item>
 ///   <item>Retries on HTTP 429, 500, 502, and 503 with exponential back-off (max 3 attempts, per spec §7).</item>
 /// </list>
@@ -27,18 +28,44 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
 
     // Per tools-integration-spec.md §2, every proxy request MUST include the
     // Foundry-Features: Toolboxes=V1Preview opt-in header while the service is in preview.
+    private const string FeaturesHeaderName = "Foundry-Features";
     private const string MandatoryFeatureFlag = "Toolboxes=V1Preview";
 
     private readonly TokenCredential _credential;
     private readonly TokenRequestContext _tokenContext;
     private readonly string? _additionalFeaturesHeaderValue;
     private readonly Uri _pinnedEndpoint;
+    private readonly string? _callId;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FoundryToolboxBearerTokenHandler"/> class.
+    /// </summary>
+    /// <param name="credential">The credential that issues the bearer token sent to the toolbox proxy.</param>
+    /// <param name="tokenScope">The scope of that token, for example <c>https://ai.azure.com/.default</c>.</param>
+    /// <param name="additionalFeaturesHeaderValue">
+    /// Feature flags to send in <c>Foundry-Features</c> besides the mandatory <c>Toolboxes=V1Preview</c>, taken from
+    /// <c>FOUNDRY_AGENT_TOOLSET_FEATURES</c>, or <see langword="null"/> for none.
+    /// </param>
+    /// <param name="pinnedEndpoint">
+    /// The absolute toolbox endpoint. Only requests to its origin (scheme, host and port) receive the token, the
+    /// Foundry headers and trace context; a request to any other origin is passed on unchanged.
+    /// </param>
+    /// <param name="callId">
+    /// The platform call id of the response that opened this connection, sent as <c>x-agent-foundry-call-id</c> on
+    /// every request to the pinned origin. When <see langword="null"/> or whitespace, no call id is sent.
+    /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="credential"/>, <paramref name="tokenScope"/> or <paramref name="pinnedEndpoint"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="tokenScope"/> is empty or whitespace, or <paramref name="pinnedEndpoint"/> is not absolute.
+    /// </exception>
     internal FoundryToolboxBearerTokenHandler(
         TokenCredential credential,
         string tokenScope,
         string? additionalFeaturesHeaderValue,
-        Uri pinnedEndpoint)
+        Uri pinnedEndpoint,
+        string? callId = null)
     {
         _ = Throw.IfNull(credential);
         _ = Throw.IfNullOrWhitespace(tokenScope);
@@ -52,6 +79,7 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
         this._tokenContext = new([tokenScope]);
         this._additionalFeaturesHeaderValue = additionalFeaturesHeaderValue;
         this._pinnedEndpoint = pinnedEndpoint;
+        this._callId = string.IsNullOrWhiteSpace(callId) ? null : callId;
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(
@@ -72,14 +100,15 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
 
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
 
-        request.Headers.TryAddWithoutValidation("Foundry-Features", BuildFeaturesHeaderValue(this._additionalFeaturesHeaderValue));
+        request.Headers.TryAddWithoutValidation(FeaturesHeaderName, BuildFeaturesHeaderValue(this._additionalFeaturesHeaderValue));
 
         // Per PlatformContext, forward the platform per-request call id (x-agent-foundry-call-id,
         // container protocol 2.0.0) so the toolbox proxy can resolve the server-side caller context.
-        var callId = HostedCallContext.CallId;
-        if (!string.IsNullOrWhiteSpace(callId) && !request.Headers.Contains("x-agent-foundry-call-id"))
+        // The value is fixed when the connection is created, never read from ambient state, so the
+        // MCP session and every request on it carry the identity of the response that opened it.
+        if (this._callId is { } callId && !request.Headers.Contains(HostedProtocolCompatibility.CallIdHeaderName))
         {
-            request.Headers.TryAddWithoutValidation("x-agent-foundry-call-id", callId);
+            request.Headers.TryAddWithoutValidation(HostedProtocolCompatibility.CallIdHeaderName, callId);
         }
 
         PropagateTraceContext(request);

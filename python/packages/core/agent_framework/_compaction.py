@@ -20,7 +20,13 @@ from typing import (
 from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
-from ._types import APPROVAL_REJECTION_RESULT_KEY, SKILL_CONTEXT_NAME_KEY, ChatResponse, Content, Message
+from ._types import (
+    _APPROVAL_REJECTION_RESULT_KEY,  # pyright: ignore[reportPrivateUsage]
+    SKILL_CONTEXT_NAME_KEY,
+    ChatResponse,
+    Content,
+    Message,
+)
 
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
@@ -1307,7 +1313,7 @@ def _completed_function_call_pairs(
         if (
             call.name == tool_name
             and result.exception is None
-            and result.additional_properties.get(APPROVAL_REJECTION_RESULT_KEY) is not True
+            and result.additional_properties.get(_APPROVAL_REJECTION_RESULT_KEY) is not True
             and (include_consumed or call.additional_properties.get(_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY) is not True)
         )
     ]
@@ -1728,7 +1734,7 @@ class UnloadSkillsCompactionStrategy:
             if (
                 result is None
                 or result.exception is not None
-                or result.additional_properties.get(APPROVAL_REJECTION_RESULT_KEY) is True
+                or result.additional_properties.get(_APPROVAL_REJECTION_RESULT_KEY) is True
             ):
                 return None
             skill_name = result.additional_properties.get(SKILL_CONTEXT_NAME_KEY)
