@@ -3,12 +3,13 @@
 import asyncio
 import os
 from collections.abc import AsyncIterable
-from typing import Annotated, cast
+from typing import Annotated
 
 from agent_framework import (
     Agent,
+    AgentResponse,
+    AgentResponseUpdate,
     Content,
-    Message,
     WorkflowEvent,
     tool,
 )
@@ -78,16 +79,20 @@ def get_database_schema() -> str:
 async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str, Content] | None:
     """Process events from the workflow stream to capture human feedback requests."""
     requests: dict[str, Content] = {}
+    output_updates: list[AgentResponseUpdate] = []
     async for event in stream:
         if event.type == "request_info" and isinstance(event.data, Content):
             # We are only expecting tool approval requests in this sample
             requests[event.request_id] = event.data
-        elif event.type == "output":
-            # The output of the workflow comes from the orchestrator and it's a list of messages
-            print("\n" + "=" * 60)
-            print("Workflow summary:")
-            outputs = cast(list[Message], event.data)
-            for msg in outputs:
+        elif event.type == "output" and isinstance(event.data, AgentResponseUpdate):
+            # The workflow output streams as agent response updates
+            output_updates.append(event.data)
+
+    if output_updates:
+        print("\n" + "=" * 60)
+        print("Workflow summary:")
+        for msg in AgentResponse.from_updates(output_updates).messages:
+            if msg.text:
                 speaker = msg.author_name or msg.role
                 print(f"[{speaker}]: {msg.text}")
 
