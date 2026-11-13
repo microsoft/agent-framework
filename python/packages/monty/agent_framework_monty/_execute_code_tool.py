@@ -274,10 +274,11 @@ class MontyExecuteCodeTool(FunctionTool):
     covers every run of one provider and works across event loops and threads.
     A call waits at most 10 minutes for its turn and then returns an error. A call
     that a host tool starts while its own call has the turn, such as a sub-agent
-    that uses the same provider, is part of that call and does not wait. Tools and
-    mounts are read when a call gets its turn. Separate tools or providers that
-    mount the same host directory do not take turns with each other, so give each
-    one its own directory.
+    that uses the same provider, is part of that call and does not wait. The turn
+    lasts until the call and every call it started have ended. Tools and mounts
+    are read when a call gets its turn. Separate tools or providers that mount the
+    same host directory do not take turns with each other, so give each one its
+    own directory.
 
     Keyword Args:
         include_detailed_errors: Include host exception types/messages and execution error details.

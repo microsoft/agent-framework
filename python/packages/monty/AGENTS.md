@@ -82,11 +82,14 @@ Tool-management methods on both classes: `add_tools`, `get_tools`,
 - **`_mount_gate.py`** — `MountGate`, a first-in-first-out turn gate that works
   across event loops and threads (a lock bound to one event loop would not). A
   call that a host tool starts while its own call has the turn is part of that
-  call and does not wait (tracked with a context variable, so it needs no
-  explicit hand-off). A waiting call fails with `MountGateTimeoutError` after
-  `WAIT_TIMEOUT_SECS`, which `_run_code` turns into an error `Content` whose
-  message always shows. The gate does not cap how long a call holds its turn.
-  A copy of a tool shares the gate, and a pickled tool gets a fresh one.
+  turn and does not wait (tracked with a context variable, so it needs no
+  explicit hand-off). A counter on the turn tracks its running calls, and the
+  gate passes the turn on only when the last one has ended, even if a host tool
+  left a call running in the background. A waiting call fails with
+  `MountGateTimeoutError` after `WAIT_TIMEOUT_SECS`, which `_run_code` turns into
+  an error `Content` whose message always shows. The gate does not cap how long
+  a call holds its turn. A copy of a tool shares the gate, and a pickled tool
+  gets a fresh one.
 - **`_monty_bridge.py`** — `InlineCodeBridge` and `generate_type_stubs`,
   adapted from the reference Monty CodeAct repo. Runs guest code through the
   async pool (`AsyncMonty`) so it never blocks the event loop, and awaits every

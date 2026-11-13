@@ -21,13 +21,13 @@ class MountGateTimeoutError(TimeoutError):
 
 
 class _Hold:
-    """One active hold, so that calls made while it is active can recognize it."""
+    """One turn: the call that has it, plus the calls started inside it that are still running."""
 
-    __slots__ = ("active", "gate")
+    __slots__ = ("calls", "gate")
 
     def __init__(self, gate: MountGate) -> None:
         self.gate = gate
-        self.active = True
+        self.calls = 1
 
 
 _HELD: ContextVar[tuple[_Hold, ...]] = ContextVar("agent_framework_monty_held_mount_gates", default=())
@@ -53,7 +53,8 @@ class MountGate:
 
     Waiting calls are served in arrival order. The gate works across event loops and threads. A call that a host
     tool makes while its own call holds the gate (for example a sub-agent that uses the same provider) is part of
-    that call, so it does not wait for it.
+    that call's turn, so it does not wait. The turn lasts until the call and every call started inside it have
+    ended, even when a host tool leaves one running in the background.
     """
 
     def __init__(self) -> None:
@@ -71,20 +72,32 @@ class MountGate:
 
     @contextlib.asynccontextmanager
     async def hold(self) -> AsyncGenerator[None]:
-        """Wait for a turn and keep it until the block ends."""
-        held = _HELD.get()
-        if any(entry.gate is self and entry.active for entry in held):
-            yield
-            return
-        await self._acquire()
-        entry = _Hold(self)
-        token = _HELD.set((*held, entry))
+        """Wait for a turn and keep it until the block and every call started inside it have ended."""
+        entry = self._join_turn()
+        token = None
+        if entry is None:
+            await self._acquire()
+            entry = _Hold(self)
+            token = _HELD.set((*_HELD.get(), entry))
         try:
             yield
         finally:
-            entry.active = False
-            _HELD.reset(token)
-            self._release()
+            if token is not None:
+                _HELD.reset(token)
+            with self._state:
+                entry.calls -= 1
+                last = entry.calls == 0
+            if last:
+                self._release()
+
+    def _join_turn(self) -> _Hold | None:
+        # A call that a running call started belongs to that call's turn. A turn whose calls have all ended is over.
+        with self._state:
+            for entry in reversed(_HELD.get()):
+                if entry.gate is self and entry.calls:
+                    entry.calls += 1
+                    return entry
+        return None
 
     async def _acquire(self) -> None:
         loop = asyncio.get_running_loop()

@@ -252,8 +252,10 @@ codeact = MontyCodeActProvider(
   the calls behind it. A call that a host tool starts while its own call has the
   turn, such as a sub-agent that uses the same provider, is part of that call
   and does not wait; the outer call also returns the files that the inner call
-  wrote. Separate tools or providers that mount the same host directory do not
-  take turns with each other, so give each one its own directory.
+  wrote. The turn lasts until the call and every call it started have ended,
+  even when a host tool leaves one running in the background. Separate tools or
+  providers that mount the same host directory do not take turns with each
+  other, so give each one its own directory.
 
 ## DSL inside `execute_code`
 

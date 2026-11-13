@@ -220,6 +220,62 @@ async def test_call_made_while_holding_the_gate_does_not_wait_for_it(monkeypatch
             await asyncio.to_thread(asyncio.run, nested_call())
 
 
+async def test_turn_lasts_until_a_call_started_inside_it_has_ended() -> None:
+    gate = MountGate()
+    background_holds = asyncio.Event()
+    finish_background = asyncio.Event()
+    entered: list[str] = []
+
+    async def background_call() -> None:
+        async with gate.hold():
+            background_holds.set()
+            await finish_background.wait()
+
+    async def later_call() -> None:
+        async with gate.hold():
+            entered.append("later")
+
+    async with asyncio.timeout(10):
+        async with gate.hold():
+            background = asyncio.create_task(background_call())
+            await background_holds.wait()
+    later = asyncio.create_task(later_call())
+    # The call that had the turn has ended, but the call it started has not. A call that wrongly got the turn
+    # would have entered by now.
+    await asyncio.sleep(0.05)
+    assert entered == []
+
+    finish_background.set()
+    async with asyncio.timeout(10):
+        await asyncio.gather(background, later)
+
+    assert entered == ["later"]
+
+
+async def test_call_started_by_a_running_call_after_the_turn_holder_ended_does_not_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A failure here would make the nested call wait, so keep it short.
+    monkeypatch.setattr(gate_module, "WAIT_TIMEOUT_SECS", 5.0)
+    gate = MountGate()
+    background_holds = asyncio.Event()
+    holder_ended = asyncio.Event()
+
+    async def background_call() -> None:
+        async with gate.hold():
+            background_holds.set()
+            await holder_ended.wait()
+            async with gate.hold():
+                pass
+
+    async with asyncio.timeout(30):
+        async with gate.hold():
+            background = asyncio.create_task(background_call())
+            await background_holds.wait()
+        holder_ended.set()
+        await background
+
+
 async def test_call_that_outlives_the_hold_that_started_it_waits_for_its_turn() -> None:
     gate = MountGate()
     proceed = asyncio.Event()
