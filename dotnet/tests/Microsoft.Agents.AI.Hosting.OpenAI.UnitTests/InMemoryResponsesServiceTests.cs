@@ -138,6 +138,50 @@ public sealed class InMemoryResponsesServiceTests
         };
     }
 
+    [Fact]
+    public async Task CreateResponseAsync_BackgroundExecutorFailsImmediately_ReturnsQueuedResponseAsync()
+    {
+        // Arrange - the executor fails as soon as it is enumerated, so the detached execution can
+        // reach "failed" before CreateResponseAsync returns (see GitHub issue #10323).
+        using var service = new InMemoryResponsesService(
+            new ThrowingResponseExecutor(), new InMemoryStorageOptions());
+        var request = new CreateResponse
+        {
+            Input = ResponseInput.FromText("hello"),
+            Background = true
+        };
+
+        // Act
+        Response created = await service.CreateResponseAsync(request);
+
+        // Assert - the caller always receives the queued response with an id it can poll.
+        Assert.Equal(ResponseStatus.Queued, created.Status);
+        Assert.Null(created.Error);
+
+        Response? stored = null;
+        for (int attempt = 0; attempt < 100 && stored?.Status != ResponseStatus.Failed; attempt++)
+        {
+            stored = await service.GetResponseAsync(created.Id);
+            await Task.Delay(10);
+        }
+
+        Assert.NotNull(stored);
+        Assert.Equal(ResponseStatus.Failed, stored.Status);
+    }
+
+    private sealed class ThrowingResponseExecutor : IResponseExecutor
+    {
+        public ValueTask<ResponseError?> ValidateRequestAsync(CreateResponse request, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<ResponseError?>(null);
+
+        public IAsyncEnumerable<StreamingResponseEvent> ExecuteAsync(
+            AgentInvocationContext context,
+            CreateResponse request,
+            IReadOnlyList<ChatMessage>? conversationHistory = null,
+            CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("Executor failed immediately.");
+    }
+
     private sealed class StubResponseExecutor : IResponseExecutor
     {
         public ValueTask<ResponseError?> ValidateRequestAsync(CreateResponse request, CancellationToken cancellationToken = default)

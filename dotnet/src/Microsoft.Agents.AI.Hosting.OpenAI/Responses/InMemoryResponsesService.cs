@@ -223,12 +223,17 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
 
         var state = this.InitializeResponse(
             responseId, responseStorageId, conversationStorageId, isolationKey, request);
+
+        // Snapshot the queued response before execution starts. Execution runs detached and may
+        // reach a terminal state (e.g. failed) before we return, which would make the HTTP layer
+        // report that terminal status instead of 202 Accepted for a background request.
+        var queuedResponse = state.Response!;
         state.CompletionTask = this.ExecuteResponseAsync(responseId, state, ct);
 
         // For background responses, start execution and return immediately
         if (request.Background == true)
         {
-            return state.Response!;
+            return queuedResponse;
         }
 
         // For non-background responses, wait for completion
