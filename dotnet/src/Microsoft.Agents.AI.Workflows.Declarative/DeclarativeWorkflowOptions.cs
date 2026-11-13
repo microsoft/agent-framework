@@ -16,6 +16,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// </summary>
 public sealed class DeclarativeWorkflowOptions(ResponseAgentProvider agentProvider)
 {
+    private readonly byte[]? _mcpApprovalHeaderFingerprintKey;
+
     /// <summary>
     /// Defines the agent provider.
     /// </summary>
@@ -26,6 +28,29 @@ public sealed class DeclarativeWorkflowOptions(ResponseAgentProvider agentProvid
     /// If not set, MCP tool invocations will fail with an appropriate error message.
     /// </summary>
     public IMcpToolHandler? McpToolHandler { get; init; }
+
+    /// <summary>
+    /// Gets or sets the key used to bind pending MCP approvals to their transport headers.
+    /// </summary>
+    /// <remarks>
+    /// Provide a cryptographically random key of at least 32 bytes and retain it across
+    /// workflow reconstruction to resume pending approvals across processes. When omitted,
+    /// a process-local key is used; approvals requiring headers cannot resume after that
+    /// key is lost. The key is copied and is not included in workflow checkpoints.
+    /// </remarks>
+    public ReadOnlyMemory<byte>? McpApprovalHeaderFingerprintKey
+    {
+        get => this._mcpApprovalHeaderFingerprintKey is null ? null : new ReadOnlyMemory<byte>((byte[])this._mcpApprovalHeaderFingerprintKey.Clone());
+        init
+        {
+            if (value is { } key && key.Length < 32)
+            {
+                throw new ArgumentException("The MCP approval header fingerprint key must contain at least 32 bytes.", nameof(value));
+            }
+
+            this._mcpApprovalHeaderFingerprintKey = value?.ToArray();
+        }
+    }
 
     /// <summary>
     /// Gets or sets the HTTP request handler for executing <c>HttpRequestAction</c> actions within workflows.

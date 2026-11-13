@@ -45,3 +45,16 @@ public interface IExternalRequestEnvelope
     /// <returns>An instance of the envelope's response type wrapping <paramref name="messages"/>.</returns>
     object CreateResponse(IList<ChatMessage> messages);
 }
+
+/// <summary>
+/// Optional extension for an external request envelope that includes informational text
+/// alongside its request content.
+/// </summary>
+public interface IExternalRequestEnvelopeWithContext : IExternalRequestEnvelope
+{
+    /// <summary>
+    /// Returns the informational text accompanying the inner request content.
+    /// </summary>
+    /// <returns>The request context, in delivery order.</returns>
+    IReadOnlyList<TextContent> GetRequestContext();
+}

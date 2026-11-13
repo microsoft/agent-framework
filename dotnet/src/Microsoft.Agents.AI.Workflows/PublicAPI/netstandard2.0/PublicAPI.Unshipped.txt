@@ -1,1 +1,3 @@
 #nullable enable
+Microsoft.Agents.AI.Workflows.IExternalRequestEnvelopeWithContext
+Microsoft.Agents.AI.Workflows.IExternalRequestEnvelopeWithContext.GetRequestContext() -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.TextContent!>!

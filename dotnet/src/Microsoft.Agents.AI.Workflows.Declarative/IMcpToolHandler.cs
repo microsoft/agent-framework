@@ -13,6 +13,11 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// <remarks>
 /// This interface allows the MCP tool invocation to be abstracted, enabling
 /// different implementations for local development, hosted workflows, and testing scenarios.
+/// Implementations used by approval-gated MCP actions must support the reserved <c>tools/list</c> operation
+/// and return a text output containing a structured tools array with complete published tool definitions,
+/// including annotations and metadata. The requested tool must include an <c>inputSchema</c> object whose
+/// <c>type</c> is <c>object</c>. Discovery is invoked only after explicit discovery approval; a separate
+/// approval binds the tool invocation to its definition. Approval fails closed when the definition cannot be verified.
 /// </remarks>
 public interface IMcpToolHandler
 {

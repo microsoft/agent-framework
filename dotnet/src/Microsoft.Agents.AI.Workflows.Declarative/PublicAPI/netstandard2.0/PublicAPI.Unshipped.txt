@@ -1,4 +1,6 @@
 ﻿#nullable enable
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.McpApprovalHeaderFingerprintKey.get -> System.ReadOnlyMemory<byte>?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.McpApprovalHeaderFingerprintKey.init -> void
 *REMOVED*Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler() -> void
 *REMOVED*Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler(System.Func<Microsoft.Agents.AI.Workflows.Declarative.HttpRequestInfo!, System.Threading.CancellationToken, System.Threading.Tasks.Task<System.Net.Http.HttpClient?>!>? httpClientProvider) -> void
 *REMOVED*Microsoft.Agents.AI.Workflows.Declarative.DefaultHttpRequestHandler.DefaultHttpRequestHandler(System.Net.Http.HttpClient! httpClient) -> void
