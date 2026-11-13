@@ -4778,6 +4778,71 @@ def test_prepare_response_format_pydantic_model(
     assert "properties" in result["schema"]
 
 
+def test_prepare_response_format_nested_pydantic_model(mock_anthropic_client: MagicMock) -> None:
+    """Nested models in $defs also get additionalProperties: false, which Anthropic requires."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    class Address(BaseModel):
+        city: str
+
+    class Person(BaseModel):
+        name: str
+        address: Address
+        previous_addresses: list[Address]
+
+    result = client._prepare_response_format(Person)
+
+    assert result["schema"]["additionalProperties"] is False
+    assert result["schema"]["$defs"]["Address"]["additionalProperties"] is False
+
+
+def test_prepare_response_format_nested_dict_schema(mock_anthropic_client: MagicMock) -> None:
+    """Nested objects in a dict schema get additionalProperties: false; field names and the caller's dict do not."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "properties": {"type": "object", "properties": {"color": {"type": "string"}}},
+            "tags": {"type": "array", "items": {"type": "object", "properties": {"label": {"type": "string"}}}},
+        },
+    }
+
+    result = client._prepare_response_format({"schema": schema})
+
+    fields = result["schema"]["properties"]
+    assert "additionalProperties" not in fields
+    assert fields["properties"]["additionalProperties"] is False
+    assert fields["tags"]["items"]["additionalProperties"] is False
+    assert "additionalProperties" not in schema["properties"]["properties"]
+
+
+def test_prepare_response_format_nested_map_schema(mock_anthropic_client: MagicMock) -> None:
+    """A map field (dict[str, str]) gets additionalProperties: false, the only value Anthropic supports."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    class Labels(BaseModel):
+        values: dict[str, str]
+
+    result = client._prepare_response_format(Labels)
+
+    assert result["schema"]["properties"]["values"]["additionalProperties"] is False
+
+
+@pytest.mark.parametrize("extra", [{}, {"additionalProperties": True}])
+def test_prepare_response_format_nullable_nested_object(
+    mock_anthropic_client: MagicMock, extra: dict[str, Any]
+) -> None:
+    """A nested object that may also be null (type ["object", "null"]) gets additionalProperties: false too."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    response_format = {"type": "object", "properties": {"meta": {"type": ["object", "null"], **extra}}}
+
+    result = client._prepare_response_format(response_format)
+
+    assert result["schema"]["properties"]["meta"]["additionalProperties"] is False
+
+
 async def test_prepare_options_uses_output_config_for_response_format(
     mock_anthropic_client: MagicMock,
 ) -> None:
