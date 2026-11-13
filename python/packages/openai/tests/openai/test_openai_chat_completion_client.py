@@ -5,13 +5,15 @@ import inspect
 import json
 import os
 import re
-from typing import Any, cast
+from importlib import import_module
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 
 import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import (
     Agent,
+    ChatOptions,
     ChatResponse,
     Content,
     Message,
@@ -27,7 +29,7 @@ from agent_framework import (
 from agent_framework._telemetry import FeatureIndex as CoreFeatureIndex
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import ChatClientException, SettingNotFoundError
-from openai import BadRequestError
+from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from pydantic import BaseModel
@@ -1987,38 +1989,79 @@ def test_tool_choice_required_with_function_name(
     assert prepared_options["tool_choice"]["function"]["name"] == "get_weather"
 
 
-def test_tool_choice_allowed_tools_falls_back_to_mode(
+@pytest.mark.parametrize("mode", ["auto", "required"])
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("allowed_tools", [["lookup_order"], ["lookup_order", "issue_refund"], []])
+async def test_tool_choice_allowed_tools(
+    mode: Literal["auto", "required"],
+    streaming: bool,
+    allowed_tools: list[str],
     openai_unit_test_env: dict[str, str],
 ) -> None:
-    """Test that tool_choice with allowed_tools falls back to plain mode (Chat Completions API unsupported)."""
-    client = OpenAIChatCompletionClient()
+    """Send allowed tool restrictions through the SDK without widening the choice."""
+    httpx = import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0])
+    requests: list[dict[str, Any]] = []
 
-    messages = [Message(role="user", contents=["test"])]
-    options = {
-        "tools": [get_weather],
-        "tool_choice": {"mode": "auto", "allowed_tools": ["get_weather"]},
+    @tool
+    def lookup_order(order_id: str) -> str:
+        """Look up an order."""
+        return "delivered"
+
+    @tool
+    def issue_refund(order_id: str, amount: int) -> str:
+        """Issue a refund."""
+        return "refunded"
+
+    def respond(request: Any) -> Any:
+        requests.append(json.loads(request.content))
+        response = {
+            "id": "chatcmpl-test",
+            "created": 0,
+            "model": "test-model",
+            "object": "chat.completion.chunk" if streaming else "chat.completion",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta" if streaming else "message": {"role": "assistant", "content": "delivered"},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        if streaming:
+            return httpx.Response(
+                200,
+                content=f"data: {json.dumps(response)}\n\ndata: [DONE]\n\n",
+                headers={"content-type": "text/event-stream"},
+            )
+        return httpx.Response(200, json=response)
+
+    async with AsyncOpenAI(
+        api_key="test-key", http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    ) as sdk_client:
+        client = OpenAIChatCompletionClient(model="test-model", async_client=sdk_client)
+        messages = [Message(role="user", contents=["Check order ORD-123456"])]
+        options: ChatOptions = {
+            "tools": [lookup_order, issue_refund],
+            "tool_choice": {"mode": mode, "allowed_tools": allowed_tools},
+        }
+        if streaming:
+            response = await client.get_response(messages, stream=True, options=options).get_final_response()
+        else:
+            response = await client.get_response(messages, options=options)
+
+    assert response.text == "delivered"
+    assert len(requests) == 1
+    assert [declared_tool["function"]["name"] for declared_tool in requests[0]["tools"]] == [
+        "lookup_order",
+        "issue_refund",
+    ]
+    assert requests[0]["tool_choice"] == {
+        "type": "allowed_tools",
+        "allowed_tools": {
+            "mode": mode,
+            "tools": [{"type": "function", "function": {"name": name}} for name in allowed_tools],
+        },
     }
-
-    prepared_options = client._prepare_options(messages, options)
-
-    assert prepared_options["tool_choice"] == "auto"
-
-
-def test_tool_choice_allowed_tools_required_mode_falls_back(
-    openai_unit_test_env: dict[str, str],
-) -> None:
-    """Test that tool_choice with allowed_tools and required mode falls back to 'required'."""
-    client = OpenAIChatCompletionClient()
-
-    messages = [Message(role="user", contents=["test"])]
-    options = {
-        "tools": [get_weather],
-        "tool_choice": {"mode": "required", "allowed_tools": ["get_weather"]},
-    }
-
-    prepared_options = client._prepare_options(messages, options)
-
-    assert prepared_options["tool_choice"] == "required"
 
 
 def test_tool_choice_auto_dict_without_allowed_tools(
