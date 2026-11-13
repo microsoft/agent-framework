@@ -271,7 +271,7 @@ async def test_nullable_inactive_if_branch_remains_supported(null_then: bool) ->
     })
 
     expected_ids = {"_workflow_entry", "branch_eval", "child"}
-    if not null_then:
-        expected_ids.add("branch_else_pass")
+    # An empty branch gets a passthrough so it can continue to the next action.
+    expected_ids.add("branch_then_pass" if null_then else "branch_else_pass")
     assert set(workflow.executors) == expected_ids
     assert (await workflow.run({})).get_outputs() == ["inside"]

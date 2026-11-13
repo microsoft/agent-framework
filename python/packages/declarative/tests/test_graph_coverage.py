@@ -4,6 +4,8 @@
 # pyright: reportPrivateUsage=false, reportUnknownVariableType=false
 # pyright: reportGeneralTypeIssues=false
 
+import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -2571,6 +2573,160 @@ class TestBuilderEdgeWiring:
         assert ("then_action", "loop_next") in edges
         assert ("else_action", "loop_next") in edges
         assert ("step_1", "loop_next") not in edges
+
+    def test_empty_then_branch_wires_continuation_passthrough(self):
+        """An empty then branch must still continue to the following action."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "empty_then_continuation",
+            "actions": [
+                {"kind": "If", "id": "check", "condition": "=true", "then": []},
+                {"kind": "SendActivity", "id": "after", "activity": {"text": "after"}},
+            ],
+        }
+
+        workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+        edges = {(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges}
+
+        assert ("check_eval", "check_then_pass") in edges
+        assert ("check_then_pass", "after") in edges
+        assert ("check_eval", "check_else_pass") in edges
+        assert ("check_else_pass", "after") in edges
+
+        from agent_framework_declarative._workflows._executors_control_flow import ELSE_BRANCH_INDEX
+
+        then_edge = next(
+            edge
+            for group in workflow.edge_groups
+            for edge in group.edges
+            if edge.source_id == "check_eval" and edge.target_id == "check_then_pass"
+        )
+        else_edge = next(
+            edge
+            for group in workflow.edge_groups
+            for edge in group.edges
+            if edge.source_id == "check_eval" and edge.target_id == "check_else_pass"
+        )
+        then_branch = ConditionResult(matched=True, branch_index=0, value=True)
+        else_branch = ConditionResult(matched=False, branch_index=ELSE_BRANCH_INDEX, value=False)
+
+        assert asyncio.run(then_edge.should_route(then_branch)) is True
+        assert asyncio.run(then_edge.should_route(else_branch)) is False
+        assert asyncio.run(else_edge.should_route(else_branch)) is True
+        assert asyncio.run(else_edge.should_route(then_branch)) is False
+
+    def test_empty_condition_group_case_wires_continuation_passthrough(self):
+        """An empty ConditionGroup case branch must still continue to the following action."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "empty_condition_group_case",
+            "actions": [
+                {
+                    "kind": "ConditionGroup",
+                    "id": "route",
+                    "conditions": [{"condition": "=true", "actions": []}],
+                },
+                {"kind": "SendActivity", "id": "after", "activity": {"text": "after"}},
+            ],
+        }
+
+        workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+        edges = {(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges}
+
+        assert ("route_eval", "route_case0_pass") in edges
+        assert ("route_case0_pass", "after") in edges
+
+        case_edge = next(
+            edge
+            for group in workflow.edge_groups
+            for edge in group.edges
+            if edge.source_id == "route_eval" and edge.target_id == "route_case0_pass"
+        )
+        matched_case = ConditionResult(matched=True, branch_index=0, value=True)
+
+        assert asyncio.run(case_edge.should_route(matched_case)) is True
+
+    def test_non_empty_then_branch_does_not_add_passthrough(self):
+        """A non-empty then branch should keep wiring directly to its action."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "non_empty_then",
+            "actions": [
+                {
+                    "kind": "If",
+                    "id": "check",
+                    "condition": "=true",
+                    "then": [{"kind": "SendActivity", "id": "then_action", "activity": {"text": "then"}}],
+                },
+                {"kind": "SendActivity", "id": "after", "activity": {"text": "after"}},
+            ],
+        }
+
+        workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+        edges = {(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges}
+
+        assert ("check_eval", "then_action") in edges
+        assert ("then_action", "after") in edges
+        assert ("check_then_pass", "after") not in edges
+
+    def test_non_empty_then_with_only_unknown_actions_does_not_add_passthrough(self, caplog):
+        """A non-empty then with only unknown actions must not be treated as empty."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "unknown_then_action",
+            "actions": [
+                {
+                    "kind": "If",
+                    "id": "check",
+                    "condition": "=true",
+                    "then": [{"kind": "UnknownAction", "id": "typo"}],
+                },
+                {"kind": "SendActivity", "id": "after", "activity": {"text": "after"}},
+            ],
+        }
+
+        with caplog.at_level(logging.WARNING):
+            workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+
+        edges = {(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges}
+
+        assert ("check_eval", "check_then_pass") not in edges
+        assert ("check_then_pass", "after") not in edges
+        assert "Unknown action kind 'UnknownAction'" in caplog.text
+
+    def test_non_empty_condition_group_case_with_only_unknown_actions_does_not_add_passthrough(
+        self,
+        caplog,
+    ):
+        """A non-empty case with only unknown actions must not be treated as empty."""
+        from agent_framework_declarative._workflows import DeclarativeWorkflowBuilder
+
+        yaml_def = {
+            "name": "unknown_condition_group_case",
+            "actions": [
+                {
+                    "kind": "ConditionGroup",
+                    "id": "route",
+                    "conditions": [
+                        {"condition": "=true", "actions": [{"kind": "UnknownAction", "id": "typo"}]},
+                    ],
+                },
+                {"kind": "SendActivity", "id": "after", "activity": {"text": "after"}},
+            ],
+        }
+
+        with caplog.at_level(logging.WARNING):
+            workflow = DeclarativeWorkflowBuilder(yaml_def).build()
+
+        edges = {(e.source_id, e.target_id) for group in workflow.edge_groups for e in group.edges}
+
+        assert ("route_eval", "route_case0_pass") not in edges
+        assert ("route_case0_pass", "after") not in edges
+        assert "Unknown action kind 'UnknownAction'" in caplog.text
 
     def test_wire_to_target_with_if_structure(self):
         """Test wiring to an If structure routes to evaluator."""
