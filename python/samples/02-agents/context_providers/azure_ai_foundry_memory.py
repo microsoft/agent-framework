@@ -96,8 +96,9 @@ async def main() -> None:
             default_options={"store": False},
         ) as agent:
             try:
-                # note that we will use the service side storage, nor load messsages from the history provider,
-                # but we include it to demonstrate that it can be used alongside the Foundry provider for other use cases.
+                # note that we will use the service side storage and not load messages from the history
+                # provider, but we include it to demonstrate that it can be used alongside the Foundry
+                # provider for other use cases.
                 session = agent.create_session()
 
                 # First interaction - establish some preferences
