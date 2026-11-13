@@ -151,7 +151,7 @@ def _is_allowed_oauth_consent_link(  # pyright: ignore[reportUnusedFunction]
 
 
 def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
-    """Extract structured consent requirements from a Foundry MCP gateway error or its wrapper."""
+    """Extract requirements only from a consent-only Foundry MCP gateway error or its wrapper."""
     inner = exc if isinstance(exc, MCPError) else next((arg for arg in exc.args if isinstance(arg, MCPError)), None)
     if inner is None or inner.code != CONSENT_ERROR_CODE:
         return None
@@ -175,20 +175,21 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     requirements: list[ConsentError] = []
     for raw_error in cast(list[object], errors):
         if not isinstance(raw_error, dict):
-            continue
+            return None
         error = cast(dict[str, object], raw_error)
         if error.get("type") not in ("mcp", "a2a_preview"):
-            continue
+            return None
         raw_details = error.get("error")
         if not isinstance(raw_details, dict):
-            continue
+            return None
         details = cast(dict[str, object], raw_details)
         if details.get("code") != "CONSENT_REQUIRED":
-            continue
+            return None
         name = error.get("name", "Unknown")
         link = details.get("message")
-        if isinstance(name, str) and name and isinstance(link, str):
-            requirements.append(ConsentError(name=name, consent_url=link))
+        if not isinstance(name, str) or not name or not isinstance(link, str):
+            return None
+        requirements.append(ConsentError(name=name, consent_url=link))
     return requirements or None
 
 

@@ -1947,6 +1947,42 @@ async def test_toolbox_oauth_consent_does_not_classify_unvalidated_errors(error:
         assert len(mcp.calls) == 3
 
 
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("history_source", ["host_managed", "inference_service"])
+async def test_toolbox_mixed_consent_errors_remain_function_failures(
+    stream: bool, history_source: Literal["host_managed", "inference_service"]
+) -> None:
+    mcp = ToolboxConsentServer()
+    mcp.error["message"] = "tools/call failed " + json.dumps({
+        "errors": [
+            {"name": "learn", "type": "mcp", "error": {"code": "CONSENT_REQUIRED", "message": CONSENT_LINK}},
+            {"name": "calendar", "type": "mcp", "error": {"code": "INTERNAL_ERROR", "message": "Upstream failure"}},
+        ]
+    })
+    model = ConsentModelServer()
+    async with toolbox_connection(mcp) as toolbox, consent_model_client(model) as chat_client:
+        host = ResponsesHostServer(
+            Agent(client=chat_client, tools=toolbox),
+            history_source=history_source,
+            response_store=InMemoryResponseProvider(),
+        )
+        response, events = await post_consent_response(host, {"input": "Run the tools", "stream": stream})
+
+        assert response["status"] == "completed", response
+        assert not any(item["type"] == "oauth_consent_request" for item in response["output"])
+        assert not any(event.get("item", {}).get("type") == "oauth_consent_request" for event in events)
+        results = [item for item in response["output"] if item["type"] == "function_call_output"]
+        assert len(results) == 3
+        assert results[0]["output"] == results[2]["output"] == "search-result"
+        assert results[1]["output"].startswith("Error:")
+        assert "OAuth consent is required" not in results[1]["output"]
+        assert CONSENT_LINK not in json.dumps(response["output"])
+        assert [call["name"] for call in mcp.calls] == ["learn___completed", "learn___protected", "learn___later"]
+        assert len(model.requests) == 2
+        assert model.requests[1].get("tool_choice") != "none"
+        assert not model.history_errors
+
+
 async def test_toolbox_oauth_consent_origin_allowlist_is_enforced() -> None:
     mcp = ToolboxConsentServer()
     model = ConsentModelServer()

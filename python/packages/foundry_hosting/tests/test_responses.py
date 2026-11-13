@@ -9238,6 +9238,39 @@ class TestConsentUrlFromError:
             ConsentError(name="work-iq", consent_url="https://example.com/a2a-consent")
         ]
 
+    @pytest.mark.parametrize(
+        "other_error",
+        [
+            {"type": "mcp", "error": {"code": "INTERNAL_ERROR", "message": "Upstream failure"}},
+            {"type": "other", "error": {"code": "CONSENT_REQUIRED", "message": "https://example.com/consent"}},
+            None,
+            {"type": "mcp", "error": None},
+            {"type": "mcp", "error": {"code": "CONSENT_REQUIRED", "message": 42}},
+            {
+                "name": "",
+                "type": "mcp",
+                "error": {"code": "CONSENT_REQUIRED", "message": "https://example.com/consent"},
+            },
+        ],
+    )
+    @pytest.mark.parametrize("consent_first", [False, True])
+    @pytest.mark.parametrize("wrapped", [False, True])
+    def test_returns_none_for_mixed_consent_errors(
+        self, other_error: object, consent_first: bool, wrapped: bool
+    ) -> None:
+        from agent_framework.exceptions import ToolExecutionException
+
+        consent = {
+            "name": "learn",
+            "type": "mcp",
+            "error": {"code": "CONSENT_REQUIRED", "message": "https://example.com/consent"},
+        }
+        errors = [consent, other_error] if consent_first else [other_error, consent]
+        inner = MCPError(CONSENT_ERROR_CODE, "tools/call failed " + json.dumps({"errors": errors}))
+        exc = ToolExecutionException("MCP failure", inner_exception=inner) if wrapped else inner
+
+        assert consent_url_from_error(exc) is None
+
     def test_returns_none_when_no_mcp_error_in_args(self) -> None:
         assert consent_url_from_error(Exception("boom")) is None
 
