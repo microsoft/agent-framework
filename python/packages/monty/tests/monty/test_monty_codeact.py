@@ -267,6 +267,32 @@ def test_tool_construction_defaults() -> None:
 
 
 @pytest.mark.parametrize("entry_point", [MontyExecuteCodeTool, MontyCodeActProvider])
+def test_execute_code_additional_properties_are_isolated_across_run_snapshots(
+    entry_point: type[MontyExecuteCodeTool] | type[MontyCodeActProvider],
+) -> None:
+    properties: dict[str, Any] = {
+        "source_integrity": "untrusted",
+        "confidentiality": "user_identity",
+        "agent_framework.security.principals": [{"tenant_id": "tenant-a", "user_id": "user-a"}],
+    }
+    codeact = entry_point(additional_properties=properties)
+    template = codeact if isinstance(codeact, MontyExecuteCodeTool) else codeact._execute_code_tool
+
+    properties["agent_framework.security.principals"][0]["user_id"] = "mutated-input"
+    assert template.additional_properties is not None
+    assert template.additional_properties["agent_framework.security.principals"][0]["user_id"] == "user-a"
+
+    run_tool = template.create_run_tool()
+    template.additional_properties["agent_framework.security.principals"][0]["user_id"] = "mutated-template"
+
+    assert run_tool.additional_properties is not None
+    assert run_tool.additional_properties["source_integrity"] == "untrusted"
+    assert run_tool.additional_properties["agent_framework.security.principals"] == [
+        {"tenant_id": "tenant-a", "user_id": "user-a"}
+    ]
+
+
+@pytest.mark.parametrize("entry_point", [MontyExecuteCodeTool, MontyCodeActProvider])
 @pytest.mark.parametrize("register_later", [False, True])
 @pytest.mark.parametrize(
     "properties",

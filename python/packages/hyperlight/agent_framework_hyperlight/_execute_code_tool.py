@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
-from copy import copy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -1370,6 +1370,8 @@ def _make_sandbox_callback(tool_obj: FunctionTool, *, include_detailed_errors: b
 
     def _callback(**kwargs: Any) -> Any:
         async def _invoke() -> Any:
+            # CodeAct needs native values inside generated code. This deliberately
+            # bypasses adapters that attach labels after Content normalization.
             return await sandbox_tool.invoke(arguments=kwargs, skip_parsing=True)
 
         # FunctionTool.invoke() is async. The real Hyperlight backend invokes
@@ -1680,7 +1682,8 @@ def _warn_unsupported_fides_tools(
             logger.warning(
                 "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
                 "through function middleware for calls made inside generated code. "
-                "Keep FIDES-dependent tools as direct agent tools.",
+                "Keep FIDES-dependent tools as direct agent tools, or label the outer execute_code result "
+                "with CodeAct additional_properties for coarse-grained handling.",
                 tool_obj.name,
             )
 
@@ -1696,6 +1699,10 @@ class HyperlightExecuteCodeTool(FunctionTool):
     """Execute Python code inside a Hyperlight sandbox.
 
     Keyword Args:
+        additional_properties: Metadata applied only to the outer ``execute_code``
+            FunctionTool. The mapping is deep-copied at construction and for each
+            run snapshot. It can define one coarse FIDES policy for the complete
+            CodeAct result; it does not label or enforce nested host-tool calls.
         tool_description_format: Parameter documentation in ``.description``: ``"compact"`` (default)
             or ``"json"``, globally or mapped by exact, case-sensitive tool name. Missing names use
             compact format. Schemas that cannot be represented faithfully in compact form use JSON Schema.
@@ -1711,6 +1718,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         self,
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
         tool_description_format: _ToolDescriptionFormat = "compact",
         include_detailed_errors: bool = False,
         approval_mode: ApprovalMode | None = None,
@@ -1743,6 +1751,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             approval_mode="never_require",
             func=self._run_code,
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
+            additional_properties=deepcopy(additional_properties),
         )
         self._state_lock = threading.RLock()
         self._tool_description_format: _NormalizedToolDescriptionFormat = normalized_description_format
@@ -1925,6 +1934,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         return HyperlightExecuteCodeTool(
             _fides_warned_metadata=warned_metadata,
             tools=tools,
+            additional_properties=deepcopy(self.additional_properties),
             tool_description_format=self._tool_description_format,
             approval_mode=self._default_approval_mode,
             include_detailed_errors=self._include_detailed_errors,

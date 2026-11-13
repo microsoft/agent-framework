@@ -5,19 +5,36 @@
 > [!WARNING]
 > **Combining FIDES with CodeAct providers is currently unsupported**, including
 > [Monty](../../../packages/monty/README.md) and
-> [Hyperlight](../../../packages/hyperlight/README.md). FIDES's per-tool guarantees
-> apply to invocations routed through its function middleware. Host-tool calls
-> inside generated code bypass that middleware; nested calls and intermediate
-> code values do not receive its policy enforcement or label tracking. Checking
-> the outer `execute_code` invocation does not enforce the policies of individual
-> tools called inside it, and sandbox isolation does not supply FIDES enforcement.
+> [Hyperlight](../../../packages/hyperlight/README.md). CodeAct is optimized for
+> combining many tool calls inside one generated-code execution and consumes
+> native tool values with `skip_parsing=True`. That bypasses the normalized
+> `Content` boundary where operation-scoped FIDES labels are attached. FIDES
+> instead depends on granular inspection, labeling, and enforcement for each
+> function result. Nested calls and intermediate code values therefore do not
+> receive its policy enforcement or label tracking.
 >
 > CodeAct logs a warning for recognized FIDES tool metadata, but this is diagnostic
 > only: execution is not blocked, and defaults can apply to unannotated tools.
 > No warning does not imply support or safety. Keep tools that require FIDES as
 > direct agent tools rather than CodeAct-managed tools, or disable CodeAct for
 > workflows requiring those guarantees. Host functions must independently enforce
-> authorization and destination restrictions.
+> authorization and destination restrictions. If one coarse policy for the
+> complete CodeAct output is sufficient, set `additional_properties` on the
+> CodeAct provider or execute-code tool:
+>
+> ```python
+> codeact = MontyCodeActProvider(
+>     tools=[search, fetch],
+>     additional_properties={
+>         "source_integrity": "untrusted",
+>         "confidentiality": "private",
+>     },
+> )
+> ```
+>
+> FIDES then labels the outer `execute_code` result as a whole. It still does
+> not inspect nested tool results, intermediate values, or side effects that
+> happen before the outer result exists.
 
 ## Context Provider Pattern with SecureAgentConfig!
 
