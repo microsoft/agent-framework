@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
-    <VersionSuffix>preview</VersionSuffix>
+    <IsReleaseCandidate>true</IsReleaseCandidate>
     <NoWarn>$(NoWarn);MEAI001</NoWarn>
   </PropertyGroup>
 
