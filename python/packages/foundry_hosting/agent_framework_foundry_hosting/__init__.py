@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from ._responses_workflow import ResponsesWorkflowHostServer
     from ._scope import FoundryRequestScope
     from ._shared import (
+        DEFAULT_CALLER_ALLOWED_EXTRA_BODY_FIELDS,
+        DEFAULT_CALLER_ALLOWED_FIELDS,
         AgentSessionStoreProvider,
         CheckpointStoreProvider,
         ContextScopedStoreProvider,
@@ -34,6 +36,8 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 
 _LAZY_EXPORTS: Final[dict[str, str]] = {
+    "DEFAULT_CALLER_ALLOWED_EXTRA_BODY_FIELDS": "._shared",
+    "DEFAULT_CALLER_ALLOWED_FIELDS": "._shared",
     "AgentSessionStoreProvider": "._shared",
     "CheckpointStoreProvider": "._shared",
     "ContextScopedStoreProvider": "._shared",
@@ -54,6 +58,8 @@ _LAZY_EXPORTS: Final[dict[str, str]] = {
 }
 
 __all__ = [
+    "DEFAULT_CALLER_ALLOWED_EXTRA_BODY_FIELDS",
+    "DEFAULT_CALLER_ALLOWED_FIELDS",
     "AgentSessionStoreProvider",
     "CheckpointStoreProvider",
     "ContextScopedStoreProvider",

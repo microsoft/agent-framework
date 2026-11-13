@@ -2252,8 +2252,9 @@ class TestAgentSessionPersistence:
         agent = Agent(client=client, default_options=OpenAIChatOptions(temperature=0.2, max_tokens=256))
         defaults = dict(agent.default_options)
 
-        def prepare_options(_request: Any, options: dict[str, Any]) -> dict[str, Any]:
+        def prepare_options(request: Any, options: dict[str, Any]) -> dict[str, Any]:
             options.pop("temperature")
+            options["vendor_option"] = request.request["vendor_option"]
             return options
 
         server = _make_server(agent, prepare_options=prepare_options)
@@ -2264,18 +2265,44 @@ class TestAgentSessionPersistence:
                 "model": "test-model",
                 "temperature": 0.8,
                 "max_output_tokens": 300,
-                "max_tokens": 150,
-                "session_id": "forged-sandbox",
-                "call_id": "forged-call",
+                "extra_body": {"max_tokens": 150},
+                "vendor_option": "caller-value",
             },
         )
 
         assert response.json()["status"] == "completed"
         assert client.options[0]["temperature"] == 0.2
         assert client.options[0]["max_tokens"] == 150
-        assert "session_id" not in client.options[0]
-        assert "call_id" not in client.options[0]
+        assert client.options[0]["vendor_option"] == "caller-value"
         assert agent.default_options == defaults
+
+    @pytest.mark.parametrize(
+        ("payload", "field_name"),
+        [
+            ({"additional_function_arguments": {"tenant_id": "forged"}}, "additional_function_arguments"),
+            (
+                {"extra_body": {"additional_function_arguments": {"tenant_id": "forged"}}},
+                "extra_body.additional_function_arguments",
+            ),
+            ({"max_output_tokens": 30, "max_tokens": 999}, "max_tokens"),
+            ({"instructions": None}, "instructions"),
+            ({"extra_body": {"vendor_option": None}}, "extra_body.vendor_option"),
+        ],
+    )
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_unlisted_caller_option_fails_before_agent_run(
+        self, payload: dict[str, Any], field_name: str, stream: bool
+    ) -> None:
+        agent = _make_agent()
+        server = _make_server(agent)
+
+        response = await _post_json(server, {"input": "one shot", "stream": stream, **payload})
+
+        body = _parse_sse_events(response.text)[-1]["data"]["response"] if stream else response.json()
+        assert body["status"] == "failed"
+        assert field_name in body["error"]["message"]
+        agent.run.assert_not_called()
+        agent.create_session.assert_not_called()
 
     async def test_hook_cannot_reintroduce_host_owned_storage_or_identity(self) -> None:
         agent = _make_agent()
@@ -9022,6 +9049,23 @@ class TestFunctionApprovalRoundTrip:
         await store.set(first_body["id"], AgentSession.from_dict(json.loads(json.dumps(session.to_dict()))))
 
         decision = {"type": "mcp_approval_response", "approval_request_id": wire_id, "approve": approved}
+        rejected = await _post_json(
+            server,
+            {
+                "input": [decision],
+                "previous_response_id": first_body["id"],
+                "stream": stream,
+                "additional_function_arguments": {"tenant_id": "forged"},
+            },
+        )
+        rejected_body = _parse_sse_events(rejected.text)[-1]["data"]["response"] if stream else rejected.json()
+        assert rejected_body["status"] == "failed"
+        assert "additional_function_arguments" in rejected_body["error"]["message"]
+        assert executions == []
+        assert len(calls) == 1
+        pending_session = await store.get(first_body["id"])
+        assert pending_session is not None
+        assert set(_load_pending_approval_requests(pending_session)) == {"native-call"}
         second = await _post_json(
             server,
             {"input": [decision], "previous_response_id": first_body["id"], "stream": stream},

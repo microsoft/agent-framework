@@ -69,6 +69,7 @@ from ._shared import (
     _build_response_server_options,  # pyright: ignore[reportPrivateUsage]
     prepare_response_options,
     prepare_workflow_kwargs,
+    reject_disallowed_caller_fields,
     response_run_options,
     validate_request_options,
     validate_workflow_source,
@@ -373,6 +374,8 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
                 Native workflow history and pending replies are checkpoint-owned, not agent-session-owned.
             prepare_options: Sync or async hook receiving the hosted request and a copy of caller model
                 options before parsing/execution. Return the replacement mapping; hosting validates it.
+                Returning a caller field not included in the default allowlist explicitly opts that field
+                into this request; host-controlled fields remain forbidden.
                 This does not enable inner provider background or service-owned history.
             allowed_oauth_consent_origins: Optional exact HTTPS origins for consent links. Omission retains
                 safe-HTTPS validation; an empty sequence rejects all origins.
@@ -514,6 +517,7 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
             )
             hosted = ResponsesRequest(request, context, scope, response_run_options(request))
             await prepare_response_options(hosted, self._prepare_options)
+            reject_disallowed_caller_fields(request, hosted.options)
             validate_request_options(hosted.options)
             workflow = await self._resolver.resolve(hosted)
             resources = AsyncExitStack()

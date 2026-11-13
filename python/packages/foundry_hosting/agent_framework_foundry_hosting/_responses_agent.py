@@ -89,6 +89,7 @@ from ._shared import (
     _build_response_server_options,  # pyright: ignore[reportPrivateUsage]
     is_agent,
     prepare_response_options,
+    reject_disallowed_caller_fields,
     resolve_agent,
     response_run_options,
     validate_agent_source,
@@ -306,7 +307,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 This regular-agent adapter currently recovers only saved inference-service continuations,
                 so it requires inference-service history and background. This does not start background
                 execution or guarantee exactly-once effects.
-            prepare_options: Developer hook to remove or replace caller model options for an agent.
+            prepare_options: Developer hook to remove or replace caller model options. Returning a caller field
+                not included in the default allowlist explicitly opts that field into this request; host-controlled
+                fields remain forbidden.
             unsupported_options: `"warn"` (default), `"error"`, or `"ignore"` when a custom agent
                 cannot accept runtime model options.
             log_level: Logging level forwarded unchanged to AgentServer. `None` preserves the SDK default.
@@ -487,6 +490,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 _initialize_agent_history(agent, configuration)
             await prepare_response_options(hosted_request, self._prepare_options)
             try:
+                reject_disallowed_caller_fields(request, hosted_request.options)
                 validate_request_options(hosted_request.options)
             except (TypeError, ValueError) as exc:
                 raise _PublicResponseFailure(exc) from None
