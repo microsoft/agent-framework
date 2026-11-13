@@ -1,1 +1,174 @@
 #nullable enable
+[MEAI001]Microsoft.Extensions.AI.BinaryDecisionAnswer
+[MEAI001]Microsoft.Extensions.AI.BinaryDecisionAnswer.BinaryDecisionAnswer(string! questionId, double trueProbability, Microsoft.Extensions.AI.DecisionPrecision precision = Microsoft.Extensions.AI.DecisionPrecision.HighPrecision, object? rawRepresentation = null, System.Collections.Generic.IReadOnlyDictionary<string!, object?>? additionalProperties = null) -> void
+[MEAI001]Microsoft.Extensions.AI.BinaryDecisionAnswer.TrueProbability.get -> double
+[MEAI001]Microsoft.Extensions.AI.BinaryDecisionQuestion
+[MEAI001]Microsoft.Extensions.AI.BinaryDecisionQuestion.BinaryDecisionQuestion(string! id, string? instructions = null, string? trueDescription = null, string? falseDescription = null) -> void
+[MEAI001]Microsoft.Extensions.AI.BinaryDecisionQuestion.FalseDescription.get -> string?
+[MEAI001]Microsoft.Extensions.AI.BinaryDecisionQuestion.TrueDescription.get -> string?
+[MEAI001]Microsoft.Extensions.AI.ChoiceDecisionAnswer
+[MEAI001]Microsoft.Extensions.AI.ChoiceDecisionAnswer.ChoiceDecisionAnswer(string! questionId, string! selectedCandidateId, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionProbability!>! probabilities, Microsoft.Extensions.AI.DecisionPrecision precision = Microsoft.Extensions.AI.DecisionPrecision.HighPrecision, object? rawRepresentation = null, System.Collections.Generic.IReadOnlyDictionary<string!, object?>? additionalProperties = null) -> void
+[MEAI001]Microsoft.Extensions.AI.ChoiceDecisionAnswer.Probabilities.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionProbability!>!
+[MEAI001]Microsoft.Extensions.AI.ChoiceDecisionAnswer.SelectedCandidateId.get -> string!
+[MEAI001]Microsoft.Extensions.AI.ChoiceDecisionQuestion
+[MEAI001]Microsoft.Extensions.AI.ChoiceDecisionQuestion.Candidates.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionCandidate!>!
+[MEAI001]Microsoft.Extensions.AI.ChoiceDecisionQuestion.ChoiceDecisionQuestion(string! id, string? instructions, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionCandidate!>! candidates) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionAnswer
+[MEAI001]Microsoft.Extensions.AI.DecisionAnswer.AdditionalProperties.get -> System.Collections.Generic.IReadOnlyDictionary<string!, object?>?
+[MEAI001]Microsoft.Extensions.AI.DecisionAnswer.Kind.get -> Microsoft.Extensions.AI.DecisionKind
+[MEAI001]Microsoft.Extensions.AI.DecisionAnswer.Precision.get -> Microsoft.Extensions.AI.DecisionPrecision
+[MEAI001]Microsoft.Extensions.AI.DecisionAnswer.QuestionId.get -> string!
+[MEAI001]Microsoft.Extensions.AI.DecisionAnswer.RawRepresentation.get -> object?
+[MEAI001]Microsoft.Extensions.AI.DecisionAnswerSet
+[MEAI001]Microsoft.Extensions.AI.DecisionAnswerSet.GetBinary(string! questionId) -> Microsoft.Extensions.AI.BinaryDecisionAnswer!
+[MEAI001]Microsoft.Extensions.AI.DecisionAnswerSet.GetChoice(string! questionId) -> Microsoft.Extensions.AI.ChoiceDecisionAnswer!
+[MEAI001]Microsoft.Extensions.AI.DecisionAnswerSet.GetChoice<TEnum>(string! questionId, Microsoft.Extensions.AI.DecisionEnumDefinition<TEnum>! definition) -> TEnum
+[MEAI001]Microsoft.Extensions.AI.DecisionAnswerSet.GetScore(string! questionId) -> Microsoft.Extensions.AI.ScoreDecisionAnswer!
+[MEAI001]Microsoft.Extensions.AI.DecisionAnswerSet.Response.get -> Microsoft.Extensions.AI.DecisionResponse!
+[MEAI001]Microsoft.Extensions.AI.DecisionBindingExtensions
+[MEAI001]Microsoft.Extensions.AI.DecisionCandidate
+[MEAI001]Microsoft.Extensions.AI.DecisionCandidate.DecisionCandidate(string! id, string! description) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionCandidate.Description.get -> string!
+[MEAI001]Microsoft.Extensions.AI.DecisionCandidate.Id.get -> string!
+[MEAI001]Microsoft.Extensions.AI.DecisionClientException
+[MEAI001]Microsoft.Extensions.AI.DecisionClientException.DecisionClientException() -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionClientException.DecisionClientException(string! message) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionClientException.DecisionClientException(string! message, System.Exception! innerException) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionClientException.DecisionClientException(string! message, bool isTransient, System.Exception? innerException = null) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionClientException.IsTransient.get -> bool
+[MEAI001]Microsoft.Extensions.AI.DecisionClientExtensions
+[MEAI001]Microsoft.Extensions.AI.DecisionClientMetadata
+[MEAI001]Microsoft.Extensions.AI.DecisionClientMetadata.DecisionClientMetadata(string? providerName = null, System.Uri? providerUri = null, string? defaultModelId = null, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionKind>? supportedKinds = null) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionClientMetadata.DefaultModelId.get -> string?
+[MEAI001]Microsoft.Extensions.AI.DecisionClientMetadata.ProviderName.get -> string?
+[MEAI001]Microsoft.Extensions.AI.DecisionClientMetadata.ProviderUri.get -> System.Uri?
+[MEAI001]Microsoft.Extensions.AI.DecisionClientMetadata.SupportedKinds.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionKind>?
+[MEAI001]Microsoft.Extensions.AI.DecisionDefinition<TResult>
+[MEAI001]Microsoft.Extensions.AI.DecisionDefinition<TResult>.AsAIFunction<TState>(Microsoft.Extensions.AI.IDecisionClient! client, Microsoft.Extensions.AI.AIFunctionFactoryOptions? functionOptions = null, Microsoft.Extensions.AI.DecisionOptions? decisionOptions = null, System.Text.Json.Serialization.Metadata.JsonTypeInfo<TState>? stateTypeInfo = null) -> Microsoft.Extensions.AI.AIFunction!
+[MEAI001]Microsoft.Extensions.AI.DecisionDefinition<TResult>.Builder
+[MEAI001]Microsoft.Extensions.AI.DecisionDefinition<TResult>.Builder.BinaryProbability(System.Linq.Expressions.Expression<System.Func<TResult, double>!>! selector, string? instructions = null) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionDefinition<TResult>.Builder.Choice<TEnum>(System.Linq.Expressions.Expression<System.Func<TResult, TEnum>!>! selector, string? instructions = null) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionDefinition<TResult>.Builder.ExpectedScore(System.Linq.Expressions.Expression<System.Func<TResult, double>!>! selector, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionScoreLevel!>! levels, string? instructions = null) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionDefinition<TResult>.Builder.Score(System.Linq.Expressions.Expression<System.Func<TResult, double>!>! selector, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionScoreLevel!>! levels, string? instructions = null) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionDefinition<TResult>.Questions.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionQuestion!>!
+[MEAI001]Microsoft.Extensions.AI.DecisionDefinition<TResult>.ResultTypeInfo.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<TResult>!
+[MEAI001]Microsoft.Extensions.AI.DecisionDefinition<TResult>.SerializerOptions.get -> System.Text.Json.JsonSerializerOptions!
+[MEAI001]Microsoft.Extensions.AI.DecisionEnumDefinition<TEnum>
+[MEAI001]Microsoft.Extensions.AI.DecisionEnumDefinition<TEnum>.Candidates.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionCandidate!>!
+[MEAI001]Microsoft.Extensions.AI.DecisionEnumDefinition<TEnum>.CreateQuestion(string! id, string? instructions) -> Microsoft.Extensions.AI.ChoiceDecisionQuestion!
+[MEAI001]Microsoft.Extensions.AI.DecisionEnumDefinition<TEnum>.DecisionEnumDefinition(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.DecisionEnumValue<TEnum>!>! values) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionEnumDefinition<TEnum>.Parse(string! candidateId) -> TEnum
+[MEAI001]Microsoft.Extensions.AI.DecisionEnumValue<TEnum>
+[MEAI001]Microsoft.Extensions.AI.DecisionEnumValue<TEnum>.DecisionEnumValue(TEnum value, string! id, string! description) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionEnumValue<TEnum>.Description.get -> string!
+[MEAI001]Microsoft.Extensions.AI.DecisionEnumValue<TEnum>.Id.get -> string!
+[MEAI001]Microsoft.Extensions.AI.DecisionEnumValue<TEnum>.Value.get -> TEnum
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureCoordinate
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureCoordinate.DecisionFeatureCoordinate(string! name, string! questionId, Microsoft.Extensions.AI.DecisionFeatureValueKind valueKind, string? memberId = null) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureCoordinate.MemberId.get -> string?
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureCoordinate.Name.get -> string!
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureCoordinate.QuestionId.get -> string!
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureCoordinate.ValueKind.get -> Microsoft.Extensions.AI.DecisionFeatureValueKind
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureProjection
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureSchema
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureSchema.Coordinates.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionFeatureCoordinate!>!
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureSchema.DecisionFeatureSchema(string! id, int version, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.DecisionFeatureCoordinate!>! coordinates) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureSchema.Id.get -> string!
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureSchema.Version.get -> int
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureValue
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureValue.DecisionFeatureValue(string! name, double value) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureValue.Name.get -> string!
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureValue.Value.get -> double
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureValueKind
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureValueKind.BinaryFalseProbability = 1 -> Microsoft.Extensions.AI.DecisionFeatureValueKind
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureValueKind.BinaryTrueProbability = 0 -> Microsoft.Extensions.AI.DecisionFeatureValueKind
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureValueKind.ChoiceProbability = 2 -> Microsoft.Extensions.AI.DecisionFeatureValueKind
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureValueKind.ExpectedScore = 5 -> Microsoft.Extensions.AI.DecisionFeatureValueKind
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureValueKind.Score = 4 -> Microsoft.Extensions.AI.DecisionFeatureValueKind
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureValueKind.ScoreProbability = 3 -> Microsoft.Extensions.AI.DecisionFeatureValueKind
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureVector
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureVector.Provenance.get -> Microsoft.Extensions.AI.DecisionProvenance?
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureVector.Schema.get -> Microsoft.Extensions.AI.DecisionFeatureSchema!
+[MEAI001]Microsoft.Extensions.AI.DecisionFeatureVector.Values.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionFeatureValue!>!
+[MEAI001]Microsoft.Extensions.AI.DecisionKind
+[MEAI001]Microsoft.Extensions.AI.DecisionKind.Binary = 0 -> Microsoft.Extensions.AI.DecisionKind
+[MEAI001]Microsoft.Extensions.AI.DecisionKind.Choice = 1 -> Microsoft.Extensions.AI.DecisionKind
+[MEAI001]Microsoft.Extensions.AI.DecisionKind.Score = 2 -> Microsoft.Extensions.AI.DecisionKind
+[MEAI001]Microsoft.Extensions.AI.DecisionOptions
+[MEAI001]Microsoft.Extensions.AI.DecisionOptions.AdditionalProperties.get -> Microsoft.Extensions.AI.AdditionalPropertiesDictionary?
+[MEAI001]Microsoft.Extensions.AI.DecisionOptions.AdditionalProperties.set -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionOptions.DecisionOptions() -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionOptions.DecisionOptions(Microsoft.Extensions.AI.DecisionOptions? other) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionOptions.ModelId.get -> string?
+[MEAI001]Microsoft.Extensions.AI.DecisionOptions.ModelId.set -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionOptions.RawRepresentationFactory.get -> System.Func<Microsoft.Extensions.AI.IDecisionClient!, object?>?
+[MEAI001]Microsoft.Extensions.AI.DecisionOptions.RawRepresentationFactory.set -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionPrecision
+[MEAI001]Microsoft.Extensions.AI.DecisionPrecision.FourDecimalPlaces = 1 -> Microsoft.Extensions.AI.DecisionPrecision
+[MEAI001]Microsoft.Extensions.AI.DecisionPrecision.HighPrecision = 0 -> Microsoft.Extensions.AI.DecisionPrecision
+[MEAI001]Microsoft.Extensions.AI.DecisionPrecision.TwoDecimalPlaces = 2 -> Microsoft.Extensions.AI.DecisionPrecision
+[MEAI001]Microsoft.Extensions.AI.DecisionProbability
+[MEAI001]Microsoft.Extensions.AI.DecisionProbability.DecisionProbability(string! id, double value) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionProbability.Id.get -> string!
+[MEAI001]Microsoft.Extensions.AI.DecisionProbability.Value.get -> double
+[MEAI001]Microsoft.Extensions.AI.DecisionProtocolException
+[MEAI001]Microsoft.Extensions.AI.DecisionProtocolException.DecisionProtocolException() -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionProtocolException.DecisionProtocolException(string! message) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionProtocolException.DecisionProtocolException(string! message, System.Exception! innerException) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionProvenance
+[MEAI001]Microsoft.Extensions.AI.DecisionProvenance.DecisionProvenance(string? providerName = null, System.Uri? providerUri = null, string? modelId = null, string? responseId = null, Microsoft.Extensions.AI.DecisionPrecision? precision = null) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionProvenance.ModelId.get -> string?
+[MEAI001]Microsoft.Extensions.AI.DecisionProvenance.Precision.get -> Microsoft.Extensions.AI.DecisionPrecision?
+[MEAI001]Microsoft.Extensions.AI.DecisionProvenance.ProviderName.get -> string?
+[MEAI001]Microsoft.Extensions.AI.DecisionProvenance.ProviderUri.get -> System.Uri?
+[MEAI001]Microsoft.Extensions.AI.DecisionProvenance.ResponseId.get -> string?
+[MEAI001]Microsoft.Extensions.AI.DecisionQuestion
+[MEAI001]Microsoft.Extensions.AI.DecisionQuestion.Id.get -> string!
+[MEAI001]Microsoft.Extensions.AI.DecisionQuestion.Instructions.get -> string!
+[MEAI001]Microsoft.Extensions.AI.DecisionQuestion.Kind.get -> Microsoft.Extensions.AI.DecisionKind
+[MEAI001]Microsoft.Extensions.AI.DecisionRequest
+[MEAI001]Microsoft.Extensions.AI.DecisionRequest.DecisionRequest(System.Text.Json.JsonElement state, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionQuestion!>! questions) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionRequest.Questions.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionQuestion!>!
+[MEAI001]Microsoft.Extensions.AI.DecisionRequest.State.get -> System.Text.Json.JsonElement
+[MEAI001]Microsoft.Extensions.AI.DecisionResponse
+[MEAI001]Microsoft.Extensions.AI.DecisionResponse.AdditionalProperties.get -> System.Collections.Generic.IReadOnlyDictionary<string!, object?>?
+[MEAI001]Microsoft.Extensions.AI.DecisionResponse.Answers.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionAnswer!>!
+[MEAI001]Microsoft.Extensions.AI.DecisionResponse.DecisionResponse(Microsoft.Extensions.AI.DecisionRequest! request, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionAnswer!>! answers, Microsoft.Extensions.AI.DecisionProvenance? provenance = null, Microsoft.Extensions.AI.UsageDetails? usage = null, object? rawRepresentation = null, System.Collections.Generic.IReadOnlyDictionary<string!, object?>? additionalProperties = null) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionResponse.GetAnswer(string! questionId) -> Microsoft.Extensions.AI.DecisionAnswer!
+[MEAI001]Microsoft.Extensions.AI.DecisionResponse.Provenance.get -> Microsoft.Extensions.AI.DecisionProvenance?
+[MEAI001]Microsoft.Extensions.AI.DecisionResponse.RawRepresentation.get -> object?
+[MEAI001]Microsoft.Extensions.AI.DecisionResponse.Request.get -> Microsoft.Extensions.AI.DecisionRequest!
+[MEAI001]Microsoft.Extensions.AI.DecisionResponse.Usage.get -> Microsoft.Extensions.AI.UsageDetails?
+[MEAI001]Microsoft.Extensions.AI.DecisionResponse<TResult>
+[MEAI001]Microsoft.Extensions.AI.DecisionResponse<TResult>.Evidence.get -> Microsoft.Extensions.AI.DecisionResponse!
+[MEAI001]Microsoft.Extensions.AI.DecisionResponse<TResult>.GetDistribution<TEnum>(System.Linq.Expressions.Expression<System.Func<TResult, TEnum>!>! selector) -> System.Collections.Generic.IReadOnlyDictionary<TEnum, double>!
+[MEAI001]Microsoft.Extensions.AI.DecisionResponse<TResult>.Result.get -> TResult
+[MEAI001]Microsoft.Extensions.AI.DecisionResultBinding<TResult>
+[MEAI001]Microsoft.Extensions.AI.DecisionResultBinding<TResult>.DecisionResultBinding(System.Text.Json.Serialization.Metadata.JsonTypeInfo<TResult>! resultTypeInfo, System.Func<Microsoft.Extensions.AI.DecisionAnswerSet!, TResult>! map) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionResultBinding<TResult>.ResultTypeInfo.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<TResult>!
+[MEAI001]Microsoft.Extensions.AI.DecisionScoreLevel
+[MEAI001]Microsoft.Extensions.AI.DecisionScoreLevel.DecisionScoreLevel(string! id, string! description) -> void
+[MEAI001]Microsoft.Extensions.AI.DecisionScoreLevel.Description.get -> string!
+[MEAI001]Microsoft.Extensions.AI.DecisionScoreLevel.Id.get -> string!
+[MEAI001]Microsoft.Extensions.AI.IDecisionClient
+[MEAI001]Microsoft.Extensions.AI.IDecisionClient.GetResponseAsync(Microsoft.Extensions.AI.DecisionRequest! request, Microsoft.Extensions.AI.DecisionOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.DecisionResponse!>!
+[MEAI001]Microsoft.Extensions.AI.IDecisionClient.GetService(System.Type! serviceType, object? serviceKey = null) -> object?
+[MEAI001]Microsoft.Extensions.AI.ScoreDecisionAnswer
+[MEAI001]Microsoft.Extensions.AI.ScoreDecisionAnswer.ExpectedScore.get -> double
+[MEAI001]Microsoft.Extensions.AI.ScoreDecisionAnswer.Probabilities.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionProbability!>!
+[MEAI001]Microsoft.Extensions.AI.ScoreDecisionAnswer.Score.get -> double?
+[MEAI001]Microsoft.Extensions.AI.ScoreDecisionAnswer.ScoreDecisionAnswer(string! questionId, double? score, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionProbability!>! probabilities, Microsoft.Extensions.AI.DecisionPrecision precision = Microsoft.Extensions.AI.DecisionPrecision.HighPrecision, object? rawRepresentation = null, System.Collections.Generic.IReadOnlyDictionary<string!, object?>? additionalProperties = null) -> void
+[MEAI001]Microsoft.Extensions.AI.ScoreDecisionQuestion
+[MEAI001]Microsoft.Extensions.AI.ScoreDecisionQuestion.Levels.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionScoreLevel!>!
+[MEAI001]Microsoft.Extensions.AI.ScoreDecisionQuestion.ScoreDecisionQuestion(string! id, string? instructions, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DecisionScoreLevel!>! levels) -> void
+[MEAI001]static Microsoft.Extensions.AI.DecisionBindingExtensions.Bind<TResult>(this Microsoft.Extensions.AI.DecisionResponse! response, Microsoft.Extensions.AI.DecisionResultBinding<TResult>! binding) -> TResult
+[MEAI001]static Microsoft.Extensions.AI.DecisionClientExtensions.GetResponseAsync<TResult>(this Microsoft.Extensions.AI.IDecisionClient! client, System.Text.Json.JsonElement state, Microsoft.Extensions.AI.DecisionDefinition<TResult>! definition, Microsoft.Extensions.AI.DecisionOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.DecisionResponse<TResult>!>!
+[MEAI001]static Microsoft.Extensions.AI.DecisionClientExtensions.GetResponseAsync<TState, TResult>(this Microsoft.Extensions.AI.IDecisionClient! client, TState state, Microsoft.Extensions.AI.DecisionDefinition<TResult>! definition, Microsoft.Extensions.AI.DecisionOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.DecisionResponse<TResult>!>!
+[MEAI001]static Microsoft.Extensions.AI.DecisionClientExtensions.GetResponseAsync<TState, TResult>(this Microsoft.Extensions.AI.IDecisionClient! client, TState state, System.Text.Json.Serialization.Metadata.JsonTypeInfo<TState>! stateTypeInfo, Microsoft.Extensions.AI.DecisionDefinition<TResult>! definition, Microsoft.Extensions.AI.DecisionOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.DecisionResponse<TResult>!>!
+[MEAI001]static Microsoft.Extensions.AI.DecisionClientExtensions.GetResponseAsync<TState>(this Microsoft.Extensions.AI.IDecisionClient! client, TState state, System.Text.Json.Serialization.Metadata.JsonTypeInfo<TState>! stateTypeInfo, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.DecisionQuestion!>! questions, Microsoft.Extensions.AI.DecisionOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.DecisionResponse!>!
+[MEAI001]static Microsoft.Extensions.AI.DecisionClientExtensions.GetService<TService>(this Microsoft.Extensions.AI.IDecisionClient! client, object? serviceKey = null) -> TService?
+[MEAI001]static Microsoft.Extensions.AI.DecisionDefinition<TResult>.Create(System.Action<Microsoft.Extensions.AI.DecisionDefinition<TResult>.Builder!>! configure, System.Text.Json.JsonSerializerOptions? serializerOptions = null) -> Microsoft.Extensions.AI.DecisionDefinition<TResult>!
+[MEAI001]static Microsoft.Extensions.AI.DecisionDefinition<TResult>.Create(System.Text.Json.Serialization.Metadata.JsonTypeInfo<TResult>! resultTypeInfo, System.Action<Microsoft.Extensions.AI.DecisionDefinition<TResult>.Builder!>! configure) -> Microsoft.Extensions.AI.DecisionDefinition<TResult>!
+[MEAI001]static Microsoft.Extensions.AI.DecisionFeatureProjection.Project(Microsoft.Extensions.AI.DecisionResponse! response, Microsoft.Extensions.AI.DecisionFeatureSchema! schema) -> Microsoft.Extensions.AI.DecisionFeatureVector!
+[MEAI001]static Microsoft.Extensions.AI.DecisionRequest.Create<TState>(TState state, System.Text.Json.Serialization.Metadata.JsonTypeInfo<TState>! stateTypeInfo, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.DecisionQuestion!>! questions) -> Microsoft.Extensions.AI.DecisionRequest!
+[MEAI001]virtual Microsoft.Extensions.AI.DecisionOptions.Clone() -> Microsoft.Extensions.AI.DecisionOptions!

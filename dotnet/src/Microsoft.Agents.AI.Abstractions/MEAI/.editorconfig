@@ -1,0 +1,22 @@
+# These files are a verbatim copy of the decision API proposed for Microsoft.Extensions.AI. The rules below keep them
+# compiling unchanged, so the copy can be diffed against the upstream source and deleted when Microsoft.Extensions.AI
+# ships the API. See README.md.
+
+[*.cs]
+# The upstream code uses the upstream style and file header.
+dotnet_style_qualification_for_field = false:none
+dotnet_style_qualification_for_property = false:none
+dotnet_style_qualification_for_method = false:none
+dotnet_style_qualification_for_event = false:none
+dotnet_diagnostic.IDE0001.severity = none
+dotnet_diagnostic.IDE0009.severity = none
+dotnet_diagnostic.IDE0073.severity = none
+dotnet_diagnostic.RCS1146.severity = none
+dotnet_diagnostic.RCS1173.severity = none
+
+# Upstream marks every public type experimental, and the internal helper types that use them do not repeat the attribute.
+dotnet_diagnostic.MEAI001.severity = none
+
+# The overload shapes are the upstream API, which the MEAI API review owns.
+dotnet_diagnostic.RS0026.severity = none
+dotnet_diagnostic.RS0027.severity = none

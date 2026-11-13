@@ -8,6 +8,11 @@ namespace Microsoft.Shared.DiagnosticIds;
 internal static class DiagnosticIds
 {
     /// <summary>
+    ///  The help link format of the MEAI diagnostics, which <see cref="Experiments"/> reuses for MEAI experiment IDs.
+    /// </summary>
+    internal const string UrlFormat = "https://aka.ms/dotnet-extensions-warnings/{0}";
+
+    /// <summary>
     ///  Experiments supported by this repo.
     /// </summary>
     internal static class Experiments
@@ -25,6 +30,7 @@ internal static class DiagnosticIds
         internal const string AIMcpServers = MEAIExperiments;
         internal const string AIFunctionApprovals = MEAIExperiments;
         internal const string AIOpenAIRequestPolicies = MEAIExperiments;
+        internal const string AIDecisions = MEAIExperiments;
 
         // These diagnostic IDs are defined by the OpenAI package for its experimental APIs.
         // We use the same IDs so consumers do not need to suppress additional diagnostics

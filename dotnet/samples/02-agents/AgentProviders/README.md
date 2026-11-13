@@ -94,6 +94,14 @@ covering basics, function tools, structured output, middleware, MCP, code interp
 | [Conversation](./openai/Agent_OpenAI_Step05_Conversation/) | Multi-turn conversations with OpenAI |
 | [Code Interpreter](./openai/Agent_OpenAI_Step06_CodeInterpreterFileDownload/) | Code interpreter with file downloads |
 
+### [TypeSafe](./typesafe/)
+
+| Sample | Description |
+| --- | --- |
+| [Loop judge](./typesafe/Agent_TypeSafe_Step01_LoopJudge/) | Use Jev as the judge of a LoopAgent, through an IDecisionClient and a typed decision definition |
+| [Decision tool](./typesafe/Agent_TypeSafe_Step02_DecisionTool/) | Give an agent a decision as a tool with `DecisionDefinition.AsAIFunction`, and answer it with Jev or a local decision client |
+| [Decision routing](./typesafe/Agent_TypeSafe_Step03_DecisionRouting/) | Route each request of an agent to a fast or a reasoning model, with Jev choosing the route through `RoutingChatClient` |
+
 ## Running the samples
 
 Navigate to a sample directory and run:

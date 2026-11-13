@@ -82,6 +82,7 @@ routes:
   - { path: dotnet/src/Microsoft.Agents.AI.OpenAI/, owner: rogerbarreto, labels: [agents] }
   - { path: dotnet/src/Microsoft.Agents.AI.Purview/, owner: westey-m, labels: [security] }
   - { path: dotnet/src/Microsoft.Agents.AI.Tools.Shell/, owner: westey-m, labels: [agents] }
+  - { path: dotnet/src/Microsoft.Agents.AI.TypeSafe/, owner: rogerbarreto, labels: [agents] }
   - { path: dotnet/src/Microsoft.Agents.AI.Valkey/, owner: westey-m, labels: [] }
   - { path: dotnet/src/Microsoft.Agents.AI.Workflows/, owner: baywet, labels: [] }
   - { path: dotnet/src/Microsoft.Agents.AI.Workflows.Declarative/, owner: baywet, labels: [] }
