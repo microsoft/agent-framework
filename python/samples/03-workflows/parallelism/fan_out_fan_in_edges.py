@@ -7,7 +7,7 @@ from typing import Never
 
 from agent_framework import (
     Agent,
-    AgentExecutor,  # Wraps a ChatAgent as an Executor for use in workflows
+    AgentExecutor,  # Wraps an Agent as an Executor for use in workflows
     AgentExecutorRequest,  # The message bundle sent to an AgentExecutor
     AgentExecutorResponse,  # The structured result returned by an AgentExecutor
     AgentResponseUpdate,

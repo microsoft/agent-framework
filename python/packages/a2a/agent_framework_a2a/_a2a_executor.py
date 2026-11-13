@@ -64,7 +64,7 @@ class A2AExecutor(AgentExecutor):
             from a2a.server.tasks import InMemoryTaskStore
             from a2a.types import AgentCapabilities, AgentCard, AgentInterface
             from agent_framework.a2a import A2AExecutor
-            from agent_framework.openai import OpenAIResponsesClient
+            from agent_framework.openai import OpenAIChatClient
             from starlette.applications import Starlette
 
             public_agent_card = AgentCard(
@@ -81,7 +81,7 @@ class A2AExecutor(AgentExecutor):
             )
 
             # Create an agent
-            agent = OpenAIResponsesClient().as_agent(
+            agent = OpenAIChatClient().as_agent(
                 name="Food Agent",
                 instructions="A simple agent that provides food-related information.",
             )
