@@ -30,6 +30,10 @@ from agent_framework.monty import (
 
 `MontyCodeActProvider` and `MontyExecuteCodeTool` both accept:
 - `tools` — host tool callables / `FunctionTool`s
+- `additional_properties` — metadata copied onto the outer `execute_code`
+  FunctionTool and each run snapshot. It can define one coarse FIDES policy
+  for the complete CodeAct result; it does not enforce nested host-tool calls
+  or intermediate values.
 - `approval_mode` — `"never_require"` (default) or `"always_require"`
 - `workspace_root` — host directory auto-mounted at `/input`
   (mirrors `HyperlightCodeActProvider.workspace_root`)

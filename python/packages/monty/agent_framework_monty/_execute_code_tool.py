@@ -18,6 +18,7 @@ import mimetypes
 import os
 import stat
 from collections.abc import Callable, Iterator, Sequence
+from copy import deepcopy
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
@@ -49,6 +50,7 @@ _FIDES_TOOL_PROPERTY_KEYS = frozenset({
     "standing_guidance",
     "agent_framework.security.principals",
     "_agent_framework_internal_security_tool",
+    "_mcp_server_ifc_policy",
     "_mcp_trust_server_ifc",
 })
 
@@ -190,6 +192,8 @@ def _make_tool_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
     Returns the raw native value (no ``Content`` wrapping) so the Monty interpreter
     receives real Python objects. ``FunctionTool.invoke`` accepts direct keyword
     arguments and handles both sync and async underlying functions internally.
+    The raw path deliberately bypasses adapters that attach labels after
+    ``Content`` normalization.
     """
     return partial(tool_obj.invoke, skip_parsing=True)
 
@@ -216,7 +220,8 @@ def _warn_unsupported_fides_tools(
             logger.warning(
                 "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
                 "through function middleware for calls made inside generated code. "
-                "Keep FIDES-dependent tools as direct agent tools.",
+                "Keep FIDES-dependent tools as direct agent tools, or label the outer execute_code result "
+                "with CodeAct additional_properties for coarse-grained handling.",
                 tool_obj.name,
             )
 
@@ -262,6 +267,10 @@ class MontyExecuteCodeTool(FunctionTool):
     loop, so no internal locking is needed.
 
     Keyword Args:
+        additional_properties: Metadata applied only to the outer ``execute_code``
+            FunctionTool. The mapping is deep-copied at construction and for each
+            run snapshot. It can define one coarse FIDES policy for the complete
+            CodeAct result; it does not label or enforce nested host-tool calls.
         include_detailed_errors: Include host exception types/messages and execution error details.
             Defaults to ``False``. Enable only for a trusted channel; diagnostics can contain secrets.
             This setting is independent of the outer client's error and sensitive-logging settings.
@@ -271,6 +280,7 @@ class MontyExecuteCodeTool(FunctionTool):
         self,
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
         approval_mode: ApprovalMode | None = None,
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
@@ -287,6 +297,7 @@ class MontyExecuteCodeTool(FunctionTool):
             approval_mode="never_require",
             func=self._run_code,
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
+            additional_properties=deepcopy(additional_properties),
         )
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
         self._include_detailed_errors = include_detailed_errors
@@ -417,6 +428,7 @@ class MontyExecuteCodeTool(FunctionTool):
         return MontyExecuteCodeTool(
             _fides_warned_metadata=self._fides_warned_metadata,
             tools=tools,
+            additional_properties=deepcopy(self.additional_properties),
             approval_mode=self._default_approval_mode,
             workspace_root=self._workspace_root,
             file_mounts=list(self._file_mounts.values()) or None,
