@@ -9,7 +9,7 @@ import inspect
 import json
 import logging
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableSequence, Sequence
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -1962,7 +1962,8 @@ async def test_chat_agent_as_tool_auto_approves_child_tool_with_middleware() -> 
     assert result[0].text == "The weather is cloudy."
 
 
-async def test_chat_agent_as_tool_fails_closed_for_unresolved_child_approval() -> None:
+@pytest.mark.parametrize("custom_return_mode", [False, True])
+async def test_chat_agent_as_tool_fails_closed_for_unresolved_child_approval(custom_return_mode: bool) -> None:
     """Test that an unresolved child approval cannot escape into the caller's tool registry."""
     executions = 0
 
@@ -1993,6 +1994,11 @@ async def test_chat_agent_as_tool_fails_closed_for_unresolved_child_approval() -
         tools=[delete_weather_data],
         middleware=[ToolApprovalMiddleware(auto_approval_rules=[lambda function_call: False])],
     )
+    extracted_responses: list[AgentResponse] = []
+
+    def extract_result(response: AgentResponse) -> str:
+        extracted_responses.append(response)
+        return "Approval must not be hidden"
 
     with raises(
         ToolExecutionException,
@@ -2001,9 +2007,12 @@ async def test_chat_agent_as_tool_fails_closed_for_unresolved_child_approval() -
             "ToolApprovalMiddleware.*Use a workflow for interactive, delayed, or durable approval"
         ),
     ):
-        await agent.as_tool().invoke(arguments={"task": "Delete weather data"})
+        await agent.as_tool(return_mode=extract_result if custom_return_mode else "all").invoke(
+            arguments={"task": "Delete weather data"}
+        )
 
     assert executions == 0
+    assert extracted_responses == []
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -2205,6 +2214,114 @@ async def test_chat_agent_as_tool_preserves_non_approval_requests_from_mixed_chi
     tool_approval_state = parent_session.state.get("tool_approval", {})
     assert isinstance(tool_approval_state, dict)
     assert not tool_approval_state.get("pending_approval_requests")
+
+
+@pytest.mark.parametrize("with_stream_callback", [False, True])
+@pytest.mark.parametrize(
+    ("return_mode", "expected"),
+    [
+        ("all", "Searching...Final answer"),
+        ("last", "Final answer"),
+        (
+            lambda response: f"{len(response.messages)} messages: {response.messages[0].text}",
+            "3 messages: Searching...",
+        ),
+    ],
+    ids=["all", "last", "callable"],
+)
+async def test_chat_agent_as_tool_return_mode(
+    return_mode: Literal["all", "last"] | Callable[[AgentResponse], str],
+    expected: str,
+    with_stream_callback: bool,
+) -> None:
+    client = MockBaseChatClient()
+    client.streaming_responses = [
+        [
+            ChatResponseUpdate(role="assistant", message_id="progress", contents=[Content.from_text("Searching...")]),
+            ChatResponseUpdate(role="assistant", message_id="answer", contents=[Content.from_text("Final answer")]),
+            ChatResponseUpdate(
+                role="tool", message_id="result", contents=[Content.from_function_result("call", result="Tool output")]
+            ),
+        ]
+    ]
+    agent = Agent(client=client, name="ChildAgent")
+    updates: list[AgentResponseUpdate] = []
+    agent_tool = agent.as_tool(
+        return_mode=return_mode,
+        stream_callback=updates.append if with_stream_callback else None,
+    )
+
+    result = await agent_tool.invoke(arguments={"task": "Find an answer"})
+
+    assert isinstance(result, list)
+    assert result[0].text == expected
+    assert set(agent_tool.parameters()["properties"]) == {"task"}
+    assert client.call_count == 1
+    if with_stream_callback:
+        assert "".join(update.text for update in updates) == "Searching...Final answer"
+        assert any(content.type == "function_result" for update in updates for content in update.contents)
+    else:
+        assert updates == []
+
+
+@pytest.mark.parametrize(
+    "response_updates",
+    [
+        [],
+        [ChatResponseUpdate(role="tool", contents=[Content.from_function_result("call", result="Tool output")])],
+        [
+            ChatResponseUpdate(role="assistant", message_id="progress", contents=[Content.from_text("Searching...")]),
+            ChatResponseUpdate(role="assistant", message_id="answer", contents=[Content.from_text("")]),
+        ],
+        [
+            ChatResponseUpdate(role="assistant", message_id="progress", contents=[Content.from_text("Searching...")]),
+            ChatResponseUpdate(
+                role="assistant", message_id="answer", contents=[Content.from_text_reasoning(text="Reasoning only")]
+            ),
+        ],
+    ],
+    ids=["empty-response", "no-assistant", "empty-final-assistant", "non-text-final-assistant"],
+)
+async def test_chat_agent_as_tool_return_last_without_final_text(response_updates: list[ChatResponseUpdate]) -> None:
+    client = MockBaseChatClient()
+    client.streaming_responses = [response_updates]
+    agent = Agent(client=client, name="ChildAgent")
+
+    result = await agent.as_tool(return_mode="last").invoke(arguments={"task": "Find an answer"})
+
+    assert isinstance(result, list)
+    assert result[0].text == ""
+
+
+@pytest.mark.parametrize("return_mode", ["unknown", "LAST", None, 0])
+def test_chat_agent_as_tool_rejects_invalid_return_mode(return_mode: Any) -> None:
+    client = MockBaseChatClient()
+    agent = Agent(client=client, name="ChildAgent")
+
+    with raises(ValueError, match="return_mode must be"):
+        agent.as_tool(return_mode=return_mode)
+
+    assert client.call_count == 0
+
+
+async def test_chat_agent_as_tool_rejects_non_string_extraction() -> None:
+    agent = Agent(client=MockBaseChatClient(), name="ChildAgent")
+
+    def extract_result(response: AgentResponse) -> Any:
+        return 42
+
+    with raises(TypeError, match="return_mode callable must return a str"):
+        await agent.as_tool(return_mode=extract_result).invoke(arguments={"task": "Find an answer"})
+
+
+async def test_chat_agent_as_tool_propagates_extraction_error() -> None:
+    agent = Agent(client=MockBaseChatClient(), name="ChildAgent")
+
+    def extract_result(response: AgentResponse) -> str:
+        raise ValueError("Extraction failed")
+
+    with raises(ValueError, match="Extraction failed"):
+        await agent.as_tool(return_mode=extract_result).invoke(arguments={"task": "Find an answer"})
 
 
 async def test_chat_agent_as_tool_with_stream_callback(
@@ -5140,7 +5257,8 @@ async def test_shared_local_storage_cross_provider_responses_history_does_not_le
 # region as_tool user_input_request propagation
 
 
-async def test_as_tool_raises_on_user_input_request(client: SupportsChatGetResponse) -> None:
+@pytest.mark.parametrize("custom_return_mode", [False, True])
+async def test_as_tool_raises_on_user_input_request(client: SupportsChatGetResponse, custom_return_mode: bool) -> None:
     """Test that as_tool raises when the wrapped sub-agent requests user input."""
     from agent_framework.exceptions import UserInputRequiredException
 
@@ -5152,7 +5270,13 @@ async def test_as_tool_raises_on_user_input_request(client: SupportsChatGetRespo
     ]
 
     agent = Agent(client=client, name="OAuthAgent", description="Agent requiring consent")
-    agent_tool = agent.as_tool()
+    extracted_responses: list[AgentResponse] = []
+
+    def extract_result(response: AgentResponse) -> str:
+        extracted_responses.append(response)
+        return "Consent must not be hidden"
+
+    agent_tool = agent.as_tool(return_mode=extract_result if custom_return_mode else "all")
 
     with raises(UserInputRequiredException) as exc_info:
         await agent_tool.invoke(arguments={"task": "Do something"})
@@ -5160,6 +5284,7 @@ async def test_as_tool_raises_on_user_input_request(client: SupportsChatGetRespo
     assert len(exc_info.value.contents) == 1
     assert exc_info.value.contents[0].type == "oauth_consent_request"
     assert exc_info.value.contents[0].consent_link == "https://login.microsoftonline.com/consent"
+    assert extracted_responses == []
 
 
 # region Per-service-call history persistence scenario matrix

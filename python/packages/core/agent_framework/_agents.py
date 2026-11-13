@@ -671,6 +671,7 @@ class BaseAgent(SerializationMixin):
         approval_mode: Literal["always_require", "never_require"] = "never_require",
         stream_callback: Callable[[AgentResponseUpdate], Awaitable[None] | None] | None = None,
         propagate_session: bool = False,
+        return_mode: Literal["all", "last"] | Callable[[AgentResponse], str] = "all",
     ) -> FunctionTool:
         """Create a FunctionTool that wraps this agent.
 
@@ -681,7 +682,8 @@ class BaseAgent(SerializationMixin):
             arg_description: The description for the function argument.
                 If None, defaults to "Task for {tool_name}".
             approval_mode: Whether this delegated tool requires approval before execution.
-            stream_callback: Optional callback for streaming responses. If provided, uses run(..., stream=True).
+            stream_callback: Optional observer for streaming child-agent responses. Receives all updates regardless
+                of return_mode.
             propagate_session: If True, the parent agent's session is forwarded
                 to this sub-agent's ``run()`` call. Application-state changes
                 propagate back to the parent, while framework approval continuation
@@ -689,6 +691,11 @@ class BaseAgent(SerializationMixin):
                 Defaults to False. The sub-agent always receives an AgentSession
                 so session-backed middleware can run. When False, that session is
                 private to this invocation.
+            return_mode: How to extract the completed tool result. "all" (default) returns the response's
+                concatenated text. "last" returns the last assistant message's text, or an empty string if no
+                assistant message exists. An empty or non-text final assistant message does not fall back to
+                earlier text. A synchronous callable receives the complete AgentResponse and must return a str.
+                Pending human-input requests retain their existing behavior and are not passed to the callable.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
@@ -723,6 +730,9 @@ class BaseAgent(SerializationMixin):
                 # Convert the agent to a tool (independent session)
                 research_tool = agent.as_tool()
 
+                # Return only the final assistant message to the coordinator
+                research_tool = agent.as_tool(return_mode="last")
+
                 # Convert the agent to a tool (shared session with parent)
                 research_tool = agent.as_tool(propagate_session=True)
 
@@ -732,6 +742,9 @@ class BaseAgent(SerializationMixin):
         # Verify that self implements SupportsAgentRun
         if not isinstance(self, SupportsAgentRun):
             raise TypeError(f"Agent {self.__class__.__name__} must implement SupportsAgentRun to be used as a tool")
+
+        if not callable(return_mode) and return_mode not in ("all", "last"):
+            raise ValueError('return_mode must be "all", "last", or a synchronous callable returning str.')
 
         tool_name = name or _sanitize_agent_name(self.name)
         if tool_name is None:
@@ -874,6 +887,16 @@ class BaseAgent(SerializationMixin):
                     raise ToolExecutionException(approval_error)
                 if other_input_requests:
                     raise UserInputRequiredException(contents=other_input_requests)
+                if callable(return_mode):
+                    result = return_mode(final_response)
+                    if not isinstance(result, str):
+                        raise TypeError("return_mode callable must return a str.")
+                    return result
+                if return_mode == "last":
+                    return next(
+                        (message.text for message in reversed(final_response.messages) if message.role == "assistant"),
+                        "",
+                    )
                 # TODO(Copilot): update once #4331 merges
                 return final_response.text
             finally:
