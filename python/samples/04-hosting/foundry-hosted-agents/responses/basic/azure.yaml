@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: agent-framework-agent-basic-responses
+services:
+  ai-project:
+    host: azure.ai.project
+  agent-framework-agent-basic-responses:
+    project: .
+    host: azure.ai.agent
+    language: docker
+    docker:
+      remoteBuild: true
+    uses:
+      - ai-project
+    container:
+      resources:
+        cpu: "0.25"
+        memory: 0.5Gi
+    description: >
+      A basic Agent Framework agent hosted by Foundry.
+    environmentVariables:
+      - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+        value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+    kind: hosted
+    metadata:
+      tags:
+        - Agent Framework
+        - AI Agent Hosting
+        - Azure AI AgentServer
+        - Responses Protocol
+        - Streaming
+    name: agent-framework-agent-basic-responses
+    protocols:
+      - protocol: responses
+        version: 2.0.0
+infra:
+  provider: microsoft.foundry
