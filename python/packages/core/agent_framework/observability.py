@@ -347,6 +347,9 @@ class OtelAttr(str, Enum):
     MCP_METHOD_NAME = "mcp.method.name"
     MCP_PROTOCOL_VERSION = "mcp.protocol.version"
     MCP_SESSION_ID = "mcp.session.id"
+    # Identity of the MCP server an MCP-served tool call was routed to (set on execute_tool spans).
+    TOOL_SERVER_NAME = "microsoft.tool.server.name"
+    URL_FULL = "url.full"
     PROMPT_NAME = "gen_ai.prompt.name"
     NETWORK_TRANSPORT = "network.transport"
     NETWORK_PROTOCOL_NAME = "network.protocol.name"
@@ -2700,6 +2703,14 @@ class AgentTelemetryLayer:
 # region Otel Helpers
 
 
+# ``FunctionTool.additional_properties`` keys under which an MCP-served function carries the identity of the
+# MCP server it calls. ``get_function_span_attributes`` reads them to stamp ``microsoft.tool.server.name`` and
+# ``url.full`` on the ``execute_tool`` span. The URL is stored already stripped of credentials and query string;
+# its path is dropped at emit time unless sensitive-data capture is enabled.
+MCP_SERVER_NAME_PROPERTY = "_mcp_server_name"
+MCP_SERVER_URL_PROPERTY = "_mcp_server_url"
+
+
 def get_function_span_attributes(function: FunctionTool, tool_call_id: str | None = None) -> dict[str, str]:
     """Get the span attributes for the given function.
 
@@ -2718,7 +2729,24 @@ def get_function_span_attributes(function: FunctionTool, tool_call_id: str | Non
     }
     if function.description:
         attributes[OtelAttr.TOOL_DESCRIPTION] = function.description
+    properties = function.additional_properties or {}
+    server_name = properties.get(MCP_SERVER_NAME_PROPERTY)
+    if isinstance(server_name, str) and server_name:
+        attributes[OtelAttr.TOOL_SERVER_NAME] = server_name
+    server_url = properties.get(MCP_SERVER_URL_PROPERTY)
+    if isinstance(server_url, str) and server_url:
+        # The path can embed credentials (for example ``/token/<secret>/mcp``), so it is only emitted when
+        # sensitive-data capture is enabled. Otherwise only scheme, host and port are recorded.
+        if not OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+            server_url = _strip_url_path(server_url)
+        attributes[OtelAttr.URL_FULL] = server_url
     return attributes
+
+
+def _strip_url_path(url: str) -> str:
+    """Return ``scheme://host[:port]`` for an already sanitized http(s) URL."""
+    parts = urlparse(url)
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 def get_function_span(
