@@ -4,13 +4,18 @@
 
 using A2A;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.A2A;
 
 // Initialize an A2ACardResolver to discover the policy agent.
 var agentUrl = Environment.GetEnvironmentVariable("A2A_AGENT_URL") ?? "http://localhost:5000/";
 var agentCardResolver = new A2ACardResolver(new Uri(agentUrl));
 
+// Agent cards may only point to https addresses by default. Accept plain http only when the configured
+// agent address itself uses it, for example during local development.
+A2AAgentOptions agentOptions = new() { AllowAgentCardHostsInsecureHttp = agentUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) };
+
 // Create an AIAgent from the A2A agent card.
-AIAgent policyAgent = await agentCardResolver.GetAIAgentAsync();
+AIAgent policyAgent = await agentCardResolver.GetAIAgentAsync(agentOptions);
 
 // Create a session so requests share the same A2A protocol context.
 AgentSession session = await policyAgent.CreateSessionAsync();

@@ -26,7 +26,7 @@ public sealed class AgentCardExtensionsTests
         {
             Name = "Test Agent",
             Description = "A test agent for unit testing",
-            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+            SupportedInterfaces = [new AgentInterface { Url = "https://test-endpoint/agent" }]
         };
     }
 
@@ -63,7 +63,7 @@ public sealed class AgentCardExtensionsTests
 
         // Assert
         Assert.Single(handler.CapturedUris);
-        Assert.Equal(new Uri("http://test-endpoint/agent"), handler.CapturedUris[0]);
+        Assert.Equal(new Uri("https://test-endpoint/agent"), handler.CapturedUris[0]);
     }
 
     [Fact]
@@ -76,8 +76,8 @@ public sealed class AgentCardExtensionsTests
             Description = "An agent with multiple interfaces",
             SupportedInterfaces =
             [
-                new AgentInterface { Url = "http://first/agent", ProtocolBinding = ProtocolBindingNames.HttpJson },
-                new AgentInterface { Url = "http://second/agent", ProtocolBinding = ProtocolBindingNames.JsonRpc },
+                new AgentInterface { Url = "https://first/agent", ProtocolBinding = ProtocolBindingNames.HttpJson },
+                new AgentInterface { Url = "https://second/agent", ProtocolBinding = ProtocolBindingNames.JsonRpc },
             ]
         };
 
@@ -102,7 +102,7 @@ public sealed class AgentCardExtensionsTests
 
         // Assert
         Assert.Single(handler.CapturedUris);
-        Assert.Equal(new Uri("http://second/agent"), handler.CapturedUris[0]);
+        Assert.Equal(new Uri("https://second/agent"), handler.CapturedUris[0]);
     }
 
     [Fact]
@@ -115,7 +115,7 @@ public sealed class AgentCardExtensionsTests
             Description = "Tests default A2AClientOptions behavior",
             SupportedInterfaces =
             [
-                new AgentInterface { Url = "http://default/agent" },
+                new AgentInterface { Url = "https://default/agent" },
             ]
         };
 
@@ -138,7 +138,7 @@ public sealed class AgentCardExtensionsTests
             Description = "Agent with unsupported binding only",
             SupportedInterfaces =
             [
-                new AgentInterface { Url = "http://grpc/agent", ProtocolBinding = "GRPC" },
+                new AgentInterface { Url = "https://grpc/agent", ProtocolBinding = "GRPC" },
             ]
         };
 
@@ -173,7 +173,7 @@ public sealed class AgentCardExtensionsTests
         {
             Name = "Card Agent",
             Description = "Card description",
-            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+            SupportedInterfaces = [new AgentInterface { Url = "https://test-endpoint/agent" }]
         };
 
         var agentOptions = new A2AAgentOptions
@@ -202,7 +202,7 @@ public sealed class AgentCardExtensionsTests
         {
             Name = "Card Agent",
             Description = "Card description",
-            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+            SupportedInterfaces = [new AgentInterface { Url = "https://test-endpoint/agent" }]
         };
 
         var agentOptions = new A2AAgentOptions
@@ -228,7 +228,7 @@ public sealed class AgentCardExtensionsTests
         {
             Name = "Card Agent",
             Description = "Card description",
-            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+            SupportedInterfaces = [new AgentInterface { Url = "https://test-endpoint/agent" }]
         };
 
         // Act
@@ -238,6 +238,156 @@ public sealed class AgentCardExtensionsTests
         Assert.NotNull(agent);
         Assert.Equal("Card Agent", agent.Name);
         Assert.Equal("Card description", agent.Description);
+    }
+
+    [Theory]
+    [InlineData("http://test-endpoint/agent", false, null)]
+    [InlineData("/relative/agent", true, null)]
+    [InlineData("ftp://test-endpoint/agent", true, null)]
+    [InlineData("https://other-host/agent", false, "test-endpoint")]
+    [InlineData("https://test-endpoint.other-host/agent", false, "test-endpoint")]
+    [InlineData("https://test-endpoint:8443/agent", false, "test-endpoint:443")]
+    public void AsAIAgent_WithOnlyDisallowedAddresses_ThrowsInvalidOperationException(string url, bool allowInsecureHttp, string? allowedHost)
+    {
+        // Arrange
+        var card = new AgentCard
+        {
+            Name = "Card Agent",
+            SupportedInterfaces = [new AgentInterface { Url = url }]
+        };
+
+        var agentOptions = new A2AAgentOptions
+        {
+            AllowAgentCardHostsInsecureHttp = allowInsecureHttp,
+            AgentCardAllowedHosts = allowedHost is null ? null : [allowedHost]
+        };
+
+        // Act & Assert
+        Assert.Throws<InvalidOperationException>(() => card.AsAIAgent(agentOptions));
+    }
+
+    [Fact]
+    public void AsAIAgent_WithEmptyAgentCardAllowedHosts_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var agentOptions = new A2AAgentOptions { AgentCardAllowedHosts = [] };
+
+        // Act & Assert
+        Assert.Throws<InvalidOperationException>(() => this._agentCard.AsAIAgent(agentOptions));
+    }
+
+    [Theory]
+    [InlineData("https://test-endpoint")]
+    [InlineData("*.test-endpoint")]
+    [InlineData("test-endpoint:99999")]
+    [InlineData("test-endpoint/agent")]
+    public void AsAIAgent_WithInvalidAgentCardAllowedHostsEntry_ThrowsArgumentException(string allowedHost)
+    {
+        // Arrange
+        var agentOptions = new A2AAgentOptions { AgentCardAllowedHosts = [allowedHost] };
+
+        // Act & Assert
+        Assert.Throws<ArgumentException>(() => this._agentCard.AsAIAgent(agentOptions));
+    }
+
+    [Theory]
+    [InlineData("https://trusted-host:8443/agent", "trusted-host", false)]
+    [InlineData("https://trusted-host:8443/agent", "trusted-host:8443", false)]
+    [InlineData("http://trusted-host/agent", "trusted-host", true)]
+    [InlineData("http://trusted-host:5000/agent", "trusted-host:5000", true)]
+    public async Task AsAIAgent_WithAllowedHostAndPort_SendsRequestToAddressAsync(string url, string allowedHost, bool allowInsecureHttp)
+    {
+        // Arrange
+        using var handler = new HttpMessageHandlerStub();
+        using var httpClient = new HttpClient(handler, false);
+
+        handler.ResponsesToReturn.Enqueue(new Message
+        {
+            Role = Role.Agent,
+            Parts = [Part.FromText("Response")],
+        });
+
+        var card = new AgentCard
+        {
+            Name = "Card Agent",
+            SupportedInterfaces = [new AgentInterface { Url = url }]
+        };
+
+        var agentOptions = new A2AAgentOptions
+        {
+            AgentCardAllowedHosts = [allowedHost],
+            AllowAgentCardHostsInsecureHttp = allowInsecureHttp
+        };
+
+        var agent = card.AsAIAgent(agentOptions, httpClient);
+
+        // Act
+        await agent.RunAsync("Test input");
+
+        // Assert
+        Assert.Equal(new Uri(url), Assert.Single(handler.CapturedUris));
+    }
+
+    [Fact]
+    public async Task AsAIAgent_WithAllowAgentCardHostsInsecureHttp_SendsRequestToHttpAddressAsync()
+    {
+        // Arrange
+        using var handler = new HttpMessageHandlerStub();
+        using var httpClient = new HttpClient(handler, false);
+
+        handler.ResponsesToReturn.Enqueue(new Message
+        {
+            Role = Role.Agent,
+            Parts = [Part.FromText("Response")],
+        });
+
+        var card = new AgentCard
+        {
+            Name = "Card Agent",
+            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+        };
+
+        var agent = card.AsAIAgent(new A2AAgentOptions { AllowAgentCardHostsInsecureHttp = true }, httpClient);
+
+        // Act
+        await agent.RunAsync("Test input");
+
+        // Assert
+        Assert.Equal(new Uri("http://test-endpoint/agent"), Assert.Single(handler.CapturedUris));
+    }
+
+    [Fact]
+    public async Task AsAIAgent_WithMixedAddresses_SkipsDisallowedAddressesAsync()
+    {
+        // Arrange
+        using var handler = new HttpMessageHandlerStub();
+        using var httpClient = new HttpClient(handler, false);
+
+        handler.ResponsesToReturn.Enqueue(new Message
+        {
+            Role = Role.Agent,
+            Parts = [Part.FromText("Response")],
+        });
+
+        var card = new AgentCard
+        {
+            Name = "Card Agent",
+            SupportedInterfaces =
+            [
+                new AgentInterface { Url = "http://trusted-host/agent" },
+                new AgentInterface { Url = "https://other-host/agent" },
+                new AgentInterface { Url = "https://Trusted-Host/agent" },
+            ]
+        };
+
+        var agent = card.AsAIAgent(new A2AAgentOptions { AgentCardAllowedHosts = ["trusted-host"] }, httpClient);
+
+        // Act
+        await agent.RunAsync("Test input");
+
+        // Assert
+        Assert.Equal(new Uri("https://trusted-host/agent"), Assert.Single(handler.CapturedUris));
+        Assert.Equal(3, card.SupportedInterfaces.Count);
     }
 
     internal sealed class HttpMessageHandlerStub : HttpMessageHandler

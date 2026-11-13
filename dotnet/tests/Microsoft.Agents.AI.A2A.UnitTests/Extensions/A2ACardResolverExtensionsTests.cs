@@ -26,7 +26,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
     {
         this._handler = new HttpMessageHandlerStub();
         this._httpClient = new HttpClient(this._handler, false);
-        this._resolver = new A2ACardResolver(new Uri("http://test-host"), httpClient: this._httpClient);
+        this._resolver = new A2ACardResolver(new Uri("https://test-host"), httpClient: this._httpClient);
     }
 
     [Fact]
@@ -37,7 +37,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
         {
             Name = "Test Agent",
             Description = "A test agent for unit testing",
-            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+            SupportedInterfaces = [new AgentInterface { Url = "https://test-endpoint/agent" }]
         });
 
         // Act
@@ -52,7 +52,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
 
         // Verify that there was only one request made to retrieve the agent card
         Assert.Single(this._handler.CapturedUris);
-        Assert.StartsWith("http://test-host/", this._handler.CapturedUris[0].ToString());
+        Assert.StartsWith("https://test-host/", this._handler.CapturedUris[0].ToString());
     }
 
     [Fact]
@@ -61,7 +61,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
         // Arrange
         this._handler.ResponsesToReturn.Enqueue(new AgentCard
         {
-            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+            SupportedInterfaces = [new AgentInterface { Url = "https://test-endpoint/agent" }]
         });
         this._handler.ResponsesToReturn.Enqueue(new Message
         {
@@ -76,7 +76,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
 
         // Assert
         Assert.Equal(2, this._handler.CapturedUris.Count); // One for getting the card, one for sending the message to the agent
-        Assert.Equal(new Uri("http://test-endpoint/agent"), this._handler.CapturedUris[1]);
+        Assert.Equal(new Uri("https://test-endpoint/agent"), this._handler.CapturedUris[1]);
     }
 
     [Fact]
@@ -89,8 +89,8 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
             Description = "Agent with multiple interfaces",
             SupportedInterfaces =
             [
-                new AgentInterface { Url = "http://httpjson/agent", ProtocolBinding = ProtocolBindingNames.HttpJson },
-                new AgentInterface { Url = "http://jsonrpc/agent", ProtocolBinding = ProtocolBindingNames.JsonRpc },
+                new AgentInterface { Url = "https://httpjson/agent", ProtocolBinding = ProtocolBindingNames.HttpJson },
+                new AgentInterface { Url = "https://jsonrpc/agent", ProtocolBinding = ProtocolBindingNames.JsonRpc },
             ]
         });
         this._handler.ResponsesToReturn.Enqueue(new Message
@@ -111,7 +111,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
 
         // Assert
         Assert.Equal(2, this._handler.CapturedUris.Count);
-        Assert.Equal(new Uri("http://jsonrpc/agent"), this._handler.CapturedUris[1]);
+        Assert.Equal(new Uri("https://jsonrpc/agent"), this._handler.CapturedUris[1]);
     }
 
     [Fact]
@@ -122,7 +122,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
         {
             Name = "Card Agent",
             Description = "Card description",
-            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+            SupportedInterfaces = [new AgentInterface { Url = "https://test-endpoint/agent" }]
         });
 
         var agentOptions = new A2AAgentOptions
@@ -152,7 +152,7 @@ public sealed class A2ACardResolverExtensionsTests : IDisposable
         {
             Name = "Card Agent",
             Description = "Card description",
-            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
+            SupportedInterfaces = [new AgentInterface { Url = "https://test-endpoint/agent" }]
         });
 
         var agentOptions = new A2AAgentOptions

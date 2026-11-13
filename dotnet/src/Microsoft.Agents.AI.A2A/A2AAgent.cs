@@ -405,13 +405,17 @@ public sealed class A2AAgent : AIAgent
 
     private AgentResponse ConvertToAgentResponse(Message message)
     {
+        // The remote agent chooses the role on the wire; never let its reply surface as anything but an assistant message.
+        var chatMessage = message.ToChatMessage();
+        chatMessage.Role = ChatRole.Assistant;
+
         return new AgentResponse
         {
             AgentId = this.Id,
             ResponseId = message.MessageId,
             FinishReason = ChatFinishReason.Stop,
             RawRepresentation = message,
-            Messages = [message.ToChatMessage()],
+            Messages = [chatMessage],
             AdditionalProperties = message.Metadata?.ToAdditionalProperties(),
         };
     }
