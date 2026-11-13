@@ -59,6 +59,14 @@ public sealed class A2AAgentOptions
     /// When <see langword="null"/> (the default), any host is allowed. An empty list allows no hosts, so every
     /// agent card is rejected.
     /// </para>
+    /// <para>
+    /// Only the addresses listed in the agent card are checked. If the supplied
+    /// <see cref="System.Net.Http.HttpClient"/> follows redirects, requests may be redirected to a host that is not in
+    /// this list. To make sure every request stays on an allowed host, supply an
+    /// <see cref="System.Net.Http.HttpClient"/> with automatic redirects turned off, for example one created with
+    /// <c>new HttpClientHandler { AllowAutoRedirect = false }</c>. The default client used when none is supplied
+    /// follows redirects.
+    /// </para>
     /// </remarks>
     [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public IList<string>? AgentCardAllowedHosts { get; set; }

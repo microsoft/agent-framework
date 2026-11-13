@@ -33,7 +33,8 @@ namespace A2A;
 /// only <c>https</c> addresses are used unless <see cref="A2AAgentOptions.AllowAgentCardHostsInsecureHttp"/> is set. The card may
 /// point to a different host than the one it was fetched from, so set <see cref="A2AAgentOptions.AgentCardAllowedHosts"/>
 /// when the supplied <see cref="HttpClient"/> carries credentials or the card source is untrusted. Setting it is
-/// recommended for any card fetched from an address you do not fully control.
+/// recommended for any card fetched from an address you do not fully control. Only the card's addresses are checked;
+/// turn off automatic redirects on the <see cref="HttpClient"/> if every request must stay on an allowed host.
 /// </para>
 /// </remarks>
 public static class A2ACardResolverExtensions

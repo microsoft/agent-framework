@@ -22,6 +22,8 @@ namespace A2A;
 /// <see cref="A2AAgentOptions.AllowAgentCardHostsInsecureHttp"/> to accept <c>http</c> addresses and
 /// <see cref="A2AAgentOptions.AgentCardAllowedHosts"/> to restrict the hosts a card may point to. Setting
 /// <see cref="A2AAgentOptions.AgentCardAllowedHosts"/> is recommended whenever the card may come from an untrusted source.
+/// Only the card's addresses are checked; redirects are handled by the <see cref="HttpClient"/>, so turn off automatic
+/// redirects on it if every request must stay on an allowed host.
 /// </para>
 /// <para>
 /// To select gRPC, also reference the SDK's <c>A2A.Grpc</c> package,
