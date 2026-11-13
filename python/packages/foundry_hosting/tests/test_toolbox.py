@@ -10,7 +10,7 @@ import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx as host_httpx
@@ -18,6 +18,7 @@ import httpx2 as httpx
 import pytest
 from agent_framework import (
     Agent,
+    AgentSession,
     FunctionInvocationContext,
     MCPStreamableHTTPTool,
     Message,
@@ -31,6 +32,7 @@ from azure.ai.agentserver.core import (
     reset_request_context,
     set_request_context,
 )
+from azure.ai.agentserver.responses import InMemoryResponseProvider
 from mcp.client.session import ClientSession
 from mcp.types import Prompt, Tool
 from pydantic import AnyUrl
@@ -45,8 +47,16 @@ from agent_framework_foundry_hosting._toolbox import (
 )
 
 from .foundry_hosting.toolbox_approval_helpers import (  # pyrefly: ignore[missing-import] - pytest's importlib namespace
+    CONSENT_LINK,
+    ConsentCallerHeaders,
+    ConsentModelServer,
+    ConsentPendingInput,
+    ConsentSessionStoreProvider,
     ToolboxApprovalClient,
     ToolboxApprovalServer,
+    ToolboxConsentServer,
+    consent_model_client,
+    post_consent_response,
     toolbox_connection,
     toolbox_tool,
 )
@@ -1639,3 +1649,438 @@ async def test_caller_can_wrap_the_foundry_metadata_policy() -> None:
         caller_policy.return_value = "always_require"
         await toolbox.load_tools()
         assert toolbox.functions[0].approval_mode == "always_require"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("history_source", ["host_managed", "inference_service"])
+@pytest.mark.parametrize("continuation", ["response", "conversation"])
+async def test_toolbox_oauth_consent_pairs_results_and_continues(
+    stream: bool,
+    history_source: Literal["host_managed", "inference_service"],
+    continuation: str,
+) -> None:
+    mcp = ToolboxConsentServer()
+    model = ConsentModelServer()
+    sessions = ConsentSessionStoreProvider()
+    async with toolbox_connection(mcp) as toolbox, consent_model_client(model) as chat_client:
+        host = ResponsesHostServer(
+            Agent(client=chat_client, tools=toolbox),
+            history_source=history_source,
+            response_store=InMemoryResponseProvider(),
+            agent_session_store_provider=sessions,
+        )
+        payload: dict[str, Any] = {"input": "Run the tools", "stream": stream, "store": True}
+        if continuation == "conversation":
+            payload["conversation"] = "oauth-conversation"
+        first, events = await post_consent_response(host, payload)
+
+        assert first["status"] == "incomplete", first
+        assert [item["consent_link"] for item in first["output"] if item["type"] == "oauth_consent_request"] == [
+            CONSENT_LINK
+        ]
+        calls = [item for item in first["output"] if item["type"] == "function_call"]
+        results = [item for item in first["output"] if item["type"] == "function_call_output"]
+        assert len(calls) == len(results) == 3, first
+        assert [item["call_id"] for item in results] == [item["call_id"] for item in calls]
+        assert results[0]["output"] == "search-result"
+        assert "OAuth consent is required" in results[1]["output"]
+        assert results[2]["output"] == "search-result"
+        assert [call["name"] for call in mcp.calls] == ["learn___completed", "learn___protected", "learn___later"]
+        assert "hidden settlement reply" not in json.dumps(first["output"])
+        if stream:
+            assert (
+                sum(
+                    event["type"] == "response.output_item.done" and event["item"]["type"] == "oauth_consent_request"
+                    for event in events
+                )
+                == 1
+            )
+        saved = await sessions.store.get(first["id"])
+        assert saved is not None
+        if history_source == "inference_service":
+            assert len(model.requests) == 2
+            assert model.requests[1]["tool_choice"] == "none"
+            assert [item["type"] for item in model.requests[1]["input"]] == ["function_call_output"] * 3
+            assert model.requests[1]["input"][0]["output"] == "search-result"
+            assert model.requests[1]["input"][2]["output"] == "search-result"
+            assert saved.service_session_id == "resp_model_2"
+            assert first["usage"]["input_tokens"] == 10
+            assert first["usage"]["output_tokens"] == 4
+        else:
+            assert len(model.requests) == 1
+            assert saved.service_session_id is None
+
+        mcp.authorized = True
+        payload["input"] = "I have signed in. Continue."
+        if continuation == "response":
+            payload["previous_response_id"] = first["id"]
+        second, _ = await post_consent_response(host, payload)
+        assert second["status"] == "completed", second
+        assert not any(item["type"] == "oauth_consent_request" for item in second["output"])
+        assert [call["name"] for call in mcp.calls] == [
+            "learn___completed",
+            "learn___protected",
+            "learn___later",
+            "learn___protected",
+        ]
+        assert not model.history_errors
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("history_source", ["host_managed", "inference_service"])
+@pytest.mark.parametrize("pending_kind", ["input", "approval"])
+@pytest.mark.parametrize("approval_resume", [False, True], ids=["ordinary", "approved-replay"])
+async def test_toolbox_oauth_consent_preserves_a_mixed_pending_batch(
+    stream: bool,
+    history_source: Literal["host_managed", "inference_service"],
+    pending_kind: Literal["input", "approval"],
+    approval_resume: bool,
+) -> None:
+    mcp = ToolboxConsentServer()
+    mcp.tools = [
+        toolbox_tool("always" if approval_resume else "never", name=name)
+        for name in ("learn___completed", "learn___protected")
+    ]
+    pending = ConsentPendingInput(pending_kind, require_approval=approval_resume)
+    names = ("learn___completed", "learn___protected", pending.function.name)
+    if pending_kind == "approval":
+        names = (pending.function.name, "learn___completed", "learn___protected")
+    model = ConsentModelServer(names)
+    sessions = ConsentSessionStoreProvider()
+    async with toolbox_connection(mcp) as toolbox, consent_model_client(model, concurrent=True) as chat_client:
+        host = ResponsesHostServer(
+            Agent(client=chat_client, tools=[toolbox, pending.function], middleware=[pending]),
+            history_source=history_source,
+            response_store=InMemoryResponseProvider(),
+            agent_session_store_provider=sessions,
+        )
+        first, _ = await post_consent_response(host, {"input": "Run the tools", "stream": stream})
+        if approval_resume:
+            approvals = [item for item in first["output"] if item["type"] == "mcp_approval_request"]
+            assert len(approvals) == 3
+            assert not mcp.calls and not pending.executions
+            first, _ = await post_consent_response(
+                host,
+                {
+                    "input": [
+                        {
+                            "type": "message",
+                            "role": "user",
+                            "content": [{"type": "input_text", "text": "Keep this instruction until input arrives."}],
+                        },
+                        *[
+                            {"type": "mcp_approval_response", "approval_request_id": approval["id"], "approve": True}
+                            for approval in approvals
+                        ],
+                    ],
+                    "previous_response_id": first["id"],
+                    "stream": stream,
+                },
+            )
+        assert first["status"] == "incomplete", first
+        assert [item["consent_link"] for item in first["output"] if item["type"] == "oauth_consent_request"] == [
+            CONSENT_LINK
+        ]
+        results = [item for item in first["output"] if item["type"] == "function_call_output"]
+        expected_call_ids = [f"call_initial_{position}" for position in range(3)]
+        pending_call_id = expected_call_ids[names.index(pending.function.name)]
+        assert [item["call_id"] for item in results] == [
+            call_id for call_id in expected_call_ids if call_id != pending_call_id
+        ]
+        assert results[0]["output"] == "search-result"
+        assert "OAuth consent is required" in results[1]["output"]
+        assert [call["name"] for call in mcp.calls] == ["learn___completed", "learn___protected"]
+        assert len(model.requests) == 1
+        assert pending.executions == (1 if pending_kind == "input" else 0)
+        if pending_kind == "approval":
+            approval = next(item for item in first["output"] if item["type"] == "mcp_approval_request")
+            decision = {"type": "mcp_approval_response", "approval_request_id": approval["id"], "approve": True}
+        else:
+            assert "Please supply the missing input." in json.dumps(first["output"])
+            decision = {"type": "function_call_output", "call_id": pending_call_id, "output": "provided-input"}
+
+        saved = await sessions.store.get(first["id"])
+        assert saved is not None
+        await sessions.store.set(first["id"], AgentSession.from_dict(saved.to_dict()))
+        second, _ = await post_consent_response(
+            host, {"input": [decision], "previous_response_id": first["id"], "stream": stream}
+        )
+        assert second["status"] == "completed", second
+        assert len(model.requests) == 2
+        outputs = [item for item in model.requests[1]["input"] if item["type"] == "function_call_output"]
+        if history_source == "inference_service":
+            assert [item["call_id"] for item in outputs] == expected_call_ids
+        else:
+            assert len(outputs) == 3
+        assert {item["call_id"]: item["output"] for item in outputs} == {
+            **{item["call_id"]: item["output"] for item in results},
+            pending_call_id: "pending-result" if pending_kind == "approval" else "provided-input",
+        }
+        assert not model.history_errors
+        if approval_resume:
+            assert "Keep this instruction until input arrives." in json.dumps(model.requests[1]["input"])
+        assert pending.executions == 1
+        assert not any(item["type"] == "oauth_consent_request" for item in second["output"])
+
+        third, _ = await post_consent_response(
+            host, {"input": "Continue.", "previous_response_id": second["id"], "stream": stream}
+        )
+        assert third["status"] == "completed", third
+        assert len(model.requests) == 3
+        if history_source == "inference_service":
+            assert not any(item["type"] == "function_call_output" for item in model.requests[2]["input"])
+        assert [call["name"] for call in mcp.calls] == ["learn___completed", "learn___protected"]
+        assert pending.executions == 1
+        assert not model.history_errors
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("history_source", ["host_managed", "inference_service"])
+async def test_toolbox_oauth_consent_rejects_unstored_requests(
+    stream: bool, history_source: Literal["host_managed", "inference_service"]
+) -> None:
+    mcp = ToolboxConsentServer()
+    model = ConsentModelServer()
+    sessions = ConsentSessionStoreProvider()
+    provider = InMemoryResponseProvider()
+    async with toolbox_connection(mcp) as toolbox, consent_model_client(model) as chat_client:
+        host = ResponsesHostServer(
+            Agent(client=chat_client, tools=toolbox),
+            history_source=history_source,
+            response_store=provider,
+            agent_session_store_provider=sessions,
+        )
+        response, _ = await post_consent_response(host, {"input": "Run the tools", "stream": stream, "store": False})
+        assert response["status"] == "failed", response
+        assert "requires store=true" in response["error"]["message"]
+        assert not any(item["type"] == "oauth_consent_request" for item in response["output"])
+        assert await sessions.store.get(response["id"]) is None
+        assert not model.chains
+        async with host_httpx.AsyncClient(
+            transport=host_httpx.ASGITransport(app=host), base_url="http://test"
+        ) as client:
+            stored = await client.get(f"/responses/{response['id']}")
+            assert stored.status_code == 404
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("unexpected_call", [False, True], ids=["refused", "unexpected-call"])
+async def test_toolbox_oauth_consent_reconciliation_failure_is_not_an_incomplete_response(
+    stream: bool, unexpected_call: bool
+) -> None:
+    mcp = ToolboxConsentServer()
+    model = ConsentModelServer()
+    model.fail_settlement = not unexpected_call
+    model.unexpected_settlement_call = unexpected_call
+    sessions = ConsentSessionStoreProvider()
+    async with toolbox_connection(mcp) as toolbox, consent_model_client(model) as chat_client:
+        host = ResponsesHostServer(
+            Agent(client=chat_client, tools=toolbox),
+            history_source="inference_service",
+            response_store=InMemoryResponseProvider(),
+            agent_session_store_provider=sessions,
+        )
+        response, events = await post_consent_response(host, {"input": "Run the tools", "stream": stream})
+        assert response["status"] == "failed", response
+        assert not any(item["type"] == "oauth_consent_request" for item in response["output"])
+        assert not any(event.get("item", {}).get("type") == "oauth_consent_request" for event in events)
+        assert len(model.requests) == 2
+        assert [call["name"] for call in mcp.calls] == ["learn___completed", "learn___protected", "learn___later"]
+        if unexpected_call:
+            saved = await sessions.store.get(response["id"])
+            assert saved is not None
+            assert saved.service_session_id == "resp_model_2"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("history_source", ["host_managed", "inference_service"])
+async def test_toolbox_oauth_consent_allows_an_internally_queued_mcp_dispatch(
+    stream: bool, history_source: Literal["host_managed", "inference_service"]
+) -> None:
+    mcp = ToolboxConsentServer()
+    model = ConsentModelServer(("learn___protected", "learn___later"))
+    headers = ConsentCallerHeaders()
+    mcp.before_consent = headers.later_queued.wait
+    async with (
+        toolbox_connection(mcp, header_provider=headers.headers) as toolbox,
+        consent_model_client(model, concurrent=True) as chat_client,
+    ):
+        host = ResponsesHostServer(
+            Agent(client=chat_client, tools=toolbox, middleware=[headers]),
+            response_store=InMemoryResponseProvider(),
+            history_source=history_source,
+        )
+        response, _ = await post_consent_response(host, {"input": "Run the tools", "stream": stream})
+        assert response["status"] == "incomplete", response
+        assert headers.later_queued.is_set()
+        assert [call["name"] for call in mcp.calls] == ["learn___protected", "learn___later"]
+        results = [item for item in response["output"] if item["type"] == "function_call_output"]
+        assert len(results) == 2
+        assert results[1]["output"] == "search-result"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        {"code": -32000, "message": "ordinary tool failure"},
+        {"code": -32006, "message": "https://consent.example.com/unstructured"},
+        {"code": -32006, "message": '{"errors": {}}'},
+        {"code": -32006, "message": '{"errors": [null, 1, {"type": "mcp", "error": null}]}'},
+        {"code": -32006, "message": '{"errors": [{"type": "mcp", "error": {"code": "OTHER"}}]}'},
+        {
+            "code": -32006,
+            "message": json.dumps({
+                "errors": [{"type": "mcp", "error": {"code": "CONSENT_REQUIRED", "message": "javascript:x"}}]
+            }),
+        },
+    ],
+)
+async def test_toolbox_oauth_consent_does_not_classify_unvalidated_errors(error: dict[str, Any]) -> None:
+    mcp = ToolboxConsentServer()
+    mcp.error = error
+    model = ConsentModelServer()
+    async with toolbox_connection(mcp) as toolbox, consent_model_client(model) as chat_client:
+        host = ResponsesHostServer(Agent(client=chat_client, tools=toolbox), response_store=InMemoryResponseProvider())
+        response, _ = await post_consent_response(host, {"input": "Run the tools"})
+        assert response["status"] == "completed", response
+        assert not any(item["type"] == "oauth_consent_request" for item in response["output"])
+        assert len(mcp.calls) == 3
+
+
+async def test_toolbox_oauth_consent_origin_allowlist_is_enforced() -> None:
+    mcp = ToolboxConsentServer()
+    model = ConsentModelServer()
+    async with toolbox_connection(mcp) as toolbox, consent_model_client(model) as chat_client:
+        host = ResponsesHostServer(
+            Agent(client=chat_client, tools=toolbox),
+            response_store=InMemoryResponseProvider(),
+            allowed_oauth_consent_origins=["https://other.example.com"],
+        )
+        response, _ = await post_consent_response(host, {"input": "Run the tools"})
+        assert response["status"] == "failed", response
+        assert not any(item["type"] == "oauth_consent_request" for item in response["output"])
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("history_source", ["host_managed", "inference_service"])
+async def test_toolbox_oauth_consent_remains_distinct_from_native_policy_approval(
+    stream: bool, history_source: Literal["host_managed", "inference_service"]
+) -> None:
+    mcp = ToolboxConsentServer()
+    mcp.tools = [
+        toolbox_tool("always", name=name) for name in ("learn___completed", "learn___protected", "learn___later")
+    ]
+    model = ConsentModelServer()
+    sessions = ConsentSessionStoreProvider()
+    async with toolbox_connection(mcp) as toolbox, consent_model_client(model) as chat_client:
+        host = ResponsesHostServer(
+            Agent(client=chat_client, tools=toolbox),
+            history_source=history_source,
+            response_store=InMemoryResponseProvider(),
+            agent_session_store_provider=sessions,
+        )
+        first, _ = await post_consent_response(host, {"input": "Run the tools", "stream": stream})
+        approvals = [item for item in first["output"] if item["type"] == "mcp_approval_request"]
+        assert len(approvals) == 3
+        assert not mcp.calls
+        assert not any(item["type"] == "oauth_consent_request" for item in first["output"])
+        second, _ = await post_consent_response(
+            host,
+            {
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "Keep this instruction."}],
+                    },
+                    *[
+                        {"type": "mcp_approval_response", "approval_request_id": approval["id"], "approve": True}
+                        for approval in approvals
+                    ],
+                ],
+                "previous_response_id": first["id"],
+                "stream": stream,
+            },
+        )
+        assert second["status"] == "incomplete", second
+        assert [item["consent_link"] for item in second["output"] if item["type"] == "oauth_consent_request"] == [
+            CONSENT_LINK
+        ]
+        results = [item for item in second["output"] if item["type"] == "function_call_output"]
+        assert len(results) == 3
+        assert results[0]["output"] == "search-result"
+        assert results[2]["output"] == "search-result"
+        assert [call["name"] for call in mcp.calls] == ["learn___completed", "learn___protected", "learn___later"]
+        assert not model.history_errors
+        saved = await sessions.store.get(second["id"])
+        assert saved is not None
+        if history_source == "inference_service":
+            assert saved.service_session_id == "resp_model_2"
+            assert len(model.requests) == 2
+            provider_input = model.requests[1]["input"]
+            assert sum(item["type"] == "function_call_output" for item in provider_input) == 3
+            assert not any(item["type"] in ("function_call", "mcp_approval_response") for item in provider_input)
+            assert any("Keep this instruction." in json.dumps(item) for item in provider_input)
+
+
+async def test_generic_mcp_does_not_translate_toolbox_consent() -> None:
+    mcp = ToolboxConsentServer()
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(mcp.handle)) as http_client,
+        MCPStreamableHTTPTool(name="generic", url="https://toolbox.invalid/mcp", http_client=http_client) as generic,
+    ):
+        with pytest.raises(ToolExecutionException):
+            await generic.call_tool("learn___protected")
+
+
+async def test_toolbox_oauth_consent_background_run_reconciles_in_foreground() -> None:
+    mcp = ToolboxConsentServer()
+    model = ConsentModelServer()
+    async with toolbox_connection(mcp) as toolbox, consent_model_client(model) as chat_client:
+        host = ResponsesHostServer(
+            Agent(client=chat_client, tools=toolbox),
+            history_source="inference_service",
+            background_source="inference_service",
+            response_store=InMemoryResponseProvider(),
+        )
+        response, _ = await post_consent_response(host, {"input": "Run the tools", "background": True})
+        assert response["status"] == "incomplete", response
+        assert any(item["type"] == "oauth_consent_request" for item in response["output"])
+        assert len(model.requests) == 2
+        assert model.requests[0]["background"] is True
+        assert model.requests[1]["background"] is False
+        assert model.requests[1]["tool_choice"] == "none"
+        assert [item["type"] for item in model.requests[1]["input"]] == ["function_call_output"] * 3
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("history_source", ["host_managed", "inference_service"])
+async def test_toolbox_oauth_consent_collects_requests_and_preserves_sibling_results(
+    stream: bool, history_source: Literal["host_managed", "inference_service"]
+) -> None:
+    mcp = ToolboxConsentServer()
+    second_link = "https://calendar.example.com/authorize"
+    mcp.error["message"] = "tools/call failed " + json.dumps({
+        "errors": [
+            {"name": "learn", "type": "mcp", "error": {"code": "CONSENT_REQUIRED", "message": CONSENT_LINK}},
+            {"name": "calendar", "type": "mcp", "error": {"code": "CONSENT_REQUIRED", "message": second_link}},
+        ]
+    })
+    model = ConsentModelServer()
+    async with toolbox_connection(mcp) as toolbox, consent_model_client(model) as chat_client:
+        host = ResponsesHostServer(
+            Agent(client=chat_client, tools=toolbox),
+            history_source=history_source,
+            response_store=InMemoryResponseProvider(),
+        )
+        response, _ = await post_consent_response(host, {"input": "Run the tools", "stream": stream})
+        assert response["status"] == "incomplete", response
+        assert [item["consent_link"] for item in response["output"] if item["type"] == "oauth_consent_request"] == [
+            CONSENT_LINK,
+            second_link,
+        ]
+        results = [item for item in response["output"] if item["type"] == "function_call_output"]
+        assert len(results) == 3
+        assert results[0]["output"] == results[2]["output"] == "search-result"
+        assert "OAuth consent is required" in results[1]["output"]
+        assert [call["name"] for call in mcp.calls] == ["learn___completed", "learn___protected", "learn___later"]

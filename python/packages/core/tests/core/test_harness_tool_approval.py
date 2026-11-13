@@ -1568,7 +1568,13 @@ async def test_approval_resume_returns_all_user_input_requests_without_another_m
         "https://example.com/consent-2",
         "https://example.com/consent-3",
     ]
-    assert resumed_response.messages[0].role == "assistant"
+    assert [
+        (message.role, [content.type for content in message.contents]) for message in resumed_response.messages
+    ] == [
+        ("tool", ["function_result"]),
+        ("assistant", ["oauth_consent_request", "oauth_consent_request", "oauth_consent_request"]),
+    ]
+    assert resumed_response.messages[0].contents[0].call_id == "call_oauth"
     assert calls == 1
 
 

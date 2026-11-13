@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import copy
 import json
 import logging
 import math
@@ -10814,7 +10815,8 @@ async def test_approval_resume_user_input_counts_toward_function_call_budget(
         resumed_updates = [update async for update in resumed_stream]
         resumed_response = await resumed_stream.get_final_response()
         assert [[content.type for content in update.contents] for update in resumed_updates] == [
-            ["oauth_consent_request", "oauth_consent_request"]
+            ["function_result"],
+            ["oauth_consent_request", "oauth_consent_request"],
         ]
         assert len(chat_client_base.streaming_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     else:
@@ -10921,7 +10923,7 @@ async def test_approval_resume_separates_terminal_results_from_follow_up_request
         resumed_updates = [update async for update in resumed_stream]
         resumed_response = await resumed_stream.get_final_response()
         assert [(update.role, [content.type for content in update.contents]) for update in resumed_updates] == [
-            ("tool", ["function_result"]),
+            ("tool", ["function_result", "function_result"]),
             ("assistant", ["oauth_consent_request"]),
         ]
         assert len(chat_client_base.streaming_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -10936,7 +10938,7 @@ async def test_approval_resume_separates_terminal_results_from_follow_up_request
     assert [
         (message.role, [content.type for content in message.contents]) for message in resumed_response.messages
     ] == [
-        ("tool", ["function_result"]),
+        ("tool", ["function_result", "function_result"]),
         ("assistant", ["oauth_consent_request"]),
     ]
     assert resumed_response.messages[0].contents[0].call_id == "call_completed"
@@ -11494,6 +11496,597 @@ class TestUpdateConversationId:
 
 
 # endregion
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("concurrent", [False, True], ids=["sequential", "concurrent"])
+@pytest.mark.parametrize("approval_resume", [False, True], ids=["ordinary", "approved-replay"])
+@pytest.mark.parametrize("later_outcome", ["result", "consent", "error"])
+async def test_oauth_consent_preserves_all_batch_results(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+    concurrent: bool,
+    approval_resume: bool,
+    later_outcome: str,
+) -> None:
+    from agent_framework import function_middleware
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+    from agent_framework.exceptions import UserInputRequiredException
+
+    executions: list[str] = []
+    middleware_calls: list[str] = []
+
+    @function_middleware
+    async def record_functions(context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        middleware_calls.append(context.function.name)
+        await call_next()
+
+    @tool(approval_mode="always_require" if approval_resume else "never_require")
+    async def completed_tool() -> str:
+        executions.append("completed")
+        return "completed-result"
+
+    @tool(approval_mode="always_require" if approval_resume else "never_require")
+    async def consent_tool() -> str:
+        executions.append("consent")
+        raise UserInputRequiredException([Content.from_oauth_consent_request("https://consent.example.com/authorize")])
+
+    @tool(approval_mode="always_require" if approval_resume else "never_require")
+    async def later_tool() -> str:
+        executions.append("later")
+        if later_outcome == "consent":
+            raise UserInputRequiredException([Content.from_oauth_consent_request("https://consent.example.com/later")])
+        if later_outcome == "error":
+            raise RuntimeError("later tool failed")
+        return "later-result"
+
+    function_calls = [
+        Content.from_function_call(name, name, arguments={}, id=f"occurrence-{name}")
+        for name in ("completed_tool", "consent_tool", "later_tool")
+    ]
+    chat_client_base.function_invocation_configuration["allow_concurrent_invocation"] = concurrent  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    budget_state: dict[str, int] = {}
+    session = AgentSession()
+    options: ChatOptions = {"tools": [completed_tool, consent_tool, later_tool]}
+    client_kwargs: dict[str, Any] = {
+        "session": session,
+        "middleware": [record_functions],
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+    }
+    updates: list[ChatResponseUpdate] = []
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=function_calls)]
+        ]
+        stream = chat_client_base.get_response(
+            [Message("user", contents=["run all"])],
+            stream=True,
+            options=options,
+            client_kwargs=client_kwargs,
+        )
+        updates = [update async for update in stream]
+        response = await stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=[Message("assistant", contents=function_calls)])
+        ]
+        response = await chat_client_base.get_response(
+            [Message("user", contents=["run all"])],
+            options=options,
+            client_kwargs=client_kwargs,
+        )
+
+    if approval_resume:
+        decisions = [
+            content.to_function_approval_response(approved=True)
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        ]
+        assert len(decisions) == 3
+        assert not executions
+        if streaming:
+            stream = chat_client_base.get_response(
+                [Message("user", contents=decisions)],
+                stream=True,
+                options=options,
+                client_kwargs=client_kwargs,
+            )
+            updates = [update async for update in stream]
+            response = await stream.get_final_response()
+        else:
+            response = await chat_client_base.get_response(
+                [Message("user", contents=decisions)],
+                options=options,
+                client_kwargs=client_kwargs,
+            )
+    if streaming:
+        streamed_results = [
+            content for update in updates for content in update.contents if content.type == "function_result"
+        ]
+        assert [content.call_id for content in streamed_results] == [call.call_id for call in function_calls]
+    results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert executions == ["completed", "consent", "later"]
+    assert middleware_calls == ["completed_tool", "consent_tool", "later_tool"]
+    assert [(result.call_id, result.id) for result in results] == [(call.call_id, call.id) for call in function_calls]
+    assert results[0].result == "completed-result"
+    assert "OAuth consent is required" in results[1].result
+    if later_outcome == "consent":
+        assert "OAuth consent is required" in results[2].result
+    elif later_outcome == "error":
+        assert results[2].exception is not None
+    else:
+        assert results[2].result == "later-result"
+    assert all("https://" not in result.result for result in results)
+    assert budget_state["total_function_calls"] == 3
+    assert [
+        content.consent_link
+        for message in response.messages
+        for content in message.contents
+        if content.type == "oauth_consent_request"
+    ] == (
+        ["https://consent.example.com/authorize", "https://consent.example.com/later"]
+        if later_outcome == "consent"
+        else ["https://consent.example.com/authorize"]
+    )
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_oauth_mixed_pause_retains_partial_input_and_budget(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    from agent_framework.exceptions import UserInputRequiredException
+
+    executions: list[str] = []
+    requests: list[dict[str, Any]] = []
+
+    @chat_middleware
+    async def record_requests(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        requests.append({"options": dict(context.options or {}), "messages": copy.deepcopy(context.messages)})
+        await call_next()
+
+    @tool
+    async def completed_tool() -> str:
+        executions.append("completed")
+        return "preserved-result"
+
+    @tool
+    async def consent_tool() -> str:
+        executions.append("consent")
+        raise UserInputRequiredException([Content.from_oauth_consent_request("https://consent.example.com/authorize")])
+
+    @tool
+    async def input_tool() -> str:
+        executions.append("input")
+        raise UserInputRequiredException([Content("text", text="Supply input.", user_input_request=True)])
+
+    calls = [
+        Content.from_function_call(call_id, name, arguments={}, id=f"occurrence-{call_id}")
+        for call_id, name in (
+            ("completed", "completed_tool"),
+            ("consent", "consent_tool"),
+            ("input-1", "input_tool"),
+            ("input-2", "input_tool"),
+        )
+    ]
+    chat_client_base.chat_middleware = [record_requests]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 4  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=calls, conversation_id="service-calls")],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=[Message("assistant", contents=calls)], conversation_id="service-calls"),
+        ]
+    options: ChatOptions = {"tools": [completed_tool, consent_tool, input_tool]}
+    session = AgentSession()
+    if streaming:
+        first = await chat_client_base.get_response(
+            [Message("user", contents=["Run the tools."])],
+            stream=True,
+            options=options,
+            client_kwargs={"session": session},
+        ).get_final_response()
+    else:
+        first = await chat_client_base.get_response(
+            [Message("user", contents=["Run the tools."])], options=options, client_kwargs={"session": session}
+        )
+    assert any(content.type == "oauth_consent_request" for message in first.messages for content in message.contents)
+    assert len(requests) == 1
+    options["conversation_id"] = "service-calls"
+    partial_input = Message(
+        "user",
+        contents=[
+            Content.from_text("Keep the first instruction."),
+            Content.from_function_result("input-1", result="first-input"),
+        ],
+    )
+    original_input = partial_input.to_dict()
+    if streaming:
+        await chat_client_base.get_response(
+            [partial_input], stream=True, options=options, client_kwargs={"session": session}
+        ).get_final_response()
+    else:
+        await chat_client_base.get_response([partial_input], options=options, client_kwargs={"session": session})
+    assert len(requests) == 1
+    assert partial_input.to_dict() == original_input
+    session = AgentSession.from_dict(session.to_dict())
+    final_input = Message(
+        "user",
+        contents=[
+            Content.from_text("Keep the last instruction."),
+            Content.from_function_result("input-2", result="last-input"),
+        ],
+    )
+    if streaming:
+        final = await chat_client_base.get_response(
+            [final_input], stream=True, options=options, client_kwargs={"session": session}
+        ).get_final_response()
+    else:
+        final = await chat_client_base.get_response([final_input], options=options, client_kwargs={"session": session})
+    assert not any(content.user_input_request for message in final.messages for content in message.contents)
+    assert len(requests) == 2
+    assert requests[1]["options"]["tool_choice"] == "none"
+    model_messages = requests[1]["messages"]
+    results = [
+        content for message in model_messages for content in message.contents if content.type == "function_result"
+    ]
+    assert [content.call_id for content in results] == [call.call_id for call in calls]
+    assert results[0].result == "preserved-result"
+    assert [content.result for content in results[2:]] == ["first-input", "last-input"]
+    assert all(
+        message.role == "tool"
+        for message in model_messages
+        if any(c.type == "function_result" for c in message.contents)
+    )
+    assert "Keep the first instruction." in " ".join(message.text for message in model_messages)
+    assert "Keep the last instruction." in " ".join(message.text for message in model_messages)
+    assert not any(
+        content.type == "oauth_consent_request" for message in model_messages for content in message.contents
+    )
+    assert executions == ["completed", "consent", "input", "input"]
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("approval_resume", [False, True], ids=["ordinary", "approved-replay"])
+async def test_oauth_consent_reconciles_real_results_and_advances_service_history(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+    approval_resume: bool,
+) -> None:
+    from agent_framework.exceptions import UserInputRequiredException
+
+    requests: list[dict[str, Any]] = []
+
+    @chat_middleware
+    async def record_requests(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        requests.append({
+            "conversation_id": (context.options or {}).get("conversation_id"),
+            "tool_choice": (context.options or {}).get("tool_choice"),
+            "contents": [content for message in context.messages for content in message.contents],
+        })
+        await call_next()
+        if len(requests) == 2:
+            context.result = settlement
+
+    @tool(approval_mode="always_require" if approval_resume else "never_require")
+    async def completed_tool() -> str:
+        return "preserved-result"
+
+    @tool(approval_mode="always_require" if approval_resume else "never_require")
+    async def consent_tool() -> str:
+        raise UserInputRequiredException([Content.from_oauth_consent_request("https://consent.example.com/authorize")])
+
+    function_calls = [
+        Content.from_function_call("completed", "completed_tool", arguments={}),
+        Content.from_function_call("consent", "consent_tool", arguments={}),
+    ]
+    settlement = ChatResponse(
+        messages=[Message("assistant", contents=["hidden settlement reply"])],
+        response_id="resp_settled",
+        conversation_id="resp_settled",
+        usage_details={"input_token_count": 3, "output_token_count": 2},
+    )
+    chat_client_base.chat_middleware = [record_requests]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [
+                ChatResponseUpdate(
+                    role="assistant",
+                    contents=function_calls,
+                    response_id="resp_calls",
+                    conversation_id="resp_calls",
+                )
+            ]
+        ]
+        chat_client_base.run_responses = [settlement]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(
+                messages=[Message("assistant", contents=function_calls)],
+                response_id="resp_calls",
+                conversation_id="resp_calls",
+            ),
+            settlement,
+        ]
+    session = AgentSession()
+    options: ChatOptions = {"tools": [completed_tool, consent_tool]}
+    updates: list[ChatResponseUpdate] = []
+    if streaming:
+        stream = chat_client_base.get_response(
+            [Message("user", contents=["run both"])],
+            stream=True,
+            options=options,
+            client_kwargs={"session": session},
+        )
+        updates = [update async for update in stream]
+        response = await stream.get_final_response()
+    else:
+        response = await chat_client_base.get_response(
+            [Message("user", contents=["run both"])], options=options, client_kwargs={"session": session}
+        )
+
+    if approval_resume:
+        decisions = [
+            content.to_function_approval_response(approved=True)
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        ]
+        assert len(decisions) == 2
+        assert len(requests) == 1
+        assert session.service_session_id == "resp_calls"
+        options["conversation_id"] = "resp_calls"
+        resume_message = Message("user", contents=[Content.from_text("Keep this instruction."), *decisions])
+        if streaming:
+            stream = chat_client_base.get_response(
+                [resume_message],
+                stream=True,
+                options=options,
+                client_kwargs={"session": session},
+            )
+            updates = [update async for update in stream]
+            response = await stream.get_final_response()
+        else:
+            response = await chat_client_base.get_response(
+                [resume_message],
+                options=options,
+                client_kwargs={"session": session},
+            )
+    if streaming:
+        assert any(content.type == "oauth_consent_request" for update in updates for content in update.contents)
+    assert len(requests) == 2
+    assert requests[1]["conversation_id"] == "resp_calls"
+    assert requests[1]["tool_choice"] == "none"
+    settled_results = [content for content in requests[1]["contents"] if content.type == "function_result"]
+    assert settled_results[0].result == "preserved-result"
+    assert [content.call_id for content in settled_results] == ["completed", "consent"]
+    assert not any(content.type == "oauth_consent_request" for content in requests[1]["contents"])
+    if approval_resume:
+        assert any(content.text == "Keep this instruction." for content in requests[1]["contents"])
+    else:
+        assert [content.type for content in requests[1]["contents"]] == ["function_result", "function_result"]
+    assert response.conversation_id == session.service_session_id == "resp_settled"
+    assert response.response_id == "resp_settled"
+    assert "hidden settlement reply" not in response.text
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("outcome", ["failure", "cancellation", "unexpected-call", "unfinished"])
+async def test_oauth_consent_settlement_failure_withholds_user_input(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+    outcome: str,
+) -> None:
+    from agent_framework.exceptions import UserInputRequiredException
+
+    requests = 0
+    executions = 0
+
+    @chat_middleware
+    async def settlement_outcome(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        nonlocal requests
+        requests += 1
+        if requests == 2:
+            if outcome == "failure":
+                raise RuntimeError("settlement refused")
+            if outcome == "cancellation":
+                raise asyncio.CancelledError
+            context.result = ChatResponse(
+                messages=(
+                    [
+                        Message(
+                            "assistant", contents=[Content.from_function_call("new-call", "consent_tool", arguments={})]
+                        )
+                    ]
+                    if outcome == "unexpected-call"
+                    else []
+                ),
+                conversation_id="resp_accepted",
+                continuation_token={} if outcome == "unfinished" else None,
+            )
+            return
+        await call_next()
+
+    @tool(approval_mode="never_require")
+    async def consent_tool() -> str:
+        nonlocal executions
+        executions += 1
+        raise UserInputRequiredException([Content.from_oauth_consent_request("https://consent.example.com/authorize")])
+
+    function_call = Content.from_function_call("consent", "consent_tool", arguments={})
+    chat_client_base.chat_middleware = [settlement_outcome]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call], conversation_id="resp_calls")]
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=[Message("assistant", contents=[function_call])], conversation_id="resp_calls")
+        ]
+    session = AgentSession()
+    updates: list[ChatResponseUpdate] = []
+    expected_error = asyncio.CancelledError if outcome == "cancellation" else RuntimeError
+    with pytest.raises(expected_error):
+        if streaming:
+            async for update in chat_client_base.get_response(
+                [Message("user", contents=["run"])],
+                stream=True,
+                options={"tools": [consent_tool]},
+                client_kwargs={"session": session},
+            ):
+                updates.append(update)
+        else:
+            await chat_client_base.get_response(
+                [Message("user", contents=["run"])],
+                options={"tools": [consent_tool]},
+                client_kwargs={"session": session},
+            )
+
+    assert requests == 2
+    assert executions == 1
+    assert not any(content.type == "oauth_consent_request" for update in updates for content in update.contents)
+    assert session.service_session_id == (
+        "resp_accepted" if outcome in ("unexpected-call", "unfinished") else "resp_calls"
+    )
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_oauth_consent_preserves_already_dispatched_sibling(
+    chat_client_base: SupportsChatGetResponse, streaming: bool
+) -> None:
+    from agent_framework.exceptions import UserInputRequiredException
+
+    started = asyncio.Event()
+    finish = asyncio.Event()
+    completed = False
+
+    @tool(approval_mode="never_require")
+    async def inflight_tool() -> str:
+        nonlocal completed
+        started.set()
+        await finish.wait()
+        completed = True
+        return "settled sibling"
+
+    @tool(approval_mode="never_require")
+    async def consent_tool() -> str:
+        await started.wait()
+        finish.set()
+        raise UserInputRequiredException([Content.from_oauth_consent_request("https://consent.example.com/authorize")])
+
+    function_calls = [
+        Content.from_function_call("inflight", "inflight_tool", arguments={}),
+        Content.from_function_call("consent", "consent_tool", arguments={}),
+    ]
+    options: ChatOptions = {"tools": [inflight_tool, consent_tool]}
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=function_calls)]
+        ]
+        stream = chat_client_base.get_response([Message("user", contents=["run"])], stream=True, options=options)
+        _ = [update async for update in stream]
+        response = await stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=[Message("assistant", contents=function_calls)])
+        ]
+        response = await chat_client_base.get_response([Message("user", contents=["run"])], options=options)
+
+    results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert completed
+    assert [content.call_id for content in results] == ["inflight", "consent"]
+    assert results[0].result == "settled sibling"
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_provider_oauth_consent_is_not_locally_settled(
+    chat_client_base: SupportsChatGetResponse, streaming: bool
+) -> None:
+    @tool(approval_mode="never_require")
+    async def unused_tool() -> str:
+        pytest.fail("A provider-owned consent request must not execute a local tool.")
+
+    contents = [Content.from_oauth_consent_request("https://consent.example.com/provider")]
+    session = AgentSession()
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=contents, conversation_id="resp_provider_consent")]
+        ]
+        stream = chat_client_base.get_response(
+            [Message("user", contents=["run"])],
+            stream=True,
+            options={"tools": [unused_tool]},
+            client_kwargs={"session": session},
+        )
+        _ = [update async for update in stream]
+        response = await stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=[Message("assistant", contents=contents)], conversation_id="resp_provider_consent")
+        ]
+        response = await chat_client_base.get_response(
+            [Message("user", contents=["run"])],
+            options={"tools": [unused_tool]},
+            client_kwargs={"session": session},
+        )
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert session.service_session_id == "resp_provider_consent"
+    assert [content.type for message in response.messages for content in message.contents] == ["oauth_consent_request"]
+
+
+@pytest.mark.parametrize("duplicate_result", [False, True])
+async def test_oauth_consent_supplied_terminal_result_stays_single_and_immutable(
+    chat_client_base: SupportsChatGetResponse, duplicate_result: bool
+) -> None:
+    from agent_framework.exceptions import UserInputRequiredException
+
+    contents = [Content.from_function_result("unbound", result="custom consent result", id="caller-result")]
+    if duplicate_result:
+        contents.append(Content.from_function_result("other", result="duplicate"))
+    contents.append(Content.from_oauth_consent_request("https://consent.example.com/authorize"))
+    original = [content.to_dict() for content in contents]
+
+    @tool(approval_mode="never_require")
+    async def request_consent() -> str:
+        raise UserInputRequiredException(contents)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=[
+                Message(
+                    "assistant",
+                    contents=[Content.from_function_call("bound", "request_consent", arguments={}, id="occurrence")],
+                )
+            ]
+        )
+    ]
+    if duplicate_result:
+        with pytest.raises(ValueError, match="at most one terminal function result") as failure:
+            await chat_client_base.get_response(
+                [Message("user", contents=["run"])], options={"tools": [request_consent]}
+            )
+        assert isinstance(failure.value.__cause__, UserInputRequiredException)
+    else:
+        response = await chat_client_base.get_response(
+            [Message("user", contents=["run"])], options={"tools": [request_consent]}
+        )
+        results = [
+            content
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_result"
+        ]
+        assert [(result.call_id, result.id, result.result) for result in results] == [
+            ("bound", "occurrence", "custom consent result")
+        ]
+    assert [content.to_dict() for content in contents] == original
+
+
 async def test_user_input_request_propagates_through_as_tool(chat_client_base: SupportsChatGetResponse):
     """Test that user_input_request content from a sub-agent wrapped as a tool propagates to the parent response."""
     from agent_framework.exceptions import UserInputRequiredException

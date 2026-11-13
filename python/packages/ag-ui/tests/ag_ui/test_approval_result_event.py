@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
 from ag_ui.core import ToolCallResultEvent
 from agent_framework import AgentResponseUpdate, Content, FunctionInvocationContext, FunctionTool
 from agent_framework.exceptions import UserInputRequiredException
@@ -262,31 +263,41 @@ async def test_mixed_batch_preserves_approved_result_identity_and_order() -> Non
     assert [(event.tool_call_id, event.content) for event in results] == [("call-seattle", "Sunny in Seattle")]
 
 
-async def test_approval_follow_up_group_remains_in_history_without_live_tool_result() -> None:
-    """Approval-time user-input requests remain grouped without becoming terminal tool results."""
+@pytest.mark.parametrize("oauth", [False, True], ids=["user-input", "oauth"])
+async def test_approval_follow_up_group_preserves_terminal_result_contract(oauth: bool) -> None:
+    """OAuth has a paired terminal result; other follow-up input remains pending."""
+    prompts = (
+        [
+            Content.from_oauth_consent_request(consent_link="https://example.com/first"),
+            Content.from_oauth_consent_request(consent_link="https://example.com/second"),
+        ]
+        if oauth
+        else [Content("text", text="Please provide more input.", user_input_request=True)]
+    )
 
     def request_consent() -> str:
-        raise UserInputRequiredException(
-            contents=[
-                Content.from_oauth_consent_request(consent_link="https://example.com/first"),
-                Content.from_oauth_consent_request(consent_link="https://example.com/second"),
-            ]
-        )
+        raise UserInputRequiredException(contents=prompts)
 
     events, agent = await _run_custom_approval(
         FunctionTool(name="request_consent", description="Request consent", func=request_consent)
     )
 
-    assert not [event for event in events if getattr(event, "type", None) == "TOOL_CALL_RESULT"]
+    results = [event for event in events if isinstance(event, ToolCallResultEvent)]
+    if oauth:
+        assert len(results) == 1
+        assert results[0].tool_call_id == "call-custom"
+        assert "OAuth consent is required" in results[0].content
+        assert "https://" not in results[0].content
+    else:
+        assert not results
     requests = [
         content
         for message in agent.messages_received
         for content in message.contents
         if isinstance(content, Content) and content.user_input_request
     ]
-    assert [request.consent_link for request in requests] == [
-        "https://example.com/first",
-        "https://example.com/second",
+    assert [(request.type, request.consent_link, request.text) for request in requests] == [
+        (prompt.type, prompt.consent_link, prompt.text) for prompt in prompts
     ]
 
 

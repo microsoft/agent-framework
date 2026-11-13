@@ -170,9 +170,20 @@ approvals and rejections. Exact pre-header HTTP 400 behavior remains blocked on 
 validation hook under #9537; the native approval migration does not claim to implement that requirement.
 
 Represent invocation-time OAuth consent as structured consent with incomplete response status.
-Pair each emitted function call with one terminal result, preserve completed sibling results, and stop
-later protected calls. Require `store=true` so continuation can retain the required state;
+Pair each OAuth-interrupted invocation with one terminal result and preserve every authorized batch result.
+OAuth consent does not suspend sibling calls: let the batch finish under its configured concurrency,
+then return all consent requests with the complete results. Existing pre-execution approval gating
+remains unchanged; eager execution before approval is separate vNext work tracked in #10334.
+Require `store=true` so continuation can retain the required state;
 do not support ephemeral consent under `store=false`.
+Preserve results rather than cancelling or automatically replaying completed calls.
+For inference-service history, reconcile a fully terminal batch before publishing consent and retain the accepted
+continuation even when the service's reconciliation output is rejected. When another call still requires approval
+or other input, publish both requests and retain completed results and unsent caller input in the native pending
+batch until that call is resolved. Submit the real results together on continuation without replaying completed
+calls or fabricating a terminal result for a pending call.
+This behavior depends on the coordinated native Core change; select and validate the released Core
+dependency floor during release preparation rather than adding a hosting-only compatibility fallback.
 
 ### Unresolved boundaries
 

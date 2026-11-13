@@ -941,8 +941,13 @@ async def test_function_loop_returns_compacted_transcript_on_early_terminal_exit
     assert "London" in (response.messages[summary_index].text or "")
     assert sum(content.call_id == "call_1" for content in correlated_contents) == 2
     assert sum(content.call_id == "call_2" for content in correlated_contents) == 2
-    assert sum(content.call_id == "call_terminal" for content in correlated_contents) == (
-        1 if terminal_kind == "approval" else 2
+    expected_terminal_types = {
+        "approval": ["function_call"],
+        "user-input": ["function_call", "function_result", "oauth_consent_request"],
+        "middleware-termination": ["function_call", "function_result"],
+    }
+    assert [content.type for content in correlated_contents if content.call_id == "call_terminal"] == (
+        expected_terminal_types[terminal_kind]
     )
     if terminal_kind == "approval":
         assert any(

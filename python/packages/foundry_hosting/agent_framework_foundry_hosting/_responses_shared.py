@@ -6,10 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import ipaddress
 import json
 import logging
-import re
 import uuid
 from collections.abc import (
     AsyncGenerator,
@@ -23,8 +21,7 @@ from collections.abc import (
 from contextlib import suppress
 from dataclasses import asdict, dataclass, is_dataclass
 from decimal import Decimal
-from typing import Any, Generic, Literal, TypeGuard, TypeVar, cast
-from urllib.parse import urlparse
+from typing import Any, Generic, Literal, TypeVar, cast
 
 from agent_framework import (
     AgentResponse,
@@ -97,7 +94,8 @@ from azure.ai.agentserver.responses.streaming._builders import (
     RefusalContentBuilder,
     TextContentBuilder,
 )
-from mcp import MCPError
+
+from ._toolbox import _is_allowed_oauth_consent_link  # pyright: ignore[reportPrivateUsage]
 
 logger = logging.getLogger(__name__)
 
@@ -638,160 +636,6 @@ _INCOMPLETE_REASON_KEY = "_incomplete_reason"
 _RESERVED_RESPONSE_METADATA_KEY = "_internal_metadata"
 
 
-# Foundry Toolbox Auth integration
-# Consent-URL error code returned by the Foundry MCP gateway when calling `/list`
-CONSENT_ERROR_CODE = -32006
-
-_OAUTH_HOST_PATTERN = re.compile(r"^[A-Za-z0-9._~-]+$")
-
-
-@dataclass
-class ConsentError:
-    name: str
-    consent_url: str
-
-
-def _is_safe_oauth_consent_link(consent_link: object) -> TypeGuard[str]:
-    """Return whether a consent link is an absolute HTTPS URL safe to expose as an action."""
-    if not isinstance(consent_link, str) or not consent_link:
-        return False
-    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in consent_link):
-        return False
-
-    try:
-        parsed = urlparse(consent_link)
-        hostname = parsed.hostname
-        _ = parsed.port
-    except ValueError:
-        return False
-
-    if parsed.scheme.lower() != "https" or not hostname or parsed.username is not None or parsed.password is not None:
-        return False
-
-    if "%" in hostname:
-        return False
-    authority = parsed.netloc
-    if authority.startswith("["):
-        closing_bracket = authority.find("]")
-        if closing_bracket == -1:
-            return False
-        ipv6_literal = authority[1:closing_bracket]
-        suffix = authority[closing_bracket + 1 :]
-        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
-            return False
-        try:
-            ipaddress.IPv6Address(ipv6_literal)
-        except ValueError:
-            return False
-        return True
-    if "[" in authority or "]" in authority or ":" in hostname:
-        return False
-    return _OAUTH_HOST_PATTERN.fullmatch(hostname) is not None
-
-
-def _normalize_oauth_consent_origin(value: str, *, require_origin_only: bool) -> str:
-    """Normalize an HTTPS consent URL or configured origin for exact matching."""
-    if not _is_safe_oauth_consent_link(value):
-        raise ValueError("OAuth consent origins must be absolute HTTPS URLs without user information.")
-
-    parsed = urlparse(value)
-    if require_origin_only and (parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment):
-        raise ValueError("OAuth consent origin entries must not include a path, query, parameters, or fragment.")
-
-    hostname = parsed.hostname
-    if hostname is None:  # pragma: no cover - _is_safe_oauth_consent_link already proved this.
-        raise ValueError("OAuth consent origin must include a hostname.")
-    normalized_host = f"[{hostname.lower()}]" if ":" in hostname else hostname.lower()
-    port = parsed.port
-    return f"https://{normalized_host}" if port in (None, 443) else f"https://{normalized_host}:{port}"
-
-
-def _normalize_allowed_oauth_consent_origins(  # pyright: ignore[reportUnusedFunction]
-    allowed_origins: Sequence[str] | None,
-) -> frozenset[str] | None:
-    """Normalize the host-configured consent origin allowlist, or return ``None`` when none is configured."""
-    if allowed_origins is None:
-        return None
-    return frozenset(_normalize_oauth_consent_origin(origin, require_origin_only=True) for origin in allowed_origins)
-
-
-def _is_allowed_oauth_consent_link(consent_link: object, allowed_origins: frozenset[str] | None) -> TypeGuard[str]:
-    """Return whether the link is safe and, when an allowlist is configured, has an allowed origin.
-
-    ``allowed_origins`` must come from ``_normalize_allowed_oauth_consent_origins``. ``None`` keeps the
-    safe-HTTPS check without restricting the origin; an empty set rejects every link.
-    """
-    if not _is_safe_oauth_consent_link(consent_link):
-        return False
-    if allowed_origins is None:
-        return True
-    return _normalize_oauth_consent_origin(consent_link, require_origin_only=False) in allowed_origins
-
-
-def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
-    """Return the consent URLs when ``exc`` wraps Foundry MCP gateway consent errors.
-
-    Args:
-        exc: The exception to inspect.
-
-    Returns:
-        The consent URL(s) extracted from the error, or ``None`` if no consent error was found.
-    """
-    inner_exception = next((arg for arg in exc.args if isinstance(arg, MCPError)), None)
-    if inner_exception is not None and inner_exception.code == CONSENT_ERROR_CODE:
-        # Parse the error message
-        # The error message is structured with the following format:
-        # "tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {"errors":[{"name": ..."
-        # where the second part is a JSON string that can be deserialized into an object with the following shape:
-        # ruff: disable[commented-out-code]
-        # {
-        #   "errors" : [
-        #       {
-        #           "name": "Name of the MCP tool that requires consent",
-        #           "type" : "mcp" | "a2a_preview",
-        #           "error": {
-        #               "code": "CONSENT_REQUIRED",
-        #               "message": consent_url,
-        #           }
-        #       }
-        #   ]
-        # }
-        # ruff: enable[commented-out-code]
-        try:
-            consent_errors: list[ConsentError] = []
-            error_message_start = inner_exception.error.message.find("{")
-            if error_message_start == -1:
-                logger.warning("Consent error message does not contain JSON: %s", inner_exception.error.message)
-                return None
-            consent_details_json = inner_exception.error.message[error_message_start:]
-            consent_details = json.loads(consent_details_json)
-            if "errors" not in consent_details or not isinstance(consent_details["errors"], list):
-                logger.warning("Consent error message JSON does not contain 'errors' list: %s", consent_details_json)
-                return None
-            for error in consent_details["errors"]:
-                if (
-                    isinstance(error, dict)
-                    and error.get("type") in ("mcp", "a2a_preview")  # type: ignore
-                    and "error" in error
-                    and isinstance(error["error"], dict)
-                    and error["error"].get("code") == "CONSENT_REQUIRED"  # type: ignore
-                    and "message" in error["error"]
-                ):
-                    consent_url = error["error"]["message"]  # type: ignore
-                    if isinstance(consent_url, str):
-                        consent_errors.append(ConsentError(name=error.get("name", "Unknown"), consent_url=consent_url))  # type: ignore
-                    else:
-                        logger.warning("Consent URL in error message is not a valid URL: %s", consent_url)  # type: ignore
-            if consent_errors:
-                return consent_errors
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse consent details JSON: %s", inner_exception.error.message)
-    return None
-
-
-# endregion Foundry Toolbox Auth integration
-
-
 # region Active Builder State
 
 
@@ -1308,7 +1152,9 @@ class _OutputItemTracker:  # pyright: ignore[reportUnusedClass]
             yield builder.emit_done(oauth_item)
 
         elif content.type == "usage":
-            self._usage_details = add_usage_details(self._usage_details, content.usage_details)
+            self._usage_details = add_usage_details(
+                None if content.merge_mode == "replace" else self._usage_details, content.usage_details
+            )
 
         else:
             for event in self._close():

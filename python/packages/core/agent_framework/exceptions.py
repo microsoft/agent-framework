@@ -194,6 +194,9 @@ class UserInputRequiredException(ToolException):
     invocation layer can propagate them instead of swallowing them as a generic
     tool error. ``Agent.as_tool()`` handles unresolved child function approvals
     separately and fails the delegated invocation.
+    An OAuth consent request also produces one terminal result for the interrupted
+    function call. The loop lets the authorized batch finish and preserves all
+    results before returning the consent requests.
 
     Args:
         contents: The user-input-request Content items from the sub-agent response.

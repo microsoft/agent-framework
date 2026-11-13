@@ -2645,9 +2645,33 @@ async def _execute_single_function_call(
     except UserInputRequiredException as exc:
         source_function_call = _underlying_function_call(function_call)
         call_id = source_function_call.call_id
-        propagated_contents = [item for item in exc.contents if isinstance(item, Content)] if exc.contents else []
+        propagated_contents = (
+            [copy.copy(item) for item in exc.contents if isinstance(item, Content)] if exc.contents else []
+        )
+        if any(item.type == "oauth_consent_request" for item in propagated_contents):
+            terminal_results = [item for item in propagated_contents if item.type == "function_result"]
+            if len(terminal_results) > 1:
+                raise ValueError(
+                    "An OAuth consent interruption must contain at most one terminal function result."
+                ) from exc
+            if not terminal_results:
+                propagated_contents.insert(
+                    0,
+                    Content.from_function_result(
+                        call_id=call_id,  # type: ignore[arg-type]
+                        id=source_function_call.id,
+                        result=(
+                            "Error: OAuth consent is required. This tool invocation did not complete. "
+                            "The user must authorize access before this tool can be invoked in a later request."
+                        ),
+                        exception="OAuthConsentRequired",
+                        additional_properties=source_function_call.additional_properties,
+                    ),
+                )
         for item in propagated_contents:
             item.call_id = call_id
+            if item.type == "function_result":
+                item.id = source_function_call.id
             if not item.id:
                 item.id = source_function_call.id or call_id
         if propagated_contents:
@@ -3543,8 +3567,9 @@ def _store_pending_mixed_pause_batch(
     *,
     deferred_function_calls: Sequence[Content] = (),
     function_call_order: Sequence[Mapping[str, str | None]] | None = None,
+    deferred_messages: Sequence[Message] = (),
 ) -> None:
-    """Persist the active ordered pause batch and any deferred local siblings."""
+    """Persist the active ordered pause batch, completed results, and deferred local siblings."""
     state = _get_tool_approval_state(invocation_session)
     if state is None:
         return
@@ -3553,21 +3578,34 @@ def _store_pending_mixed_pause_batch(
     kinds: set[str] = set()
     for group in pause_groups:
         for content in group:
+            if content.type == "function_result":
+                kinds.add("result")
+                items.append({"kind": "result", "response": content.to_dict()})
+                continue
             if content.type == "function_approval_request":
                 kind = "approval"
-            elif content.type == "function_call" and content.user_input_request:
+            elif content.user_input_request and content.type != "oauth_consent_request":
                 kind = "host"
             else:
                 continue
             kinds.add(kind)
             items.append({"kind": kind, "request": content.to_dict()})
 
-    if kinds == {"approval", "host"} or (kinds == {"host"} and deferred_function_calls):
+    if (
+        kinds == {"approval", "host"}
+        or (kinds == {"host"} and deferred_function_calls)
+        or ("result" in kinds and bool(kinds & {"approval", "host"}))
+    ):
         batch: dict[str, Any] = {"items": items}
         if deferred_function_calls:
             batch[_DEFERRED_FUNCTION_CALLS_KEY] = [function_call.to_dict() for function_call in deferred_function_calls]
         if function_call_order is not None:
             batch[_FUNCTION_CALL_ORDER_KEY] = [dict(item) for item in function_call_order]
+        if deferred_messages:
+            retained_messages = _copy_messages_for_function_invocation(deferred_messages)
+            for message in retained_messages:
+                message.contents = [content for content in message.contents if content.type != "oauth_consent_request"]
+            batch["messages"] = [message.to_dict() for message in retained_messages if message.contents]
         state[_PENDING_MIXED_PAUSE_BATCH_KEY] = batch
     else:
         state.pop(_PENDING_MIXED_PAUSE_BATCH_KEY, None)
@@ -3593,7 +3631,7 @@ def _match_mixed_pause_responses(
     host_items_by_occurrence: dict[str, int] = {}
     host_items_by_call: dict[str, list[int]] = {}
     for index, item in enumerate(items):
-        request = _content_from_state(item.get("request"))
+        request = _content_from_state(item.get("request", item.get("response")))
         if request is None:
             continue
         if item.get("kind") == "approval":
@@ -3607,7 +3645,7 @@ def _match_mixed_pause_responses(
                     approval_items[identity] = index
                 elif approval_items[identity] != index:
                     approval_items[identity] = None
-        elif item.get("kind") == "host" and request.call_id is not None:
+        elif item.get("kind") in {"host", "result"} and request.call_id is not None:
             host_items_by_call.setdefault(request.call_id, []).append(index)
             if request.id is not None:
                 host_items_by_occurrence[request.id] = index
@@ -3645,7 +3683,11 @@ def _match_mixed_pause_responses(
                 candidate = response
                 if response.id is not None:
                     item_index = host_items_by_occurrence.get(response.id)
-                    request = _content_from_state(items[item_index].get("request")) if item_index is not None else None
+                    request = (
+                        _content_from_state(items[item_index].get("request", items[item_index].get("response")))
+                        if item_index is not None
+                        else None
+                    )
                     if request is None or request.call_id != response.call_id:
                         item_index = None
                 else:
@@ -3714,7 +3756,7 @@ def _match_mixed_pause_responses(
         if response is None:
             return matched_content_ids, True, [], set()
         ordered_responses.append(response)
-        if item.get("kind") == "host":
+        if item.get("kind") in {"host", "result"}:
             host_result_ids.add(id(response))
     return matched_content_ids, False, ordered_responses, host_result_ids
 
@@ -3741,13 +3783,23 @@ def _stage_pending_mixed_pause_responses(
     if not items:
         state.pop(_PENDING_MIXED_PAUSE_BATCH_KEY, None)
         return False, False, set()
+    raw_messages = cast(Mapping[str, Any], raw_batch).get("messages")
+    if isinstance(raw_messages, list):
+        messages[:0] = _copy_messages_for_function_invocation([
+            raw_message if isinstance(raw_message, Message) else Message.from_dict(cast(dict[str, Any], raw_message))
+            for raw_message in cast(list[Any], raw_messages)
+        ])
 
     def bind_approval_response(response: Content) -> Content | None:
-        return _bind_approval_response_to_pending_request(
+        bound = _bind_approval_response_to_pending_request(
             response,
             invocation_session,
             consume=False,
         )
+        if bound is not None:
+            # Binding runs again after staging; retain replacement-request identity until then.
+            bound.id = bound.additional_properties[_APPROVAL_REQUEST_ID_KEY]
+        return bound
 
     def attributed_staged_replay_item_index(
         content: Content,
@@ -3772,7 +3824,7 @@ def _stage_pending_mixed_pause_responses(
                 candidate_state,
             ):
                 continue
-            request = _content_from_state(item.get("request"))
+            request = _content_from_state(item.get("request", item.get("response")))
             if request is None:
                 continue
             if item.get("kind") == "approval" and candidate.type == "function_approval_response":
@@ -3795,7 +3847,7 @@ def _stage_pending_mixed_pause_responses(
                 if request_ids.intersection(candidate_ids):
                     return item_index
             elif (
-                item.get("kind") == "host"
+                item.get("kind") in {"host", "result"}
                 and candidate.type == "function_result"
                 and candidate.call_id == request.call_id
                 and (candidate.id is None or candidate.id == request.id)
@@ -3806,9 +3858,8 @@ def _stage_pending_mixed_pause_responses(
     host_requests = [
         request
         for item in items
-        if item.get("kind") == "host"
-        and item.get("response") is None
-        and (request := _content_from_state(item.get("request"))) is not None
+        if (item.get("kind") == "host" and item.get("response") is None) or item.get("kind") == "result"
+        if (request := _content_from_state(item.get("request", item.get("response")))) is not None
         and request.call_id is not None
     ]
     approval_request_ids = {
@@ -3925,12 +3976,18 @@ def _stage_pending_mixed_pause_responses(
         messages[:] = filtered_messages
     updated_batch = dict(cast(Mapping[str, Any], raw_batch))
     updated_batch["items"] = items
+    if incomplete and any(item.get("kind") == "result" for item in items):
+        updated_batch["messages"] = [message.to_dict() for message in messages]
     state[_PENDING_MIXED_PAUSE_BATCH_KEY] = updated_batch
 
     if incomplete:
         return True, False, set()
 
-    messages.append(Message(role="user", contents=ordered_responses))
+    if any(item.get("kind") == "result" for item in items):
+        response_messages, _ = _messages_and_updates_for_terminal_contents(ordered_responses)
+        messages.extend(response_messages)
+    else:
+        messages.append(Message(role="user", contents=ordered_responses))
     return False, True, host_result_ids
 
 
@@ -4890,9 +4947,7 @@ def _clear_budget_state_from_session(
         if pending:
             return
         pending_pause_batch = tool_state.get(_PENDING_MIXED_PAUSE_BATCH_KEY)
-        if isinstance(pending_pause_batch, Mapping) and cast(Mapping[str, Any], pending_pause_batch).get(
-            _DEFERRED_FUNCTION_CALLS_KEY
-        ):
+        if isinstance(pending_pause_batch, Mapping):
             updated_batch = dict(cast(Mapping[str, Any], pending_pause_batch))
             updated_batch[_DEFERRED_BUDGET_STATE_KEY] = _portable_budget_snapshot(budget_state)
             tool_state[_PENDING_MIXED_PAUSE_BATCH_KEY] = updated_batch
@@ -5145,6 +5200,7 @@ def _handle_function_call_results(
             errors_in_a_row=errors_in_a_row,
             action="return",
             function_call_count=function_call_count,
+            response_messages=response_messages,
             streaming_updates=streaming_updates,
         )
 
@@ -5746,6 +5802,97 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         ):
             session.service_session_id = conversation_id
 
+    async def _settle_oauth_consent_results(
+        self,
+        *,
+        super_get_response: Callable[..., Any],
+        response: ChatResponse[Any],
+        result_messages: Sequence[Message],
+        options: dict[str, Any],
+        request_kwargs: dict[str, Any],
+        compaction_strategy: CompactionStrategy | None,
+        tokenizer: TokenizerProtocol | None,
+        invocation_session: AgentSession | None,
+        input_messages: Sequence[Message] | None = None,
+    ) -> ChatResponse[Any] | None:
+        """Reconcile terminal OAuth batches and retain mixed pauses until their remaining calls resolve."""
+        from ._sessions import is_local_history_conversation_id
+        from ._types import ChatResponse, Message
+
+        if not any(
+            content.type == "oauth_consent_request" for message in result_messages for content in message.contents
+        ):
+            return None
+        continuation_id = response.conversation_id or cast("str | None", options.get("conversation_id"))
+        if continuation_id is None or is_local_history_conversation_id(continuation_id):
+            return None
+        results = [
+            copy.copy(content)
+            for message in result_messages
+            for content in message.contents
+            if content.type == "function_result"
+        ]
+        if not results:
+            raise RuntimeError("OAuth consent reconciliation requires terminal function results.")
+        completed_calls = {(content.id, content.call_id) for content in results}
+        pending_calls: set[tuple[str | None, str | None]] = set()
+        pause_contents: list[Content] = []
+        for message in result_messages:
+            for content in message.contents:
+                if content.type == "function_result":
+                    pause_contents.append(content)
+                elif content.type == "function_approval_request" or (
+                    content.user_input_request and content.type != "oauth_consent_request"
+                ):
+                    source_call = content.function_call or content
+                    identity = (source_call.id, source_call.call_id)
+                    if identity not in completed_calls and identity not in pending_calls:
+                        pause_contents.append(content)
+                        pending_calls.add(identity)
+        if pending_calls:
+            _store_pending_mixed_pause_batch(
+                invocation_session, [pause_contents], deferred_messages=input_messages or ()
+            )
+            return None
+        settlement_options = {**options, "conversation_id": continuation_id, "tool_choice": "none"}
+        if "background" in settlement_options:
+            settlement_options["background"] = False
+        settlement_messages = (
+            _copy_messages_for_function_invocation(input_messages)
+            if input_messages is not None
+            else [Message(role="tool", contents=results)]
+        )
+        for message in settlement_messages:
+            message.contents = [content for content in message.contents if content.type != "oauth_consent_request"]
+        settlement = await super_get_response(
+            messages=[message for message in settlement_messages if message.contents],
+            stream=False,
+            options=settlement_options,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            client_kwargs=request_kwargs,
+        )
+        if not isinstance(settlement, ChatResponse) or settlement.conversation_id is None:
+            raise RuntimeError("OAuth consent reconciliation did not return a service continuation ID.")
+        settlement = cast("ChatResponse[Any]", settlement)
+        # The service accepted the outputs. Preserve that advance even if its new output is invalid.
+        self._update_function_invocation_continuation_state(
+            request_kwargs, settlement, session=invocation_session, options=options
+        )
+        response.conversation_id = settlement.conversation_id
+        if settlement.response_id is not None:
+            response.response_id = settlement.response_id
+        if settlement.continuation_token is not None:
+            raise RuntimeError("OAuth consent reconciliation returned an unfinished service response.")
+        if any(
+            content.type in {"function_call", "function_approval_request", "computer_tool_call", "shell_tool_call"}
+            or content.user_input_request
+            for message in settlement.messages
+            for content in message.contents
+        ):
+            raise RuntimeError("The service requested new tool execution or user input while settling OAuth consent.")
+        return settlement
+
     async def _settle_dangling_service_function_calls(
         self,
         *,
@@ -5920,6 +6067,19 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         if approval_processing.action == "return":
             response = ChatResponse(messages=list(function_call_messages))
+            settlement = await self._settle_oauth_consent_results(
+                super_get_response=super_get_response,
+                response=response,
+                result_messages=approval_processing.response_messages,
+                options=options,
+                request_kwargs=request_kwargs,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                invocation_session=invocation_session,
+                input_messages=prepared_messages,
+            )
+            if settlement is not None:
+                aggregated_usage = add_usage_details(aggregated_usage, settlement.usage_details)
             response.usage_details = aggregated_usage
             _clear_budget_state_from_session(invocation_session, budget_state)
             return _clear_internal_conversation_id(response)
@@ -6010,6 +6170,18 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 function_processing.function_call_count,
             )
             if function_processing.action == "return":
+                settlement = await self._settle_oauth_consent_results(
+                    super_get_response=super_get_response,
+                    response=response,
+                    result_messages=function_processing.response_messages,
+                    options=options,
+                    request_kwargs=request_kwargs,
+                    compaction_strategy=compaction_strategy,
+                    tokenizer=tokenizer,
+                    invocation_session=invocation_session,
+                )
+                if settlement is not None:
+                    aggregated_usage = add_usage_details(aggregated_usage, settlement.usage_details)
                 response.usage_details = aggregated_usage
                 _prepend_function_call_messages(response, function_call_messages[:terminal_prefix_length])
                 _clear_budget_state_from_session(invocation_session, budget_state)
@@ -6086,7 +6258,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Run the streaming function invocation loop."""
         from ._middleware import MiddlewareFailure
-        from ._types import ChatResponseUpdate, Content, add_usage_details
+        from ._types import ChatResponse, ChatResponseUpdate, Content, add_usage_details
 
         errors_in_a_row = 0
         total_function_calls = int(budget_state.get("total_function_calls", 0) or 0)
@@ -6164,6 +6336,38 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 invocation_session=invocation_session,
             )
 
+        async def settle_oauth_pause(
+            response: ChatResponse[Any],
+            result_messages: Sequence[Message],
+            *,
+            input_messages: Sequence[Message] | None = None,
+        ) -> ChatResponseUpdate | None:
+            nonlocal completed_usage
+            settlement = await self._settle_oauth_consent_results(
+                super_get_response=super_get_response,
+                response=response,
+                result_messages=result_messages,
+                options=options,
+                request_kwargs=request_kwargs,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                invocation_session=invocation_session,
+                input_messages=input_messages,
+            )
+            if settlement is None:
+                return None
+            if settlement.usage_details is not None:
+                completed_usage = add_usage_details(completed_usage, settlement.usage_details)
+            return ChatResponseUpdate(
+                response_id=settlement.response_id,
+                conversation_id=settlement.conversation_id,
+                contents=(
+                    [Content.from_usage(copy.deepcopy(completed_usage), merge_mode="replace")]
+                    if completed_usage is not None
+                    else []
+                ),
+            )
+
         # Apply limit decisions early to prevent execution during replay if limits are already breached.
         _apply_batch_limit_decision(
             "continue",
@@ -6196,6 +6400,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             total_function_calls,
             approval_processing.function_call_count,
         )
+        if approval_processing.action == "return":
+            settlement_update = await settle_oauth_pause(
+                ChatResponse(messages=list(approval_processing.response_messages)),
+                approval_processing.response_messages,
+                input_messages=prepared_messages,
+            )
+            if settlement_update is not None:
+                yield settlement_update
         for update in approval_processing.streaming_updates:
             yield update
         if approval_processing.action == "return":
@@ -6352,6 +6564,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 total_function_calls,
                 function_processing.function_call_count,
             )
+            if function_processing.action == "return":
+                settlement_update = await settle_oauth_pause(response, function_processing.response_messages)
+                if settlement_update is not None:
+                    yield settlement_update
             for update in function_processing.streaming_updates:
                 yield update
             if function_processing.action != "continue" and function_processing.action != "stop":
