@@ -47,6 +47,7 @@ _FIDES_TOOL_PROPERTY_KEYS = frozenset({
     "standing_guidance",
     "agent_framework.security.principals",
     "_agent_framework_internal_security_tool",
+    "_mcp_server_ifc_policy",
     "_mcp_trust_server_ifc",
 })
 OUTPUT_FILE_RETRY_ATTEMPTS = 10

@@ -590,14 +590,34 @@ async def run_secure_github_mcp(github_pat: str, endpoint: str) -> None:
 - Per-result label mapping from `_meta.ifc` into FIDES `security_label`; by default, remote labels are combined with
   local policy and can only add restrictions
 
-Set `trust_server_ifc=True` only when the MCP server is an authenticated authority for result labels. In that mode,
-a complete valid `_meta.ifc` label is authoritative for that result, including permitted relaxation of the local
-fallback. Missing, partial, or malformed labels still use current local policy. This opt-in does not make
-ToolAnnotations authoritative: `readOnlyHint` and `openWorldHint` remain restriction-only hints.
+Choose how result `_meta.ifc` is handled with `server_ifc_policy`:
 
 ```python
-secure_mcp = SecureMCPToolProxy(url="https://trusted.example.com/mcp/", trust_server_ifc=True)
+secure_mcp = SecureMCPToolProxy(
+    url="https://trusted.example.com/mcp/",
+    server_ifc_policy="authoritative",
+)
 ```
+
+- `"ignore"` uses local policy only.
+- `"restrict"` (the default) lets valid server labels add restrictions but never relax local policy.
+- `"authoritative"` accepts a complete valid server label as authoritative, including permitted relaxation of the
+  local fallback. Use it only when the MCP server is an authenticated label authority.
+
+Missing labels use local policy. Partial, malformed, oversized, or unretainable labels fail closed when server IFC is
+processed. This setting does not make ToolAnnotations authoritative: `readOnlyHint` and `openWorldHint` remain
+restriction-only hints.
+The deprecated `trust_server_ifc=True` and `False` values map to `"authoritative"` and `"restrict"` respectively.
+
+Use the same proxy for MCP Skills so each `resources/read` result keeps its own IFC label:
+
+```python
+async with SecureMCPToolProxy(url="https://trusted.example.com/mcp/") as secure_mcp:
+    skills_provider = SkillsProvider(secure_mcp.skills_source())
+```
+
+Pass `skills_provider` in the agent's `context_providers`. Direct `MCPSkillsSource(...)` construction does not apply
+FIDES labels.
 
 `annotation_overrides` supplies explicit local policy keyed by remote MCP tool name. It applies only to the
 `MCPTool` passed to `apply_mcp_security_labels`, or the connection wrapped by `SecureMCPToolProxy`; the mapping
@@ -609,10 +629,11 @@ reusing it; a shared tool name does not establish shared trust.
 
 1. Prefer `async with SecureMCPToolProxy(...)` so connection and label application happen together.
 2. Pass `secure_mcp.tools` into `Agent(..., tools=...)`.
-3. Use `context_providers=[SecureAgentConfig(...)]` instead of manual security wiring.
-4. Keep `auto_hide_untrusted=True` unless you have a very specific reason to expose untrusted content.
-5. If write-like actions are blocked, inspect `config.get_audit_log(session)` first.
-6. Leave `trust_server_ifc=False` unless the connected server is explicitly trusted to label result data.
+3. For MCP Skills, create `SkillsProvider(secure_mcp.skills_source())`.
+4. Use `context_providers=[SecureAgentConfig(...)]` instead of manual security wiring.
+5. Keep `auto_hide_untrusted=True` unless you have a very specific reason to expose untrusted content.
+6. If write-like actions are blocked, inspect `config.get_audit_log(session)` first.
+7. Leave `server_ifc_policy="restrict"` unless the connected server is explicitly trusted as a label authority.
 
 
 ### 7. Security Tools

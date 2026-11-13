@@ -24,6 +24,7 @@ import math
 import re
 import time
 import uuid
+import warnings
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextvars import ContextVar, Token
 from copy import copy, deepcopy
@@ -31,7 +32,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, NoReturn, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, cast
 from weakref import WeakKeyDictionary
 
 from pydantic import BaseModel, Field
@@ -78,6 +79,7 @@ from ._types import Content, Message
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
     from ._mcp import MCPTool
+    from ._skills import SkillsSource
 
 __all__ = [
     "PRINCIPAL_METADATA_KEY",
@@ -140,6 +142,7 @@ _SECURITY_ARGUMENTS_REQUIRE_MATERIALIZATION_CONTEXT_KEY = (
 _SECURITY_MATERIALIZED_AUTHORITY_CONTEXT_KEY = "_agent_framework_core_security_materialized_authority"
 _SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY = "_agent_framework_core_security_resolved_authority"
 _SECURITY_RESULT_FALLBACK_LABEL_CONTEXT_KEY = "_agent_framework_core_security_result_fallback_label"
+_MCP_IFC_POLICY_SNAPSHOTS_CONTEXT_KEY = "_agent_framework_core_mcp_ifc_policy_snapshots"
 _TOOL_POLICY_ACCEPTS_UNTRUSTED_KEY = "accepts_untrusted"
 _TOOL_POLICY_CONFIDENTIALITY_KEY = "confidentiality"
 _TOOL_POLICY_MAX_ALLOWED_CONFIDENTIALITY_KEY = "max_allowed_confidentiality"
@@ -5687,6 +5690,32 @@ def get_security_tools() -> list[FunctionTool]:
 # Written only from local application configuration. MCP result metadata is
 # attached to Content instances and cannot mutate FunctionTool properties.
 _MCP_TRUST_SERVER_IFC_KEY = "_mcp_trust_server_ifc"
+_MCP_SERVER_IFC_POLICY_KEY = "_mcp_server_ifc_policy"
+_MCPServerIFCPolicy = Literal["ignore", "restrict", "authoritative"]
+_MCP_SERVER_IFC_POLICIES = frozenset({"ignore", "restrict", "authoritative"})
+
+
+def _normalize_mcp_server_ifc_policy(
+    server_ifc_policy: _MCPServerIFCPolicy,
+    trust_server_ifc: bool | None,
+    *,
+    stacklevel: int,
+) -> _MCPServerIFCPolicy:
+    """Validate the policy and translate the deprecated boolean alias."""
+    if server_ifc_policy not in _MCP_SERVER_IFC_POLICIES:
+        raise ValueError(
+            "server_ifc_policy must be 'ignore', 'restrict', or 'authoritative', "
+            f"got {server_ifc_policy!r}."
+        )
+    if trust_server_ifc is None:
+        return server_ifc_policy
+    warnings.warn(
+        "trust_server_ifc is deprecated; use server_ifc_policy='authoritative' when True "
+        "or server_ifc_policy='restrict' when False.",
+        DeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    return "authoritative" if trust_server_ifc else "restrict"
 
 
 def _map_mcp_annotations_to_labels(
@@ -5730,7 +5759,7 @@ def _apply_mcp_security_label_to_function(
     default_integrity: IntegrityLabel,
     annotation_overrides: Mapping[str, tuple[IntegrityLabel, ConfidentialityLabel | None]] | None,
     mark_write_tools_as_sinks: bool,
-    trust_server_ifc: bool,
+    server_ifc_policy: _MCPServerIFCPolicy,
 ) -> None:
     """Apply one local MCP security policy to a remote function."""
     properties = function.additional_properties
@@ -5757,7 +5786,8 @@ def _apply_mcp_security_label_to_function(
     else:
         properties.pop("max_allowed_confidentiality", None)
     properties["accepts_untrusted"] = accepts_untrusted
-    properties[_MCP_TRUST_SERVER_IFC_KEY] = trust_server_ifc
+    properties[_MCP_SERVER_IFC_POLICY_KEY] = server_ifc_policy
+    properties[_MCP_TRUST_SERVER_IFC_KEY] = server_ifc_policy == "authoritative"
     _wrap_mcp_function_for_ifc(function, default_integrity)
 
     logger.info(
@@ -5777,7 +5807,8 @@ async def apply_mcp_security_labels(  # ruff: ignore[unused-async]
     default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
     annotation_overrides: dict[str, tuple[IntegrityLabel, ConfidentialityLabel | None]] | None = None,
     mark_write_tools_as_sinks: bool = True,
-    trust_server_ifc: bool = False,
+    server_ifc_policy: _MCPServerIFCPolicy = "restrict",
+    trust_server_ifc: bool | None = None,
 ) -> None:
     """Auto-assign FIDES security labels to every tool loaded from an MCP server.
 
@@ -5790,10 +5821,15 @@ async def apply_mcp_security_labels(  # ruff: ignore[unused-async]
     Currently hidden progressive-disclosure tools are included.
 
     Server annotations cannot relax local policy. Use ``annotation_overrides``
-    for explicit local per-tool static policy. Server result ``_meta.ifc`` is
-    also restriction-only unless ``trust_server_ifc=True`` is configured
-    locally, in which case a complete valid server label is authoritative for
-    that result. ToolAnnotations remain non-authoritative in both modes.
+    for explicit local per-tool static policy. ``server_ifc_policy`` controls
+    result ``_meta.ifc``: ``"ignore"`` uses local policy only, ``"restrict"``
+    combines server labels with the local baseline so they can only add
+    restrictions, and ``"authoritative"`` accepts a complete valid server
+    label as authoritative. The integrity baseline comes from
+    ``default_integrity`` or ``annotation_overrides``; because it is written
+    as explicit ``FunctionTool`` policy, it takes precedence over
+    :class:`SecureAgentConfig`'s ``default_integrity`` for these MCP results.
+    ToolAnnotations remain non-authoritative in every mode.
 
     Call this **after** the ``MCPTool`` is connected (tools already loaded).
     Use :class:`SecureMCPToolProxy` to keep the same policy bound to functions
@@ -5802,8 +5838,10 @@ async def apply_mcp_security_labels(  # ruff: ignore[unused-async]
     Args:
         mcp_tool: A connected ``MCPTool`` instance (``MCPStdioTool``,
             ``MCPStreamableHTTPTool``).
-        default_integrity: Integrity label to assign when the server provides
-            no annotations.  Defaults to ``UNTRUSTED`` (conservative).
+        default_integrity: Local integrity baseline for MCP results when no
+            override or stricter annotation applies. Defaults to ``UNTRUSTED``
+            (conservative). This becomes explicit tool policy and therefore
+            takes precedence over ``SecureAgentConfig.default_integrity``.
         annotation_overrides: Optional per-tool-name overrides.  Keys are
             *remote* MCP tool names (as the server exposes them).  Values are
             ``(IntegrityLabel, ConfidentialityLabel | None)`` tuples that
@@ -5813,13 +5851,17 @@ async def apply_mcp_security_labels(  # ruff: ignore[unused-async]
             independently authorizing that policy for the other server's tools.
         mark_write_tools_as_sinks: When ``True`` (default), apply the
             annotation-derived ``max_allowed_confidentiality=PUBLIC`` cap.
-        trust_server_ifc: Whether complete, valid server ``_meta.ifc`` labels
-            are authoritative for tool results. Defaults to ``False``, which
-            combines remote labels with current local policy so they can only
-            add restrictions.
+        server_ifc_policy: How to handle server ``_meta.ifc`` labels. Defaults
+            to ``"restrict"``, which combines the server label with the local
+            MCP baseline. Use ``"ignore"`` for local policy only or
+            ``"authoritative"`` for an authenticated label authority.
+        trust_server_ifc: Deprecated boolean alias. ``True`` maps to
+            ``server_ifc_policy="authoritative"`` and ``False`` maps to
+            ``server_ifc_policy="restrict"``.
 
     Raises:
         RuntimeError: If the ``MCPTool`` is not connected.
+        ValueError: If ``server_ifc_policy`` is invalid.
 
     Examples:
         .. code-block:: python
@@ -5832,6 +5874,11 @@ async def apply_mcp_security_labels(  # ruff: ignore[unused-async]
                     context_providers=[SecureAgentConfig(chat_client=client)],
                 )
     """
+    effective_server_ifc_policy = _normalize_mcp_server_ifc_policy(
+        server_ifc_policy,
+        trust_server_ifc,
+        stacklevel=2,
+    )
     if not getattr(mcp_tool, "is_connected", False):
         raise RuntimeError(
             "MCPTool is not connected. Call connect() or use 'async with' before applying security labels."
@@ -5851,7 +5898,7 @@ async def apply_mcp_security_labels(  # ruff: ignore[unused-async]
             default_integrity=default_integrity,
             annotation_overrides=annotation_overrides,
             mark_write_tools_as_sinks=mark_write_tools_as_sinks,
-            trust_server_ifc=trust_server_ifc,
+            server_ifc_policy=effective_server_ifc_policy,
         )
 
 
@@ -5992,13 +6039,26 @@ def _stamp_parsed_mcp_content_labels(
     contents: list[Content],
     local_label: ContentLabel,
     *,
-    trust_server_ifc: bool,
+    server_ifc_policy: _MCPServerIFCPolicy,
     retain_authority: bool,
 ) -> list[Content]:
     """Reapply retained MCP IFC after a function-level result parser."""
+    trust_server_ifc = server_ifc_policy == "authoritative"
     raw_carrier = context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
     if not isinstance(raw_carrier, _FunctionResultCarrier):
-        return contents
+        if server_ifc_policy == "ignore":
+            contents = [copy(item) for item in contents]
+            for item in contents:
+                item.additional_properties = dict(item.additional_properties)
+                item.additional_properties.pop(_MCP_RESULT_META_KEY, None)
+                item.additional_properties.pop(_MCP_RESULT_SECURITY_META_KEY, None)
+        stamped = cast(
+            list[Content],
+            _stamp_mcp_content_labels(contents, local_label, trust_server_ifc=trust_server_ifc),
+        )
+        if not retain_authority:
+            _strip_mcp_authority_markers(stamped)
+        return stamped
 
     security_meta = raw_carrier.private_metadata.get(_MCP_RESULT_SECURITY_META_KEY)
     prepared: list[Content] = []
@@ -6010,7 +6070,7 @@ def _stamp_parsed_mcp_content_labels(
         props.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
         props.pop(_VALIDATED_SECURITY_LABEL_PRINCIPALS, None)
         props.pop(_LEGACY_AUTHORITATIVE_CONFIDENTIALITY, None)
-        if security_meta is not None:
+        if server_ifc_policy != "ignore" and security_meta is not None:
             props[_MCP_RESULT_SECURITY_META_KEY] = security_meta
         updated_item.additional_properties = props
         prepared.append(updated_item)
@@ -6029,14 +6089,19 @@ def _stamp_mcp_error_carrier_label(
     local_label: ContentLabel,
     fallback_label: ContentLabel,
     *,
-    trust_server_ifc: bool,
+    server_ifc_policy: _MCPServerIFCPolicy,
 ) -> ContentLabel | None:
     """Apply retained MCP IFC to a generic function-error result carrier."""
     raw_carrier = context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
     if not isinstance(raw_carrier, _FunctionResultCarrier):
         return None
 
-    security_meta = raw_carrier.private_metadata.get(_MCP_RESULT_SECURITY_META_KEY)
+    security_meta = (
+        None
+        if server_ifc_policy == "ignore"
+        else raw_carrier.private_metadata.get(_MCP_RESULT_SECURITY_META_KEY)
+    )
+    trust_server_ifc = server_ifc_policy == "authoritative"
     probe = Content.from_text("")
     valid_server_ifc = False
     if security_meta is not None:
@@ -6046,7 +6111,11 @@ def _stamp_mcp_error_carrier_label(
             if security_meta_mapping.get("retained") is True:
                 valid_server_ifc = _label_from_mcp_meta(security_meta_mapping.get("meta")) is not None
     effective_local_label = (
-        fallback_label if security_meta is None or (valid_server_ifc and not trust_server_ifc) else local_label
+        fallback_label
+        if server_ifc_policy == "ignore"
+        or security_meta is None
+        or (valid_server_ifc and server_ifc_policy == "restrict")
+        else local_label
     )
     stamped = cast(
         list[Content],
@@ -6092,107 +6161,202 @@ def _current_mcp_local_label(func_tool: FunctionTool, default_integrity: Integri
     return ContentLabel(integrity=integrity, confidentiality=confidentiality, metadata=metadata)
 
 
-def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: IntegrityLabel) -> None:
-    """Replace ``func_tool.func`` with a wrapper that stamps IFC labels on results.
-
-    The wrapper preserves the original signature and binding behaviour
-    (FunctionTool already cached ``_context_parameter_name`` from the
-    original callable) and merely post-processes the returned
-    ``list[Content]``.  ``str`` returns are left untouched because there are
-    no per-item containers to stamp.
-    """
-    original = func_tool.func
-    if original is None or getattr(original, "_ifc_wrapped", False):
+def _track_mcp_error_label(
+    context: FunctionInvocationContext,
+    func_tool: FunctionTool,
+    local_label: ContentLabel,
+    server_ifc_policy: _MCPServerIFCPolicy,
+) -> None:
+    """Apply retained MCP IFC to a generic function error and its active tracker."""
+    raw_fallback_label = context.metadata.get(_SECURITY_RESULT_FALLBACK_LABEL_CONTEXT_KEY)
+    fallback_label = raw_fallback_label if isinstance(raw_fallback_label, ContentLabel) else local_label
+    error_label = _stamp_mcp_error_carrier_label(
+        context,
+        local_label,
+        fallback_label,
+        server_ifc_policy=server_ifc_policy,
+    )
+    if error_label is None:
         return
+    active_middleware = _current_middleware.get()
+    if active_middleware is None or not _has_matching_label_tracker(context, func_tool):
+        return
+    raw_carrier = context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
+    if not isinstance(raw_carrier, _FunctionResultCarrier):
+        return
+    active_scope = active_middleware._scope  # pyright: ignore[reportPrivateUsage]
 
-    async def _wrapped(*args: Any, **kwargs: Any) -> Any:
-        import inspect as _inspect
-
-        props = func_tool.additional_properties or {}
-        local_label = _current_mcp_local_label(func_tool, default_integrity)
-        trust_server_ifc = props.get(_MCP_TRUST_SERVER_IFC_KEY) is True
-
-        invocation_context = next(
-            (value for value in kwargs.values() if isinstance(value, FunctionInvocationContext)),
-            None,
+    def commit_error_label() -> None:
+        context.metadata["result_label"] = error_label
+        active_middleware._update_context_label(  # pyright: ignore[reportPrivateUsage]
+            error_label,
+            scope=active_scope,
         )
 
-        def has_matching_tracker() -> bool:
-            active_context = _current_context.get()
-            if active_context is None:
-                return False
-            active_authority = active_context.metadata.get(_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY)
-            return (
-                _current_middleware.get() is not None
-                and isinstance(active_authority, _SecurityInvocationAuthority)
-                and active_authority.function is func_tool
-                and (invocation_context is None or active_context is invocation_context)
-            )
+    raw_carrier.error_result_finalizer = commit_error_label
 
-        def prepare_error_label() -> None:
-            active_middleware = _current_middleware.get()
-            if invocation_context is None or active_middleware is None or not has_matching_tracker():
-                return
-            active_context = invocation_context
-            raw_fallback_label = active_context.metadata.get(_SECURITY_RESULT_FALLBACK_LABEL_CONTEXT_KEY)
-            fallback_label = raw_fallback_label if isinstance(raw_fallback_label, ContentLabel) else local_label
-            error_label = _stamp_mcp_error_carrier_label(
-                active_context,
-                local_label,
-                fallback_label,
-                trust_server_ifc=trust_server_ifc,
-            )
-            if error_label is None:
-                return
-            raw_carrier = active_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
-            if not isinstance(raw_carrier, _FunctionResultCarrier):
-                return
-            active_scope = active_middleware._scope  # pyright: ignore[reportPrivateUsage]
 
-            def commit_error_label() -> None:
-                active_context.metadata["result_label"] = error_label
-                active_middleware._update_context_label(  # pyright: ignore[reportPrivateUsage]
-                    error_label,
-                    scope=active_scope,
-                )
+def _has_matching_label_tracker(
+    context: FunctionInvocationContext | None,
+    func_tool: FunctionTool,
+) -> bool:
+    """Return whether the active tracker owns this exact invocation."""
+    if context is None:
+        return False
+    active_context = _current_context.get()
+    if active_context is None or active_context is not context or _current_middleware.get() is None:
+        return False
+    active_authority = active_context.metadata.get(_SECURITY_RESOLVED_AUTHORITY_CONTEXT_KEY)
+    return isinstance(active_authority, _SecurityInvocationAuthority) and active_authority.function is func_tool
 
-            raw_carrier.error_result_finalizer = commit_error_label
 
-        try:
-            res = original(*args, **kwargs)
-            if _inspect.isawaitable(res):
-                res = await res
-        except Exception:
-            prepare_error_label()
-            raise
+class _MCPIFCResultPostprocessor:
+    """Apply retained MCP IFC after every FunctionTool result parsing path."""
 
-        retain_authority = has_matching_tracker()
-        if invocation_context is not None:
-            raw_carrier = invocation_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
-            if isinstance(raw_carrier, _FunctionResultCarrier):
+    def __init__(self, func_tool: FunctionTool, default_integrity: IntegrityLabel) -> None:
+        self._func_tool = func_tool
+        self._default_integrity = default_integrity
 
-                def postprocess_parsed_result(contents: list[Content]) -> list[Content]:
-                    return _stamp_parsed_mcp_content_labels(
-                        invocation_context,
-                        contents,
-                        local_label,
-                        trust_server_ifc=trust_server_ifc,
-                        retain_authority=retain_authority,
-                    )
-
-                raw_carrier.parsed_result_postprocessor = postprocess_parsed_result
-                raw_carrier.parser_exception_handler = prepare_error_label
-
-        stamped = cast(
-            str | list[Content],
-            _stamp_mcp_content_labels(res, local_label, trust_server_ifc=trust_server_ifc),
+    def _current_policy(self) -> tuple[ContentLabel, _MCPServerIFCPolicy]:
+        props = self._func_tool.additional_properties or {}
+        raw_policy = props.get(_MCP_SERVER_IFC_POLICY_KEY)
+        server_ifc_policy: _MCPServerIFCPolicy = (
+            cast(_MCPServerIFCPolicy, raw_policy)
+            if isinstance(raw_policy, str) and raw_policy in _MCP_SERVER_IFC_POLICIES
+            else "authoritative"
+            if props.get(_MCP_TRUST_SERVER_IFC_KEY) is True
+            else "restrict"
         )
-        if not retain_authority:
-            _strip_mcp_authority_markers(stamped)
-        return stamped
+        return (
+            _current_mcp_local_label(self._func_tool, self._default_integrity),
+            server_ifc_policy,
+        )
 
-    _wrapped._ifc_wrapped = True  # type: ignore[attr-defined]
-    func_tool.func = _wrapped
+    def before_invoke(self, context: FunctionInvocationContext | None) -> None:
+        if context is None:
+            return
+        raw_snapshots = context.metadata.setdefault(_MCP_IFC_POLICY_SNAPSHOTS_CONTEXT_KEY, {})
+        if isinstance(raw_snapshots, dict):
+            cast(dict[FunctionTool, tuple[ContentLabel, _MCPServerIFCPolicy]], raw_snapshots)[self._func_tool] = (
+                self._current_policy()
+            )
+
+    def _policy(self, context: FunctionInvocationContext | None) -> tuple[ContentLabel, _MCPServerIFCPolicy]:
+        if context is None:
+            return self._current_policy()
+        raw_snapshots = context.metadata.get(_MCP_IFC_POLICY_SNAPSHOTS_CONTEXT_KEY)
+        if isinstance(raw_snapshots, dict):
+            snapshots = cast(dict[FunctionTool, tuple[ContentLabel, _MCPServerIFCPolicy]], raw_snapshots)
+            snapshot = snapshots.pop(self._func_tool, None)
+            if not snapshots:
+                context.metadata.pop(_MCP_IFC_POLICY_SNAPSHOTS_CONTEXT_KEY, None)
+            if snapshot is not None:
+                return snapshot
+        return self._current_policy()
+
+    def postprocess(
+        self,
+        contents: list[Content],
+        context: FunctionInvocationContext | None,
+    ) -> list[Content]:
+        local_label, server_ifc_policy = self._policy(context)
+        if context is None:
+            if server_ifc_policy == "ignore":
+                contents = [copy(item) for item in contents]
+                for item in contents:
+                    item.additional_properties = dict(item.additional_properties)
+                    item.additional_properties.pop(_MCP_RESULT_META_KEY, None)
+                    item.additional_properties.pop(_MCP_RESULT_SECURITY_META_KEY, None)
+            stamped = cast(
+                list[Content],
+                _stamp_mcp_content_labels(
+                    contents,
+                    local_label,
+                    trust_server_ifc=server_ifc_policy == "authoritative",
+                ),
+            )
+            return cast(list[Content], _strip_mcp_authority_markers(stamped))
+        return _stamp_parsed_mcp_content_labels(
+            context,
+            contents,
+            local_label,
+            server_ifc_policy=server_ifc_policy,
+            retain_authority=_has_matching_label_tracker(context, self._func_tool),
+        )
+
+    def postprocess_raw(
+        self,
+        result: Any,
+        context: FunctionInvocationContext | None,
+    ) -> Any:
+        if not isinstance(result, list):
+            return result
+        return self.postprocess(cast(list[Content], result), context)
+
+    def handle_error(self, context: FunctionInvocationContext | None) -> None:
+        if context is None:
+            return
+        local_label, server_ifc_policy = self._policy(context)
+        _track_mcp_error_label(context, self._func_tool, local_label, server_ifc_policy)
+
+
+class _MCPIFCSkillResultAdapter:
+    """Apply one MCP Skills resource label at the built-in FunctionTool boundary."""
+
+    def __init__(
+        self,
+        security_meta: Any,
+        local_label: ContentLabel,
+        server_ifc_policy: _MCPServerIFCPolicy,
+    ) -> None:
+        self._security_meta = security_meta
+        self._local_label = local_label
+        self._server_ifc_policy: _MCPServerIFCPolicy = server_ifc_policy
+
+    def _prepare_carrier(self, context: FunctionInvocationContext) -> None:
+        raw_carrier = context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
+        if not isinstance(raw_carrier, _FunctionResultCarrier):
+            return
+        if self._server_ifc_policy != "ignore" and self._security_meta is not None:
+            raw_carrier.private_metadata[_MCP_RESULT_SECURITY_META_KEY] = self._security_meta
+        else:
+            raw_carrier.private_metadata.pop(_MCP_RESULT_SECURITY_META_KEY, None)
+
+    def postprocess(
+        self,
+        contents: list[Content],
+        context: FunctionInvocationContext,
+        function: FunctionTool,
+    ) -> list[Content]:
+        self._prepare_carrier(context)
+        return _stamp_parsed_mcp_content_labels(
+            context,
+            contents,
+            self._local_label,
+            server_ifc_policy=self._server_ifc_policy,
+            retain_authority=_has_matching_label_tracker(context, function),
+        )
+
+    def handle_error(
+        self,
+        context: FunctionInvocationContext,
+        function: FunctionTool,
+    ) -> None:
+        self._prepare_carrier(context)
+        _track_mcp_error_label(
+            context,
+            function,
+            self._local_label,
+            self._server_ifc_policy,
+        )
+
+
+def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: IntegrityLabel) -> None:
+    """Install final MCP IFC processing without replacing a user result parser."""
+    func_tool._result_postprocessor = _MCPIFCResultPostprocessor(  # pyright: ignore[reportPrivateUsage]
+        func_tool,
+        default_integrity,
+    )
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
@@ -6227,6 +6391,12 @@ class SecureMCPToolProxy:
         ) as proxy:
             agent = Agent(client=client, tools=proxy.tools, ...)
 
+    The same secured connection can supply MCP Skills with identical IFC
+    policy by passing :meth:`skills_source` to ``SkillsProvider``::
+
+        async with SecureMCPToolProxy(url="https://mcp.example.com/") as proxy:
+            skills = SkillsProvider(proxy.skills_source())
+
     The URL mode ensures the MCP server is called **locally** by your
     application (not by the model provider), so
     :class:`LabelTrackingFunctionMiddleware` and
@@ -6250,17 +6420,20 @@ class SecureMCPToolProxy:
             *url* mode. Defaults to 100; ``None`` disables the limit.
         max_discovery_items: Maximum entries accepted independently for each tool or prompt catalog fetch in
             *url* mode. Defaults to 1,000; ``None`` disables the limit.
-        default_integrity: Default integrity for tools without annotations.
+        default_integrity: Local integrity baseline for MCP results. It becomes
+            explicit tool policy and therefore takes precedence over
+            ``SecureAgentConfig.default_integrity`` for these functions.
         annotation_overrides: Per-tool-name label overrides (keyed by remote
             MCP tool name), applied only to this proxy's MCP connection.
             The mapping is not bound to a server identity; reuse it for another
             connection only after independently authorizing that policy there.
         mark_write_tools_as_sinks: Whether to apply the annotation-derived
             PUBLIC confidentiality cap.
-        trust_server_ifc: Whether complete, valid server ``_meta.ifc`` labels
-            are authoritative for results. Defaults to ``False`` so remote
-            labels can only add restrictions. This does not grant authority to
-            server ToolAnnotations.
+        server_ifc_policy: How to handle server ``_meta.ifc`` labels:
+            ``"ignore"``, ``"restrict"`` (default, combined with the local
+            MCP baseline), or ``"authoritative"``. This does not grant
+            authority to server ToolAnnotations.
+        trust_server_ifc: Deprecated boolean alias for ``server_ifc_policy``.
     """
 
     def __init__(
@@ -6276,7 +6449,8 @@ class SecureMCPToolProxy:
         default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
         annotation_overrides: dict[str, tuple[IntegrityLabel, ConfidentialityLabel | None]] | None = None,
         mark_write_tools_as_sinks: bool = True,
-        trust_server_ifc: bool = False,
+        server_ifc_policy: _MCPServerIFCPolicy = "restrict",
+        trust_server_ifc: bool | None = None,
     ) -> None:
         """Initialize a secure proxy for an MCP tool or MCP URL endpoint.
 
@@ -6297,21 +6471,26 @@ class SecureMCPToolProxy:
                 ``url`` mode. Defaults to 100; ``None`` disables the limit.
             max_discovery_items: Maximum entries accepted independently for each tool or prompt catalog fetch in
                 ``url`` mode. Defaults to 1,000; ``None`` disables the limit.
-            default_integrity: Default integrity for tools without annotations.
-                Defaults to ``IntegrityLabel.UNTRUSTED``.
+            default_integrity: Local integrity baseline for MCP results.
+                Defaults to ``IntegrityLabel.UNTRUSTED``. This becomes
+                explicit tool policy and therefore takes precedence over
+                ``SecureAgentConfig.default_integrity``.
             annotation_overrides: Per-tool-name label overrides keyed by remote MCP tool name,
                 applied only to this proxy's MCP connection. The mapping is not bound to a
                 server identity; reuse it for another connection only after independently
                 authorizing that policy there.
             mark_write_tools_as_sinks: Whether to apply the annotation-derived
                 PUBLIC confidentiality cap. Defaults to ``True``.
-            trust_server_ifc: Whether complete, valid server ``_meta.ifc``
-                labels are authoritative for results. Defaults to ``False``;
-                ToolAnnotations remain restriction-only hints regardless of
-                this setting.
+            server_ifc_policy: How to handle server ``_meta.ifc`` labels.
+                Defaults to ``"restrict"``, which combines the server label
+                with the local MCP baseline. Use ``"ignore"`` for local policy
+                only or ``"authoritative"`` for an authenticated label
+                authority. ToolAnnotations remain restriction-only hints.
+            trust_server_ifc: Deprecated boolean alias. ``True`` maps to
+                ``"authoritative"`` and ``False`` maps to ``"restrict"``.
 
         Raises:
-            ValueError: If both ``mcp_tool`` and ``url`` are provided, or if neither is provided.
+            ValueError: If tool/URL selection or ``server_ifc_policy`` is invalid.
         """
         if mcp_tool is not None and url is not None:
             raise ValueError("Provide either 'mcp_tool' or 'url', not both.")
@@ -6337,7 +6516,11 @@ class SecureMCPToolProxy:
         self._default_integrity = default_integrity
         self._annotation_overrides = annotation_overrides
         self._mark_write_tools_as_sinks = mark_write_tools_as_sinks
-        self._trust_server_ifc = trust_server_ifc
+        self._server_ifc_policy: _MCPServerIFCPolicy = _normalize_mcp_server_ifc_policy(
+            server_ifc_policy,
+            trust_server_ifc,
+            stacklevel=2,
+        )
         self._function_load_callback = self._apply_function_labels
 
     # -- Async context manager --
@@ -6440,7 +6623,67 @@ class SecureMCPToolProxy:
         """Access the underlying ``MCPTool`` instance."""
         return self._mcp_tool
 
+    def skills_source(self, **archive_options: Any) -> SkillsSource:
+        """Create an MCP Skills source using this proxy's connection and IFC policy.
+
+        The source resolves the proxy's current MCP connection for every
+        discovery and resource read, so it follows framework-owned reconnects.
+        Skill content and resources use the same ``default_integrity`` and
+        ``server_ifc_policy`` as MCP tools and prompts. Direct
+        :class:`MCPSkillsSource` construction remains unlabeled.
+
+        Keyword Args:
+            archive_options: Archive-related ``MCPSkillsSource`` options such
+                as ``archive_resource_extensions`` and size limits. Connection
+                and result-adapter options are owned by this proxy.
+
+        Returns:
+            A configured ``MCPSkillsSource`` for use with ``SkillsProvider``.
+
+        Raises:
+            TypeError: If a caller tries to replace proxy-owned connection or
+                result-adapter options.
+            RuntimeError: When the source is read while the proxy is disconnected.
+        """
+        from ._mcp import _retain_mcp_result_security_meta  # pyright: ignore[reportPrivateUsage]
+        from ._skills import MCPSkillsSource
+
+        reserved = {"client", "session_provider", "_result_adapter_factory"}
+        invalid = reserved.intersection(archive_options)
+        if invalid:
+            names = ", ".join(sorted(invalid))
+            raise TypeError(f"skills_source() owns these option(s): {names}.")
+
+        local_label = ContentLabel(
+            integrity=self._default_integrity,
+            confidentiality=ConfidentialityLabel.PUBLIC,
+        )
+        server_ifc_policy = self._server_ifc_policy
+
+        def result_adapter_factory(result: Any) -> _MCPIFCSkillResultAdapter:
+            return _MCPIFCSkillResultAdapter(
+                _retain_mcp_result_security_meta(result),
+                local_label,
+                server_ifc_policy,
+            )
+
+        return MCPSkillsSource(
+            session_provider=self._current_skills_connection,
+            _result_adapter_factory=result_adapter_factory,
+            **archive_options,
+        )
+
     # -- Internal --
+
+    def _current_skills_connection(self) -> Any:
+        connection = self._mcp_tool._connection  # pyright: ignore[reportPrivateUsage]
+        if connection is None:
+            raise RuntimeError("SecureMCPToolProxy must be connected before reading MCP Skills.")
+        if connection.client is not None:
+            return connection.client
+        if connection.session is not None:
+            return connection.session
+        raise RuntimeError("The active MCP connection cannot read Skills resources.")
 
     def _bind_function_load_callback(self) -> bool:
         current = self._mcp_tool._function_load_callback  # pyright: ignore[reportPrivateUsage]
@@ -6465,7 +6708,7 @@ class SecureMCPToolProxy:
             default_integrity=self._default_integrity,
             annotation_overrides=self._annotation_overrides,
             mark_write_tools_as_sinks=self._mark_write_tools_as_sinks,
-            trust_server_ifc=self._trust_server_ifc,
+            server_ifc_policy=self._server_ifc_policy,
         )
 
     async def _apply_labels(self) -> None:
@@ -6474,5 +6717,5 @@ class SecureMCPToolProxy:
             default_integrity=self._default_integrity,
             annotation_overrides=self._annotation_overrides,
             mark_write_tools_as_sinks=self._mark_write_tools_as_sinks,
-            trust_server_ifc=self._trust_server_ifc,
+            server_ifc_policy=self._server_ifc_policy,
         )

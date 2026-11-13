@@ -279,6 +279,7 @@ def test_tool_construction_defaults() -> None:
         {"standing_guidance": []},
         {"agent_framework.security.principals": []},
         {"_agent_framework_internal_security_tool": object()},
+        {"_mcp_server_ifc_policy": "restrict"},
         {"_mcp_trust_server_ifc": False},
     ],
 )
