@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <TargetFrameworks>$(TestTargetFrameworksCore)</TargetFrameworks>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
     <NoWarn>$(NoWarn);NU1605;NU1903</NoWarn>
   </PropertyGroup>
@@ -13,7 +13,6 @@
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
     <PackageReference Include="OpenTelemetry" />
     <PackageReference Include="OpenTelemetry.Exporter.InMemory" />
-    <PackageReference Include="System.Net.ServerSentEvents" />
   </ItemGroup>
 
   <ItemGroup>
@@ -22,7 +21,7 @@
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Harness\Microsoft.Agents.AI.Harness.csproj" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+  <ItemGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net10.0'))">
     <ProjectReference Include="..\..\samples\04-hosting\FoundryHostedAgents\responses\Hosted-Harness-Research\HostedHarnessResearch.csproj" />
   </ItemGroup>
 

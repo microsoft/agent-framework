@@ -3,6 +3,7 @@
   <!-- Source generators MUST target netstandard2.0 only -->
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
+    <TargetFrameworks>netstandard2.0</TargetFrameworks>
   </PropertyGroup>
 
   <PropertyGroup>

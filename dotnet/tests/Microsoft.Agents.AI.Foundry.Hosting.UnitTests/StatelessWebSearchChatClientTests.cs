@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#if NET10_0
+#if NET10_0_OR_GREATER
 #pragma warning disable OPENAI001 // Web-search response items are experimental.
 
 using System.Collections.Generic;

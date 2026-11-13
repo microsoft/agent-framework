@@ -12,6 +12,7 @@
     <PackageReference Include="Microsoft.Agents.ObjectModel" />
     <PackageReference Include="Microsoft.Agents.ObjectModel.Json" />
     <PackageReference Include="Microsoft.Agents.ObjectModel.PowerFx" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
   </ItemGroup>
 
   <ItemGroup>

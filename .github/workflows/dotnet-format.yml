@@ -22,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { dotnet: "10.0", configuration: Release, os: ubuntu-latest }
+          - { dotnet: "11.0", configuration: Release, os: ubuntu-latest }
 
     runs-on: ${{ matrix.os }}
     env:
