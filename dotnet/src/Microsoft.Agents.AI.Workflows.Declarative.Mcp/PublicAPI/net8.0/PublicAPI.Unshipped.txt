@@ -1,4 +1,8 @@
 ﻿#nullable enable
+Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.MaxResponseBodyBytes.get -> int
+Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.MaxResponseBodyBytes.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.MaxSseEventBytes.get -> int
+Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.MaxSseEventBytes.init -> void
 Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.DefaultMcpToolHandler(System.Collections.Generic.IEnumerable<string!>! allowedHosts, System.Net.Http.IHttpMessageHandlerFactory! httpMessageHandlerFactory, string! httpClientName) -> void
 Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.ProtocolVersion.get -> string?
 Microsoft.Agents.AI.Workflows.Declarative.Mcp.DefaultMcpToolHandler.ProtocolVersion.init -> void
