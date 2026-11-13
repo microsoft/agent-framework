@@ -572,16 +572,33 @@ def _default_vector_model_encoder(record_type: type[Any]) -> VectorModelEncoder:
     return encode
 
 
+def _pydantic_validation_key(name: str, field_info: Any) -> str:
+    """Return the key that feeds one model field from a mapping keyed by field name.
+
+    A string validation alias (which ``alias=`` also installs) or a string model alias is the key
+    Pydantic accepts, so it is used unchanged. ``AliasChoices`` declares several accepted aliases and
+    validates on any one of them, so the first string choice is used; keying such a field by its own
+    name only validates when the model also allows population by name, which declaring an alias does
+    not require. Nested ``AliasPath`` aliases keep the previous field-name fallback.
+    """
+    validation_alias = getattr(field_info, "validation_alias", None)
+    if isinstance(validation_alias, str):
+        return validation_alias
+    choices = getattr(validation_alias, "choices", None)
+    if isinstance(choices, Sequence) and not isinstance(choices, str):
+        for choice in cast("Sequence[Any]", choices):
+            if isinstance(choice, str):
+                return choice
+    alias = getattr(field_info, "alias", None)
+    return alias if isinstance(alias, str) else name
+
+
 def _default_vector_model_decoder(record_type: type[Any]) -> VectorModelDecoder:
     if issubclass(record_type, BaseModel):
 
         def decode_pydantic(value: Mapping[str, Any]) -> Any:
             validation_value = {
-                field.validation_alias
-                if isinstance(field.validation_alias, str)
-                else field.alias
-                if isinstance(field.alias, str)
-                else name: value[name]
+                _pydantic_validation_key(name, field): value[name]
                 for name, field in record_type.model_fields.items()
                 if name in value
             }
