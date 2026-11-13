@@ -31,13 +31,26 @@ from abc import abstractmethod
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Iterable, Mapping, Sequence
 from contextvars import ContextVar, Token
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass
 from functools import partial
 from hashlib import sha256
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, cast
+from types import UnionType
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Literal,
+    TypeAlias,
+    TypeVar,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+)
 
 import msgspec
+import typing_extensions
 from typing_extensions import TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
@@ -265,6 +278,253 @@ def _default_state_encoder(cls: type[Any]) -> StateEncoder:
     )
 
 
+_RESTORE_LEAF: Any = object()
+_LocationTree: TypeAlias = dict[Any, Any]
+
+
+def _field_alias_names(field: Any) -> list[str]:
+    """Return every serialized key one pydantic field may legitimately appear under."""
+    names: list[str] = []
+    validation_alias = getattr(field, "validation_alias", None)
+    if isinstance(validation_alias, str):
+        names.append(validation_alias)
+    else:
+        names.extend(choice for choice in getattr(validation_alias, "choices", ()) if isinstance(choice, str))
+    for alias in (getattr(field, "alias", None), getattr(field, "serialization_alias", None)):
+        if isinstance(alias, str) and alias not in names:
+            names.append(alias)
+    return names
+
+
+def _model_fields(value_cls: Any) -> Mapping[str, Any]:
+    fields = cast("Mapping[str, Any] | None", getattr(value_cls, "model_fields", None))
+    return fields if isinstance(fields, Mapping) else {}
+
+
+def _union_branch_label(annotation: Any) -> str:
+    """Format a type the way pydantic labels its synthetic union branches."""
+    annotation_origin = getattr(annotation, "__origin__", None)
+    if getattr(annotation, "__metadata__", None) is not None and annotation_origin is not None:
+        return _union_branch_label(annotation_origin)
+    origin = get_origin(annotation)
+    if origin in (Union, UnionType):
+        return f"Union[{','.join(_union_branch_label(arg) for arg in get_args(annotation))}]"
+    if origin is not None:
+        origin_name = getattr(origin, "__name__", str(origin).removeprefix("typing."))
+        args = ",".join(_union_branch_label(arg) for arg in get_args(annotation))
+        return f"{origin_name}[{args}]"
+    if annotation is Ellipsis:
+        return "..."
+    if isinstance(annotation, str):
+        return repr(annotation)
+    return getattr(annotation, "__name__", str(annotation))
+
+
+def _descend_classes(annotation: Any) -> tuple[Any | None, Any | None]:
+    """Return the model class and annotation for the current location.
+
+    A nullable union with one non-None alternative unwraps to that alternative.
+    Other union annotations stay intact until a synthetic branch label identifies
+    the branch. Containers keep their complete annotation until a key or index
+    consumes that level, including when a list's element is itself a tuple.
+    """
+    annotation_origin = getattr(annotation, "__origin__", None)
+    if getattr(annotation, "__metadata__", None) is not None and annotation_origin is not None:
+        return _descend_classes(annotation_origin)
+    origin = get_origin(annotation)
+    if origin is Union or origin is UnionType:
+        non_none_args = tuple(arg for arg in get_args(annotation) if arg is not type(None))
+        if len(non_none_args) == 1:
+            return _descend_classes(non_none_args[0])
+        return annotation, annotation
+    if origin is not None:
+        return None, annotation
+    if annotation is Any or annotation in (str, bytes) or not isinstance(annotation, type):
+        return None, None
+    return annotation, annotation
+
+
+def _list_item_annotation(annotation: Any, index: int) -> Any:
+    """Select the annotation consumed by one sequence index."""
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin is not tuple:
+        return args[0] if origin is not None and args else annotation
+    if len(args) == 2 and args[1] is Ellipsis:
+        return args[0]
+    return args[index] if index < len(args) else None
+
+
+def _location_tree(errors: Sequence[Mapping[str, Any]]) -> _LocationTree | None:
+    """Collapse validation-error locations into a tree of segments to restore.
+
+    A deeper location supersedes a shallower one on the same path. When pydantic
+    blames both ``child`` and ``child.message``, only ``child.message`` is
+    repaired, because restoring ``child`` would again sweep up its siblings.
+    """
+    tree: _LocationTree = {}
+    found = False
+    for error in errors:
+        location = cast("Sequence[Any] | None", error.get("loc"))
+        if location is None or not location:
+            continue
+        node: _LocationTree = tree
+        for segment in location[:-1]:
+            child = node.get(segment)
+            subtree: _LocationTree = cast("_LocationTree", child) if isinstance(child, dict) else {}
+            node[segment] = subtree
+            node = subtree
+        last = location[-1]
+        if not isinstance(node.get(last), dict):
+            node[last] = _RESTORE_LEAF
+        found = True
+    return tree if found else None
+
+
+def _restore_union(value: Any, tree: Mapping[Any, Any], annotation: Any, path: str) -> tuple[Any, bool]:
+    """Repair one union branch at a time, always starting from the original value."""
+    from pydantic import BaseModel, ConfigDict, TypeAdapter
+
+    for segment, sub in tree.items():
+        matching_branches = tuple(arg for arg in get_args(annotation) if _union_branch_label(arg) == segment)
+        # Pydantic also uses is-instance labels and discriminator values. When
+        # the label is not a type name, branch validation identifies the candidate
+        # without guessing the schema-specific label format. Duplicate class names
+        # are not unique labels, so every matching branch gets an independent try.
+        candidates = matching_branches or get_args(annotation)
+        for candidate in candidates:
+            restored = value
+            try:
+                restored, changed = _restore_at_loc_tree(
+                    value,
+                    sub,
+                    classes=_descend_classes(candidate),
+                    path=f"{path}.{segment}",
+                )
+                if not changed:
+                    continue
+                config_candidate: Any = candidate
+                annotation_origin = getattr(config_candidate, "__origin__", None)
+                if getattr(config_candidate, "__metadata__", None) is not None and annotation_origin is not None:
+                    config_candidate = annotation_origin
+                owns_validation_config = False
+                if isinstance(config_candidate, type):
+                    candidate_type = cast(Any, config_candidate)
+                    owns_validation_config = (
+                        issubclass(candidate_type, BaseModel)
+                        or is_dataclass(candidate_type)
+                        or typing_extensions.is_typeddict(candidate_type)
+                    )
+                config = None if owns_validation_config else ConfigDict(arbitrary_types_allowed=True)
+                TypeAdapter(candidate, config=config).validate_python(restored)
+            except ValueError:
+                # Registered codecs are application extension points. A failed
+                # candidate must not prevent a later branch from succeeding.
+                changed = False
+            if changed:
+                return restored, True
+    return value, False
+
+
+def _restore_at_loc_tree(
+    value: Any, tree: Any, *, classes: tuple[Any | None, Any | None], path: str
+) -> tuple[Any, bool]:
+    keyed_cls, item_annotation = classes
+    if tree is _RESTORE_LEAF:
+        return _deserialize_value(value, path=path), True
+    subtree = cast("_LocationTree | None", tree)
+    if subtree is None or not subtree:
+        return value, False
+    if get_origin(keyed_cls) in (Union, UnionType):
+        return _restore_union(value, subtree, keyed_cls, path)
+    if isinstance(value, Mapping):
+        mapping = cast("Mapping[str, Any]", value)
+        if (
+            keyed_cls is not None
+            and _STATE_CLASS_REGISTRY.get(keyed_cls) is not None
+            and _STATE_TYPE_REGISTRY.get(str(mapping.get("type", ""))) is not None
+        ):
+            # The location reaches inside a payload owned by a registered codec.
+            # Only that codec knows the shape, so restore the value as a whole.
+            return _deserialize_value(mapping, path=path), True
+        return _restore_mapping(mapping, subtree, keyed_cls=keyed_cls, item_annotation=item_annotation, path=path)
+    if isinstance(value, list):
+        return _restore_list(cast("list[Any]", value), subtree, item_annotation=item_annotation, path=path)
+    return value, False
+
+
+def _restore_mapping(
+    value: Mapping[str, Any],
+    tree: Mapping[Any, Any],
+    *,
+    keyed_cls: Any,
+    item_annotation: Any,
+    path: str,
+) -> tuple[Any, bool]:
+    fields = _model_fields(keyed_cls)
+    args = get_args(item_annotation)
+    value_annotation = args[1] if get_origin(item_annotation) in (dict, Mapping) and len(args) == 2 else item_annotation
+    out = dict(value)
+    changed = False
+    for segment, sub in tree.items():
+        field_name, field = next(
+            (
+                (name, candidate)
+                for name, candidate in fields.items()
+                if name == segment or segment in _field_alias_names(candidate)
+            ),
+            (None, None),
+        )
+        candidates = [segment]
+        if field_name is not None:
+            candidates.append(field_name)
+            candidates.extend(_field_alias_names(field))
+        raw_key = next((key for key in candidates if key in value), None)
+        if raw_key is None:
+            continue
+        restored, key_changed = _restore_at_loc_tree(
+            out[raw_key],
+            sub,
+            classes=_descend_classes(getattr(field, "annotation", None) if field is not None else value_annotation),
+            path=f"{path}.{raw_key}",
+        )
+        if key_changed:
+            out[raw_key] = restored
+            changed = True
+    return (out, True) if changed else (value, False)
+
+
+def _restore_list(
+    value: Sequence[Any], tree: Mapping[Any, Any], *, item_annotation: Any, path: str
+) -> tuple[Any, bool]:
+    out = list(value)
+    changed = False
+    for segment, sub in tree.items():
+        if not isinstance(segment, int) or not 0 <= segment < len(out):
+            continue
+        restored, item_changed = _restore_at_loc_tree(
+            out[segment],
+            sub,
+            classes=_descend_classes(_list_item_annotation(item_annotation, segment)),
+            path=f"{path}[{segment}]",
+        )
+        if item_changed:
+            out[segment] = restored
+            changed = True
+    return (out, True) if changed else (value, False)
+
+
+def _restore_failed_values(
+    cls: type[Any], raw: Mapping[str, Any], errors: Sequence[Mapping[str, Any]], *, path: str
+) -> Mapping[str, Any] | None:
+    """Repair only the values pydantic blamed, or ``None`` when none can be located."""
+    tree = _location_tree(errors)
+    if tree is None:
+        return None
+    restored, changed = _restore_at_loc_tree(raw, tree, classes=(cls, cls), path=path)
+    return cast(Mapping[str, Any], restored) if changed else None
+
+
 def _default_state_decoder(cls: type[Any]) -> StateDecoder:
     """Create the default decoder for one explicitly registered state type."""
     if callable(getattr(cls, "from_dict", None)):
@@ -274,12 +534,28 @@ def _default_state_decoder(cls: type[Any]) -> StateDecoder:
 
         return decode_from_dict
 
-    from pydantic import BaseModel
+    from pydantic import BaseModel, ValidationError
 
     if issubclass(cls, BaseModel):
 
         def decode_pydantic(payload: Mapping[str, Any]) -> Any:
-            return cls.model_validate({key: value for key, value in payload.items() if key != "type"})
+            raw = {key: value for key, value in payload.items() if key != "type"}
+            try:
+                return cls.model_validate(raw)
+            except ValidationError as exc:
+                # The encoder's payload items went through _serialize_value,
+                # so a nested registered value (e.g. Message) sits in the
+                # payload as its tagged dict. Restore only the values pydantic
+                # actually blames: the complete error location is walked, so a
+                # failure deep inside a nested model or a container repairs that
+                # one value and leaves every sibling untouched. A sibling that
+                # legitimately holds a tag-shaped dict (e.g. plain
+                # dict[str, Any] data) therefore keeps its payload instead of
+                # being converted or rejected by the retry.
+                restored = _restore_failed_values(cls, raw, exc.errors(), path=cls.__name__)
+                if restored is None:
+                    raise
+                return cls.model_validate(restored)
 
         return decode_pydantic
 
