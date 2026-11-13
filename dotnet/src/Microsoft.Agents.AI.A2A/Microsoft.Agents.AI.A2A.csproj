@@ -3,7 +3,7 @@
   <PropertyGroup>
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <VersionSuffix>preview</VersionSuffix>
-    <NoWarn>$(NoWarn);MEAI001</NoWarn>
+    <NoWarn>$(NoWarn);MEAI001;MAAI001</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
@@ -11,6 +11,9 @@
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
+    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
+    <InjectSharedHttpHeaderValidation>true</InjectSharedHttpHeaderValidation>
   </PropertyGroup>
 
   <ItemGroup>

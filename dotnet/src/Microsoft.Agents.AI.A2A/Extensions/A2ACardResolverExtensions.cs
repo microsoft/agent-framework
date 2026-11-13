@@ -28,6 +28,13 @@ namespace A2A;
 /// and include <see cref="ProtocolBindingNames.Grpc"/> in <see cref="A2AClientOptions.PreferredBindings"/>.
 /// Agent card discovery still uses HTTP. Client ownership follows <see cref="AgentCardExtensions"/>.
 /// </para>
+/// <para>
+/// The addresses listed in the resolved card are checked as described in <see cref="AgentCardExtensions"/>:
+/// only <c>https</c> addresses are used unless <see cref="A2AAgentOptions.AllowAgentCardHostsInsecureHttp"/> is set. The card may
+/// point to a different host than the one it was fetched from, so set <see cref="A2AAgentOptions.AgentCardAllowedHosts"/>
+/// when the supplied <see cref="HttpClient"/> carries credentials or the card source is untrusted. Setting it is
+/// recommended for any card fetched from an address you do not fully control.
+/// </para>
 /// </remarks>
 public static class A2ACardResolverExtensions
 {
@@ -38,6 +45,11 @@ public static class A2ACardResolverExtensions
     /// This method can be used to access A2A agents that support the
     /// <see href="https://github.com/a2aproject/A2A/blob/main/docs/topics/agent-discovery.md#1-well-known-uri">Well-Known URI</see>
     /// discovery mechanism.
+    /// <para>
+    /// This overload accepts any host listed in the resolved card. If the card may come from an untrusted source,
+    /// use the overload that takes <see cref="A2AAgentOptions"/> and set
+    /// <see cref="A2AAgentOptions.AgentCardAllowedHosts"/>.
+    /// </para>
     /// </remarks>
     /// <param name="resolver">The <see cref="A2ACardResolver" /> to use for the agent creation.</param>
     /// <param name="httpClient">The <see cref="HttpClient"/> to use for HTTP requests.</param>
@@ -67,8 +79,9 @@ public static class A2ACardResolverExtensions
     /// </remarks>
     /// <param name="resolver">The <see cref="A2ACardResolver" /> to use for the agent creation.</param>
     /// <param name="agentOptions">
-    /// Configuration options that control the agent's identity. When provided, non-null values override the
-    /// corresponding values from the resolved agent card.
+    /// Configuration options that control the agent's identity and which card addresses may be used. When provided,
+    /// non-null values override the corresponding values from the resolved agent card. If the card may come from an
+    /// untrusted source, setting <see cref="A2AAgentOptions.AgentCardAllowedHosts"/> is recommended.
     /// </param>
     /// <param name="httpClient">
     /// The <see cref="HttpClient"/> to use for HTTP requests made by the created A2A client.

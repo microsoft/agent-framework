@@ -208,7 +208,7 @@ public sealed class A2AAgentTaskExtensionsTests
         // Assert
         Assert.NotNull(result);
         var message = Assert.Single(result);
-        Assert.Equal(role == Role.Agent ? ChatRole.Assistant : ChatRole.User, message.Role);
+        Assert.Equal(ChatRole.Assistant, message.Role);
         Assert.Equal("status-message", message.MessageId);
         Assert.Same(agentTask.Status.Message, message.RawRepresentation);
         Assert.NotNull(message.AdditionalProperties);

@@ -28,7 +28,7 @@ The linked echo-agent does not expose gRPC. To select `GRPC`, use a server whose
 Set the following environment variable:
 
 ```powershell
-$env:A2A_AGENT_HOST="http://localhost:5000"  # Replace with your A2A agent server host
+$env:A2A_AGENT_HOST="https://your-a2a-agent-host"  # Replace with your A2A agent server host
 ```
 
 Optionally select a binding:

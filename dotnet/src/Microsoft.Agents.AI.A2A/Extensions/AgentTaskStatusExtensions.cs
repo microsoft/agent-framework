@@ -27,7 +27,9 @@ internal static class AgentTaskStatusExtensions
         }
 
         // Convert status messages for InputRequired, AuthRequired, Failed, Canceled, Rejected, and Unspecified.
+        // The remote agent chooses the role on the wire; always surface its status text as an assistant message.
         var message = status.Message.ToChatMessage();
+        message.Role = ChatRole.Assistant;
 
         return message.Contents.Count > 0 ? message : null;
     }

@@ -21,5 +21,5 @@ Before you begin, ensure you have the following prerequisites:
 Set the following environment variable:
 
 ```powershell
-$env:A2A_AGENT_HOST="http://localhost:5000"  # Replace with your A2A agent server host
+$env:A2A_AGENT_HOST="https://your-a2a-agent-host"  # Replace with your A2A agent server host
 ```
