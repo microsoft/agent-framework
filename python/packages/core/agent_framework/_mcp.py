@@ -208,6 +208,7 @@ _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_IS_TOOL_KEY = "_mcp_is_tool"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
 _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = "_mcp_tool_result_host_payload"
+_MCP_TOOL_RESULT_SECURITY_META_KEY = "_mcp_tool_result_security_meta"
 _MCP_PROGRESSIVE_LIST_TOOL_NAME = "list_mcp_tools"
 _MCP_PROGRESSIVE_LOAD_TOOL_NAME = "load_tool"
 _MCP_PROGRESSIVE_UNLOAD_TOOL_NAME = "unload_tool"
@@ -243,8 +244,18 @@ _MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
 })
 # object is a reference to the owner of the headers, so we keep track which headers belong to which tool
 _mcp_call_headers: ContextVar[tuple[object, dict[str, str]] | None] = ContextVar("_mcp_call_headers")
-_mcp_tool_runtime_context: ContextVar[tuple[object, Mapping[str, Any]] | None] = ContextVar(
-    "_mcp_tool_runtime_context", default=None
+
+
+@dataclass(frozen=True)
+class _MCPToolRuntimeContext:
+    owner: object
+    runtime_kwargs: Mapping[str, Any]
+    result_capture: _MCPResultCapture | None = None
+
+
+_mcp_tool_runtime_context: ContextVar[_MCPToolRuntimeContext | None] = ContextVar(
+    "_mcp_tool_runtime_context",
+    default=None,
 )
 _MCP_HEADER_OWNER_EXTENSION = "agent_framework.mcp_header_owner"
 _MCP_INJECTED_HEADER_KEYS_EXTENSION = "agent_framework.mcp_injected_header_keys"
@@ -258,6 +269,7 @@ _MCP_SUBSCRIPTION_RETRY_MAX_DELAY = 2.0
 _DEFAULT_MCP_DISCOVERY_MAX_PAGES = 100
 _DEFAULT_MCP_DISCOVERY_MAX_ITEMS = 1_000
 _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES = 1024 * 1024
+_MAX_MCP_SECURITY_META_SIZE_BYTES = 4096
 
 
 @dataclass
@@ -278,17 +290,56 @@ class _MCPDiscoveryRestart(Exception):
     """Restart staged discovery when its connection is replaced."""
 
 
+def _retain_mcp_result_security_meta(mcp_type: Any) -> dict[str, Any] | None:
+    """Retain bounded, JSON-safe MCP IFC metadata independently of generic payload budgets."""
+    raw_meta = getattr(mcp_type, "meta", None)
+    if not isinstance(raw_meta, Mapping) or "ifc" not in raw_meta:
+        return None
+
+    raw_meta_mapping = cast(Mapping[str, Any], raw_meta)
+    raw_security_meta: dict[str, Any] = {"ifc": raw_meta_mapping["ifc"]}
+    if _json_size_exceeds(raw_security_meta, _MAX_MCP_SECURITY_META_SIZE_BYTES):
+        logger.warning("MCP result _meta.ifc exceeds the independent security metadata limit.")
+        return {"retained": False}
+
+    try:
+        copied = cast(
+            dict[str, Any],
+            to_jsonable_python(raw_security_meta, fallback=str),
+        )
+    except (TypeError, ValueError):
+        logger.warning("MCP result _meta.ifc could not be retained safely.")
+        return {"retained": False}
+
+    if len(json.dumps(copied).encode("utf-8")) > _MAX_MCP_SECURITY_META_SIZE_BYTES:
+        logger.warning("MCP result _meta.ifc exceeds the independent security metadata limit.")
+        return {"retained": False}
+
+    return {"retained": True, "meta": copied}
+
+
 @dataclass
-class _MCPHostPayloadCapture:
+class _MCPResultCapture:
     """Collect one generated MCP result without affecting its public return shape."""
 
     max_size_bytes: int | None
     aggregate_budget: _FunctionResultPayloadBudget | None
     apply_server_meta_to_model_items: bool
+    retain_generic_payload: bool = True
     host_payload: dict[str, Any] | None = None
     meta: dict[str, Any] | None = None
+    security_meta: dict[str, Any] | None = None
     recorded: bool = False
     meta_prepared: bool = False
+    security_meta_prepared: bool = False
+
+    def prepare_security_meta(self, mcp_type: Any) -> dict[str, Any] | None:
+        """Retain security-relevant MCP metadata outside generic payload budgets."""
+        if self.security_meta_prepared:
+            return self.security_meta
+        self.security_meta_prepared = True
+        self.security_meta = _retain_mcp_result_security_meta(mcp_type)
+        return self.security_meta
 
     def prepare_meta(self, mcp_type: Any) -> dict[str, Any] | None:
         if self.meta_prepared:
@@ -318,6 +369,9 @@ class _MCPHostPayloadCapture:
         if self.recorded:
             return
         self.recorded = True
+        self.prepare_security_meta(mcp_type)
+        if not self.retain_generic_payload:
+            return
         self.prepare_meta(mcp_type)
 
         effective_limit = self.max_size_bytes
@@ -350,8 +404,17 @@ class _MCPHostPayloadCapture:
         return _FunctionResultCarrier(
             additional_properties=additional_properties,
             item_additional_properties=item_additional_properties,
+            private_metadata=(
+                {_MCP_TOOL_RESULT_SECURITY_META_KEY: self.security_meta} if self.security_meta is not None else {}
+            ),
             exclusive_outer_keys=frozenset({_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY}),
-            exclusive_item_keys=frozenset({"_meta"}),
+            exclusive_item_keys=frozenset({
+                "_meta",
+                "_security_label_authoritative",
+                "_security_label_authoritative_confidentiality",
+                "_security_label_validated_principals",
+                _MCP_TOOL_RESULT_SECURITY_META_KEY,
+            }),
             result_already_parsed=True,
         )
 
@@ -363,16 +426,13 @@ class _MCPHostPayloadCapture:
             updated_item.additional_properties = dict(updated_item.additional_properties)
             updated_item.additional_properties.pop(_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY, None)
             updated_item.additional_properties.pop("_meta", None)
+            updated_item.additional_properties.pop(_MCP_TOOL_RESULT_SECURITY_META_KEY, None)
             if self.apply_server_meta_to_model_items and self.meta is not None:
                 updated_item.additional_properties["_meta"] = self.meta
+            if self.security_meta is not None:
+                updated_item.additional_properties[_MCP_TOOL_RESULT_SECURITY_META_KEY] = self.security_meta
             items[index] = updated_item
         return items
-
-
-_mcp_host_payload_capture: ContextVar[_MCPHostPayloadCapture | None] = ContextVar(
-    "_mcp_host_payload_capture",
-    default=None,
-)
 
 
 class _EncodedSizeBudget:
@@ -541,8 +601,13 @@ def _mcp_tool_result_meta(
     return meta
 
 
-def _capture_mcp_tool_result(mcp_type: Any) -> None:
-    capture = _mcp_host_payload_capture.get()
+def _capture_mcp_result(owner: object, mcp_type: Any) -> None:
+    runtime_context = _mcp_tool_runtime_context.get()
+    capture = (
+        runtime_context.result_capture
+        if runtime_context is not None and runtime_context.owner is owner
+        else None
+    )
     if capture is not None:
         capture.record(mcp_type)
 
@@ -982,19 +1047,23 @@ def _make_mcp_tool_caller(
         else:
             call_kwargs.pop("_meta", None)
         raw_budget = ctx.metadata.get(_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY)
-        capture = _MCPHostPayloadCapture(
+        capture = _MCPResultCapture(
             max_size_bytes=mcp_tool.max_host_payload_size_bytes,
             aggregate_budget=raw_budget if isinstance(raw_budget, _FunctionResultPayloadBudget) else None,
             apply_server_meta_to_model_items=mcp_tool.parse_tool_results is None,
         )
-        token = _mcp_host_payload_capture.set(capture)
-        runtime_token = _mcp_tool_runtime_context.set((mcp_tool, dict(ctx.kwargs)))
+        runtime_token = _mcp_tool_runtime_context.set(
+            _MCPToolRuntimeContext(
+                owner=mcp_tool,
+                runtime_kwargs=dict(ctx.kwargs),
+                result_capture=capture,
+            )
+        )
         try:
             parsed = await mcp_tool.call_tool(remote_tool_name, **call_kwargs)
             return capture.prepare_model_result(parsed)
         finally:
             _mcp_tool_runtime_context.reset(runtime_token)
-            _mcp_host_payload_capture.reset(token)
             ctx.metadata[_FUNCTION_RESULT_CARRIER_CONTEXT_KEY] = capture.to_carrier()
 
     return _call_tool_with_runtime_kwargs
@@ -1010,11 +1079,29 @@ def _make_mcp_prompt_caller(
         ctx: FunctionInvocationContext,
         **kwargs: Any,
     ) -> str:
-        return await mcp_tool._call_prompt_with_runtime_kwargs(  # pyright: ignore[reportPrivateUsage]
-            remote_prompt_name,
-            kwargs,
-            ctx.kwargs,
+        raw_budget = ctx.metadata.get(_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY)
+        capture = _MCPResultCapture(
+            max_size_bytes=mcp_tool.max_host_payload_size_bytes,
+            aggregate_budget=raw_budget if isinstance(raw_budget, _FunctionResultPayloadBudget) else None,
+            apply_server_meta_to_model_items=False,
+            retain_generic_payload=False,
         )
+        runtime_token = _mcp_tool_runtime_context.set(
+            _MCPToolRuntimeContext(
+                owner=mcp_tool,
+                runtime_kwargs=dict(ctx.kwargs),
+                result_capture=capture,
+            )
+        )
+        try:
+            return await mcp_tool._call_prompt_with_runtime_kwargs(  # pyright: ignore[reportPrivateUsage]
+                remote_prompt_name,
+                kwargs,
+                ctx.kwargs,
+            )
+        finally:
+            _mcp_tool_runtime_context.reset(runtime_token)
+            ctx.metadata[_FUNCTION_RESULT_CARRIER_CONTEXT_KEY] = capture.to_carrier()
 
     return _call_prompt_with_runtime_kwargs
 
@@ -1452,8 +1539,14 @@ class MCPTool:
         """
         from mcp import types
 
-        capture = _mcp_host_payload_capture.get()
+        runtime_context = _mcp_tool_runtime_context.get()
+        capture = (
+            runtime_context.result_capture
+            if runtime_context is not None and runtime_context.owner is self
+            else None
+        )
         if capture is not None:
+            capture.prepare_security_meta(mcp_type)
             meta = capture.prepare_meta(mcp_type)
         else:
             raw_meta = mcp_type.meta
@@ -3728,7 +3821,7 @@ class MCPTool:
             span_error_recorded = False
             try:
                 result = await self._invoke_tool(tool_name, kwargs, trace_context)
-                _capture_mcp_tool_result(result)
+                _capture_mcp_result(self, result)
                 if result.is_error:
                     parsed = parser(result)
                     text = (
@@ -3886,6 +3979,7 @@ class MCPTool:
                 close_generation = self._close_generation
                 try:
                     prompt_result = await self._invoke_prompt(prompt_name, kwargs)
+                    _capture_mcp_result(self, prompt_result)
                     return parser(prompt_result)
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
@@ -5121,7 +5215,11 @@ class MCPStreamableHTTPTool(MCPTool):
             A list of Content items representing the tool output.
         """
         runtime_context = _mcp_tool_runtime_context.get()
-        header_kwargs = runtime_context[1] if runtime_context is not None and runtime_context[0] is self else kwargs
+        header_kwargs = (
+            runtime_context.runtime_kwargs
+            if runtime_context is not None and runtime_context.owner is self
+            else kwargs
+        )
         headers = self._effective_headers(header_kwargs)
         with self._http_headers(headers, header_kwargs):
             return await super().call_tool(tool_name, **kwargs)

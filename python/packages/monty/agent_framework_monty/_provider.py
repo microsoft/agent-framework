@@ -23,7 +23,10 @@ class MontyCodeActProvider(ContextProvider):
     Mirrors :class:`agent_framework_hyperlight.HyperlightCodeActProvider` for
     the subset of capabilities that apply to the Monty interpreter:
     ``tools``, ``approval_mode``, ``workspace_root``, ``file_mounts``, and
-    ``resource_limits`` (Monty-only).
+    ``resource_limits`` (Monty-only). ``resource_limits`` follows
+    :class:`MontyExecuteCodeTool`, including its default 30-second guest
+    execution limit. Calls that can write to the same host files take turns
+    across every run of the provider, as described for :class:`MontyExecuteCodeTool`.
 
     ``tool_description_format`` controls parameter documentation in both
     injected instructions and the tool description. Pass ``"compact"`` (the
@@ -33,6 +36,9 @@ class MontyCodeActProvider(ContextProvider):
     retaining entries for tools registered later.
 
     Keyword Args:
+        additional_properties: Metadata applied only to the outer ``execute_code``
+            FunctionTool. Use it for one coarse FIDES policy over the complete
+            CodeAct result; nested host-tool calls remain outside FIDES tracking.
         include_detailed_errors: Expose host exception and execution diagnostics only for a trusted
             channel. Defaults to ``False`` and is independent of outer-client error/logging settings.
     """
@@ -44,6 +50,7 @@ class MontyCodeActProvider(ContextProvider):
         source_id: str = DEFAULT_SOURCE_ID,
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
         approval_mode: ApprovalMode | None = None,
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
@@ -54,6 +61,7 @@ class MontyCodeActProvider(ContextProvider):
         super().__init__(source_id)
         self._execute_code_tool = MontyExecuteCodeTool(
             tools=tools,
+            additional_properties=additional_properties,
             approval_mode=approval_mode,
             workspace_root=workspace_root,
             file_mounts=file_mounts,

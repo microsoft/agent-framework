@@ -23,7 +23,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp;
 /// </summary>
 /// <remarks>
 /// Every invocation creates and disposes a separate MCP client, including <c>tools/list</c>.
-/// Factory-created HTTP clients reuse factory-managed handlers without sharing MCP session state.
+/// Per-invocation HTTP clients reuse factory-managed handlers without sharing MCP session state.
 /// Standalone GET streams for unsolicited server messages are disabled; request-scoped SSE responses remain supported.
 /// The handler owns no shared disposable resources. The host must await its invocations before disposing
 /// the application-owned factory infrastructure.
@@ -42,8 +42,9 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
 
     private static readonly JsonWriterOptions s_toolListJsonWriterOptions = new() { Indented = true };
 
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IHttpMessageHandlerFactory _httpMessageHandlerFactory;
     private readonly string _httpClientName;
+    private readonly AllowedHttpHosts _allowedHosts;
 
     /// <summary>
     /// Gets or initializes the protocol version requested for every invocation.
@@ -60,27 +61,59 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
     public string? ProtocolVersion { get; init; }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class using an application-provided HTTP client factory.
+    /// Gets or initializes the maximum decoded size of an HTTP response other than an SSE stream, in bytes.
     /// </summary>
-    /// <param name="httpClientFactory">
-    /// The factory that creates a separate <see cref="HttpClient"/> for every invocation.
-    /// Factory-created clients are disposed after MCP cleanup; the factory and its pooled handlers remain application-owned.
-    /// </param>
-    /// <param name="httpClientName">
-    /// The stable named-client configuration to use, or an empty string for the default configuration.
-    /// Do not derive names from workflow identifiers, credentials, or arbitrary server URLs.
-    /// </param>
-    /// <remarks>
-    /// The application is responsible for the HTTP pipeline's transport policy.
-    /// Disable cookies and automatic redirects, enable certificate revocation checking, and restrict credential injection
-    /// to the configured server origin. Pooled handlers must not retain per-invocation credentials or mutable origin state.
-    /// Configure a finite handler lifetime so new invocations can pick up endpoint changes without disrupting active calls.
-    /// </remarks>
-    /// <exception cref="ArgumentNullException">A required argument is <see langword="null"/>.</exception>
-    public DefaultMcpToolHandler(IHttpClientFactory httpClientFactory, string httpClientName)
+    /// <value>A positive byte count. The default is 4 MiB.</value>
+    public int MaxResponseBodyBytes
     {
-        this._httpClientFactory = Throw.IfNull(httpClientFactory);
+        get;
+        init => field = value > 0 ? value : throw new ArgumentOutOfRangeException(nameof(value));
+    } = 4 * 1024 * 1024;
+
+    /// <summary>
+    /// Gets or initializes the maximum decoded size of an individual SSE event, including its framing, in bytes.
+    /// </summary>
+    /// <value>
+    /// A positive byte count. The default is 4 MiB. The limit resets at each empty line and does not
+    /// limit the aggregate size of a stream containing multiple events.
+    /// </value>
+    public int MaxSseEventBytes
+    {
+        get;
+        init => field = value > 0 ? value : throw new ArgumentOutOfRangeException(nameof(value));
+    } = 4 * 1024 * 1024;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DefaultMcpToolHandler"/> class with allowed hosts
+    /// and an application-provided HTTP message handler factory.
+    /// </summary>
+    /// <param name="allowedHosts">
+    /// The application-owned allowlist checked against each MCP server URL's host and effective port
+    /// before creating an HTTP client, including for tool discovery.
+    /// The exact DNS names or IP literals, optionally including a port, the application permits.
+    /// Omitted ports default to 443. Use brackets around IPv6 literals when specifying a port.
+    /// Schemes, paths, and wildcards are not supported. An empty collection rejects all invocations.
+    /// The collection is copied at construction.
+    /// Matching is case-insensitive, with internationalized names and trailing DNS dots normalized.
+    /// Both HTTP and HTTPS are supported; authorization matches the host and effective port, not the scheme.
+    /// DNS resolution and routing remain the responsibility of the HTTP transport.
+    /// </param>
+    /// <param name="httpMessageHandlerFactory">
+    /// The application-owned factory supplying pooled HTTP handler pipelines. The primary handler must be
+    /// an <see cref="HttpClientHandler"/> or, on .NET, a <c>SocketsHttpHandler</c>, with cookies and automatic
+    /// redirects disabled. Enable certificate revocation checking and bind credentials to the intended origin
+    /// in delegating handlers. Delegating handlers must preserve the validated destination.
+    /// Per-invocation HTTP clients do not dispose factory-owned pipelines. Client configuration registered
+    /// through <see cref="IHttpClientFactory"/> does not apply; configure headers in delegating handlers.
+    /// </param>
+    /// <param name="httpClientName">The stable named-client configuration, or an empty string for the default configuration.</param>
+    /// <exception cref="ArgumentNullException">A required argument is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">An allowed host is invalid.</exception>
+    public DefaultMcpToolHandler(IEnumerable<string> allowedHosts, IHttpMessageHandlerFactory httpMessageHandlerFactory, string httpClientName)
+    {
+        this._httpMessageHandlerFactory = Throw.IfNull(httpMessageHandlerFactory);
         this._httpClientName = Throw.IfNull(httpClientName);
+        this._allowedHosts = new(allowedHosts);
     }
 
     /// <inheritdoc/>
@@ -110,6 +143,10 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
                     header.Value,
                     nameof(headers),
                     "HTTP header value contains invalid characters.");
+                if (string.Equals(header.Key, "Host", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new HttpRequestException("Request headers must not override the Host header.");
+                }
             }
         }
 
@@ -189,7 +226,14 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler
             EnableStandaloneGetStream = false
         };
 
-        HttpClient httpClient = this._httpClientFactory.CreateClient(this._httpClientName);
+        if (!this._allowedHosts.Contains(endpoint))
+        {
+            throw new HttpRequestException("The request host and port are not in the allowed hosts list.");
+        }
+
+        HttpMessageHandler messageHandler = this._httpMessageHandlerFactory.CreateHandler(this._httpClientName);
+        HttpTransportValidation.Validate(messageHandler);
+        HttpClient httpClient = new(new McpResponseLimitHandler(messageHandler, this.MaxResponseBodyBytes, this.MaxSseEventBytes));
         HttpClientTransport? transport = null;
         try
         {

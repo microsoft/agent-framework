@@ -627,6 +627,7 @@ class RawOpenAIChatClient(
         "conversation_id",
         "previous_response_id",
         "conversation",
+        "continuation_token",
     )
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
     _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.OPENAI

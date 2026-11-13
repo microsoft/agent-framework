@@ -17,6 +17,9 @@ from typing import Annotated, Any, cast, get_type_hints
 
 MAX_PRINT_OUTPUT_CHARS = 8192
 
+# Guest execution budget in seconds, applied when ``resource_limits`` configures no feed duration.
+DEFAULT_MAX_FEED_DURATION_SECS = 30.0
+
 # Prelude injected into all Monty code so `asyncio.gather` works for fan-out.
 _CODEACT_PRELUDE = """\
 import asyncio
@@ -203,8 +206,8 @@ class _PrintCollector:
 def load_monty() -> Any:
     """Import ``pydantic_monty`` lazily so unit tests can run without it.
 
-    Returns the module so callers can read ``Monty``, ``MontyComplete``,
-    ``FunctionSnapshot``, ``FutureSnapshot``, ``NameLookupSnapshot`` from it.
+    Returns the module so callers can read ``AsyncMonty``, ``MontyComplete``,
+    ``AsyncFunctionSnapshot``, ``AsyncFutureSnapshot``, ``AsyncNameLookupSnapshot`` from it.
     """
     try:
         import pydantic_monty
@@ -220,8 +223,14 @@ class InlineCodeBridge:
     """Execute Monty code inline (non-durable).
 
     Supports both ``await call_tool('name', ...)`` and direct ``await name(...)``
-    calls. When Monty yields a :class:`FutureSnapshot`, the bridge invokes the
+    calls. When Monty yields an :class:`AsyncFutureSnapshot`, the bridge invokes the
     registered host tools and resumes execution with the results.
+
+    Guest code runs in Monty worker processes through the asynchronous pool API, so it does
+    not block the event loop. Cancelling :meth:`run` discards the worker. When ``resource_limits``
+    configures neither ``max_feed_duration_secs`` nor the legacy ``max_duration_secs``,
+    ``DEFAULT_MAX_FEED_DURATION_SECS`` bounds the guest execution time. Set
+    ``max_feed_duration_secs`` to ``None`` to remove that bound.
     """
 
     def __init__(
@@ -245,11 +254,11 @@ class InlineCodeBridge:
             raise ValueError("Code must be a non-empty string.")
 
         monty_module = load_monty()
-        Monty = monty_module.Monty
+        AsyncMonty = monty_module.AsyncMonty
         MontyComplete = monty_module.MontyComplete
-        FunctionSnapshot = monty_module.FunctionSnapshot
-        FutureSnapshot = monty_module.FutureSnapshot
-        NameLookupSnapshot = monty_module.NameLookupSnapshot
+        FunctionSnapshot = monty_module.AsyncFunctionSnapshot
+        FutureSnapshot = monty_module.AsyncFutureSnapshot
+        NameLookupSnapshot = monty_module.AsyncNameLookupSnapshot
 
         printer = _PrintCollector()
         checkout_kwargs: dict[str, Any] = {
@@ -257,20 +266,21 @@ class InlineCodeBridge:
             "type_check": self.type_stubs is not None,
             "type_check_stubs": self.type_stubs,
         }
-        if self._resource_limits:
-            limits = dict(self._resource_limits)
-            if "max_duration_secs" in limits:
-                if "max_feed_duration_secs" in limits:
-                    raise ValueError("Specify only one of max_duration_secs and max_feed_duration_secs.")
-                limits["max_feed_duration_secs"] = limits.pop("max_duration_secs")
-            checkout_kwargs["limits"] = limits
+        limits = dict(self._resource_limits) if self._resource_limits else {}
+        if "max_duration_secs" in limits:
+            if "max_feed_duration_secs" in limits:
+                raise ValueError("Specify only one of max_duration_secs and max_feed_duration_secs.")
+            limits["max_feed_duration_secs"] = limits.pop("max_duration_secs")
+        # Only an absent key gets the default; an explicit ``None`` is the caller's opt-out.
+        limits.setdefault("max_feed_duration_secs", DEFAULT_MAX_FEED_DURATION_SECS)
+        checkout_kwargs["limits"] = limits
 
         feed_kwargs: dict[str, Any] = {"print_callback": printer}
         if self._mounts:
             feed_kwargs["mount"] = list(self._mounts)
 
-        with Monty() as pool, pool.checkout(**checkout_kwargs) as session:
-            progress = session.feed_start(_build_code(code), **feed_kwargs)
+        async with AsyncMonty() as pool, pool.checkout(**checkout_kwargs) as session:
+            progress = await session.feed_start(_build_code(code), **feed_kwargs)
 
             while True:
                 if isinstance(progress, MontyComplete):
@@ -280,7 +290,7 @@ class InlineCodeBridge:
                         "truncated": printer.truncated,
                     }
                 if isinstance(progress, FunctionSnapshot):
-                    progress = self._handle_function(progress)
+                    progress = await self._handle_function(progress)
                     continue
                 if isinstance(progress, FutureSnapshot):
                     progress = await self._handle_future(progress)
@@ -289,14 +299,14 @@ class InlineCodeBridge:
                     raise RuntimeError(f"Name lookup not supported: {progress.variable_name!r}")
                 raise RuntimeError(f"Unsupported Monty progress type: {type(progress).__name__}")
 
-    def _handle_function(self, snapshot: Any) -> Any:
+    async def _handle_function(self, snapshot: Any) -> Any:
         if snapshot.is_os_function:
             # pydantic-monty pool API: feed_start always surfaces OS calls as
             # snapshots. Mounts (and os=) are consulted only by resume_auto(),
             # not by a plain resume(...) payload.
             if self._mounts:
-                return snapshot.resume_auto()
-            return snapshot.resume({
+                return await snapshot.resume_auto()
+            return await snapshot.resume({
                 "exc_type": "PermissionError",
                 "message": "OS and filesystem calls are not available.",
             })
@@ -304,31 +314,31 @@ class InlineCodeBridge:
         function_name = str(snapshot.function_name)
 
         if function_name in self.tool_map:
-            return self._schedule_direct_tool(snapshot, function_name)
+            return await self._schedule_direct_tool(snapshot, function_name)
         if function_name == "call_tool":
-            return self._schedule_call_tool(snapshot)
+            return await self._schedule_call_tool(snapshot)
 
-        return snapshot.resume({
+        return await snapshot.resume({
             "exc_type": "NameError",
             "message": f"Function {function_name!r} is not available.",
         })
 
-    def _schedule_direct_tool(self, snapshot: Any, name: str) -> Any:
+    async def _schedule_direct_tool(self, snapshot: Any, name: str) -> Any:
         # The generated stubs are keyword-only, so ``ty`` rejects positional calls before any code runs. Fail
         # closed on anything that still reaches the host (for example when type checking is bypassed) instead of
         # dropping the positional arguments and running the host tool with its defaults. This is a bridge-owned
         # usage error, not a host failure, so it stays actionable under redaction (like ``_schedule_call_tool``).
         if snapshot.args:
-            return snapshot.resume(
+            return await snapshot.resume(
                 _external_error(
                     TypeError(f"{name} accepts keyword arguments only. Use keyword arguments for parameters."),
                     include_detailed_errors=True,
                 )
             )
         self._pending_calls[int(snapshot.call_id)] = (name, dict(snapshot.kwargs))
-        return snapshot.resume({"future": ...})
+        return await snapshot.resume({"future": ...})
 
-    def _schedule_call_tool(self, snapshot: Any) -> Any:
+    async def _schedule_call_tool(self, snapshot: Any) -> Any:
         try:
             name, kwargs = _parse_call_tool(snapshot.args, snapshot.kwargs)
             if name not in self.tool_map:
@@ -336,13 +346,13 @@ class InlineCodeBridge:
                 raise ValueError(f"Tool {name!r} is not registered. Available tools: {allowed}")
             self._pending_calls[int(snapshot.call_id)] = (name, kwargs)
         except Exception as exc:
-            return snapshot.resume(_external_error(exc, include_detailed_errors=True))
-        return snapshot.resume({"future": ...})
+            return await snapshot.resume(_external_error(exc, include_detailed_errors=True))
+        return await snapshot.resume({"future": ...})
 
     async def _handle_future(self, snapshot: Any) -> Any:
         pending_call_ids = [int(cid) for cid in snapshot.pending_call_ids]
         if not pending_call_ids:
-            return snapshot.resume({})
+            return await snapshot.resume({})
 
         entries: list[tuple[int, tuple[str, dict[str, Any]]]] = []
         for cid in pending_call_ids:
@@ -353,7 +363,7 @@ class InlineCodeBridge:
         tasks = [self._invoke_tool(cid, name, kwargs) for cid, (name, kwargs) in entries]
         results = await asyncio.gather(*tasks)
         resume_results: dict[int, Any] = dict(results)
-        return snapshot.resume(resume_results)
+        return await snapshot.resume(resume_results)
 
     async def _invoke_tool(self, cid: int, name: str, kwargs: dict[str, Any]) -> tuple[int, Any]:
         # Every entry in ``self.tool_map`` is produced by ``_make_tool_callback``

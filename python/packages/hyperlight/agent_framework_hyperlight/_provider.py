@@ -26,6 +26,9 @@ class HyperlightCodeActProvider(ContextProvider):
     """Inject a Hyperlight-backed CodeAct surface using provider-owned tools.
 
     Keyword Args:
+        additional_properties: Metadata applied only to the outer ``execute_code``
+            FunctionTool. Use it for one coarse FIDES policy over the complete
+            CodeAct result; nested host-tool calls remain outside FIDES tracking.
         tool_description_format: Parameter documentation in the injected tool's ``.description``:
             ``"compact"`` (default) or ``"json"``, globally or mapped by exact, case-sensitive tool name.
             Missing names use compact format; rich schemas fall back to full JSON Schema.
@@ -43,6 +46,7 @@ class HyperlightCodeActProvider(ContextProvider):
         source_id: str = DEFAULT_SOURCE_ID,
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
         tool_description_format: _ToolDescriptionFormat = "compact",
         include_detailed_errors: bool = False,
         approval_mode: ApprovalMode | None = None,
@@ -61,6 +65,7 @@ class HyperlightCodeActProvider(ContextProvider):
         super().__init__(source_id)
         self._execute_code_tool = HyperlightExecuteCodeTool(
             tools=tools,
+            additional_properties=additional_properties,
             tool_description_format=tool_description_format,
             include_detailed_errors=include_detailed_errors,
             approval_mode=approval_mode,

@@ -18,7 +18,6 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// </summary>
 internal sealed partial class HostedProtocolCompatibilityFilter : IEndpointFilter
 {
-    private const string CallIdHeaderName = "x-agent-foundry-call-id";
     private const string ErrorSourceHeaderName = "x-platform-error-source";
     private const string UpstreamErrorSource = "upstream";
 
@@ -49,7 +48,7 @@ internal sealed partial class HostedProtocolCompatibilityFilter : IEndpointFilte
             return next(context);
         }
 
-        string? callId = request.Headers.TryGetValue(CallIdHeaderName, out var values)
+        string? callId = request.Headers.TryGetValue(HostedProtocolCompatibility.CallIdHeaderName, out var values)
             ? values.ToString()
             : null;
         var unsupportedProtocolError =

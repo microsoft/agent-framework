@@ -46,7 +46,6 @@ import contextlib
 import logging
 import os
 import secrets
-import shutil
 import subprocess  # ruff:ignore[suspicious-subprocess-import]  # nosec B404 - running shell commands is the whole point of this tool
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -59,7 +58,7 @@ from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from .._feature_usage import FeatureIndex
 from ._capture import _ProcessOutput  # pyright: ignore[reportPrivateUsage] - shared shell capture
 from ._policy import ShellPolicy, ShellRequest
-from ._resolve import resolve_executable
+from ._resolve import require_full_path
 from ._session import ShellSession
 from ._truncate import _validate_output_limit  # pyright: ignore[reportPrivateUsage] - shared limit validation
 from ._types import (
@@ -92,17 +91,19 @@ class DockerNotAvailableError(RuntimeError):
     """Raised when the configured docker binary cannot be reached."""
 
 
-def is_docker_available(binary: str = "docker") -> bool:
-    """Return ``True`` if ``binary`` is on PATH and the daemon responds.
+def is_docker_available(binary: str) -> bool:
+    """Return ``True`` if the container runtime at ``binary`` exists and its daemon responds.
 
-    On Windows, a bare ``binary`` is looked up only in the fully qualified entries of ``PATH``. The
-    current directory is never searched.
+    Args:
+        binary: Full path to the ``docker`` (or compatible, such as ``podman``) executable. On
+            Windows it must include the file extension. A short name or relative path returns
+            ``False`` because it could be resolved from the current directory.
     """
     try:
-        binary = resolve_executable(binary)
-    except FileNotFoundError:
+        require_full_path(binary, source="binary")
+    except ValueError:
         return False
-    if shutil.which(binary) is None:
+    if not os.path.isfile(binary):
         return False
     try:
         out = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]  # nosec B603 - argv is built from trusted binary name
@@ -240,6 +241,12 @@ class DockerShellTool:
     docstring for more.
 
     Args:
+        docker_binary: Required full path to the ``docker`` (or compatible,
+            such as ``podman``) executable, for example ``"/usr/bin/docker"``.
+            On Windows it must also include the file extension (``.exe``).
+            Short names and relative paths are rejected because they could be
+            resolved from the current directory. A path shows only that the
+            file is there, not that it can be trusted.
         image: OCI image to run. Defaults to a small Microsoft-maintained
             base image. Override with anything that includes ``bash`` and
             (for persistent mode) ``sleep``.
@@ -287,11 +294,6 @@ class DockerShellTool:
             with the default isolation flags and a trusted runtime — is
             the intended boundary rather than approval.
         on_command: Audit hook fired for every allowed command.
-        docker_binary: Override (e.g. ``"podman"``). On Windows, a bare name is
-            looked up only in the fully qualified entries of ``PATH``; the current
-            directory is never searched. Pass an absolute path to select a specific
-            executable. A path, like a ``PATH`` match, shows only that the file
-            exists, not that it can be trusted.
         shell: Shell binary to invoke inside the container. Defaults to
             ``"bash"``; pass ``"sh"`` for minimal images such as Alpine
             that don't ship bash. Anything else must be present on
@@ -301,6 +303,7 @@ class DockerShellTool:
     def __init__(
         self,
         *,
+        docker_binary: str,
         image: str = DEFAULT_IMAGE,
         container_name: str | None = None,
         mode: ShellMode = "persistent",
@@ -320,7 +323,6 @@ class DockerShellTool:
         max_stderr_bytes: int = 64 * 1024,
         approval_mode: Literal["always_require", "never_require"] = "always_require",
         on_command: Callable[[str], None] | None = None,
-        docker_binary: str = "docker",
         shell: str = "bash",
     ) -> None:
         _validate_output_limit(max_stdout_bytes, name="max_stdout_bytes")
@@ -348,10 +350,9 @@ class DockerShellTool:
         self._max_stderr_bytes = max_stderr_bytes
         self._approval_mode: Literal["always_require", "never_require"] = approval_mode
         self._on_command = on_command
-        self._binary = docker_binary
+        self._binary = require_full_path(docker_binary, source="docker_binary")
         self._shell = shell
 
-        self._resolved_binary: str | None = None
         self._session: ShellSession | None = None
         self._container_started = False
         self._lifecycle_lock: asyncio.Lock | None = None
@@ -361,23 +362,13 @@ class DockerShellTool:
             self._lifecycle_lock = asyncio.Lock()
         return self._lifecycle_lock
 
-    def _runtime_path(self) -> str:
-        """Return the container runtime to launch, resolved once for this instance.
-
-        Resolving once keeps every launch of one instance on the same executable, so the runtime that
-        started a container is also the one that stops it.
-        """
-        if self._resolved_binary is None:
-            self._resolved_binary = resolve_executable(self._binary)
-        return self._resolved_binary
-
     # ------------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
         """Pull/start the container and (if persistent) the inner shell session.
 
         Raises:
-            FileNotFoundError: If the container runtime executable cannot be found.
+            FileNotFoundError: If the container runtime executable does not exist.
         """
         # Stateless mode never uses the long-lived container — every call goes
         # through ``docker run --rm`` — so start()/close() are no-ops.
@@ -391,7 +382,7 @@ class DockerShellTool:
             await self._start_container()
             self._container_started = True
             argv = build_exec_argv(
-                binary=self._runtime_path(),
+                binary=self._binary,
                 container_name=self._container_name,
                 interactive=True,
                 shell=self._shell,  # nosec B604 - 'shell' is the binary name kwarg, not subprocess shell=True
@@ -467,7 +458,7 @@ class DockerShellTool:
         """Run a single command in a fresh ``docker run --rm`` container."""
         per_call_name = f"af-shell-{secrets.token_hex(6)}"
         argv = [
-            self._runtime_path(),
+            self._binary,
             "run",
             "--rm",
             "-i",
@@ -538,7 +529,7 @@ class DockerShellTool:
         # Stopping the local client alone does not stop its container.
         try:
             killer = await asyncio.create_subprocess_exec(
-                self._runtime_path(),
+                self._binary,
                 "kill",
                 "--signal",
                 "KILL",
@@ -562,7 +553,7 @@ class DockerShellTool:
             if not kill_ok:
                 logger.warning("docker kill of %s did not succeed; attempting docker rm -f", name)
                 reaper = await asyncio.create_subprocess_exec(
-                    self._runtime_path(),
+                    self._binary,
                     "rm",
                     "-f",
                     name,
@@ -598,7 +589,7 @@ class DockerShellTool:
 
     async def _start_container(self) -> None:
         argv = build_run_argv(
-            binary=self._runtime_path(),
+            binary=self._binary,
             image=self._image,
             container_name=self._container_name,
             user=self._user,
@@ -634,7 +625,7 @@ class DockerShellTool:
         async def _attempt(timeout: float) -> tuple[int | None, str]:
             """Run a single ``docker rm -f`` attempt. Returns (rc, stderr)."""
             proc = await asyncio.create_subprocess_exec(
-                self._runtime_path(),
+                self._binary,
                 "rm",
                 "-f",
                 self._container_name,

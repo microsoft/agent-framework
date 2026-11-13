@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import io
@@ -25,8 +26,20 @@ from mcp.types import (
     TextResourceContents,
 )
 
-from agent_framework import CachingSkillsSource, MCPSkill, MCPSkillResource, MCPSkillsSource, SkillsSourceContext
-from agent_framework._skills import _fully_unquote, _parse_mcp_skill_index
+from agent_framework import (
+    CachingSkillsSource,
+    FileSkill,
+    InlineSkill,
+    MCPSkill,
+    MCPSkillResource,
+    MCPSkillsSource,
+    SkillFrontmatter,
+    SkillsProvider,
+    SkillsSourceContext,
+)
+from agent_framework._middleware import FunctionInvocationContext
+from agent_framework._skills import InlineSkillResource, _fully_unquote, _parse_mcp_skill_index
+from agent_framework._tools import _finalize_function_result  # pyright: ignore[reportPrivateUsage]
 
 from .conftest import MockAgent
 
@@ -60,20 +73,45 @@ SAMPLE_SKILL_INDEX = json.dumps({
     ],
 })
 
+_PRIVATE_IFC_META = {"ifc": {"integrity": "trusted", "confidentiality": "private"}}
+_IGNORED_IFC_LABEL = {"integrity": "untrusted", "confidentiality": "public"}
+_RESTRICTED_IFC_LABEL = {"integrity": "untrusted", "confidentiality": "private"}
+_AUTHORITATIVE_IFC_LABEL = {"integrity": "trusted", "confidentiality": "private"}
+_SERVER_IFC_POLICY_CASES = [
+    pytest.param("ignore", _IGNORED_IFC_LABEL, id="ignore"),
+    pytest.param("restrict", _RESTRICTED_IFC_LABEL, id="restrict"),
+    pytest.param("authoritative", _AUTHORITATIVE_IFC_LABEL, id="authoritative"),
+]
+_SERVER_IFC_POLICY_CASES_WITH_DEFAULT = [
+    pytest.param(None, _RESTRICTED_IFC_LABEL, id="restrict-default"),
+    *_SERVER_IFC_POLICY_CASES,
+]
 
-def _make_text_result(text: str, uri: str = "skill://test") -> ReadResourceResult:
+
+def _make_text_result(
+    text: str,
+    uri: str = "skill://test",
+    *,
+    meta: Mapping[str, Any] | None = None,
+) -> ReadResourceResult:
     """Create a ReadResourceResult with a single TextResourceContents."""
-    return ReadResourceResult(contents=[TextResourceContents(uri=uri, text=text, mime_type="text/markdown")])
+    return ReadResourceResult(
+        contents=[TextResourceContents(uri=uri, text=text, mime_type="text/markdown")],
+        _meta=dict(meta) if meta is not None else None,
+    )
 
 
 def _make_blob_result(
     data: bytes,
     uri: str = "skill://test",
     mime_type: str = "application/octet-stream",
+    *,
+    meta: Mapping[str, Any] | None = None,
 ) -> ReadResourceResult:
     """Create a ReadResourceResult with a single BlobResourceContents."""
     return ReadResourceResult(
-        contents=[BlobResourceContents(uri=uri, blob=base64.b64encode(data).decode(), mime_type=mime_type)]
+        contents=[BlobResourceContents(uri=uri, blob=base64.b64encode(data).decode(), mime_type=mime_type)],
+        _meta=dict(meta) if meta is not None else None,
     )
 
 
@@ -115,6 +153,50 @@ def _make_client(
 
     client.read_resource = AsyncMock(side_effect=_read_resource)
     return client
+
+
+async def _create_skill_tools(source: Any) -> dict[str, Any]:
+    """Create the built-in skill tools for a source."""
+    provider = SkillsProvider(source)
+    _, _, tools = await provider._create_context(_SOURCE_CTX)  # pyright: ignore[reportPrivateUsage]
+    return {tool.name: tool for tool in tools}
+
+
+async def _invoke_skill_tool(tool: Any, **arguments: Any) -> list[Any]:
+    """Invoke one built-in skill tool through its FunctionTool boundary."""
+    context = FunctionInvocationContext(function=tool, arguments={})
+    result = await tool.invoke(arguments=arguments, context=context)
+    assert isinstance(result, list)
+    return result
+
+
+def _secure_skills_source(
+    client: Any,
+    *,
+    server_ifc_policy: Any | None = None,
+) -> MCPSkillsSource:
+    """Create an MCP Skills source through SecureMCPToolProxy."""
+    from agent_framework._mcp import MCPTool
+    from agent_framework.security import SecureMCPToolProxy
+
+    mcp_tool = MCPTool(name="skills", session=client)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    proxy = (
+        SecureMCPToolProxy(mcp_tool)
+        if server_ifc_policy is None
+        else SecureMCPToolProxy(mcp_tool, server_ifc_policy=server_ifc_policy)
+    )
+    source = proxy.skills_source()
+    assert isinstance(source, MCPSkillsSource)
+    return source
+
+
+def _assert_ifc_label(result: list[Any], expected_label: Mapping[str, Any]) -> None:
+    """Assert the expected IFC label was applied without leaking private markers."""
+    properties = result[0].additional_properties
+    assert properties["security_label"] == expected_label
+    assert "_mcp_tool_result_security_meta" not in properties
+    assert "_security_label_authoritative" not in properties
+    assert "_security_label_validated_principals" not in properties
 
 
 @pytest.fixture(autouse=True)
@@ -1118,6 +1200,382 @@ def _archive_client(index_json: str, archive_url: str, archive_bytes: bytes, mim
         "skill://index.json": _make_text_result(index_json, uri="skill://index.json"),
         archive_url: _make_blob_result(archive_bytes, uri=archive_url, mime_type=mime_type),
     })
+
+
+# ---------------------------------------------------------------------------
+# MCP skill IFC tests
+# ---------------------------------------------------------------------------
+
+
+class TestMCPSkillsIFC:
+    """Tests for SecureMCPToolProxy's operation-scoped skill result adapters."""
+
+    async def test_proxy_source_requires_an_active_connection(self) -> None:
+        from agent_framework._mcp import MCPTool
+        from agent_framework.security import SecureMCPToolProxy
+
+        proxy = SecureMCPToolProxy(MCPTool(name="skills"))  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+        with pytest.raises(RuntimeError, match="must be connected"):
+            await proxy.skills_source().get_skills(_SOURCE_CTX)
+
+    def test_proxy_source_rejects_connection_overrides(self) -> None:
+        from agent_framework._mcp import MCPTool
+        from agent_framework.security import SecureMCPToolProxy
+
+        client = _make_client()
+        proxy = SecureMCPToolProxy(
+            MCPTool(name="skills", session=client)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        )
+
+        with pytest.raises(TypeError, match="skills_source.*owns"):
+            proxy.skills_source(client=client)
+
+    async def test_proxy_source_follows_replaced_connection(self) -> None:
+        from agent_framework._mcp import MCPTool
+        from agent_framework.security import SecureMCPToolProxy
+
+        old_client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+        })
+        new_client = _make_client(**{
+            "skill://unit-converter/SKILL.md": _make_text_result(
+                "# New\nnew body",
+                uri="skill://unit-converter/SKILL.md",
+                meta=_PRIVATE_IFC_META,
+            ),
+        })
+        mcp_tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="skills",
+            session=old_client,
+        )
+        proxy = SecureMCPToolProxy(mcp_tool)
+        skills = await proxy.skills_source().get_skills(_SOURCE_CTX)
+
+        with pytest.warns(DeprecationWarning, match="MCPTool.session"):
+            mcp_tool.session = new_client
+        tools = await _create_skill_tools(skills)
+        result = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+
+        assert result[0].text == "# New\nnew body"
+        _assert_ifc_label(result, _RESTRICTED_IFC_LABEL)
+
+    def test_invalid_server_ifc_policy_is_rejected(self) -> None:
+        invalid_policy: Any = "invalid"
+        with pytest.raises(ValueError, match="server_ifc_policy"):
+            _secure_skills_source(_make_client(), server_ifc_policy=invalid_policy)
+
+    @pytest.mark.parametrize(("server_ifc_policy", "expected_label"), _SERVER_IFC_POLICY_CASES_WITH_DEFAULT)
+    async def test_skill_md_ifc_applies_to_load_and_cached_load(
+        self,
+        server_ifc_policy: Any | None,
+        expected_label: dict[str, str],
+    ) -> None:
+        skill_uri = "skill://unit-converter/SKILL.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            skill_uri: _make_text_result(SAMPLE_SKILL_MD, uri=skill_uri, meta=_PRIVATE_IFC_META),
+        })
+        source = (
+            _secure_skills_source(client)
+            if server_ifc_policy is None
+            else _secure_skills_source(client, server_ifc_policy=server_ifc_policy)
+        )
+        tools = await _create_skill_tools(source)
+
+        first = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+        second = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+
+        assert first[0].text == SAMPLE_SKILL_MD
+        assert second[0].text == SAMPLE_SKILL_MD
+        _assert_ifc_label(first, expected_label)
+        _assert_ifc_label(second, expected_label)
+        assert client.read_resource.await_args_list == [
+            call("skill://index.json"),
+            call(skill_uri),
+        ]
+
+    async def test_skill_adapter_runs_after_custom_result_parser(self) -> None:
+        skill_uri = "skill://unit-converter/SKILL.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            skill_uri: _make_text_result(SAMPLE_SKILL_MD, uri=skill_uri, meta=_PRIVATE_IFC_META),
+        })
+        tools = await _create_skill_tools(_secure_skills_source(client))
+        tools["load_skill"].result_parser = lambda _: "projected instructions"
+
+        result = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+
+        assert result[0].text == "projected instructions"
+        _assert_ifc_label(result, _RESTRICTED_IFC_LABEL)
+
+    @pytest.mark.parametrize(("server_ifc_policy", "expected_label"), _SERVER_IFC_POLICY_CASES)
+    async def test_sibling_resource_ifc_applies_to_read_resource(
+        self,
+        server_ifc_policy: Any,
+        expected_label: dict[str, str],
+    ) -> None:
+        resource_uri = "skill://unit-converter/references/checklist.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            resource_uri: _make_text_result("private checklist", uri=resource_uri, meta=_PRIVATE_IFC_META),
+        })
+        tools = await _create_skill_tools(_secure_skills_source(client, server_ifc_policy=server_ifc_policy))
+
+        result = await _invoke_skill_tool(
+            tools["read_skill_resource"],
+            skill_name="unit-converter",
+            resource_name="references/checklist.md",
+        )
+
+        assert result[0].text == "private checklist"
+        _assert_ifc_label(result, expected_label)
+
+    async def test_sibling_resource_does_not_inherit_cached_skill_adapter(self) -> None:
+        skill_uri = "skill://unit-converter/SKILL.md"
+        resource_uri = "skill://unit-converter/references/public.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            skill_uri: _make_text_result(SAMPLE_SKILL_MD, uri=skill_uri, meta=_PRIVATE_IFC_META),
+            resource_uri: _make_text_result("public resource", uri=resource_uri),
+        })
+        tools = await _create_skill_tools(_secure_skills_source(client, server_ifc_policy="authoritative"))
+
+        manifest = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+        resource = await _invoke_skill_tool(
+            tools["read_skill_resource"],
+            skill_name="unit-converter",
+            resource_name="references/public.md",
+        )
+
+        _assert_ifc_label(manifest, _AUTHORITATIVE_IFC_LABEL)
+        _assert_ifc_label(resource, _IGNORED_IFC_LABEL)
+
+    @pytest.mark.parametrize(("server_ifc_policy", "expected_label"), _SERVER_IFC_POLICY_CASES)
+    async def test_archive_ifc_applies_to_manifest_and_extracted_resource(
+        self,
+        server_ifc_policy: Any,
+        expected_label: dict[str, str],
+    ) -> None:
+        archive_uri = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({
+            "SKILL.md": ARCHIVE_SKILL_MD.encode(),
+            "references/private.md": b"private archive resource",
+        })
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(
+                _make_archive_index("packaged-skill", archive_uri),
+                uri="skill://index.json",
+            ),
+            archive_uri: _make_blob_result(
+                archive,
+                uri=archive_uri,
+                mime_type="application/zip",
+                meta=_PRIVATE_IFC_META,
+            ),
+        })
+        tools = await _create_skill_tools(_secure_skills_source(client, server_ifc_policy=server_ifc_policy))
+
+        manifest = await _invoke_skill_tool(tools["load_skill"], skill_name="packaged-skill")
+        resource = await _invoke_skill_tool(
+            tools["read_skill_resource"],
+            skill_name="packaged-skill",
+            resource_name="references/private.md",
+        )
+
+        assert "Instructions from an archive." in manifest[0].text
+        assert resource[0].text == "private archive resource"
+        _assert_ifc_label(manifest, expected_label)
+        _assert_ifc_label(resource, expected_label)
+
+    async def test_index_ifc_is_not_inherited_by_skill_md(self) -> None:
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(
+                SAMPLE_SKILL_INDEX,
+                uri="skill://index.json",
+                meta=_PRIVATE_IFC_META,
+            ),
+            "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
+        })
+        tools = await _create_skill_tools(_secure_skills_source(client, server_ifc_policy="authoritative"))
+
+        result = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+
+        assert result[0].text == SAMPLE_SKILL_MD
+        _assert_ifc_label(result, _IGNORED_IFC_LABEL)
+
+    @pytest.mark.parametrize(
+        "meta",
+        [
+            {"ifc": {"integrity": "trusted"}},
+            {
+                "ifc": {
+                    "integrity": "trusted",
+                    "confidentiality": "private",
+                    "padding": "x" * 5000,
+                }
+            },
+        ],
+        ids=["malformed", "oversized"],
+    )
+    async def test_invalid_ifc_fails_closed(self, meta: dict[str, Any]) -> None:
+        skill_uri = "skill://unit-converter/SKILL.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            skill_uri: _make_text_result(SAMPLE_SKILL_MD, uri=skill_uri, meta=meta),
+        })
+        tools = await _create_skill_tools(_secure_skills_source(client))
+
+        result = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "user_identity",
+            "metadata": {"source": "invalid_mcp_ifc"},
+        }
+        assert "_mcp_tool_result_security_meta" not in result[0].additional_properties
+        assert "_security_label_authoritative" not in result[0].additional_properties
+
+    async def test_plain_mcp_source_remains_unlabeled(self) -> None:
+        skill_uri = "skill://unit-converter/SKILL.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            skill_uri: _make_text_result(SAMPLE_SKILL_MD, uri=skill_uri, meta=_PRIVATE_IFC_META),
+        })
+        tools = await _create_skill_tools(MCPSkillsSource(client=client))
+
+        result = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+
+        assert result[0].text == SAMPLE_SKILL_MD
+        assert result[0].additional_properties == {}
+
+    @pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+    @pytest.mark.usefixtures("span_exporter")
+    async def test_adapter_does_not_leak_after_result_parser_error(self) -> None:
+        resource_uri = "skill://unit-converter/references/private.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            resource_uri: _make_text_result("private resource", uri=resource_uri, meta=_PRIVATE_IFC_META),
+        })
+        mcp_skill = (await _secure_skills_source(client).get_skills(_SOURCE_CTX))[0]
+        inline = InlineSkill(
+            frontmatter=SkillFrontmatter(name="inline-skill", description="Inline test skill."),
+            instructions="Inline instructions.",
+            resources=[InlineSkillResource(name="reference.md", content="inline resource")],
+        )
+        tools = await _create_skill_tools([mcp_skill, inline])
+        read_tool = tools["read_skill_resource"]
+        context = FunctionInvocationContext(function=read_tool, arguments={})
+
+        def fail_parser(value: Any) -> str:
+            raise ValueError(f"parser failed: {value}")
+
+        read_tool.result_parser = fail_parser
+        with pytest.raises(ValueError, match="parser failed") as exc_info:
+            await read_tool.invoke(
+                arguments={
+                    "skill_name": "unit-converter",
+                    "resource_name": "references/private.md",
+                },
+                context=context,
+            )
+        error_result = _finalize_function_result(
+            call_id="call-1",
+            result=f"Error: {exc_info.value}",
+            exception=str(exc_info.value),
+            context=context,
+        )
+
+        assert error_result.items is not None
+        assert "private resource" in error_result.result
+        assert error_result.items[0].additional_properties["security_label"] == _RESTRICTED_IFC_LABEL
+        json.dumps(error_result.to_dict())
+
+        read_tool.result_parser = None
+        result = await read_tool.invoke(
+            arguments={
+                "skill_name": "inline-skill",
+                "resource_name": "reference.md",
+            },
+            context=context,
+        )
+
+        assert isinstance(result, list)
+        assert result[0].text == "inline resource"
+        assert result[0].additional_properties == {}
+
+    async def test_concurrent_resource_reads_keep_adapters_isolated(self) -> None:
+        first_uri = "skill://unit-converter/references/first.md"
+        second_uri = "skill://unit-converter/references/second.md"
+        responses = {
+            first_uri: _make_text_result("first", uri=first_uri, meta=_PRIVATE_IFC_META),
+            second_uri: _make_text_result(
+                "second",
+                uri=second_uri,
+                meta={"ifc": {"integrity": "untrusted", "confidentiality": "public"}},
+            ),
+        }
+        client = AsyncMock()
+        started: set[str] = set()
+        both_started = asyncio.Event()
+
+        async def read_resource(uri: str) -> ReadResourceResult:
+            uri_str = str(uri)
+            if uri_str == "skill://index.json":
+                return _make_text_result(SAMPLE_SKILL_INDEX, uri=uri_str)
+            started.add(uri_str)
+            if len(started) == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=1)
+            return responses[uri_str]
+
+        client.read_resource = AsyncMock(side_effect=read_resource)
+        tools = await _create_skill_tools(_secure_skills_source(client, server_ifc_policy="authoritative"))
+
+        first, second = await asyncio.gather(
+            _invoke_skill_tool(
+                tools["read_skill_resource"],
+                skill_name="unit-converter",
+                resource_name="references/first.md",
+            ),
+            _invoke_skill_tool(
+                tools["read_skill_resource"],
+                skill_name="unit-converter",
+                resource_name="references/second.md",
+            ),
+        )
+
+        assert first[0].text == "first"
+        assert second[0].text == "second"
+        _assert_ifc_label(first, _AUTHORITATIVE_IFC_LABEL)
+        _assert_ifc_label(second, _IGNORED_IFC_LABEL)
+
+    async def test_local_inline_and_file_skill_outputs_remain_unchanged(self) -> None:
+        inline = InlineSkill(
+            frontmatter=SkillFrontmatter(name="inline-skill", description="Inline test skill."),
+            instructions="Inline instructions.",
+            resources=[InlineSkillResource(name="reference.md", content="inline resource")],
+        )
+        file_skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="file-skill", description="File test skill."),
+            content="# File instructions",
+            path="file-skill",
+            resources=[InlineSkillResource(name="reference.md", content="file resource")],
+        )
+        tools = await _create_skill_tools([inline, file_skill])
+
+        for skill, expected_resource in ((inline, "inline resource"), (file_skill, "file resource")):
+            manifest = await _invoke_skill_tool(tools["load_skill"], skill_name=skill.frontmatter.name)
+            resource = await _invoke_skill_tool(
+                tools["read_skill_resource"],
+                skill_name=skill.frontmatter.name,
+                resource_name="reference.md",
+            )
+
+            assert manifest[0].text == await skill.get_content()
+            assert manifest[0].additional_properties == {}
+            assert resource[0].text == expected_resource
+            assert resource[0].additional_properties == {}
 
 
 # ---------------------------------------------------------------------------

@@ -516,6 +516,34 @@ def test_execute_code_tool_updates_approval_with_managed_tools() -> None:
 
 
 @pytest.mark.parametrize("entry_point", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+def test_execute_code_additional_properties_are_isolated_across_run_snapshots(
+    entry_point: type[HyperlightExecuteCodeTool] | type[HyperlightCodeActProvider],
+) -> None:
+    properties: dict[str, Any] = {
+        "source_integrity": "untrusted",
+        "confidentiality": "user_identity",
+        "agent_framework.security.principals": [{"tenant_id": "tenant-a", "user_id": "user-a"}],
+    }
+    codeact = entry_point(additional_properties=properties, _registry=_FakeRuntime())
+    template = codeact if isinstance(codeact, HyperlightExecuteCodeTool) else codeact._execute_code_tool
+
+    properties["agent_framework.security.principals"][0]["user_id"] = "mutated-input"
+    assert template.additional_properties is not None
+    assert template.additional_properties["agent_framework.security.principals"][0]["user_id"] == "user-a"
+
+    run_tool = template.create_run_tool()
+    template.additional_properties["agent_framework.security.principals"][0]["user_id"] = "mutated-template"
+
+    assert run_tool.additional_properties is not None
+    assert run_tool.additional_properties["source_integrity"] == "untrusted"
+    assert run_tool.additional_properties["agent_framework.security.principals"] == [
+        {"tenant_id": "tenant-a", "user_id": "user-a"}
+    ]
+
+    _close_execute_code_registry(template)
+
+
+@pytest.mark.parametrize("entry_point", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
 @pytest.mark.parametrize("register_later", [False, True])
 @pytest.mark.parametrize(
     "properties",
@@ -528,6 +556,7 @@ def test_execute_code_tool_updates_approval_with_managed_tools() -> None:
         {"standing_guidance": []},
         {"agent_framework.security.principals": []},
         {"_agent_framework_internal_security_tool": object()},
+        {"_mcp_server_ifc_policy": "restrict"},
         {"_mcp_trust_server_ifc": False},
     ],
 )
