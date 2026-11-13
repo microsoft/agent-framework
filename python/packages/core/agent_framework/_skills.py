@@ -96,6 +96,7 @@ from ._tools import (
     _FUNCTION_RESULT_CARRIER_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     ApprovalMode,
     FunctionTool,
+    _FunctionResultAdapter,  # pyright: ignore[reportPrivateUsage]
     _FunctionResultCarrier,  # pyright: ignore[reportPrivateUsage]
 )
 from ._types import SKILL_CONTEXT_NAME_KEY
@@ -2106,6 +2107,8 @@ SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
 # region SkillsProvider
 
 _TSkillsProvider = TypeVar("_TSkillsProvider", bound="SkillsProvider")
+_SkillResultAdapter: TypeAlias = _FunctionResultAdapter
+_SkillResultAdapterFactory: TypeAlias = Callable[["ReadResourceResult"], _SkillResultAdapter | None]
 
 
 class SkillsProvider(ContextProvider):
@@ -2896,17 +2899,37 @@ class SkillsProvider(ContextProvider):
         return next((s for s in skills if s.frontmatter.name.lower() == name_lower), None)
 
     @staticmethod
-    def _record_skill_context(context: FunctionInvocationContext | None, skill: Skill) -> None:
+    def _record_skill_context(
+        context: FunctionInvocationContext | None,
+        skill: Skill,
+        result_adapter: _SkillResultAdapter | None = None,
+    ) -> None:
         """Attach the resolved skill identity without changing model-facing output."""
-        if context is not None:
-            carrier = context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
-            if isinstance(carrier, _FunctionResultCarrier):
-                carrier.additional_properties[SKILL_CONTEXT_NAME_KEY] = skill.frontmatter.name
-            else:
-                context.metadata[_FUNCTION_RESULT_CARRIER_CONTEXT_KEY] = _FunctionResultCarrier(
-                    additional_properties={SKILL_CONTEXT_NAME_KEY: skill.frontmatter.name},
-                    item_additional_properties={},
-                )
+        if context is None:
+            return
+
+        carrier = context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
+        if not isinstance(carrier, _FunctionResultCarrier):
+            carrier = _FunctionResultCarrier(
+                additional_properties={},
+                item_additional_properties={},
+            )
+            context.metadata[_FUNCTION_RESULT_CARRIER_CONTEXT_KEY] = carrier
+
+        carrier.additional_properties[SKILL_CONTEXT_NAME_KEY] = skill.frontmatter.name
+        if result_adapter is not None:
+            carrier.result_adapter = result_adapter
+
+    @staticmethod
+    def _read_result_adapter(
+        skill: Skill,
+        resource: SkillResource | None = None,
+    ) -> _SkillResultAdapter | None:
+        if resource is not None:
+            resource_adapter = getattr(resource, "_result_adapter", None)
+            if resource_adapter is not None:
+                return cast(_SkillResultAdapter | None, resource_adapter)
+        return cast(_SkillResultAdapter | None, getattr(skill, "_result_adapter", None))
 
     async def _load_skill(
         self,
@@ -2941,7 +2964,7 @@ class SkillsProvider(ContextProvider):
         logger.info("Loading skill: %s", skill_name)
 
         content = await skill.get_content()
-        self._record_skill_context(context, skill)
+        self._record_skill_context(context, skill, self._read_result_adapter(skill))
         return content
 
     async def _run_skill_script(
@@ -3062,7 +3085,7 @@ class SkillsProvider(ContextProvider):
             logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
             raise
 
-        self._record_skill_context(context, skill)
+        self._record_skill_context(context, skill, self._read_result_adapter(skill, resource))
         return result
 
 
@@ -4701,15 +4724,23 @@ class MCPSkillResource(SkillResource):
     extracts text or binary content from the result.
     """
 
-    def __init__(self, *, name: str, result: ReadResourceResult) -> None:
+    def __init__(
+        self,
+        *,
+        name: str,
+        result: ReadResourceResult,
+        _result_adapter_factory: _SkillResultAdapterFactory | None = None,
+    ) -> None:
         """Initialize an MCPSkillResource.
 
         Args:
             name: The resource name (e.g. a relative path or identifier).
             result: The result returned by the MCP server's ``resources/read`` request.
+            _result_adapter_factory: Private factory for adapting the built-in tool result.
         """
         super().__init__(name=name)
         self._result = result
+        self._result_adapter = _result_adapter_factory(result) if _result_adapter_factory is not None else None
 
     async def read(self, **kwargs: Any) -> Any:
         """Read the resource content.
@@ -4784,6 +4815,7 @@ class MCPSkill(Skill):
         client: Client | ClientSession | None = None,
         *,
         session_provider: Callable[[], Client | ClientSession] | None = None,
+        _result_adapter_factory: _SkillResultAdapterFactory | None = None,
     ) -> None:
         """Initialize an MCPSkill.
 
@@ -4803,6 +4835,8 @@ class MCPSkill(Skill):
                 high-level Client or low-level ClientSession, resolved on every
                 fetch. Use it when the owner may replace the underlying connection;
                 MCPSkill borrows each returned connection and never enters or closes it.
+            _result_adapter_factory: Private factory for adapting each successful
+                MCP resource read at the built-in skill tool boundary.
 
         Raises:
             ValueError: If both or neither of *client* and *session_provider* are
@@ -4812,7 +4846,9 @@ class MCPSkill(Skill):
         self._skill_md_uri = skill_md_uri
         self._skill_root_uri = self._compute_skill_root_uri(skill_md_uri)
         self._connection_provider = _resolve_mcp_connection_provider(client, session_provider)
+        self._result_adapter_factory = _result_adapter_factory
         self._content: str | None = None
+        self._result_adapter: _SkillResultAdapter | None = None
 
     @property
     def frontmatter(self) -> SkillFrontmatter:
@@ -4839,7 +4875,9 @@ class MCPSkill(Skill):
         text = _mcp_join_text(result)
         if not text:
             raise ValueError(f"The MCP server returned no text content for SKILL.md resource '{self._skill_md_uri}'.")
+        result_adapter = self._result_adapter_factory(result) if self._result_adapter_factory is not None else None
         self._content = text
+        self._result_adapter = result_adapter
         return text
 
     async def get_resource(self, name: str) -> SkillResource | None:
@@ -4872,7 +4910,11 @@ class MCPSkill(Skill):
                 return None
             raise
 
-        return MCPSkillResource(name=name, result=result)
+        return MCPSkillResource(
+            name=name,
+            result=result,
+            _result_adapter_factory=self._result_adapter_factory,
+        )
 
     @staticmethod
     def _validate_resource_name(name: str) -> str | None:
@@ -5144,8 +5186,10 @@ class _ArchiveEntryLoader:
         max_file_count: int,
         max_size_bytes: int,
         max_uncompressed_size_bytes: int,
+        result_adapter_factory: _SkillResultAdapterFactory | None,
     ) -> None:
         self._connection_provider = connection_provider
+        self._result_adapter_factory = result_adapter_factory
         self._resource_extensions: tuple[str, ...] = (
             resource_extensions if resource_extensions is not None else DEFAULT_RESOURCE_EXTENSIONS
         )
@@ -5180,8 +5224,8 @@ class _ArchiveEntryLoader:
             if downloaded is None:
                 continue
 
-            data, mime_type = downloaded
-            skill = self._build_skill(entry, data, mime_type)
+            data, mime_type, result = downloaded
+            skill = self._build_skill(entry, data, mime_type, result)
             if skill is None:
                 continue
 
@@ -5198,7 +5242,7 @@ class _ArchiveEntryLoader:
 
         return skills
 
-    async def _download(self, entry: _McpSkillIndexEntry) -> tuple[bytes, str | None] | None:
+    async def _download(self, entry: _McpSkillIndexEntry) -> tuple[bytes, str | None, ReadResourceResult] | None:
         """Download and decode the binary content of a skill's archive resource.
 
         Only "resource not found" MCP errors are swallowed (the skill is skipped);
@@ -5208,9 +5252,9 @@ class _ArchiveEntryLoader:
         would otherwise overwrite a previously cached list with a partial result.
 
         Returns:
-            A ``(data, mime_type)`` tuple, or ``None`` when the resource is not found,
-            contains no binary content, is empty, exceeds the configured size limit,
-            or has an invalid or mismatched digest.
+            A ``(data, mime_type, result)`` tuple, or ``None`` when the
+            resource is not found, contains no binary content, is empty, exceeds
+            the configured size limit, or has an invalid or mismatched digest.
 
         Raises:
             Exception: Any error other than a "resource not found" MCP error raised
@@ -5246,7 +5290,7 @@ class _ArchiveEntryLoader:
         if entry.digest is not None and not self._verify_digest(entry, data):
             return None
 
-        return data, mime_type
+        return data, mime_type, result
 
     @staticmethod
     def _verify_digest(entry: _McpSkillIndexEntry, data: bytes) -> bool:
@@ -5265,7 +5309,13 @@ class _ArchiveEntryLoader:
 
         return True
 
-    def _build_skill(self, entry: _McpSkillIndexEntry, data: bytes, mime_type: str | None) -> FileSkill | None:
+    def _build_skill(
+        self,
+        entry: _McpSkillIndexEntry,
+        data: bytes,
+        mime_type: str | None,
+        result: ReadResourceResult,
+    ) -> FileSkill | None:
         """Detect the format of and unpack one archive entry into an in-memory :class:`FileSkill`.
 
         Returns:
@@ -5288,9 +5338,14 @@ class _ArchiveEntryLoader:
             logger.warning("Failed to extract archive for skill '%s'.", entry.name, exc_info=True)
             return None
 
-        return self._skill_from_files(entry, files)
+        return self._skill_from_files(entry, files, result)
 
-    def _skill_from_files(self, entry: _McpSkillIndexEntry, files: dict[str, bytes]) -> FileSkill | None:
+    def _skill_from_files(
+        self,
+        entry: _McpSkillIndexEntry,
+        files: dict[str, bytes],
+        result: ReadResourceResult,
+    ) -> FileSkill | None:
         """Assemble an in-memory :class:`FileSkill` from the archive's extracted files."""
         try:
             skill_md_key = self._find_skill_md(files)
@@ -5329,7 +5384,7 @@ class _ArchiveEntryLoader:
         # ``path`` records the archive's origin URL; it is informational only, as the
         # skill and its resources are served entirely from memory (no filesystem access).
         try:
-            return FileSkill(
+            skill = FileSkill(
                 frontmatter=frontmatter,
                 content=content,
                 path=cast(str, entry.url),
@@ -5339,6 +5394,9 @@ class _ArchiveEntryLoader:
         except ValueError as exc:
             logger.warning("Skipping skill '%s': %s", entry.name, exc)
             return None
+        if self._result_adapter_factory is not None:
+            setattr(skill, "_result_adapter", self._result_adapter_factory(result))  # ruff: ignore[set-attr-with-constant]
+        return skill
 
     @staticmethod
     def _find_skill_md(files: dict[str, bytes]) -> str | None:
@@ -5488,6 +5546,7 @@ class MCPSkillsSource(SkillsSource):
         client: Client | ClientSession | None = None,
         *,
         session_provider: Callable[[], Client | ClientSession] | None = None,
+        _result_adapter_factory: _SkillResultAdapterFactory | None = None,
         archive_resource_extensions: tuple[str, ...] | None = None,
         archive_resource_search_depth: int = DEFAULT_SEARCH_DEPTH,
         archive_max_file_count: int = _DEFAULT_ARCHIVE_MAX_FILE_COUNT,
@@ -5511,6 +5570,8 @@ class MCPSkillsSource(SkillsSource):
                 a replacement connection without reading ``MCPTool.session``.
                 MCPSkillsSource borrows every returned connection and never enters
                 or closes it.
+            _result_adapter_factory: Private factory for adapting successful
+                MCP resource reads at the built-in skill tool boundary.
             archive_resource_extensions: Allowed file extensions for resources discovered
                 in ``archive``-type skills. When ``None`` (the default), the file-source
                 default set (``.md``, ``.json``, ``.yaml``, ``.yml``, ``.csv``, ``.xml``,
@@ -5529,10 +5590,10 @@ class MCPSkillsSource(SkillsSource):
                 guard). Defaults to ``1 MB``. An archive that exceeds the limit is skipped.
 
         Raises:
-            ValueError: If both or neither of *client* and *session_provider* are
-                provided.
+            ValueError: If both or neither of *client* and *session_provider* are provided.
         """
         self._connection_provider = _resolve_mcp_connection_provider(client, session_provider)
+        self._result_adapter_factory = _result_adapter_factory
         self._archive_loader = _ArchiveEntryLoader(
             self._connection_provider,
             resource_extensions=archive_resource_extensions,
@@ -5540,6 +5601,7 @@ class MCPSkillsSource(SkillsSource):
             max_file_count=archive_max_file_count,
             max_size_bytes=archive_max_size_bytes,
             max_uncompressed_size_bytes=archive_max_uncompressed_size_bytes,
+            result_adapter_factory=_result_adapter_factory,
         )
 
     async def get_skills(self, context: SkillsSourceContext) -> list[Skill]:
@@ -5662,7 +5724,12 @@ class MCPSkillsSource(SkillsSource):
             logger.debug("Skipping entry '%s': invalid metadata: %s", entry.name, ex)
             return None
 
-        return MCPSkill(frontmatter=fm, skill_md_uri=entry.url, session_provider=self._current_connection_source)
+        return MCPSkill(
+            frontmatter=fm,
+            skill_md_uri=entry.url,
+            session_provider=self._current_connection_source,
+            _result_adapter_factory=self._result_adapter_factory,
+        )
 
 
 # endregion

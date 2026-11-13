@@ -5,19 +5,36 @@
 > [!WARNING]
 > **Combining FIDES with CodeAct providers is currently unsupported**, including
 > [Monty](../../../packages/monty/README.md) and
-> [Hyperlight](../../../packages/hyperlight/README.md). FIDES's per-tool guarantees
-> apply to invocations routed through its function middleware. Host-tool calls
-> inside generated code bypass that middleware; nested calls and intermediate
-> code values do not receive its policy enforcement or label tracking. Checking
-> the outer `execute_code` invocation does not enforce the policies of individual
-> tools called inside it, and sandbox isolation does not supply FIDES enforcement.
+> [Hyperlight](../../../packages/hyperlight/README.md). CodeAct is optimized for
+> combining many tool calls inside one generated-code execution and consumes
+> native tool values with `skip_parsing=True`. That bypasses the normalized
+> `Content` boundary where operation-scoped FIDES labels are attached. FIDES
+> instead depends on granular inspection, labeling, and enforcement for each
+> function result. Nested calls and intermediate code values therefore do not
+> receive its policy enforcement or label tracking.
 >
 > CodeAct logs a warning for recognized FIDES tool metadata, but this is diagnostic
 > only: execution is not blocked, and defaults can apply to unannotated tools.
 > No warning does not imply support or safety. Keep tools that require FIDES as
 > direct agent tools rather than CodeAct-managed tools, or disable CodeAct for
 > workflows requiring those guarantees. Host functions must independently enforce
-> authorization and destination restrictions.
+> authorization and destination restrictions. If one coarse policy for the
+> complete CodeAct output is sufficient, set `additional_properties` on the
+> CodeAct provider or execute-code tool:
+>
+> ```python
+> codeact = MontyCodeActProvider(
+>     tools=[search, fetch],
+>     additional_properties={
+>         "source_integrity": "untrusted",
+>         "confidentiality": "private",
+>     },
+> )
+> ```
+>
+> FIDES then labels the outer `execute_code` result as a whole. It still does
+> not inspect nested tool results, intermediate values, or side effects that
+> happen before the outer result exists.
 
 ## Context Provider Pattern with SecureAgentConfig!
 
@@ -590,14 +607,34 @@ async def run_secure_github_mcp(github_pat: str, endpoint: str) -> None:
 - Per-result label mapping from `_meta.ifc` into FIDES `security_label`; by default, remote labels are combined with
   local policy and can only add restrictions
 
-Set `trust_server_ifc=True` only when the MCP server is an authenticated authority for result labels. In that mode,
-a complete valid `_meta.ifc` label is authoritative for that result, including permitted relaxation of the local
-fallback. Missing, partial, or malformed labels still use current local policy. This opt-in does not make
-ToolAnnotations authoritative: `readOnlyHint` and `openWorldHint` remain restriction-only hints.
+Choose how result `_meta.ifc` is handled with `server_ifc_policy`:
 
 ```python
-secure_mcp = SecureMCPToolProxy(url="https://trusted.example.com/mcp/", trust_server_ifc=True)
+secure_mcp = SecureMCPToolProxy(
+    url="https://trusted.example.com/mcp/",
+    server_ifc_policy="authoritative",
+)
 ```
+
+- `"ignore"` uses local policy only.
+- `"restrict"` (the default) lets valid server labels add restrictions but never relax local policy.
+- `"authoritative"` accepts a complete valid server label as authoritative, including permitted relaxation of the
+  local fallback. Use it only when the MCP server is an authenticated label authority.
+
+Missing labels use local policy. Partial, malformed, oversized, or unretainable labels fail closed when server IFC is
+processed. This setting does not make ToolAnnotations authoritative: `readOnlyHint` and `openWorldHint` remain
+restriction-only hints.
+The deprecated `trust_server_ifc=True` and `False` values map to `"authoritative"` and `"restrict"` respectively.
+
+Use the same proxy for MCP Skills so each `resources/read` result keeps its own IFC label:
+
+```python
+async with SecureMCPToolProxy(url="https://trusted.example.com/mcp/") as secure_mcp:
+    skills_provider = SkillsProvider(secure_mcp.skills_source())
+```
+
+Pass `skills_provider` in the agent's `context_providers`. Direct `MCPSkillsSource(...)` construction does not apply
+FIDES labels.
 
 `annotation_overrides` supplies explicit local policy keyed by remote MCP tool name. It applies only to the
 `MCPTool` passed to `apply_mcp_security_labels`, or the connection wrapped by `SecureMCPToolProxy`; the mapping
@@ -609,10 +646,11 @@ reusing it; a shared tool name does not establish shared trust.
 
 1. Prefer `async with SecureMCPToolProxy(...)` so connection and label application happen together.
 2. Pass `secure_mcp.tools` into `Agent(..., tools=...)`.
-3. Use `context_providers=[SecureAgentConfig(...)]` instead of manual security wiring.
-4. Keep `auto_hide_untrusted=True` unless you have a very specific reason to expose untrusted content.
-5. If write-like actions are blocked, inspect `config.get_audit_log(session)` first.
-6. Leave `trust_server_ifc=False` unless the connected server is explicitly trusted to label result data.
+3. For MCP Skills, create `SkillsProvider(secure_mcp.skills_source())`.
+4. Use `context_providers=[SecureAgentConfig(...)]` instead of manual security wiring.
+5. Keep `auto_hide_untrusted=True` unless you have a very specific reason to expose untrusted content.
+6. If write-like actions are blocked, inspect `config.get_audit_log(session)` first.
+7. Leave `server_ifc_policy="restrict"` unless the connected server is explicitly trusted as a label authority.
 
 
 ### 7. Security Tools

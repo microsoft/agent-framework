@@ -5,19 +5,32 @@ Hyperlight-backed CodeAct integrations for Microsoft Agent Framework.
 ## FIDES compatibility
 
 > [!WARNING]
-> **FIDES integration is not supported with CodeAct providers.** Host-tool calls
-> made inside generated code bypass the agent's function middleware, so FIDES
-> policy enforcement and label tracking do not apply to those nested calls or
-> intermediate code values. Checks on the outer `execute_code` invocation do not
-> enforce the policies of individual tools called inside it.
+> **Granular FIDES integration is not supported with CodeAct providers.** CodeAct
+> combines many tool calls inside one generated-code execution and consumes native
+> values with `skip_parsing=True`. Nested calls therefore bypass the normalized
+> `Content` boundary and function middleware where FIDES labels and policies apply.
 >
 > Registering tools with recognized FIDES `additional_properties` logs a warning,
 > but does not block execution. This is a best-effort diagnostic: FIDES also uses
 > defaults for unannotated tools, so no warning does not imply support or safety.
 > Keep tools that require FIDES as direct agent tools, not Hyperlight-managed tools,
 > and enforce authorization and destination restrictions inside host functions.
-> Sandbox isolation does not supply FIDES enforcement.
+> Sandbox isolation does not supply FIDES enforcement. For coarse-grained handling,
+> pass `additional_properties` to `HyperlightCodeActProvider` or
+> `HyperlightExecuteCodeTool`; those properties label the complete outer
+> `execute_code` result, not nested results, intermediate values, or prior side
+> effects.
 > See the [FIDES guide](../../samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md).
+
+```python
+codeact = HyperlightCodeActProvider(
+    tools=[search, fetch],
+    additional_properties={
+        "source_integrity": "untrusted",
+        "confidentiality": "private",
+    },
+)
+```
 
 ## Error diagnostics
 

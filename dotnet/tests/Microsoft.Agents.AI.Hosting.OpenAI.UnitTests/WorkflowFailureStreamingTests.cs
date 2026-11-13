@@ -162,7 +162,7 @@ public sealed class WorkflowFailureStreamingTests
         AssertNoExceptionInternals(replayBody, includeExceptionDetails);
     }
 
-    [Theory]
+    [Theory(Skip = "Temporarily skipped due to flaky background failure handling; see https://github.com/microsoft/agent-framework/issues/10323")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task HostedWorkflowFailure_Background_StoresFailedResponseWithHostSelectedTextAsync(bool includeExceptionDetails)

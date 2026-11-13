@@ -23,7 +23,7 @@ from collections.abc import (
     Sequence,
 )
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from datetime import time as datetime_time
 from decimal import Decimal
@@ -324,9 +324,65 @@ class _FunctionResultCarrier:
 
     additional_properties: dict[str, Any]
     item_additional_properties: dict[str, Any]
+    private_metadata: dict[str, Any] = field(default_factory=dict[str, Any])
+    result_adapter: _FunctionResultAdapter | None = None
+    error_result_finalizer: Callable[[], None] | None = None
     exclusive_outer_keys: frozenset[str] = frozenset()
     exclusive_item_keys: frozenset[str] = frozenset()
     result_already_parsed: bool = False
+
+
+class _FunctionResultAdapter(typing.Protocol):
+    """Private operation-scoped result hook for integration-owned metadata."""
+
+    def postprocess(
+        self,
+        contents: list[Content],
+        context: FunctionInvocationContext,
+        function: FunctionTool,
+    ) -> list[Content]:
+        raise NotImplementedError
+
+    def handle_error(
+        self,
+        context: FunctionInvocationContext,
+        function: FunctionTool,
+    ) -> None:
+        pass
+
+
+class _FunctionResultPostprocessor(typing.Protocol):
+    """Private final-result hook that cannot be replaced by a user parser."""
+
+    def before_invoke(
+        self,
+        context: FunctionInvocationContext | None,
+        function: FunctionTool,
+    ) -> None:
+        pass
+
+    def postprocess(
+        self,
+        contents: list[Content],
+        context: FunctionInvocationContext | None,
+        function: FunctionTool,
+    ) -> list[Content]:
+        raise NotImplementedError
+
+    def postprocess_raw(
+        self,
+        result: Any,
+        context: FunctionInvocationContext | None,
+        function: FunctionTool,
+    ) -> Any:
+        pass
+
+    def handle_error(
+        self,
+        context: FunctionInvocationContext | None,
+        function: FunctionTool,
+    ) -> None:
+        pass
 
 
 class _FunctionResultPayloadBudget:
@@ -373,6 +429,11 @@ class _SkipParsingSentinel:
     return value is returned unchanged from :meth:`FunctionTool.invoke`. Callers may also
     request the raw value on a per-call basis by passing ``skip_parsing=True`` to
     :meth:`FunctionTool.invoke`.
+
+    Raw invocation bypasses operation-scoped adapters that depend on normalized
+    ``Content`` items. Scalar values therefore do not gain per-item security labels.
+    A tool's private final-result hook may still process raw values it explicitly
+    supports, such as an existing ``list[Content]``.
 
     Use the module-level ``SKIP_PARSING`` singleton — do not instantiate this class.
     """
@@ -680,6 +741,7 @@ class FunctionTool(SerializationMixin):
         "_input_schema",
         "_schema_supplied",
         "_invoke_sync_on_event_loop",
+        "_result_postprocessor",
     }
     # A tool that ``BaseAgent.as_tool()`` made keeps pointing at its agent when copied, as its function does.
     _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation", "_wrapped_agent"}
@@ -804,6 +866,7 @@ class FunctionTool(SerializationMixin):
         self._invocation_duration_histogram = _default_histogram()
         self.type: Literal["function_tool"] = "function_tool"
         self.result_parser = result_parser
+        self._result_postprocessor: _FunctionResultPostprocessor | None = None
 
     def _discover_injected_parameters(self) -> None:
         """Inspect the wrapped function for runtime injection parameters."""
@@ -1152,14 +1215,19 @@ class FunctionTool(SerializationMixin):
         ``skip_parsing=True`` per call. Either way the wrapped function's raw value
         is returned. This is intended for callers (e.g. sandboxed runtimes) that
         consume the value from Python directly and would otherwise undo the
-        ``Content`` wrapping.
+        ``Content`` wrapping. Operation-scoped adapters that run after ``Content``
+        normalization are bypassed, so scalar raw values do not gain per-item
+        security labels. Private final-result hooks may still process compatible
+        raw values such as an existing ``list[Content]``.
 
         Keyword Args:
             arguments: A mapping or model instance containing the arguments for the function.
             context: Explicit function invocation context carrying runtime kwargs.
             tool_call_id: Optional tool call identifier used for telemetry and tracing.
             skip_parsing: When ``True``, bypass parsing and return the wrapped function's
-                raw value instead of a ``list[Content]``. Defaults to ``False``.
+                raw value instead of a ``list[Content]``. This also bypasses
+                operation-scoped adapters that require normalized content. Defaults
+                to ``False``.
             kwargs: Direct function argument values. When provided, every keyword
                 must match a declared tool parameter. Runtime data must be passed
                 via ``context``.
@@ -1243,12 +1311,26 @@ class FunctionTool(SerializationMixin):
         if self._context_parameter_name is not None and effective_context is not None:
             call_kwargs[self._context_parameter_name] = effective_context
 
+        if effective_context is not None:
+            carrier = effective_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY)
+            if isinstance(carrier, _FunctionResultCarrier):
+                carrier.result_adapter = None
+        if self._result_postprocessor is not None:
+            self._result_postprocessor.before_invoke(effective_context, self)
+
         if not OBSERVABILITY_SETTINGS.ENABLED:
             logger.info(f"Function name: {self.name}")
             logger.debug(f"Function arguments: {observable_kwargs}")
-            with _suspend_security_argument_materialization():
-                result = await self._invoke_function(call_kwargs)
+            try:
+                with _suspend_security_argument_materialization():
+                    result = await self._invoke_function(call_kwargs)
+            except Exception:
+                if self._result_postprocessor is not None:
+                    self._result_postprocessor.handle_error(effective_context, self)
+                raise
             if skip_parsing:
+                if self._result_postprocessor is not None:
+                    result = self._result_postprocessor.postprocess_raw(result, effective_context, self)
                 logger.info(f"Function {self.name} succeeded.")
                 logger.debug(f"Function result: {type(result).__name__}")
                 return result
@@ -1265,6 +1347,16 @@ class FunctionTool(SerializationMixin):
                 try:
                     parsed = configured_parser(result)
                 except Exception as exception:
+                    if (
+                        isinstance(carrier, _FunctionResultCarrier)
+                        and carrier.result_adapter is not None
+                        and effective_context is not None
+                    ):
+                        result_adapter = carrier.result_adapter
+                        carrier.result_adapter = None
+                        result_adapter.handle_error(effective_context, self)
+                    if self._result_postprocessor is not None:
+                        self._result_postprocessor.handle_error(effective_context, self)
                     self.invocation_exception_count += 1
                     if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                         logger.error(f"Function {self.name}: result parser failed. Error: {exception}")
@@ -1279,6 +1371,16 @@ class FunctionTool(SerializationMixin):
                     parsed = [Content.from_text(str(result))]
             if isinstance(parsed, str):
                 parsed = [Content.from_text(parsed)]
+            if self._result_postprocessor is not None:
+                parsed = self._result_postprocessor.postprocess(parsed, effective_context, self)
+            if (
+                isinstance(carrier, _FunctionResultCarrier)
+                and carrier.result_adapter is not None
+                and effective_context is not None
+            ):
+                result_adapter = carrier.result_adapter
+                carrier.result_adapter = None
+                parsed = result_adapter.postprocess(parsed, effective_context, self)
             logger.info(f"Function {self.name} succeeded.")
             if parsed:
                 types = [item.type for item in parsed]
@@ -1331,6 +1433,8 @@ class FunctionTool(SerializationMixin):
                 end_time_stamp = perf_counter()
             except Exception as exception:
                 end_time_stamp = perf_counter()
+                if self._result_postprocessor is not None:
+                    self._result_postprocessor.handle_error(effective_context, self)
                 metric_attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
@@ -1340,6 +1444,8 @@ class FunctionTool(SerializationMixin):
                 raise
             else:
                 if skip_parsing:
+                    if self._result_postprocessor is not None:
+                        result = self._result_postprocessor.postprocess_raw(result, effective_context, self)
                     logger.info(f"Function {self.name} succeeded.")
                     if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                         result_str = str(result)
@@ -1360,6 +1466,16 @@ class FunctionTool(SerializationMixin):
                     try:
                         parsed = configured_parser(result)
                     except Exception as exception:
+                        if (
+                            isinstance(carrier, _FunctionResultCarrier)
+                            and carrier.result_adapter is not None
+                            and effective_context is not None
+                        ):
+                            result_adapter = carrier.result_adapter
+                            carrier.result_adapter = None
+                            result_adapter.handle_error(effective_context, self)
+                        if self._result_postprocessor is not None:
+                            self._result_postprocessor.handle_error(effective_context, self)
                         self.invocation_exception_count += 1
                         metric_attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
                         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
@@ -1378,6 +1494,16 @@ class FunctionTool(SerializationMixin):
                         parsed = [Content.from_text(str(result))]
                 if isinstance(parsed, str):
                     parsed = [Content.from_text(parsed)]
+                if self._result_postprocessor is not None:
+                    parsed = self._result_postprocessor.postprocess(parsed, effective_context, self)
+                if (
+                    isinstance(carrier, _FunctionResultCarrier)
+                    and carrier.result_adapter is not None
+                    and effective_context is not None
+                ):
+                    result_adapter = carrier.result_adapter
+                    carrier.result_adapter = None
+                    parsed = result_adapter.postprocess(parsed, effective_context, self)
                 logger.info(f"Function {self.name} succeeded.")
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                     result_str = "\n".join(c.text or "" for c in parsed if c.type == "text") or str(parsed)
@@ -2257,21 +2383,26 @@ def _finalize_function_result(
         exception=exception,
         additional_properties=additional_properties,
     )
-    if carrier is None or function_result.items is None:
-        return function_result
+    if carrier is not None and function_result.items is not None:
+        updated_items = list(function_result.items)
+        for index, item in enumerate(updated_items):
+            updated_item = copy.copy(item)
+            updated_item.additional_properties = dict(updated_item.additional_properties)
+            for key in carrier.exclusive_outer_keys | carrier.exclusive_item_keys:
+                updated_item.additional_properties.pop(key, None)
+            is_hidden_variable_reference = (
+                updated_item.type == "text" and updated_item.additional_properties.get("_variable_reference") is True
+            )
+            if not is_hidden_variable_reference:
+                updated_item.additional_properties = merge_additional_properties(
+                    updated_item.additional_properties,
+                    carrier.item_additional_properties,
+                )
+            updated_items[index] = updated_item
+        function_result.items = updated_items
 
-    updated_items = list(function_result.items)
-    for index, item in enumerate(updated_items):
-        updated_item = copy.copy(item)
-        updated_item.additional_properties = dict(updated_item.additional_properties)
-        for key in carrier.exclusive_outer_keys | carrier.exclusive_item_keys:
-            updated_item.additional_properties.pop(key, None)
-        updated_item.additional_properties = merge_additional_properties(
-            updated_item.additional_properties,
-            carrier.item_additional_properties,
-        )
-        updated_items[index] = updated_item
-    function_result.items = updated_items
+    if exception is not None and carrier is not None and carrier.error_result_finalizer is not None:
+        carrier.error_result_finalizer()
     return function_result
 
 
