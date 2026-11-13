@@ -130,16 +130,6 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// <inheritdoc/>
     public void Dispose() => this._otelClient.Dispose();
 
-    /// <inheritdoc/>
-    public override object? GetService(Type serviceType, object? serviceKey = null)
-    {
-        // Foundry hosting uses the wrapper itself as the key when it owns a factory-created pipeline
-        // and must dispose the telemetry wrapper and the agent inside it separately.
-        return ReferenceEquals(serviceKey, this) && serviceType == typeof(AIAgent)
-            ? this.InnerAgent
-            : base.GetService(serviceType, serviceKey);
-    }
-
     /// <summary>
     /// Gets or sets a value indicating whether potentially sensitive information should be included in telemetry.
     /// </summary>

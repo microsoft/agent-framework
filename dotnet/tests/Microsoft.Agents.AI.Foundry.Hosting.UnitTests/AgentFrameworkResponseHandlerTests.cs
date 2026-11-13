@@ -174,8 +174,7 @@ public class AgentFrameworkResponseHandlerTests
         var agentSource = new FoundryHostedAgentSource(
             _ => throw new InvalidOperationException("factory failed"),
             ServiceLifetime.Scoped,
-            sp,
-            requireOpenTelemetryAgent: true);
+            sp);
 
         var handler = new AgentFrameworkResponseHandler(sp, agentSource, NullLogger<AgentFrameworkResponseHandler>.Instance);
 

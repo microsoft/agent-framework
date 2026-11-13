@@ -84,10 +84,7 @@ factory and a lifetime instead:
 
 ```csharp
 builder.AddFoundryResponses(
-    sp => new MyAgent(sp.GetRequiredService<MyDbContext>())
-        .AsBuilder()
-        .UseOpenTelemetry(sourceName: "Azure.AI.AgentServer.Responses")
-        .Build(),
+    sp => new MyAgent(sp.GetRequiredService<MyDbContext>()),
     ServiceLifetime.Scoped);
 ```
 
@@ -101,26 +98,19 @@ the factory creates the same name. Switching from the instance overload then kee
 
 Hosting adds OpenTelemetry to an agent it reuses for every response, one you pass in or a `Singleton`
 created by a factory, unless the agent already has it. It builds that wrapper once and disposes it at
-shutdown. It adds none to a `Scoped` or `Transient` agent: each `OpenTelemetryAgent` registers its own meter
-and activity source for the whole process until it is disposed, so it has to live and be disposed with the
-agent it wraps. The factory adds it, as above, with the `Azure.AI.AgentServer.Responses` source that Foundry
-exports, and hosting disposes the agent the factory returns when the response ends. By default a response,
-and the readiness probe, fails when such an agent has no `OpenTelemetryAgent`. A workflow agent also needs
-`WithFoundryCheckpointing` before the wrapper, so its checkpoints are stored in Foundry rather than inside its
-saved session; hosting cannot move the checkpoints of a workflow agent that is already wrapped:
+shutdown. For a `Scoped` or `Transient` agent, hosting applies Foundry workflow checkpointing first, then
+adds a telemetry wrapper for that response. It disposes the wrapper before disposing the factory-created
+agent. The factory must return the unwrapped agent:
 
 ```csharp
 builder.AddFoundryResponses(
-    sp => workflow.AsAIAgent(name: "triage")
-        .WithFoundryCheckpointing(sp)
-        .AsBuilder()
-        .UseOpenTelemetry(sourceName: "Azure.AI.AgentServer.Responses")
-        .Build(),
+    _ => workflow.AsAIAgent(name: "triage"),
     ServiceLifetime.Scoped);
 ```
 
-To serve per-response agents without agent telemetry, set
-`FoundryResponsesServerOptions.RequireOpenTelemetryAgent` to `false`.
+Return an unwrapped scoped or transient agent to let hosting own both lifetimes. If the factory supplies
+its own telemetry wrapper, it must arrange the inner agent's lifetime independently. To serve those agents
+without agent telemetry, set `FoundryResponsesServerOptions.RequireOpenTelemetryAgent` to `false`.
 
 The session store has its own registration and lifetime, independent of the agent. Without one, the agent
 uses the default store, a single shared instance. The store registered last is used, whether it was passed

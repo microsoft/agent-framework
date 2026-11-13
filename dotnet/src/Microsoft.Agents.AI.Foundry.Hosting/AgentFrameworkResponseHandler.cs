@@ -138,7 +138,9 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler, I
         IServiceProvider services = serviceScope.ServiceProvider;
         FoundryHostedAgentSource.Lease agentLease = await this._agentSource.AcquireAsync(services).ConfigureAwait(false);
         await using var configuredAgentLease = agentLease.ConfigureAwait(false);
-        AIAgent agent = this.GetServedAgent(agentLease.Agent);
+        ServedAgentLease servedAgentLease = this.GetServedAgent(agentLease.Agent);
+        using var configuredServedAgentLease = servedAgentLease;
+        AIAgent agent = servedAgentLease.Agent;
         AgentSessionStore sessionStore = ResolveSessionStore(services);
 
         // When resolvedUserId is null here the container is NOT hosted by Foundry (local
@@ -901,23 +903,29 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler, I
     /// <remarks>
     /// An agent reused for every run is wrapped once, telemetry included, and the wrapper is reused. Each
     /// <see cref="OpenTelemetryAgent"/> registers a meter and an activity source for the whole process until it
-    /// is disposed, so a wrapper per run would leak them, and disposing one per run would end the metric streams
-    /// that runs still in flight share in the OpenTelemetry SDK. An agent created per run is wrapped per run
-    /// without telemetry: its factory supplies the telemetry, which is disposed with the agent, as
-    /// <see cref="FoundryResponsesServerOptions.RequireOpenTelemetryAgent"/> describes.
+    /// is disposed. Hosting creates a separate wrapper for each per-run agent after applying its other wrappers,
+    /// then disposes that telemetry before the factory-created agent at the end of the run.
     /// </remarks>
     /// <param name="agent">The agent supplied by the agent source for the current run.</param>
-    /// <returns>The agent to serve the run with.</returns>
-    private AIAgent GetServedAgent(AIAgent agent)
+    /// <returns>A lease that disposes telemetry hosting added for this run.</returns>
+    private ServedAgentLease GetServedAgent(AIAgent agent)
     {
         if (this._agentSource.CreatesAgentPerRun)
         {
-            return this.PrepareAgent(agent);
+            AIAgent prepared = this.PrepareAgent(agent);
+            if (!this._options.RequireOpenTelemetryAgent)
+            {
+                return new ServedAgentLease(prepared);
+            }
+
+            AIAgent instrumented = ServiceCollectionExtensions.ApplyOpenTelemetry(prepared);
+            IDisposable? ownedTelemetry = ReferenceEquals(instrumented, prepared) ? null : instrumented as IDisposable;
+            return new ServedAgentLease(instrumented, ownedTelemetry);
         }
 
         if (this._servedAgent is { } servedAgent)
         {
-            return servedAgent;
+            return new ServedAgentLease(servedAgent);
         }
 
         lock (this._servedAgentGate)
@@ -934,7 +942,7 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler, I
                 this._servedAgent = instrumented;
             }
 
-            return this._servedAgent;
+            return new ServedAgentLease(this._servedAgent);
         }
     }
 
@@ -948,8 +956,8 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler, I
     {
         ServiceCollectionExtensions.TryApplyUserAgent(agent);
 
-        // The same call a factory makes for a workflow agent it wraps itself. It changes nothing for an agent
-        // that is not a workflow, is wrapped, or already stores its checkpoints in Foundry.
+        // Apply checkpoint storage before hosting adds telemetry. A factory-supplied wrapper is left unchanged,
+        // because only the workflow agent itself can be copied with different checkpoint storage.
         AIAgent prepared = agent.WithFoundryCheckpointing(this._serviceProvider);
         return new FoundryHostingAgent(prepared, FoundryHostingAgent.ResolveSessionStorageIdentity(agent));
     }
@@ -963,6 +971,22 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler, I
         services.GetService<AgentSessionStore>()
             ?? throw new InvalidOperationException(
                 "No AgentSessionStore is registered. Register one with AddFoundryAgentSessionStore, or pass one to AddFoundryResponses.");
+
+    /// <summary>
+    /// Holds the agent served for one run and disposes a telemetry wrapper created for that run only.
+    /// </summary>
+    private sealed class ServedAgentLease(AIAgent agent, IDisposable? ownedTelemetry = null) : IDisposable
+    {
+        private IDisposable? _ownedTelemetry = ownedTelemetry;
+
+        internal AIAgent Agent { get; } = agent;
+
+        public void Dispose()
+        {
+            this._ownedTelemetry?.Dispose();
+            this._ownedTelemetry = null;
+        }
+    }
 
     [LoggerMessage(
         EventId = 0,

@@ -142,11 +142,10 @@ public static class ServiceCollectionExtensions
     /// </para>
     /// <para>
     /// Hosting adds an <see cref="OpenTelemetryAgent"/> to a singleton agent, unless it already has one, and
-    /// disposes that wrapper at shutdown. It adds none to a scoped or transient agent, because that telemetry
-    /// must be disposed with the agent it wraps: the factory adds it, and by default a run or readiness probe
-    /// fails when the agent has none. A workflow agent must have
-    /// <see cref="WorkflowAgentExtensions.WithFoundryCheckpointing"/> applied before the wrapper is added.
-    /// See <see cref="FoundryResponsesServerOptions.RequireOpenTelemetryAgent"/>.
+    /// disposes that wrapper at shutdown. For a scoped or transient agent, hosting adds and disposes a separate
+    /// wrapper for every response after applying Foundry workflow checkpointing. A factory that supplies its own
+    /// <see cref="OpenTelemetryAgent"/> must arrange the inner agent's lifetime independently. See
+    /// <see cref="FoundryResponsesServerOptions.RequireOpenTelemetryAgent"/>.
     /// </para>
     /// <para>
     /// The run's scope is not the ASP.NET Core request scope, so scoped services that middleware fills in for
@@ -173,10 +172,7 @@ public static class ServiceCollectionExtensions
     /// Example:
     /// <code>
     /// builder.Services.AddFoundryResponses(
-    ///     sp => new MyAgent(sp.GetRequiredService&lt;MyDbContext&gt;())
-    ///         .AsBuilder()
-    ///         .UseOpenTelemetry(sourceName: "Azure.AI.AgentServer.Responses")
-    ///         .Build(),
+    ///     sp => new MyAgent(sp.GetRequiredService&lt;MyDbContext&gt;()),
     ///     ServiceLifetime.Scoped);
     /// </code>
     /// </para>
@@ -368,8 +364,7 @@ public static class ServiceCollectionExtensions
         ServiceDescriptor source = ServiceDescriptor.Singleton(serviceProvider => new FoundryHostedAgentSource(
             agentFactory,
             lifetime,
-            serviceProvider,
-            serviceProvider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value.RequireOpenTelemetryAgent));
+            serviceProvider));
 
         if (lifetime != ServiceLifetime.Singleton)
         {

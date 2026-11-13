@@ -48,21 +48,18 @@ public static class WorkflowAgentExtensions
     /// Foundry, the AgentServer SDK's local state-store fallback is used.
     /// </para>
     /// <para>
-    /// Hosting applies this to the agent it serves. Call it yourself when you wrap a workflow agent, for example
-    /// to add the <see cref="OpenTelemetryAgent"/> that a workflow agent created for each response must include
-    /// (see <see cref="FoundryResponsesServerOptions.RequireOpenTelemetryAgent"/>). Call it on the workflow agent
-    /// before wrapping it: only the workflow agent itself can be copied, so a wrapped agent is returned unchanged.
-    /// The agent is also returned unchanged when it does not run a workflow, when it was built with a checkpoint
-    /// manager of its own, or when its checkpoints are already stored in Foundry.
+    /// Hosting applies this to the agent it serves before adding its own telemetry wrapper. Call it yourself
+    /// before adding other middleware when building an agent outside hosting: only the workflow agent itself can
+    /// be copied, so a wrapped agent is returned unchanged. The agent is also returned unchanged when it does not
+    /// run a workflow, when it was built with a checkpoint manager of its own, or when its checkpoints are already
+    /// stored in Foundry.
     /// </para>
     /// <code>
-    /// builder.AddFoundryResponses(
-    ///     sp => workflow.AsAIAgent(name: "triage")
-    ///         .WithFoundryCheckpointing(sp)
-    ///         .AsBuilder()
-    ///         .UseOpenTelemetry(sourceName: "Azure.AI.AgentServer.Responses")
-    ///         .Build(),
-    ///     ServiceLifetime.Scoped);
+    /// AIAgent agent = workflow.AsAIAgent(name: "triage")
+    ///     .WithFoundryCheckpointing(services)
+    ///     .AsBuilder()
+    ///     .UseOpenTelemetry()
+    ///     .Build();
     /// </code>
     /// </remarks>
     /// <param name="agent">The workflow agent.</param>

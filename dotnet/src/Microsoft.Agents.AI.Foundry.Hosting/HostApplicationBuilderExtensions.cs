@@ -98,11 +98,10 @@ public static class HostApplicationBuilderExtensions
     /// </para>
     /// <para>
     /// Hosting adds an <see cref="OpenTelemetryAgent"/> to a singleton agent, unless it already has one, and
-    /// disposes that wrapper at shutdown. It adds none to a scoped or transient agent, because that telemetry
-    /// must be disposed with the agent it wraps: the factory adds it, and by default a run or readiness probe
-    /// fails when the agent has none. A workflow agent must have
-    /// <see cref="WorkflowAgentExtensions.WithFoundryCheckpointing"/> applied before the wrapper is added.
-    /// See <see cref="FoundryResponsesServerOptions.RequireOpenTelemetryAgent"/>.
+    /// disposes that wrapper at shutdown. For a scoped or transient agent, hosting adds and disposes a separate
+    /// wrapper for every response after applying Foundry workflow checkpointing. A factory that supplies its own
+    /// <see cref="OpenTelemetryAgent"/> must arrange the inner agent's lifetime independently. See
+    /// <see cref="FoundryResponsesServerOptions.RequireOpenTelemetryAgent"/>.
     /// </para>
     /// <para>
     /// The session store is registered separately with
@@ -115,10 +114,7 @@ public static class HostApplicationBuilderExtensions
     /// </para>
     /// <code>
     /// builder.AddFoundryResponses(
-    ///     sp => new MyAgent(sp.GetRequiredService&lt;MyDbContext&gt;())
-    ///         .AsBuilder()
-    ///         .UseOpenTelemetry(sourceName: "Azure.AI.AgentServer.Responses")
-    ///         .Build(),
+    ///     sp => new MyAgent(sp.GetRequiredService&lt;MyDbContext&gt;()),
     ///     ServiceLifetime.Scoped);
     /// </code>
     /// </remarks>

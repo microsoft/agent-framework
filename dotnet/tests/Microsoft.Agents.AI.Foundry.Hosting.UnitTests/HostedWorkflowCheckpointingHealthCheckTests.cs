@@ -138,8 +138,7 @@ public class HostedWorkflowCheckpointingHealthCheckTests
                 return BuildWorkflowAgent(environment);
             },
             ServiceLifetime.Scoped,
-            provider,
-            requireOpenTelemetryAgent: false);
+            provider);
         var check = new HostedWorkflowCheckpointingHealthCheck(provider, agentSource)
         {
             IsHosted = true,

@@ -4,4 +4,3 @@
 [MAAI001]Microsoft.Agents.AI.ChatClientAgentRunOptions.PersistPartialMessagesOnCancellation.get -> bool?
 [MAAI001]Microsoft.Agents.AI.ChatClientAgentRunOptions.PersistPartialMessagesOnCancellation.set -> void
 [MAAI001]const Microsoft.Agents.AI.ChatClientAgent.PartialResponseMessageMarkerKey = "agent_framework.partial_response_message" -> string!
-override Microsoft.Agents.AI.OpenTelemetryAgent.GetService(System.Type! serviceType, object? serviceKey = null) -> object?

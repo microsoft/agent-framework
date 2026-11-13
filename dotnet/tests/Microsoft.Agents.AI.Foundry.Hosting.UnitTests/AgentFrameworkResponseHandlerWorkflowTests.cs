@@ -135,17 +135,10 @@ public class AgentFrameworkResponseHandlerWorkflowTests
     [Theory]
     [InlineData(ServiceLifetime.Scoped)]
     [InlineData(ServiceLifetime.Transient)]
-    public async Task WorkflowAgent_CreatedByFactoryWithFoundryCheckpointingAndTelemetry_RunsAsync(ServiceLifetime lifetime)
+    public async Task WorkflowAgent_CreatedByFactory_HostingAppliesCheckpointingBeforeTelemetryAsync(ServiceLifetime lifetime)
     {
-        // Arrange: a workflow agent created for each response, its checkpoints moved to Foundry before it is wrapped
-        var (handler, store) = CreateFactoryHandler(
-            sp => BuildFactoryWorkflowAgent()
-                .WithFoundryCheckpointing(sp)
-                .AsBuilder()
-                .UseOpenTelemetry(sourceName: TelemetrySourceName)
-                .Build(),
-            lifetime,
-            requireOpenTelemetryAgent: true);
+        // Arrange
+        var (handler, store) = CreateFactoryHandler(_ => BuildFactoryWorkflowAgent(), lifetime);
 
         // Act
         var events = await CollectEventsAsync(handler, CreateRequest("Test factory workflow"), CreateMockContext().Object);
@@ -154,21 +147,11 @@ public class AgentFrameworkResponseHandlerWorkflowTests
         Assert.IsType<ResponseCreatedEvent>(events[0]);
         Assert.True(events.Count >= 3, $"Expected at least 3 events, got {events.Count}");
         Assert.NotEmpty(store.Agents);
-        Assert.All(store.Agents, agent => Assert.True(WorkflowAgentExtensions.UsesFoundryCheckpointing(agent)));
-    }
-
-    [Fact]
-    public async Task WorkflowAgent_CreatedByFactoryWithoutTelemetry_IsRejectedAsync()
-    {
-        // Arrange
-        var (handler, _) = CreateFactoryHandler(_ => BuildFactoryWorkflowAgent(), ServiceLifetime.Scoped, requireOpenTelemetryAgent: true);
-
-        // Act
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => CollectEventsAsync(handler, CreateRequest("Test factory workflow"), CreateMockContext().Object));
-
-        // Assert: the message names both calls, in the order they have to be made.
-        Assert.Contains("WithFoundryCheckpointing(serviceProvider).AsBuilder().UseOpenTelemetry", exception.Message, StringComparison.Ordinal);
+        Assert.All(store.Agents, agent =>
+        {
+            Assert.IsType<OpenTelemetryAgent>(agent);
+            Assert.True(WorkflowAgentExtensions.UsesFoundryCheckpointing(agent));
+        });
     }
 
     [Fact]
@@ -177,8 +160,7 @@ public class AgentFrameworkResponseHandlerWorkflowTests
         // Arrange: the telemetry wrapper hides the workflow agent, so its checkpoints cannot be moved to Foundry.
         var (handler, _) = CreateFactoryHandler(
             _ => BuildFactoryWorkflowAgent().AsBuilder().UseOpenTelemetry(sourceName: TelemetrySourceName).Build(),
-            ServiceLifetime.Scoped,
-            requireOpenTelemetryAgent: true);
+            ServiceLifetime.Scoped);
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
@@ -192,7 +174,10 @@ public class AgentFrameworkResponseHandlerWorkflowTests
     public async Task WorkflowAgent_CreatedByFactoryWhenTelemetryIsNotRequired_StoresItsCheckpointsInFoundryAsync()
     {
         // Arrange: without the telemetry requirement, a bare workflow agent is served and hosting moves its checkpoints.
-        var (handler, store) = CreateFactoryHandler(_ => BuildFactoryWorkflowAgent(), ServiceLifetime.Scoped, requireOpenTelemetryAgent: false);
+        var (handler, store) = CreateFactoryHandler(
+            _ => BuildFactoryWorkflowAgent(),
+            ServiceLifetime.Scoped,
+            requireOpenTelemetryAgent: false);
 
         // Act
         var events = await CollectEventsAsync(handler, CreateRequest("Test factory workflow"), CreateMockContext().Object);
@@ -292,7 +277,7 @@ public class AgentFrameworkResponseHandlerWorkflowTests
     private static (AgentFrameworkResponseHandler Handler, ServedAgentRecordingStore Store) CreateFactoryHandler(
         Func<IServiceProvider, AIAgent> agentFactory,
         ServiceLifetime lifetime,
-        bool requireOpenTelemetryAgent)
+        bool requireOpenTelemetryAgent = true)
     {
         var store = new ServedAgentRecordingStore();
         var services = new ServiceCollection();
@@ -300,8 +285,9 @@ public class AgentFrameworkResponseHandlerWorkflowTests
         var sp = services.BuildServiceProvider();
         var handler = new AgentFrameworkResponseHandler(
             sp,
-            new FoundryHostedAgentSource(agentFactory, lifetime, sp, requireOpenTelemetryAgent),
-            NullLogger<AgentFrameworkResponseHandler>.Instance);
+            new FoundryHostedAgentSource(agentFactory, lifetime, sp),
+            NullLogger<AgentFrameworkResponseHandler>.Instance,
+            new FoundryResponsesServerOptions { RequireOpenTelemetryAgent = requireOpenTelemetryAgent });
         return (handler, store);
     }
 

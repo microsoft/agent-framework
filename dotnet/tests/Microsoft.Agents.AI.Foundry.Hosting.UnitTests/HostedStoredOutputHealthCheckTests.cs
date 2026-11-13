@@ -219,8 +219,7 @@ public class HostedStoredOutputHealthCheckTests
                     });
             },
             ServiceLifetime.Scoped,
-            provider,
-            requireOpenTelemetryAgent: false);
+            provider);
         var check = new HostedStoredOutputHealthCheck(provider, agentSource, new FoundryResponsesServerOptions());
 
         // Act

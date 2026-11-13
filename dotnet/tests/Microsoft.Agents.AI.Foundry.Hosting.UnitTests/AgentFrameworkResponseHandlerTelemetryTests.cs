@@ -73,7 +73,7 @@ public class AgentFrameworkResponseHandlerTelemetryTests
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
         var sp = services.BuildServiceProvider();
-        var agentSource = new FoundryHostedAgentSource(_ => new TelemetryTestAgent(), ServiceLifetime.Singleton, sp, requireOpenTelemetryAgent: true);
+        var agentSource = new FoundryHostedAgentSource(_ => new TelemetryTestAgent(), ServiceLifetime.Singleton, sp);
 
         var handler = new AgentFrameworkResponseHandler(sp, agentSource, NullLogger<AgentFrameworkResponseHandler>.Instance);
         var (request, context) = BuildRequest();
@@ -220,6 +220,41 @@ public class AgentFrameworkResponseHandlerTelemetryTests
     [Theory]
     [InlineData(ServiceLifetime.Scoped)]
     [InlineData(ServiceLifetime.Transient)]
+    public async Task CreateAsync_PerRunAgent_IsWrappedAndTheWrapperIsDisposedWithTheRunAsync(ServiceLifetime lifetime)
+    {
+        // Arrange
+        var activities = new ConcurrentActivityList();
+        using var tracerProvider = Sdk.CreateTracerProviderBuilder()
+            .AddSource(ResponsesSourceName)
+            .AddInMemoryExporter(activities)
+            .Build();
+
+        string agentName = UniqueAgentName();
+        var store = new ServedAgentRecordingStore();
+        var services = new ServiceCollection();
+        services.AddSingleton<AgentSessionStore>(store);
+        var sp = services.BuildServiceProvider();
+        var agentSource = new FoundryHostedAgentSource(
+            _ => new TelemetryTestAgent(agentName),
+            lifetime,
+            sp);
+        var handler = new AgentFrameworkResponseHandler(sp, agentSource, NullLogger<AgentFrameworkResponseHandler>.Instance);
+
+        // Act: finish one response, then run through the telemetry wrapper that response used.
+        await DrainAsync(handler);
+        AIAgent servedAgent = Assert.Single(store.Agents.Distinct());
+        int spansWhileServing = CountSpans(activities, agentName);
+        await foreach (var _ in servedAgent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hello")])) { }
+
+        // Assert: hosting added telemetry for the run, then disposed it before disposing the factory agent.
+        Assert.IsType<OpenTelemetryAgent>(servedAgent);
+        Assert.Equal(1, spansWhileServing);
+        Assert.Equal(1, CountSpans(activities, agentName));
+    }
+
+    [Theory]
+    [InlineData(ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient)]
     public async Task CreateAsync_PerRunAgentWithItsOwnTelemetry_IsNotWrappedByHostingAsync(ServiceLifetime lifetime)
     {
         // Arrange
@@ -242,15 +277,14 @@ public class AgentFrameworkResponseHandlerTelemetryTests
         var agentSource = new FoundryHostedAgentSource(
             _ => new TelemetryTestAgent(agentName).AsBuilder().UseOpenTelemetry(sourceName: ownSource).Build(),
             lifetime,
-            sp,
-            requireOpenTelemetryAgent: true);
+            sp);
         var handler = new AgentFrameworkResponseHandler(sp, agentSource, NullLogger<AgentFrameworkResponseHandler>.Instance);
 
         // Act
         await DrainAsync(handler);
         await DrainAsync(handler);
 
-        // Assert: each response is traced once, by the telemetry the factory added.
+        // Assert: each response is traced once by the factory-supplied telemetry.
         Assert.Equal(2, CountSpans(ownActivities, agentName));
         Assert.Equal(0, CountSpans(responsesActivities, agentName));
     }
@@ -272,9 +306,12 @@ public class AgentFrameworkResponseHandlerTelemetryTests
         var agentSource = new FoundryHostedAgentSource(
             _ => new TelemetryTestAgent(agentName),
             ServiceLifetime.Scoped,
+            sp);
+        var handler = new AgentFrameworkResponseHandler(
             sp,
-            requireOpenTelemetryAgent: false);
-        var handler = new AgentFrameworkResponseHandler(sp, agentSource, NullLogger<AgentFrameworkResponseHandler>.Instance);
+            agentSource,
+            NullLogger<AgentFrameworkResponseHandler>.Instance,
+            new FoundryResponsesServerOptions { RequireOpenTelemetryAgent = false });
 
         // Act
         await DrainAsync(handler);
