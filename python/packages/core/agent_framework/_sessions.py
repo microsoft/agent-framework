@@ -265,6 +265,27 @@ def _default_state_encoder(cls: type[Any]) -> StateEncoder:
     )
 
 
+def _pydantic_validation_key(name: str, field_info: Any) -> str:
+    """Return the name Pydantic accepts for one model field stored under ``name``.
+
+    A string validation alias (which ``alias=`` also installs) or a string model alias is the name
+    Pydantic accepts, so it is used unchanged. ``AliasChoices`` declares several accepted aliases and
+    validates on any one of them, so the first string choice is used; a field keyed by its own name
+    only validates when the model also allows population by name, which declaring an alias does not
+    require. Nested ``AliasPath`` aliases keep the previous field-name fallback.
+    """
+    validation_alias = getattr(field_info, "validation_alias", None)
+    if isinstance(validation_alias, str):
+        return validation_alias
+    choices = getattr(validation_alias, "choices", None)
+    if isinstance(choices, Sequence) and not isinstance(choices, str):
+        for choice in cast("Sequence[Any]", choices):
+            if isinstance(choice, str):
+                return choice
+    alias = getattr(field_info, "alias", None)
+    return alias if isinstance(alias, str) else name
+
+
 def _default_state_decoder(cls: type[Any]) -> StateDecoder:
     """Create the default decoder for one explicitly registered state type."""
     if callable(getattr(cls, "from_dict", None)):
@@ -279,7 +300,13 @@ def _default_state_decoder(cls: type[Any]) -> StateDecoder:
     if issubclass(cls, BaseModel):
 
         def decode_pydantic(payload: Mapping[str, Any]) -> Any:
-            return cls.model_validate({key: value for key, value in payload.items() if key != "type"})
+            # The default encoder dumps field names, so map each one onto a name this model accepts;
+            # an alias-only field rejects its own field name and failed to restore from a snapshot.
+            return cls.model_validate({
+                _pydantic_validation_key(key, cls.model_fields[key]) if key in cls.model_fields else key: value
+                for key, value in payload.items()
+                if key != "type"
+            })
 
         return decode_pydantic
 
