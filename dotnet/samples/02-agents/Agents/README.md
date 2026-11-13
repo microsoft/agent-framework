@@ -26,6 +26,7 @@ Before you begin, ensure you have the following prerequisites:
 
 |Sample|Description|
 |---|---|
+|[Container Apps Dynamic Sessions](./Agent_ContainerAppsDynamicSessions/)|Run agent-generated Python in a cloud code-interpreter session using a function tool|
 |[Using OpenAPI function tools with a simple agent](https://github.com/microsoft/semantic-kernel/tree/main/dotnet/samples/AgentFrameworkMigration/AzureOpenAI/Step04_ToolCall_WithOpenAPI)|This sample demonstrates how to create function tools from an OpenAPI spec and use them with a simple agent (note that this sample is in the Semantic Kernel repository)|
 |[Using function tools with approvals](./Agent_Step01_UsingFunctionToolsWithApprovals/)|This sample demonstrates how to use function tools where approvals require human in the loop approvals before execution|
 |[Structured output with a simple agent](./Agent_Step02_StructuredOutput/)|This sample demonstrates how to use structured output with a simple agent|
