@@ -186,18 +186,28 @@ internal sealed class WorkflowSession : AgentSession
         };
     }
 
-    public AgentResponseUpdate CreateUpdate(string responseId, object raw, ChatMessage message)
+    public AgentResponseUpdate CreateUpdate(string responseId, object raw, ChatMessage message, string? executorId = default)
     {
         Throw.IfNull(message);
 
-        return new(message.Role, message.Contents)
+        return SetExecutorId(new(message.Role, message.Contents)
         {
             AuthorName = message.AuthorName,
             CreatedAt = message.CreatedAt ?? DateTimeOffset.UtcNow,
             MessageId = message.MessageId ?? Guid.NewGuid().ToString("N"),
             ResponseId = responseId,
             RawRepresentation = raw
-        };
+        }, executorId);
+    }
+
+    private static AgentResponseUpdate SetExecutorId(AgentResponseUpdate update, string? executorId)
+    {
+        if (!string.IsNullOrEmpty(executorId))
+        {
+            update.AdditionalProperties ??= [];
+            update.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId] = executorId;
+        }
+        return update;
     }
 
     private async ValueTask<ResumeRunResult> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
@@ -499,15 +509,15 @@ internal sealed class WorkflowSession : AgentSession
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
         }
 
-        AgentResponseUpdate CreateObservabilityUpdate(WorkflowEvent evt)
-            => new(ChatRole.Assistant, [])
+        AgentResponseUpdate CreateObservabilityUpdate(WorkflowEvent evt, string? executorId = default)
+            => SetExecutorId(new(ChatRole.Assistant, [])
             {
                 CreatedAt = DateTimeOffset.UtcNow,
                 MessageId = Guid.NewGuid().ToString("N"),
                 Role = ChatRole.Assistant,
                 ResponseId = this.LastResponseId,
                 RawRepresentation = evt
-            };
+            }, executorId);
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken)
                                                .ConfigureAwait(false)
@@ -586,7 +596,7 @@ internal sealed class WorkflowSession : AgentSession
                     // the legacy default, keep today's behavior — gated by the include flag.
                     if (!Futures.EnableAgentResponseOutputTaggingAndFiltering && !this._includeWorkflowOutputsInResponse)
                     {
-                        yield return CreateObservabilityUpdate(evt);
+                        yield return CreateObservabilityUpdate(evt, agentResponse.ExecutorId);
                         break;
                     }
 
@@ -610,13 +620,13 @@ internal sealed class WorkflowSession : AgentSession
                         }
 
                         emittedMessage = true;
-                        yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                        yield return this.CreateUpdate(this.LastResponseId, evt, message, agentResponse.ExecutorId);
                     }
                     if (!emittedMessage && suppressedStreamedMessage)
                     {
                         // Preserve the completion event for observability after its correlated
                         // streamed content has already been forwarded.
-                        yield return CreateObservabilityUpdate(evt);
+                        yield return CreateObservabilityUpdate(evt, agentResponse.ExecutorId);
                     }
                     break;
 
