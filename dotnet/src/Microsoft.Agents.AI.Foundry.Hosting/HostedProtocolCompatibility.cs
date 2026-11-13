@@ -30,6 +30,11 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 internal static class HostedProtocolCompatibility
 {
     /// <summary>
+    /// The request header that carries the platform per-request call id (protocol <c>2.0.0</c> only).
+    /// </summary>
+    internal const string CallIdHeaderName = "x-agent-foundry-call-id";
+
+    /// <summary>
     /// HTTP status returned when this image is served a container protocol version it does not support.
     /// <c>501 Not Implemented</c> is a server-side (<c>5xx</c>) classification, because the deployment,
     /// not the caller, is misconfigured; it is also non-retryable and distinct from the generic

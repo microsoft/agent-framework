@@ -1,165 +1,553 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Buffers;
+using System.Buffers.Text;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.Diagnostics;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// An <see cref="AgentSkill"/> discovered from an MCP server exposing the Agent Skills convention.
+/// Represents an MCP skill and loads its <c>SKILL.md</c> file and supporting resources on request.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The skill is constructed from <c>skill://index.json</c> discovery metadata only; <see cref="GetContentAsync"/>
-/// fetches the full <c>SKILL.md</c> content from the MCP server on demand via <c>resources/read</c>.
+/// The server first describes the skill by providing its metadata (frontmatter) and resource information:
+/// either a list of resources (manifest) or an indication that resources are dynamic.
+/// The skill's instructions are stored in a file named <c>SKILL.md</c>.
+/// This file also contains frontmatter at the start.
+/// Every field in that frontmatter is checked against the metadata the server initially provided.
+/// All reads enforce size limits and cache-sharing rules, and supporting-resource requests stay within the skill's directory.
 /// </para>
 /// <para>
-/// Per SEP-2640, resources referenced inside SKILL.md are fetched on demand via the originating MCP
-/// server: <see cref="GetResourceAsync"/> resolves a relative resource name against the
-/// skill's root URI, issues a <c>resources/read</c> request, and returns an <see cref="AgentMcpSkillResource"/>
-/// with pre-fetched content.
+/// Each skill limits the number and combined size of resources, including <c>SKILL.md</c>.
+/// Reads that would exceed a limit throw without changing the cache.
+/// </para>
+/// <para>
+/// With a manifest, only listed resources are loaded, and their content is checked against the expected sizes and content hashes.
+/// Dynamic resources have no list, so any resource within the skill's directory can be requested, and those checks are not possible.
+/// </para>
+/// <para>
+/// Each resource is cached until its time to live (TTL) expires, then fetched again.
+/// If a manifest resource's size or content hash has changed, a skill refresh is queued.
+/// Previously verified content, if available, is returned and cached indefinitely for this skill object
+/// to avoid unnecessary requests for a resource that no longer matches its manifest.
+/// If no verified content is cached when a mismatch occurs, the read throws. Other errors propagate.
+/// </para>
+/// <para>
+/// A refresh creates a new skill object with the server's updated resource information.
+/// Existing skill objects continue checking reads against the resource information they were created with.
+/// The catalog refreshes skill metadata independently of resource content.
 /// </para>
 /// </remarks>
-internal sealed partial class AgentMcpSkill : AgentSkill
+public sealed partial class AgentMcpSkill : AgentSkill
 {
-    private const string SkillMdSuffix = "SKILL.md";
+    internal const long DefaultMaxResourceSizeBytes = 16 * 1024 * 1024;
+
+    internal const int DefaultMaxResourceCount = 512;
+
     private const int MaxResourceNameDecodingDepth = 32;
 
     private readonly McpClient _client;
     private readonly ILogger _logger;
-    private readonly string _skillMdUri;
     private readonly string _skillRootUri;
-    private string? _content;
+    private readonly McpSkillResources _resources;
+    private readonly JsonElement _frontmatterJson;
+    private readonly long _maxResourceSizeBytes;
+    private readonly bool _hasIsolationKey;
+    private readonly TimeProvider _timeProvider;
+    private readonly Func<TimeSpan?, TimeSpan>? _ttlResolver;
+    private readonly McpCache<string, ResourceContents> _resourceCache;
+    private volatile bool _needsRefresh;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentMcpSkill"/> class.
     /// </summary>
-    /// <param name="frontmatter">The parsed frontmatter metadata for this skill.</param>
-    /// <param name="skillMdUri">
-    /// The full MCP resource URI of the <c>SKILL.md</c> resource (e.g. <c>skill://unit-converter/SKILL.md</c>).
-    /// Used by <see cref="GetContentAsync"/> to fetch the skill content on demand. The skill's root URI
-    /// (used to resolve sibling resources) is derived by stripping the trailing <c>SKILL.md</c> segment.
-    /// </param>
-    /// <param name="client">The MCP client used to fetch resources on demand.</param>
-    /// <param name="logger">The logger used to report rejected resource names.</param>
-    public AgentMcpSkill(AgentSkillFrontmatter frontmatter, string skillMdUri, McpClient client, ILogger logger)
+    /// <param name="frontmatter">The skill's frontmatter.</param>
+    /// <param name="frontmatterJson">The server's complete frontmatter JSON, cloned from its source document.</param>
+    /// <param name="uri">The resource URI of the skill's <c>SKILL.md</c>.</param>
+    /// <param name="resources">The server's file list with expected sizes and hashes, or an indication that resources are dynamic.</param>
+    /// <param name="client">The MCP client used to fetch <c>SKILL.md</c> and supporting resources.</param>
+    /// <param name="logger">Optional logger for validation diagnostics.</param>
+    /// <param name="maxResourceSizeBytes">The maximum combined size, in bytes, of cached resources, including <c>SKILL.md</c>.</param>
+    /// <param name="timeProvider">Optional clock for resource expiration.</param>
+    /// <param name="metadataLifetime">Optional lifetime for skill metadata. Defaults to no independent expiration; the catalog lifetime controls refreshes.</param>
+    /// <param name="ttlResolver">Optional callback to override the server's resource TTLs.</param>
+    /// <param name="hasIsolationKey">Whether the skill belongs to a cache partition key.</param>
+    /// <param name="maxResourceCount">The maximum number of cached resources, including <c>SKILL.md</c>.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxResourceSizeBytes"/> or <paramref name="maxResourceCount"/> is not positive.</exception>
+    /// <exception cref="ArgumentException"><paramref name="uri"/> is not absolute.</exception>
+    internal AgentMcpSkill(AgentSkillFrontmatter frontmatter, JsonElement frontmatterJson, Uri uri, McpSkillResources resources, McpClient client, ILogger? logger = null, long maxResourceSizeBytes = DefaultMaxResourceSizeBytes, TimeProvider? timeProvider = null, McpCacheLifetime? metadataLifetime = null, Func<TimeSpan?, TimeSpan>? ttlResolver = null, bool hasIsolationKey = false, int maxResourceCount = DefaultMaxResourceCount)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
-        this._skillMdUri = Throw.IfNullOrWhitespace(skillMdUri);
-        this._skillRootUri = ComputeSkillRootUri(skillMdUri);
+        ArgumentNullException.ThrowIfNull(uri);
+        if (!uri.IsAbsoluteUri)
+        {
+            throw new ArgumentException("The URI must be absolute.", nameof(uri));
+        }
+
+        this.Uri = uri;
+        this.MetadataLifetime = metadataLifetime ?? McpCacheLifetime.Infinite;
+        this._skillRootUri = this.Uri.OriginalString[..^"SKILL.md".Length];
+        this._resources = Throw.IfNull(resources);
         this._client = Throw.IfNull(client);
-        this._logger = Throw.IfNull(logger);
+        this._hasIsolationKey = hasIsolationKey;
+        this._timeProvider = timeProvider ?? TimeProvider.System;
+        this._ttlResolver = ttlResolver;
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxResourceSizeBytes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxResourceCount);
+        this._maxResourceSizeBytes = maxResourceSizeBytes;
+        this._resourceCache = new(this._timeProvider, StringComparer.Ordinal, new McpCacheOptions
+        {
+            MaxEntryCount = maxResourceCount,
+            MaxTotalSize = maxResourceSizeBytes,
+        });
+        this._logger = logger ?? NullLogger.Instance;
+
+        this._frontmatterJson = frontmatterJson;
     }
 
     /// <inheritdoc/>
     public override AgentSkillFrontmatter Frontmatter { get; }
 
+    /// <summary>
+    /// Gets the resource URI of the skill's <c>SKILL.md</c> file.
+    /// </summary>
+    /// <remarks>
+    /// Use <see cref="Uri.OriginalString"/> to obtain the exact URI provided by the MCP server.
+    /// </remarks>
+    public Uri Uri { get; }
+
+    /// <summary>
+    /// Gets the skill lifetime.
+    /// </summary>
+    internal McpCacheLifetime MetadataLifetime { get; }
+
+    /// <summary>
+    /// Gets whether a resource mismatch requires updated skill metadata.
+    /// </summary>
+    internal bool NeedsRefresh => this._needsRefresh;
+
     /// <inheritdoc/>
     /// <remarks>
-    /// Fetches the <c>SKILL.md</c> content from the MCP server via <c>resources/read</c> on the first call
-    /// and caches the result.
+    /// Returns the text of <c>SKILL.md</c>, using cached content until it expires.
+    /// Fetched content is checked against the complete advertised frontmatter and,
+    /// with a manifest, against the expected size and content hash.
+    /// A size or content hash mismatch returns previously verified content if available and queues a skill refresh.
     /// </remarks>
+    /// <exception cref="InvalidOperationException">The <c>SKILL.md</c> resource is missing or invalid,
+    /// has different frontmatter,
+    /// would exceed the skill's resource count or size limit,
+    /// fails the size or content hash check without cached content to return,
+    /// or is private and no cache partition key is set.</exception>
     public override async ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
     {
-        if (this._content is not null)
+        McpSkillResourceEntry? skillMdResource = null;
+        if (this._resources is McpSkillManifestResources manifest)
         {
-            return this._content;
+            skillMdResource = manifest.FindEntry(this.Uri.OriginalString) ?? throw new InvalidOperationException($"The resource list must include the skill's SKILL.md resource '{this.Uri.OriginalString}'.");
         }
 
-#pragma warning disable CA2234 // Pass system uri objects instead of strings
-        ReadResourceResult result = await this._client.ReadResourceAsync(this._skillMdUri, cancellationToken: cancellationToken).ConfigureAwait(false);
-#pragma warning restore CA2234 // Pass system uri objects instead of strings
+        ResourceContents content = await this.GetResourceContentAsync(this.Uri.OriginalString, skillMdResource, cancellationToken).ConfigureAwait(false);
 
-        string text = string.Join("\n", result.Contents.OfType<TextResourceContents>().Select(c => c.Text));
-
-        if (text.Length == 0)
+        if (content is not TextResourceContents textContent)
         {
-            throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this._skillMdUri}'.");
+            throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this.Uri.OriginalString}'.");
         }
 
-        return this._content = text;
+        return textContent.Text;
     }
 
     /// <inheritdoc/>
+    /// <exception cref="ArgumentNullException"><paramref name="name"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="name"/> is empty or whitespace-only.</exception>
     /// <remarks>
-    /// Resolves <paramref name="name"/> as a relative path against the skill's root URI, issues a
-    /// <c>resources/read</c> request to the MCP server, and returns an <see cref="AgentMcpSkillResource"/>
-    /// with the pre-fetched content. Absolute paths, parent traversal (including percent-encoded forms),
-    /// embedded URI schemes, and control characters are rejected before sending a request.
-    /// Resource names requiring more than 32 percent-decoding passes are also rejected.
-    /// Returns <see langword="null"/> when the name is empty or unsafe, the server
-    /// returns no content, or the resource does not exist on the server.
+    /// Returns a supporting resource from the server's resource list, or any resource within the skill's directory
+    /// when resources are dynamic, using cached content until it expires.
+    /// Returns <see langword="null"/> for unsafe names, resources not listed in the manifest,
+    /// resources the server reports as not found, or <c>SKILL.md</c>.
+    /// A size or content hash mismatch returns previously verified content if available and queues a skill refresh.
     /// </remarks>
+    /// <exception cref="InvalidOperationException">The resource response is invalid,
+    /// would exceed the skill's resource count or size limit,
+    /// fails the size or content hash check without cached content to return,
+    /// or is private and no cache partition key is set.</exception>
     public override async ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return null;
-        }
+        Throw.IfNullOrWhitespace(name);
 
-        // Treat backslashes as separators, e.g. "..\x" is checked and requested as "../x".
         string normalized = name.Replace('\\', '/');
+
+        // Reject paths that could escape the skill before sending a request.
         if (!IsResourceNameSafe(normalized))
         {
-            LogUnsafeResourceName(this._logger);
             return null;
         }
 
         string uri = this._skillRootUri + normalized;
 
-        ReadResourceResult result;
-        try
-        {
-#pragma warning disable CA2234 // Pass system uri objects instead of strings
-            result = await this._client.ReadResourceAsync(uri, cancellationToken: cancellationToken).ConfigureAwait(false);
-#pragma warning restore CA2234 // Pass system uri objects instead of strings
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        // Exclude SKILL.md, which should be loaded via GetContentAsync.
+        if (this.IsInstructionsResource(uri))
         {
             return null;
         }
 
-        return new AgentMcpSkillResource(name: name, result: result);
+        // Supporting reads must stay within the held manifest if a manifest is provided.
+        McpSkillResourceEntry? resource = null;
+        if (this._resources is McpSkillManifestResources manifest)
+        {
+            resource = manifest.FindEntry(uri);
+            if (resource is null)
+            {
+                return null;
+            }
+        }
+
+        ResourceContents content;
+        try
+        {
+            content = await this.GetResourceContentAsync(uri, resource, cancellationToken).ConfigureAwait(false);
+        }
+        catch (McpProtocolException ex) when (ex.ErrorCode == McpErrorCode.ResourceNotFound)
+        {
+            // Return null to indicate that the resource was not found, as required by GetResourceAsync's contract.
+            return null;
+        }
+
+        return new AgentMcpSkillResource(name, content);
     }
 
-    private static bool IsResourceNameSafe(string normalized)
+    /// <summary>
+    /// Gets resource content, checking its size and content hash only when a manifest entry exists.
+    /// </summary>
+    /// <remarks>
+    /// Reads of the same resource wait for earlier reads to finish.
+    /// Dynamic resources have no manifest entry, so their size and content hash are not checked.
+    /// A size or content hash mismatch queues a skill refresh and returns previously verified content when available.
+    /// </remarks>
+    private ValueTask<ResourceContents> GetResourceContentAsync(string uri, McpSkillResourceEntry? resource, CancellationToken cancellationToken)
     {
-        // Split at the first literal "?"/"#" before decoding, so "a%3f/%2e%2e/x" stays one path while
-        // "a/b.md?q=/../x" leaves "/../x" in the query; then decode each part once.
+        return this._resourceCache.GetOrRefreshAsync(
+            uri,
+            (cached, token) => this.FetchResourceContentAsync(uri, resource, cached, token),
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Fetches and validates resource content, returning previously verified content on a size or content hash mismatch when available.
+    /// </summary>
+    private async ValueTask<McpCacheEntry<ResourceContents>> FetchResourceContentAsync(string uri, McpSkillResourceEntry? resource, McpCacheEntry<ResourceContents>? cached, CancellationToken cancellationToken)
+    {
+#pragma warning disable CA2234 // Preserve the exact resource URI advertised by the server.
+        ReadResourceResult response = await this._client.ReadResourceAsync(uri, cancellationToken: cancellationToken).ConfigureAwait(false);
+#pragma warning restore CA2234
+
+        // Validation time consumes the TTL; network request time does not.
+        long receivedTimestamp = this._timeProvider.GetTimestamp();
+
+        response.CacheScope = McpSkillsCatalog.ValidateAndNormalizeCacheScope(response.CacheScope, this._hasIsolationKey, this._logger, "resources/read");
+
+        ResourceContents content = this.GetValidatedResourceContent(uri, response);
+
+        // The resource entry is null for dynamic resources, which have no expected size and hash to verify.
+        if (resource is not null && !TryVerifyResourceIntegrity(resource, content, out string? mismatch))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // The resource may have changed; request a new manifest without changing this skill's held manifest.
+            this._needsRefresh = true;
+            LogResourceIntegrityMismatch(this._logger, uri, this.Uri.OriginalString, mismatch);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (cached is null)
+            {
+                throw new InvalidOperationException($"Resource '{uri}' has a {mismatch} that differs from the resource manifest.");
+            }
+
+            // When the resource's size or digest changes, the cached content becomes stale but still matches this skill's held manifest.
+            // A skill refresh is queued, so keep the cached content indefinitely to avoid fetching the changed resource again.
+            // A refresh creates a new skill object with the updated manifest and a separate resource cache.
+            return new(cached.Value, GetResourceSizeBytes(cached.Value), McpCacheLifetime.Infinite);
+        }
+
+        // Verify all frontmatter fields before the SKILL.md instructions can enter the resource cache.
+        if (this.IsInstructionsResource(uri))
+        {
+            this.VerifyInstructions(content);
+        }
+
+        return new(content, GetResourceSizeBytes(content), McpCacheLifetime.Create(receivedTimestamp, response.TimeToLive, this._ttlResolver));
+    }
+
+    /// <summary>
+    /// Gets and validates the response's single text or binary content block.
+    /// </summary>
+    /// <remarks>
+    /// <c>SKILL.md</c> must contain text. Binary content is decoded and checked against the size limit.
+    /// </remarks>
+    private ResourceContents GetValidatedResourceContent(string uri, ReadResourceResult result)
+    {
+        if (result.Contents.Count == 0)
+        {
+            throw new InvalidOperationException($"The MCP server returned no content for resource '{uri}'.");
+        }
+
+        if (result.Contents.Count > 1)
+        {
+            throw new InvalidOperationException($"Resource '{uri}' must contain exactly one text or binary content block; the MCP server returned {result.Contents.Count}.");
+        }
+
+        ResourceContents content = result.Contents[0];
+
+        if (content is not (TextResourceContents or BlobResourceContents))
+        {
+            throw new InvalidOperationException($"The MCP server returned unsupported content for resource '{uri}'.");
+        }
+
+        // SKILL.md contains the skill's instructions and must be returned as text.
+        if (this.IsInstructionsResource(uri) && content is not TextResourceContents)
+        {
+            throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this.Uri.OriginalString}'.");
+        }
+
+        if (content is TextResourceContents text)
+        {
+            // Check the character count before calculating the UTF-8 byte count for large strings.
+            this.ValidateResourceSize(uri, text.Text.Length);
+            this.ValidateResourceSize(uri, Encoding.UTF8.GetByteCount(text.Text));
+        }
+
+        return content is BlobResourceContents binary ? this.DecodeBinaryContent(binary, uri) : content;
+    }
+
+    /// <summary>
+    /// Checks the content against the server's expected size and content hash and reports any mismatch.
+    /// </summary>
+    private static bool TryVerifyResourceIntegrity(McpSkillResourceEntry resource, ResourceContents content, [NotNullWhen(false)] out string? mismatch)
+    {
+        // Reject a size mismatch before encoding text or hashing decoded binary content.
+        if (GetResourceSizeBytes(content) != resource.Size)
+        {
+            mismatch = "byte size";
+            return false;
+        }
+
+        ReadOnlyMemory<byte> bytes = content switch
+        {
+            TextResourceContents text => Encoding.UTF8.GetBytes(text.Text),
+            BlobResourceContents binary => binary.DecodedData,
+            _ => throw new InvalidOperationException("Unsupported listed skill content."),
+        };
+
+        string digest = Convert.ToHexString(SHA256.HashData(bytes.Span));
+
+        // Content can change without changing size.
+        if (!digest.AsSpan().Equals(resource.Digest.AsSpan("sha256:".Length), StringComparison.OrdinalIgnoreCase))
+        {
+            mismatch = "SHA-256 digest";
+            return false;
+        }
+
+        mismatch = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Returns the resource's size in bytes.
+    /// </summary>
+    private static long GetResourceSizeBytes(ResourceContents content) => content switch
+    {
+        TextResourceContents text => Encoding.UTF8.GetByteCount(text.Text),
+
+        // DecodeBinaryContent already decoded the Base64 data and checked its size.
+        BlobResourceContents binary => binary.DecodedData.Length,
+
+        _ => throw new InvalidOperationException($"The MCP server returned unsupported content for resource '{content.Uri}'."),
+    };
+
+    /// <summary>
+    /// Checks every fetched frontmatter field against the metadata advertised for this skill.
+    /// </summary>
+    private void VerifyInstructions(ResourceContents content)
+    {
+        if (content is not TextResourceContents textContent)
+        {
+            throw new InvalidOperationException($"The MCP server returned no text content for SKILL.md resource '{this.Uri.OriginalString}'.");
+        }
+
+        JsonElement frontmatter;
+
+        try
+        {
+            frontmatter = McpSkillFrontmatterParser.Parse(textContent.Text, this._maxResourceSizeBytes);
+        }
+        catch (InvalidOperationException exception)
+        {
+            LogInvalidFrontmatter(this._logger, this.Uri.OriginalString, exception);
+            throw new InvalidOperationException($"SKILL.md resource '{this.Uri.OriginalString}' contains invalid frontmatter.", exception);
+        }
+
+        if (this._frontmatterJson.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException($"Skill '{this.Uri.OriginalString}' has no advertised frontmatter JSON snapshot.");
+        }
+
+        if (!JsonElementComparer.DeepEquals(this._frontmatterJson, frontmatter, out string? mismatch))
+        {
+            throw new InvalidOperationException($"SKILL.md resource '{this.Uri.OriginalString}' has frontmatter that differs from the advertised metadata at JSON pointer '{mismatch}'.");
+        }
+    }
+
+    /// <summary>
+    /// Decodes binary content and checks its size.
+    /// </summary>
+    /// <param name="content">The Base64-encoded resource content.</param>
+    /// <param name="uri">The resource URI used in error messages.</param>
+    /// <returns>Decoded content with the original resource metadata.</returns>
+    /// <exception cref="InvalidOperationException">The Base64 content is invalid or its decoded size exceeds the configured limit.</exception>
+    private BlobResourceContents DecodeBinaryContent(BlobResourceContents content, string uri)
+    {
+        ReadOnlySpan<byte> encoded = content.Blob.Span;
+
+        if (!Base64.IsValid(encoded, out int byteSize))
+        {
+            throw new InvalidOperationException($"Resource '{uri}' contains invalid base64 content.");
+        }
+
+        this.ValidateResourceSize(uri, byteSize);
+
+        byte[] bytes = new byte[byteSize];
+        Span<byte> block = stackalloc byte[256];
+        int bytesWritten = 0;
+
+        // Decode whitespace-free blocks of complete Base64 quartets so capacity checks use only Base64 data.
+        for (int offset = 0; offset < encoded.Length;)
+        {
+            int blockLength = 0;
+            while (offset < encoded.Length && blockLength < block.Length)
+            {
+                byte value = encoded[offset++];
+                if (value is not ((byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n'))
+                {
+                    block[blockLength++] = value;
+                }
+            }
+
+            if (Base64.DecodeFromUtf8(block[..blockLength], bytes.AsSpan(bytesWritten), out _, out int written) != OperationStatus.Done)
+            {
+                throw new InvalidOperationException($"Resource '{uri}' contains invalid base64 content.");
+            }
+
+            bytesWritten += written;
+        }
+
+        if (bytesWritten != byteSize)
+        {
+            throw new InvalidOperationException($"Resource '{uri}' contains invalid base64 content.");
+        }
+
+        BlobResourceContents decodedContent = BlobResourceContents.FromBytes(bytes, content.Uri, content.MimeType);
+        decodedContent.Meta = content.Meta;
+        return decodedContent;
+    }
+
+    /// <summary>
+    /// Rejects content larger than the configured byte limit.
+    /// </summary>
+    private void ValidateResourceSize(string uri, long size)
+    {
+        if (size > this._maxResourceSizeBytes)
+        {
+            throw new InvalidOperationException($"Resource '{uri}' exceeds the maximum allowed size ({this._maxResourceSizeBytes} bytes).");
+        }
+    }
+
+    /// <summary>
+    /// Determines whether a resource URI refers to this skill's root <c>SKILL.md</c> instructions file.
+    /// </summary>
+    /// <param name="uri">The resource URI to identify.</param>
+    /// <returns>
+    /// <see langword="true"/> for the root instructions file or a recognized alias;
+    /// <see langword="false"/> for other resources.
+    /// </returns>
+    /// <remarks>
+    /// Recognizes aliases such as <c>./SKILL.md</c> and <c>%53KILL.md</c> by decoding the relative path
+    /// and ignoring empty and <c>.</c> segments. Query strings and fragments are excluded before decoding.
+    /// This shared check prevents supporting reads of the instructions file and selects its text-only
+    /// and frontmatter validation. It does not replace path-safety checks or change request URIs or cache keys.
+    /// </remarks>
+    private bool IsInstructionsResource(string uri)
+    {
+        // Require this skill's directory, e.g. skill://my-skill/, not skill://other-skill/.
+        if (!uri.StartsWith(this._skillRootUri, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // Strip ?v=1 or #intro, then decode aliases: %53KILL.md becomes SKILL.md.
+        string? path = FullyUnescape(uri[this._skillRootUri.Length..].Split(['?', '#'], 2)[0]);
+        if (path is null)
+        {
+            // Reject identification beyond the decoding limit, e.g. deeply nested %2525... escapes.
+            return false;
+        }
+
+        // Ignore empty and "." segments: ./SKILL.md matches; references/SKILL.md does not.
+        // Keep the original URI for requests and cache keys.
+        string name = string.Join("/", path.Split('/').Where(segment => segment.Length > 0 && segment != "."));
+
+        return string.Equals(name, "SKILL.md", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Checks that a relative resource name stays within the skill's directory.
+    /// </summary>
+    internal static bool IsResourceNameSafe(string normalized)
+    {
+        // Separate the file path from query (?...) or fragment (#...) text before decoding.
+        // Example: guide.md?version=1 becomes path "guide.md" and suffix "version=1".
         string[] parts = normalized.Split(['?', '#'], 2);
+
+        // Decode encoded characters to reveal attempts to leave the skill directory.
+        // Example: %252e%252e/secret.txt becomes ../secret.txt.
         string? path = FullyUnescape(parts[0]);
+
+        // Decode query/fragment text too: value=%00 contains an invisible control character after decoding.
         string? suffix = FullyUnescape(parts.Length > 1 ? parts[1] : string.Empty);
 
-        // Excessive encoding depth, e.g. a name requiring more than 32 decoding passes.
+        // Allow relative paths such as references/guide.md, but reject /etc/passwd,
+        // https://example.com/file, and ../secret.txt. Neither the path nor the suffix may contain control characters.
         return path is not null && suffix is not null
-            // Absolute path, e.g. "/etc/passwd" or "%2fetc/passwd".
             && !path.StartsWith('/')
-            // Embedded URI, e.g. "http://example.com/other" or "%68ttp%3a%2f%2fexample.com".
             && !path.Contains("://", StringComparison.Ordinal)
-            // Parent traversal, e.g. "../x", "%2e%2e/x", "%252e%252e/x", "a%3f/../../x", or ".. " (URI parsers can trim trailing spaces).
-            && !path.Split(['/', '?', '#']).Any(segment => segment.TrimEnd(' ') == "..")
-            // Control characters anywhere, e.g. "a/\0/b.md", ".\t./x", or ".%09./x".
+            && !path.Split(['/', '?', '#']).Any(segment => string.Equals(segment.TrimEnd(' '), "..", StringComparison.Ordinal))
             && !(path + suffix).Any(char.IsControl);
     }
 
     /// <summary>
-    /// Percent-decodes <paramref name="value"/> until stable, normalizing backslashes to forward slashes.
-    /// Decoding never removes a literal <c>.</c>, <c>/</c>, <c>:</c>, or control character, so checking
-    /// the final form also covers every nested encoding layer (e.g. <c>%252e</c>).
+    /// Removes nested path escapes so resource-name checks can detect unsafe paths.
     /// </summary>
-    /// <returns>The decoded value, or <see langword="null"/> if the decoding depth exceeds the limit.</returns>
+    /// <returns>The decoded value, or null if too many decoding steps are needed.</returns>
     private static string? FullyUnescape(string value)
     {
-        // The final pass only checks that decoding has stabilized.
+        // Bound decoding work while still checking that the final pass has stabilized.
         for (int depth = 0; depth <= MaxResourceNameDecodingDepth; depth++)
         {
             string decoded = Uri.UnescapeDataString(value).Replace('\\', '/');
+
+            // The stable form exposes traversal and control characters hidden by nested encoding.
             if (decoded == value)
             {
                 return value;
@@ -171,25 +559,15 @@ internal sealed partial class AgentMcpSkill : AgentSkill
         return null;
     }
 
-    [LoggerMessage(LogLevel.Debug, "Rejecting MCP skill resource name with unsafe path components.")]
-    private static partial void LogUnsafeResourceName(ILogger logger);
+    /// <summary>
+    /// Logs why the fetched metadata could not be parsed or validated.
+    /// </summary>
+    [LoggerMessage(LogLevel.Error, "SKILL.md resource '{ResourceUri}' contains invalid frontmatter.")]
+    private static partial void LogInvalidFrontmatter(ILogger logger, string resourceUri, Exception exception);
 
     /// <summary>
-    /// Strips the trailing <c>SKILL.md</c> from the URI to produce the skill's root directory URI.
-    /// If the URI doesn't end with <c>SKILL.md</c>, ensures it ends with a trailing slash.
+    /// Logs a resource mismatch and the queued skill refresh.
     /// </summary>
-    private static string ComputeSkillRootUri(string skillMdUri)
-    {
-        if (skillMdUri.EndsWith(SkillMdSuffix, StringComparison.Ordinal))
-        {
-            return skillMdUri.Substring(0, skillMdUri.Length - SkillMdSuffix.Length);
-        }
-
-        if (skillMdUri.EndsWith("/", StringComparison.Ordinal))
-        {
-            return skillMdUri;
-        }
-
-        return skillMdUri + "/";
-    }
+    [LoggerMessage(LogLevel.Warning, "Resource '{ResourceUri}' has a {Mismatch} that differs from the resource manifest for skill '{SkillUri}'. A skill refresh has been queued.")]
+    private static partial void LogResourceIntegrityMismatch(ILogger logger, string resourceUri, string skillUri, string mismatch);
 }

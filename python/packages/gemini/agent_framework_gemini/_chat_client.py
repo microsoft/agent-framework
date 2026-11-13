@@ -891,6 +891,19 @@ class RawGeminiChatClient(
             if key == "stop" and isinstance(value, str):
                 # ChatOptions allows a single stop string; stop_sequences takes a list.
                 value = [value]
+            if key == "candidate_count":
+                # Both the streaming and non-streaming parsers read candidates[0] only,
+                # so any count other than one is billed while every candidate but the
+                # first is silently dropped. The default should be to not pass the
+                # option at all; if passed, it needs to be 1 (including the stringified
+                # form some config paths produce, which is normalized here).
+                if value not in (1, "1"):
+                    raise ChatClientInvalidRequestException(
+                        "Gemini chat client supports a single candidate. Remove "
+                        "candidate_count or set it to 1; candidate_count="
+                        f"{value!r} would silently drop every candidate but the first."
+                    )
+                value = 1
             kwargs[_OPTION_TRANSLATIONS.get(key, key)] = value
 
         response_format = options.get("response_format")
@@ -1099,9 +1112,7 @@ class RawGeminiChatClient(
             messages=[Message(role="assistant", contents=contents, raw_representation=candidate)],
             usage_details=self._parse_usage(response.usage_metadata),
             model=response.model_version or model or self.model,
-            finish_reason=self._map_finish_reason(
-                candidate.finish_reason.name if candidate and candidate.finish_reason else None
-            ),
+            finish_reason=self._response_finish_reason(response, candidate),
             response_format=response_format,
             raw_representation=response,
         )
@@ -1123,9 +1134,7 @@ class RawGeminiChatClient(
         parts: list[types.Part] = (candidate.content.parts or []) if candidate and candidate.content else []
         contents = self._parse_parts(parts, streaming=True)
 
-        finish_reason = self._map_finish_reason(
-            candidate.finish_reason.name if candidate and candidate.finish_reason else None
-        )
+        finish_reason = self._response_finish_reason(chunk, candidate)
 
         # Attach usage to the final chunk only (when finish_reason is set).
         if finish_reason and (usage := self._parse_usage(chunk.usage_metadata)):
@@ -1284,6 +1293,28 @@ class RawGeminiChatClient(
         if (v := usage.thoughts_token_count) is not None:
             details["reasoning_output_token_count"] = v
         return details or None
+
+    def _response_finish_reason(
+        self, response: types.GenerateContentResponse, candidate: types.Candidate | None
+    ) -> FinishReasonLiteral | FinishReason | None:
+        """Return the finish reason for a response or streaming chunk.
+
+        Args:
+            response: The ``GenerateContentResponse`` (or streaming chunk) from the Gemini API.
+            candidate: The first candidate of ``response``, or None if it has none.
+
+        Returns:
+            The mapped candidate finish reason, ``"content_filter"`` when Gemini blocked the prompt
+            itself, or None.
+        """
+        if candidate and candidate.finish_reason:
+            return self._map_finish_reason(candidate.finish_reason.name)
+        # A blocked prompt sets prompt_feedback.block_reason. There are usually no candidates, but when
+        # a later automatic-continuation hop is blocked, the SDK keeps the earlier candidate with its
+        # finish_reason cleared.
+        if response.prompt_feedback and response.prompt_feedback.block_reason:
+            return "content_filter"
+        return None
 
     def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | FinishReason | None:
         """Map a Gemini finish reason string to the framework's FinishReasonLiteral.

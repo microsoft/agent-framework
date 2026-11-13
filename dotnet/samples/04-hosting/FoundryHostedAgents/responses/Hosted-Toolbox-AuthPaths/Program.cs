@@ -53,7 +53,7 @@ string agentName = FirstNonBlank(
 var credential = new DefaultAzureCredential();
 
 // AddFoundryToolboxService registers the toolbox with the Foundry.Hosting layer, which discovers
-// its MCP tools at startup and automatically makes them available on every request.
+// its MCP tools for each response under the caller's identity and makes them available to that response.
 AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
     .AsAIAgent(
         model: deploymentName,
@@ -74,8 +74,8 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddFoundryResponses(agent);
-// With FOUNDRY_PROJECT_ENDPOINT injected by the platform, startup MCP tools/list against
-// the toolbox proxy is typically <100ms in-region.
+// With FOUNDRY_PROJECT_ENDPOINT injected by the platform, the per-response MCP initialize and
+// tools/list against the toolbox proxy is typically <100ms in-region.
 #if USE_LOCAL_AGENT_FRAMEWORK_SOURCE
 builder.Services.AddFoundryToolboxService(credential, toolboxName);
 #else

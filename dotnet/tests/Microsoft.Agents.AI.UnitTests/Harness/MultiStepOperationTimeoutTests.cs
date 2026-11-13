@@ -16,9 +16,14 @@ public sealed class MultiStepOperationTimeoutTests
 
         // Act
         int firstResult = timeout.RunStep(_ => 1);
-        await Task.Delay(200);
+
+        // Wait for the timer callback itself; a fixed delay can finish first on a loaded runner.
+        var expired = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using CancellationTokenRegistration registration = timeout.Token.Register(() => expired.TrySetResult(true));
+        Task completed = await Task.WhenAny(expired.Task, Task.Delay(TimeSpan.FromSeconds(30)));
 
         // Assert
+        Assert.Same(expired.Task, completed);
         Assert.Equal(1, firstResult);
         Assert.Throws<TimeoutException>(() => timeout.RunStep(_ => 2));
     }

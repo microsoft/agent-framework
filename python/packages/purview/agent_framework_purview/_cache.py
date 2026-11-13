@@ -140,9 +140,9 @@ class InMemoryCacheProvider:
         size = self._estimate_size(value)
 
         # Remove old entry if exists
-        if key in self._cache:
-            old_size = self._cache[key][2]
-            self._current_size_bytes -= old_size
+        old_entry = self._cache.pop(key, None)
+        if old_entry is not None:
+            self._current_size_bytes -= old_entry[2]
 
         # Evict if needed
         self._evict_if_needed(size)

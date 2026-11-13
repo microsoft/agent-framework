@@ -409,6 +409,7 @@
   </Folder>
   <Folder Name="/Samples/02-agents/A2A/">
     <File Path="samples/02-agents/A2A/README.md" />
+    <Project Path="samples/02-agents/A2A/A2AAgent_BasicUsage/A2AAgent_BasicUsage.csproj" />
     <Project Path="samples/02-agents/A2A/A2AAgent_AsFunctionTool/A2AAgent_AsFunctionTool.csproj" />
     <Project Path="samples/02-agents/A2A/A2AAgent_Skills/A2AAgent_Skills.csproj" />
     <Project Path="samples/02-agents/A2A/A2AAgent_PollingForTaskCompletion/A2AAgent_PollingForTaskCompletion.csproj" />
@@ -620,6 +621,7 @@
     <Project Path="src/Microsoft.Agents.AI.CosmosNoSql/Microsoft.Agents.AI.CosmosNoSql.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Declarative/Microsoft.Agents.AI.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.DevUI/Microsoft.Agents.AI.DevUI.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.Foundry.Hosting.A2A/Microsoft.Agents.AI.Foundry.Hosting.A2A.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Foundry.Hosting/Microsoft.Agents.AI.Foundry.Hosting.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Foundry/Microsoft.Agents.AI.Foundry.csproj" />
     <Project Path="src/Microsoft.Agents.AI.GitHub.Copilot/Microsoft.Agents.AI.GitHub.Copilot.csproj" />

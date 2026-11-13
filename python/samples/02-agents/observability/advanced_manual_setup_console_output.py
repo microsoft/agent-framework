@@ -93,9 +93,6 @@ async def run_chat_client() -> None:
 
     The telemetry will include information about the AI service execution.
 
-    Args:
-        stream: Whether to use streaming for the plugin
-
     Remarks:
         By default, the built-in non-`Raw...Client` chat clients already compose
         the layers in this order:

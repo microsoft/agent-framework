@@ -13,8 +13,11 @@ pass through to ``agent.run(...)`` and which request-owned fields to drop.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
+import mimetypes
 import time
 import uuid
 import warnings
@@ -32,6 +35,7 @@ from agent_framework import (
     get_namespaced_value,
 )
 from agent_framework._telemetry import mark_feature_used
+from agent_framework.exceptions import ContentError
 from agent_framework.observability import OBSERVABILITY_SETTINGS
 from agent_framework_hosting import AgentRunArgs
 from openai.types.responses import (
@@ -141,8 +145,8 @@ def _content_from_input_item(item: Mapping[str, Any]) -> Content:
     """Convert a single OpenAI Responses ``input`` item into a :class:`Content` part.
 
     Handles the ``input_text``/``output_text``/``text`` text variants,
-    ``input_image`` URL references, and ``input_file`` references via either
-    a public URL or a hosted ``file_id``. Raises ``ValueError`` for any
+    ``input_image`` URL references, and ``input_file`` references via a public
+    URL, a hosted ``file_id``, or inline ``file_data``. Raises ``ValueError`` for any
     unsupported item type so the surrounding parser can return a 422.
     """
     item_type = item.get("type")
@@ -208,7 +212,33 @@ def _content_from_input_item(item: Mapping[str, Any]) -> Content:
                     **({"filename": filename} if isinstance(filename, str) else {}),
                 },
             )
-        raise ValueError("input_file requires a non-empty string `file_url` or `file_id`")
+        file_data = item.get("file_data")
+        if file_data is not None:
+            if not isinstance(file_data, str) or not file_data:
+                raise ValueError("input_file `file_data` must be a non-empty string")
+            filename = item.get("filename")
+            if file_data.startswith("data:"):
+                header, comma, payload = file_data.partition(",")
+                if not comma or not header.endswith(";base64"):
+                    raise ValueError("input_file `file_data` must be a base64 data URI or plain base64")
+            else:
+                # Plain base64 without a data URI prefix; take the media type from the filename.
+                guessed = mimetypes.guess_type(filename)[0] if isinstance(filename, str) else None
+                header, payload = f"data:{guessed or 'application/octet-stream'};base64", file_data
+            try:
+                base64.b64decode(payload, validate=True)
+                return Content.from_uri(
+                    uri=f"{header},{payload}",
+                    name=filename if isinstance(filename, str) else None,
+                    additional_properties={
+                        "openai": {"content_type": "input_file"},
+                        "openai_content_type": "input_file",
+                        **({"filename": filename} if isinstance(filename, str) else {}),
+                    },
+                )
+            except (binascii.Error, ContentError) as exc:
+                raise ValueError(f"input_file `file_data` is not valid base64 data: {exc}") from exc
+        raise ValueError("input_file requires a non-empty string `file_url`, `file_id`, or `file_data`")
     raise ValueError(f"Unsupported Responses input content type: {item_type!r}")
 
 

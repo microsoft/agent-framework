@@ -69,6 +69,38 @@ AZURE_TOKEN_CREDENTIALS=dev
 > credentials (Azure CLI, Visual Studio, `azd`) and skips the managed-identity probe. This variable
 > is only for local runs; the deployed agent in Foundry uses the platform-injected managed identity.
 
+## Agent lifetime
+
+`builder.AddFoundryResponses(agent)` registers one agent object that serves every request for the
+life of the process. When the agent needs services that should not live that long, for example a
+database context, register a factory with a DI lifetime instead:
+
+```csharp
+builder.AddFoundryResponses(
+    agentName,
+    sp => new MyAgent(sp.GetRequiredService<MyDbContext>()),
+    ServiceLifetime.Scoped);
+```
+
+Each response run (streaming, background, or resumed after a restart) gets its own DI scope, which is
+disposed when that run's event stream ends. A `Scoped` agent is therefore created once per response and
+disposed afterwards, even when a background response keeps running after the HTTP request has returned.
+Conversation state is not kept on the agent object; each turn loads the saved session, and sessions are
+stored under `agentName`, so switching from the instance overload keeps existing conversations.
+
+The session store has its own registration and lifetime, independent of the agent. Without one, every
+agent uses the default store, a single shared instance. A store passed to `AddFoundryResponses(agent, store)`
+is used only by that agent. Each store keeps its own sessions, so moving an agent to a different store
+means the sessions it saved in the old store are no longer found:
+
+```csharp
+// For every agent that has no store of its own. A store object you pass in is never disposed by DI.
+builder.AddFoundryAgentSessionStore(sp => new MySessionStore(sp.GetRequiredService<MyDbContext>()), ServiceLifetime.Scoped);
+
+// Or for one agent only.
+builder.AddFoundryAgentSessionStore(mySessionStore, agentName);
+```
+
 ## Run and test locally
 
 Local runs use two terminals: one hosts the agent, the other is a code-first client that talks to it
