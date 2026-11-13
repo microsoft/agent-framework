@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import ipaddress
+import json
 import logging
 import os
+import re
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import _AsyncGeneratorContextManager  # pyright: ignore[reportPrivateUsage]
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Literal, cast
-from urllib.parse import urlsplit
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
+from urllib.parse import urlparse, urlsplit
 
 import httpx2 as httpx
 from agent_framework import (
     CachingSkillsSource,
+    Content,
     DeduplicatingSkillsSource,
     MCPSkillsSource,
     MCPStreamableHTTPTool,
@@ -23,8 +28,9 @@ from agent_framework import (
     SkillsSourceContext,
 )
 from agent_framework._telemetry import mark_feature_used
-from agent_framework.exceptions import ToolExecutionException
+from agent_framework.exceptions import ToolExecutionException, UserInputRequiredException
 from azure.ai.agentserver.core import get_request_context
+from mcp import MCPError
 from mcp.types import Tool
 from typing_extensions import override
 
@@ -34,12 +40,13 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
     from datetime import timedelta
 
-    from agent_framework import Content, Skill
+    from agent_framework import Skill
     from agent_framework._mcp import MCPSpecificApproval
     from azure.core.credentials import AccessToken, TokenCredential
     from azure.core.credentials_async import AsyncTokenCredential
     from mcp.client.session import ClientSession
-    from mcp.types import Prompt, ReadResourceResult
+    from mcp.types import CallToolResult, Prompt, ReadResourceResult
+    from opentelemetry import context as otel_context
     from pydantic import AnyUrl
 
     AzureCredentialTypes = TokenCredential | AsyncTokenCredential
@@ -59,6 +66,131 @@ _strict_toolbox_header_provider: ContextVar[bool] = ContextVar(
     "strict_toolbox_header_provider",
     default=False,
 )
+CONSENT_ERROR_CODE = -32006
+_OAUTH_HOST_PATTERN = re.compile(r"^[A-Za-z0-9._~-]+$")
+
+
+@dataclass
+class ConsentError:
+    name: str
+    consent_url: str
+
+
+def _is_safe_oauth_consent_link(consent_link: object) -> TypeGuard[str]:
+    """Return whether a consent link is an absolute HTTPS URL safe to expose as an action."""
+    if not isinstance(consent_link, str) or not consent_link:
+        return False
+    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in consent_link):
+        return False
+
+    try:
+        parsed = urlparse(consent_link)
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        return False
+
+    if parsed.scheme.lower() != "https" or not hostname or parsed.username is not None or parsed.password is not None:
+        return False
+
+    if "%" in hostname:
+        return False
+    authority = parsed.netloc
+    if authority.startswith("["):
+        closing_bracket = authority.find("]")
+        if closing_bracket == -1:
+            return False
+        ipv6_literal = authority[1:closing_bracket]
+        suffix = authority[closing_bracket + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            return False
+        try:
+            ipaddress.IPv6Address(ipv6_literal)
+        except ValueError:
+            return False
+        return True
+    if "[" in authority or "]" in authority or ":" in hostname:
+        return False
+    return _OAUTH_HOST_PATTERN.fullmatch(hostname) is not None
+
+
+def _normalize_oauth_consent_origin(value: str, *, require_origin_only: bool) -> str:
+    if not _is_safe_oauth_consent_link(value):
+        raise ValueError("OAuth consent origins must be absolute HTTPS URLs without user information.")
+
+    parsed = urlparse(value)
+    if require_origin_only and (parsed.path not in ("", "/") or parsed.params or parsed.query or parsed.fragment):
+        raise ValueError("OAuth consent origin entries must not include a path, query, parameters, or fragment.")
+
+    hostname = parsed.hostname
+    if hostname is None:  # pragma: no cover - validated above.
+        raise ValueError("OAuth consent origin must include a hostname.")
+    normalized_host = f"[{hostname.lower()}]" if ":" in hostname else hostname.lower()
+    port = parsed.port
+    return f"https://{normalized_host}" if port in (None, 443) else f"https://{normalized_host}:{port}"
+
+
+def _normalize_allowed_oauth_consent_origins(  # pyright: ignore[reportUnusedFunction]
+    allowed_origins: Sequence[str] | None,
+) -> frozenset[str] | None:
+    """Normalize exact HTTPS origins; ``None`` retains the safe-link-only policy."""
+    if allowed_origins is None:
+        return None
+    return frozenset(_normalize_oauth_consent_origin(origin, require_origin_only=True) for origin in allowed_origins)
+
+
+def _is_allowed_oauth_consent_link(  # pyright: ignore[reportUnusedFunction]
+    consent_link: object, allowed_origins: frozenset[str] | None
+) -> TypeGuard[str]:
+    """Validate a link against safety rules and the optional normalized origin allowlist."""
+    if not _is_safe_oauth_consent_link(consent_link):
+        return False
+    if allowed_origins is None:
+        return True
+    return _normalize_oauth_consent_origin(consent_link, require_origin_only=False) in allowed_origins
+
+
+def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
+    """Extract requirements only from a consent-only Foundry MCP gateway error or its wrapper."""
+    inner = exc if isinstance(exc, MCPError) else next((arg for arg in exc.args if isinstance(arg, MCPError)), None)
+    if inner is None or inner.code != CONSENT_ERROR_CODE:
+        return None
+    start = inner.error.message.find("{")
+    if start == -1:
+        logger.warning("Foundry consent error does not contain a structured payload.")
+        return None
+    try:
+        payload: object = json.loads(inner.error.message[start:])
+    except json.JSONDecodeError:
+        logger.warning("Foundry consent error contains invalid JSON.")
+        return None
+    if not isinstance(payload, dict):
+        logger.warning("Foundry consent error payload must be an object.")
+        return None
+    errors = cast(dict[str, object], payload).get("errors")
+    if not isinstance(errors, list):
+        logger.warning("Foundry consent error payload must contain an errors list.")
+        return None
+
+    requirements: list[ConsentError] = []
+    for raw_error in cast(list[object], errors):
+        if not isinstance(raw_error, dict):
+            return None
+        error = cast(dict[str, object], raw_error)
+        if error.get("type") not in ("mcp", "a2a_preview"):
+            return None
+        raw_details = error.get("error")
+        if not isinstance(raw_details, dict):
+            return None
+        details = cast(dict[str, object], raw_details)
+        if details.get("code") != "CONSENT_REQUIRED":
+            return None
+        name = error.get("name", "Unknown")
+        link = details.get("message")
+        if not isinstance(name, str) or not name or not isinstance(link, str):
+            return None
+        requirements.append(ConsentError(name=name, consent_url=link))
+    return requirements or None
 
 
 def _build_toolbox_features_header(additional_features: str | None) -> str:
@@ -265,6 +397,12 @@ class FoundryToolbox(MCPStreamableHTTPTool):
     The private metadata parser provides no security or compatibility guarantees when
     reused outside Foundry Toolbox; it is not a general-purpose MCP approval policy.
 
+    A validated invocation-time OAuth consent error raises
+    :class:`~agent_framework.exceptions.UserInputRequiredException`. The native
+    function loop returns a paired terminal result and consent action, retaining
+    completed sibling results without automatically retrying protected operations.
+    Responses hosting requires ``store=true`` for this continuation.
+
     Like any MCP tool, the connection lifecycle is driven by the agent: the hosting
     server enters a factory-created agent for its request and closes its toolbox
     and owned HTTP client afterward. A long-lived Toolbox is also supported: it
@@ -417,6 +555,29 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             return await super().call_tool(tool_name, **kwargs)
         finally:
             _strict_toolbox_header_provider.reset(token)
+
+    @override
+    async def _invoke_tool(
+        self, tool_name: str, kwargs: dict[str, Any], trace_context: otel_context.Context
+    ) -> CallToolResult:
+        try:
+            return await super()._invoke_tool(tool_name, kwargs, trace_context)
+        except MCPError as exc:
+            requirements = consent_url_from_error(exc)
+            if not requirements or any(
+                not _is_safe_oauth_consent_link(requirement.consent_url) for requirement in requirements
+            ):
+                raise
+            raise UserInputRequiredException(
+                contents=[
+                    Content.from_oauth_consent_request(
+                        requirement.consent_url,
+                        additional_properties={"openai": {"server_label": requirement.name}},
+                    )
+                    for requirement in requirements
+                ],
+                message="Tool invocation requires OAuth consent.",
+            ) from exc
 
     @override
     async def _call_prompt_with_runtime_kwargs(

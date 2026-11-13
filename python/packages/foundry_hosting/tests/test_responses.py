@@ -88,28 +88,30 @@ from agent_framework_foundry_hosting import ResponsesHostServer, ResponsesReques
 from agent_framework_foundry_hosting._responses_shared import (
     _INCOMPLETE_REASON_KEY,  # pyright: ignore[reportPrivateUsage]
     _LATEST_CHECKPOINT_ID_KEY,  # pyright: ignore[reportPrivateUsage]
-    CONSENT_ERROR_CODE,
-    ConsentError,
     _agent_response_updates,  # pyright: ignore[reportPrivateUsage]
     _annotations_to_output_text,  # pyright: ignore[reportPrivateUsage]
     _await_before_signal,  # pyright: ignore[reportPrivateUsage]
     _container_file_citations_from_function_result,  # pyright: ignore[reportPrivateUsage]
     _create_response_event_stream,  # pyright: ignore[reportPrivateUsage]
     _hosted_internal_metadata,  # pyright: ignore[reportPrivateUsage]
-    _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
-    _normalize_allowed_oauth_consent_origins,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_items_to_messages,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _PublicResponseFailure,  # pyright: ignore[reportPrivateUsage]
     _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
-    consent_url_from_error,
 )
 from agent_framework_foundry_hosting._shared import (
     AgentSessionStoreProvider,
     FoundryAgentSessionStore,
+)
+from agent_framework_foundry_hosting._toolbox import (
+    CONSENT_ERROR_CODE,
+    ConsentError,
+    _is_allowed_oauth_consent_link,
+    _normalize_allowed_oauth_consent_origins,
+    consent_url_from_error,
 )
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
@@ -9236,6 +9238,39 @@ class TestConsentUrlFromError:
             ConsentError(name="work-iq", consent_url="https://example.com/a2a-consent")
         ]
 
+    @pytest.mark.parametrize(
+        "other_error",
+        [
+            {"type": "mcp", "error": {"code": "INTERNAL_ERROR", "message": "Upstream failure"}},
+            {"type": "other", "error": {"code": "CONSENT_REQUIRED", "message": "https://example.com/consent"}},
+            None,
+            {"type": "mcp", "error": None},
+            {"type": "mcp", "error": {"code": "CONSENT_REQUIRED", "message": 42}},
+            {
+                "name": "",
+                "type": "mcp",
+                "error": {"code": "CONSENT_REQUIRED", "message": "https://example.com/consent"},
+            },
+        ],
+    )
+    @pytest.mark.parametrize("consent_first", [False, True])
+    @pytest.mark.parametrize("wrapped", [False, True])
+    def test_returns_none_for_mixed_consent_errors(
+        self, other_error: object, consent_first: bool, wrapped: bool
+    ) -> None:
+        from agent_framework.exceptions import ToolExecutionException
+
+        consent = {
+            "name": "learn",
+            "type": "mcp",
+            "error": {"code": "CONSENT_REQUIRED", "message": "https://example.com/consent"},
+        }
+        errors = [consent, other_error] if consent_first else [other_error, consent]
+        inner = MCPError(CONSENT_ERROR_CODE, "tools/call failed " + json.dumps({"errors": errors}))
+        exc = ToolExecutionException("MCP failure", inner_exception=inner) if wrapped else inner
+
+        assert consent_url_from_error(exc) is None
+
     def test_returns_none_when_no_mcp_error_in_args(self) -> None:
         assert consent_url_from_error(Exception("boom")) is None
 
@@ -9244,10 +9279,7 @@ class TestConsentUrlFromError:
         exc = Exception("wrapped", inner)
         assert consent_url_from_error(exc) is None
 
-    def test_returns_none_for_bare_mcp_error_without_wrapping(self) -> None:
-        # `args` of a bare MCPError holds the message string, not an MCPError
-        # instance, so it does not match the wrapping pattern produced by the
-        # MCP client when it bubbles consent errors up.
+    def test_returns_none_for_unstructured_bare_mcp_error(self) -> None:
         bare = MCPError(CONSENT_ERROR_CODE, "https://x")
         assert consent_url_from_error(bare) is None
 

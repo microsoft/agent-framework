@@ -51,7 +51,6 @@ from ._responses_shared import (
     _hosted_internal_metadata,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _native_approval_id,  # pyright: ignore[reportPrivateUsage]
-    _normalize_allowed_oauth_consent_origins,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _request_without_reserved_metadata,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
@@ -75,6 +74,7 @@ from ._shared import (
     validate_workflow_source,
     workflow_agents,
 )
+from ._toolbox import _normalize_allowed_oauth_consent_origins  # pyright: ignore[reportPrivateUsage]
 
 logger = logging.getLogger(__name__)
 

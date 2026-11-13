@@ -68,18 +68,15 @@ from ._responses_shared import (
     _await_before_signal,  # pyright: ignore[reportPrivateUsage]
     _create_response_event_stream,  # pyright: ignore[reportPrivateUsage]
     _hosted_internal_metadata,  # pyright: ignore[reportPrivateUsage]
-    _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
     _items_to_messages,  # pyright: ignore[reportPrivateUsage]
     _log_response_failure,  # pyright: ignore[reportPrivateUsage]
     _native_approval_id,  # pyright: ignore[reportPrivateUsage]
-    _normalize_allowed_oauth_consent_origins,  # pyright: ignore[reportPrivateUsage]
     _output_items_to_messages,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _PublicResponseFailure,  # pyright: ignore[reportPrivateUsage]
     _reject_busy_conversation,  # pyright: ignore[reportPrivateUsage]
     _set_agent_session,  # pyright: ignore[reportPrivateUsage]
     _SignalledIterator,  # pyright: ignore[reportPrivateUsage]
-    consent_url_from_error,
 )
 from ._scope import FoundryRequestScope
 from ._shared import (
@@ -98,6 +95,11 @@ from ._shared import (
     validate_default_transport_options,
     validate_request_options,
     validate_unsupported_options,
+)
+from ._toolbox import (
+    _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
+    _normalize_allowed_oauth_consent_origins,  # pyright: ignore[reportPrivateUsage]
+    consent_url_from_error,
 )
 
 logger = logging.getLogger(__name__)
@@ -1139,6 +1141,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             or content.user_input_request
                             for content in update.contents
                         ):
+                            if any(content.type == "oauth_consent_request" for content in update.contents):
+                                raise _PublicResponseFailure(
+                                    ValueError("OAuth consent continuation requires store=true.")
+                                )
                             raise ValueError("Approval and user-input continuation requires store=true.")
                         if deferred_updates or any(
                             content.type == "function_approval_request" for content in update.contents

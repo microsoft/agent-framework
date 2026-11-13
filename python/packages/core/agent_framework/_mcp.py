@@ -50,7 +50,7 @@ from ._types import (
     Content,
     Message,
 )
-from .exceptions import ToolException, ToolExecutionException
+from .exceptions import ToolException, ToolExecutionException, UserInputRequiredException
 from .observability import (
     OtelAttr,
     create_mcp_client_span,
@@ -3742,6 +3742,8 @@ class MCPTool:
                         span_error_recorded = True
                     raise _mcp_tool_execution_exception(text or str(parsed))
                 return parser(result)
+            except UserInputRequiredException:
+                raise
             except ToolExecutionException as tool_ex:
                 if span.is_recording() and not span_error_recorded:
                     set_mcp_span_error(span, type(tool_ex).__name__, str(tool_ex))
