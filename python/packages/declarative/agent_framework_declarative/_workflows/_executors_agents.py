@@ -402,28 +402,34 @@ class AgentExternalInputRequest:
     Examples:
         .. code-block:: python
 
-            from agent_framework import run_context
             from agent_framework_declarative import (
-                ExternalInputRequest,
-                ExternalInputResponse,
+                AgentExternalInputRequest,
+                AgentExternalInputResponse,
                 WorkflowFactory,
             )
 
-            factory = WorkflowFactory()
+            factory = WorkflowFactory(agents={"Helper": agent})
             workflow = factory.create_workflow_from_yaml_path("hitl_workflow.yaml")
 
 
-            async def run_with_hitl():
-                # Set up external input handler
-                async def on_request(request: AgentExternalInputRequest) -> ExternalInputResponse:
-                    print(f"Agent '{request.agent_name}' needs input:")
-                    print(f"  Response: {request.agent_response}")
-                    user_input = input("Your response: ")
-                    return AgentExternalInputResponse(user_input=user_input)
-
-                async with run_context(request_handler=on_request) as ctx:
-                    async for event in workflow.run(ctx=ctx, stream=True):
-                        print(event)
+            async def run_with_hitl(user_input: str) -> None:
+                stream = workflow.run(user_input, stream=True)
+                while True:
+                    responses: dict[str, AgentExternalInputResponse] = {}
+                    async for event in stream:
+                        if event.type == "request_info" and isinstance(event.data, AgentExternalInputRequest):
+                            request = event.data
+                            print(f"Agent '{request.agent_name}' needs input:")
+                            print(f"  Response: {request.agent_response}")
+                            responses[event.request_id] = AgentExternalInputResponse(
+                                user_input=input("Your response: ")
+                            )
+                        elif event.type == "output":
+                            print(event.data)
+                    if not responses:
+                        break
+                    # Resume the paused workflow with the user's answers.
+                    stream = workflow.run(stream=True, responses=responses)
     """
 
     request_id: str
@@ -436,7 +442,7 @@ class AgentExternalInputRequest:
 
 @dataclass
 class AgentExternalInputResponse:
-    """Response to an ExternalInputRequest.
+    """Response to an AgentExternalInputRequest.
 
     Provided by the caller to resume agent execution with new user input.
     This is the response type expected by the response_handler.
@@ -444,14 +450,14 @@ class AgentExternalInputResponse:
     Examples:
         .. code-block:: python
 
-            from agent_framework_declarative import ExternalInputResponse
+            from agent_framework_declarative import AgentExternalInputResponse
 
             # Basic response with user text input
             response = AgentExternalInputResponse(user_input="Yes, please proceed with the order.")
 
         .. code-block:: python
 
-            from agent_framework_declarative import ExternalInputResponse
+            from agent_framework_declarative import AgentExternalInputResponse
 
             # Response with additional message history
             response = AgentExternalInputResponse(
