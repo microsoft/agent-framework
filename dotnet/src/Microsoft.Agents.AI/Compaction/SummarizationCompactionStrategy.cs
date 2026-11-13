@@ -176,11 +176,14 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
             }
         }
 
+        summarizationMessages.Add(new ChatMessage(ChatRole.User,
+            "Summarize the preceding conversation according to the system instructions. Do not continue the conversation."));
+
         // Generate summary using the chat client (single LLM call for all marked groups)
         int summarized = excludedGroups.Count;
         if (logger.IsEnabled(LogLevel.Debug))
         {
-            logger.LogSummarizationStarting(summarized, summarizationMessages.Count - 1, this.ChatClient.GetType().Name);
+            logger.LogSummarizationStarting(summarized, summarizationMessages.Count - 2, this.ChatClient.GetType().Name);
         }
 
         using Activity? summarizeActivity = CompactionTelemetry.ActivitySource.StartActivity(CompactionTelemetry.ActivityNames.Summarize);
