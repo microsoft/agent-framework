@@ -32,6 +32,7 @@ from agent_framework._vectors import (
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
 from bson import BSON
 from bson.errors import InvalidDocument
+from bson.int64 import Int64
 from pymongo import AsyncMongoClient, ReplaceOne
 from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.asynchronous.database import AsyncDatabase
@@ -245,6 +246,17 @@ def _prepare_key(value: Any, expected_type: str | None) -> str | int:
             raise ValueError(f"Azure DocumentDB string keys cannot exceed {_MAX_ID_BYTES} UTF-8 bytes.")
     elif not -(2**63) <= value < 2**63:
         raise ValueError("Azure DocumentDB integer keys must fit a signed 64-bit BSON integer.")
+    return value
+
+
+def _normalize_returned_ints(value: Any) -> Any:
+    """Turn PyMongo's ``Int64`` (used for integers that need 64 bits) back into a plain ``int``."""
+    if isinstance(value, Int64):
+        return int(value)
+    if isinstance(value, dict):
+        return {key: _normalize_returned_ints(item) for key, item in cast(dict[Any, Any], value).items()}
+    if isinstance(value, list):
+        return [_normalize_returned_ints(item) for item in cast(list[Any], value)]
     return value
 
 
@@ -879,7 +891,7 @@ class AzureDocumentDBCollection(
         for item in records:
             if not isinstance(item, Mapping):
                 raise IntegrationInvalidResponseException("Azure DocumentDB returned a non-document record.")
-            document = dict(cast(Mapping[str, Any], item))
+            document = cast(dict[str, Any], _normalize_returned_ints(dict(cast(Mapping[str, Any], item))))
             if "_id" not in document:
                 raise IntegrationInvalidResponseException("Azure DocumentDB returned a document without '_id'.")
             document[key_name] = _prepare_key(document.pop("_id"), self.definition.key_field.type_)
