@@ -174,6 +174,11 @@ conversation id, so the approval request is sent with `conversation`, not
 `previous_response_id`. Sending only `previous_response_id` selects the separate implicit-chain
 path; sending both fields is rejected by the Responses API.
 
+After approval, `load_skill` is returned as `function_call` plus `function_call_output`, followed by
+the assistant message. These are Agent Framework's built-in skill functions. The Toolbox MCP
+connection supplies the skill source; it is not the tool call exposed to the model, so this path does
+not produce an `mcp_call`.
+
 ### Step 4: clean up
 
 ```

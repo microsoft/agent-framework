@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable MEAI001 // HostedMcpServerTool is experimental
+
 using System.ComponentModel;
 using Azure;
 using Azure.AI.Extensions.OpenAI;
@@ -40,6 +42,7 @@ AIAgent agent = scenario switch
     "tool-calling" => CreateToolCallingAgent(projectClient, deployment),
     "tool-calling-approval" => CreateToolCallingApprovalAgent(projectClient, deployment),
     "mcp-toolbox" => CreateMcpToolboxAgent(projectClient, deployment),
+    "mcp-hosted" => CreateHostedMcpAgent(projectClient, deployment),
     "toolbox-oauth-consent" => CreateToolboxOAuthConsentAgent(projectClient, deployment),
     "custom-storage" => CreateCustomStorageAgent(projectClient, deployment),
     "memory" => await CreateMemoryAgentAsync(projectClient, deployment).ConfigureAwait(false),
@@ -146,12 +149,30 @@ static AIAgent CreateToolCallingApprovalAgent(AIProjectClient client, string dep
         ]);
 
 static AIAgent CreateMcpToolboxAgent(AIProjectClient client, string deployment) =>
-    // TODO: wire MCP toolbox client to https://learn.microsoft.com/api/mcp.
+    // FoundryToolboxService injects the tools from IT_TOOLBOX_NAME at request time.
     client.AsAIAgent(
         model: deployment,
-        instructions: "You are an assistant with access to Microsoft Learn documentation via MCP.",
+        instructions: "You have GitHub tools through a Foundry Toolbox. Use get_me for the current GitHub user.",
         name: "mcp-toolbox-agent",
-        description: "MCP toolbox test agent (placeholder).");
+        description: "Container-local Foundry Toolbox MCP contract test agent.");
+
+static AIAgent CreateHostedMcpAgent(AIProjectClient client, string deployment)
+{
+    AITool hostedMcp = new HostedMcpServerTool(
+        serverName: "microsoft_learn_hosted",
+        serverAddress: "https://learn.microsoft.com/api/mcp")
+    {
+        AllowedTools = ["microsoft_docs_search"],
+        ApprovalMode = HostedMcpServerToolApprovalMode.NeverRequire
+    };
+
+    return client.AsAIAgent(
+        model: deployment,
+        instructions: "Use microsoft_docs_search for Microsoft documentation.",
+        name: "mcp-hosted-agent",
+        description: "Inference-hosted MCP contract test agent.",
+        tools: [hostedMcp]);
+}
 
 // toolbox-oauth-consent scenario: a plain agent whose tools come from a pre-registered Foundry
 // toolbox (wired via AddFoundryToolboxService from IT_TOOLBOX_NAME). The toolbox's tool source requires

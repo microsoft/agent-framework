@@ -38,9 +38,35 @@ internal static class InputConverter
             {
                 messages.Add(message);
             }
+
         }
 
         return messages;
+    }
+
+    private static void AppendRejectedMcpApprovalResult(
+        List<ChatMessage> messages,
+        string approvalRequestId,
+        AgentSessionStateBag? stateBag)
+    {
+        const string RejectionResult =
+            "Tool call invocation was rejected by the approver and must not be retried.";
+        if (ToolApprovalIdMap.ResolveEntry(stateBag, approvalRequestId) is not
+            {
+                Approved: false,
+                McpServerLabel: not null
+            } entry)
+        {
+            return;
+        }
+
+        AIContent result = entry.IsMcpToolCall
+            ? new McpServerToolResultContent(entry.CallId)
+            {
+                Outputs = [new ErrorContent(RejectionResult)]
+            }
+            : new FunctionResultContent(entry.CallId, RejectionResult);
+        messages.Add(new ChatMessage(ChatRole.Tool, [result]));
     }
 
     /// <summary>
@@ -60,6 +86,7 @@ internal static class InputConverter
             {
                 messages.Add(message);
             }
+
         }
 
         return messages;
@@ -77,10 +104,21 @@ internal static class InputConverter
 
         foreach (var item in items)
         {
+            if (item is OutputItemMcpToolCall mcpCall)
+            {
+                AppendMcpCallMessages(messages, mcpCall, stateBag);
+                continue;
+            }
+
             var message = ConvertOutputItemToMessage(item, stateBag);
             if (message is not null)
             {
                 messages.Add(message);
+            }
+
+            if (item is OutputItemMcpApprovalResponseResource { Approve: false } approvalResponse)
+            {
+                AppendRejectedMcpApprovalResult(messages, approvalResponse.ApprovalRequestId, stateBag);
             }
         }
 
@@ -198,8 +236,17 @@ internal static class InputConverter
             ItemMessage msg => ConvertItemMessage(msg),
             FunctionCallOutputItemParam funcOutput => ConvertFunctionCallOutput(funcOutput),
             ItemFunctionToolCall funcCall => ConvertItemFunctionToolCall(funcCall),
-            ItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(approvalRequest.Id, approvalRequest.Name, approvalRequest.Arguments, stateBag),
-            MCPApprovalResponse approvalResponse => ConvertMcpApprovalResponse(approvalResponse.ApprovalRequestId, approvalResponse.Approve, stateBag),
+            ItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(
+                approvalRequest.Id,
+                approvalRequest.ServerLabel,
+                approvalRequest.Name,
+                approvalRequest.Arguments,
+                stateBag),
+            MCPApprovalResponse approvalResponse => ConvertMcpApprovalResponse(
+                approvalResponse.ApprovalRequestId,
+                approvalResponse.Approve,
+                stateBag,
+                recordDecision: true),
             ItemComputerToolCall computerCall => ComputerToolItemConverter.ToChatMessage(computerCall),
             ComputerCallOutputItemParam computerCallOutput => ComputerToolItemConverter.ToChatMessage(computerCallOutput),
             ItemReferenceParam => null,
@@ -281,24 +328,30 @@ internal static class InputConverter
     /// <summary>
     /// Converts an inbound <c>mcp_approval_request</c> wire item (from history replay
     /// or fresh-input) to a <see cref="ToolApprovalRequestContent"/> wrapping a
-    /// <see cref="FunctionCallContent"/>.
+    /// the original function or MCP tool call.
     /// </summary>
-    private static ChatMessage ConvertMcpApprovalRequest(string id, string name, string? arguments, AgentSessionStateBag? stateBag)
+    private static ChatMessage ConvertMcpApprovalRequest(
+        string id,
+        string serverLabel,
+        string name,
+        string? arguments,
+        AgentSessionStateBag? stateBag)
     {
         var entry = ToolApprovalIdMap.ResolveEntry(stateBag, id);
-        if (entry is not { AfRequestId: string requestId } || entry.Name != name || entry.Arguments != arguments)
+        string? publicToolName = entry?.McpToolName ?? entry?.Name;
+        if (entry is not { AfRequestId: string requestId }
+            || !string.Equals(publicToolName, name, StringComparison.Ordinal)
+            || entry.Arguments != arguments
+            || (entry.McpServerLabel is not null
+                && !string.Equals(entry.McpServerLabel, serverLabel, StringComparison.Ordinal)))
         {
             throw new InvalidOperationException(
                 $"Approval mapping for wire id '{id}' does not match the replayed approval request.");
         }
 
-        var functionCall = new FunctionCallContent(
-            entry.CallId,
-            entry.Name,
-            ParseFunctionArgumentsObject(arguments));
         return new ChatMessage(
             ChatRole.Assistant,
-            [new ToolApprovalRequestContent(requestId, functionCall)]);
+            [new ToolApprovalRequestContent(requestId, CreateApprovalToolCall(entry, arguments))]);
     }
 
     /// <summary>
@@ -311,20 +364,168 @@ internal static class InputConverter
     /// Thrown when no mapping is recorded for <paramref name="approvalRequestId"/>.
     /// Without the mapping the original call cannot be reconstructed, so we fail the request.
     /// </exception>
-    private static ChatMessage ConvertMcpApprovalResponse(string approvalRequestId, bool approve, AgentSessionStateBag? stateBag)
+    private static ChatMessage ConvertMcpApprovalResponse(
+        string approvalRequestId,
+        bool approve,
+        AgentSessionStateBag? stateBag,
+        bool recordDecision)
     {
-        var entry = ToolApprovalIdMap.ResolveEntry(stateBag, approvalRequestId)
-            ?? throw new InvalidOperationException(
-                $"No approval mapping recorded for wire id '{approvalRequestId}'.");
-
-        var functionCall = new FunctionCallContent(
-            entry.CallId,
-            entry.Name,
-            ParseFunctionArgumentsObject(entry.Arguments));
+        var entry = recordDecision
+            ? ToolApprovalIdMap.RecordDecision(stateBag, approvalRequestId, approve)
+            : ToolApprovalIdMap.ResolveEntry(stateBag, approvalRequestId)
+                ?? throw new InvalidOperationException(
+                    $"No approval mapping recorded for wire id '{approvalRequestId}'.");
 
         return new ChatMessage(
             ChatRole.User,
-            [new ToolApprovalResponseContent(entry.AfRequestId, approve, functionCall)]);
+            [new ToolApprovalResponseContent(entry.AfRequestId, approve, CreateApprovalToolCall(entry, entry.Arguments))]);
+    }
+
+    private static ToolCallContent CreateApprovalToolCall(
+        ToolApprovalIdMap.ApprovalEntry entry,
+        string? arguments)
+    {
+        var parsedArguments = ParseFunctionArgumentsObject(arguments);
+        if (entry.IsMcpToolCall)
+        {
+            return new McpServerToolCallContent(
+                entry.CallId,
+                entry.McpToolName ?? entry.Name,
+                entry.McpServerLabel)
+            {
+                Arguments = parsedArguments,
+            };
+        }
+
+        return new FunctionCallContent(entry.CallId, entry.Name, parsedArguments);
+    }
+
+    private static void AppendMcpCallMessages(
+        List<ChatMessage> messages,
+        OutputItemMcpToolCall mcpCall,
+        AgentSessionStateBag? stateBag)
+    {
+        var arguments = ParseFunctionArgumentsObject(mcpCall.Arguments);
+        bool hasTerminalResult = mcpCall.Status is MCPToolCallStatus.Completed
+            or MCPToolCallStatus.Failed
+            or MCPToolCallStatus.Incomplete;
+        string? failureMessage = GetMcpFailureMessage(mcpCall);
+
+        if (LocalMcpCallIdMap.ResolveEntry(stateBag, mcpCall.Id) is { } localMcpEntry)
+        {
+            if (!string.Equals(localMcpEntry.ServerLabel, mcpCall.ServerLabel, StringComparison.Ordinal)
+                || !string.Equals(localMcpEntry.ToolName, mcpCall.Name, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Local MCP mapping for wire id '{mcpCall.Id}' does not match the replayed MCP call.");
+            }
+
+            messages.Add(new ChatMessage(
+                ChatRole.Assistant,
+                [new FunctionCallContent(localMcpEntry.CallId, localMcpEntry.FunctionName, arguments)]));
+            if (hasTerminalResult)
+            {
+                var result = new FunctionResultContent(localMcpEntry.CallId, mcpCall.Output);
+                if (failureMessage is not null)
+                {
+                    result.Exception = new InvalidOperationException(failureMessage);
+                }
+
+                messages.Add(new ChatMessage(
+                    ChatRole.Tool,
+                    [result]));
+            }
+
+            return;
+        }
+
+        if (NativeMcpCallIdMap.ResolveEntry(stateBag, mcpCall.Id) is { } nativeMcpEntry)
+        {
+            if (!string.Equals(nativeMcpEntry.ServerLabel, mcpCall.ServerLabel, StringComparison.Ordinal)
+                || !string.Equals(nativeMcpEntry.ToolName, mcpCall.Name, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Native MCP mapping for wire id '{mcpCall.Id}' does not match the replayed MCP call.");
+            }
+
+            AppendNativeMcpMessages(
+                messages,
+                nativeMcpEntry.CallId,
+                nativeMcpEntry.ToolName,
+                nativeMcpEntry.ServerLabel,
+                arguments,
+                mcpCall.Output,
+                hasTerminalResult,
+                failureMessage);
+            return;
+        }
+
+        AppendNativeMcpMessages(
+            messages,
+            mcpCall.Id,
+            mcpCall.Name,
+            mcpCall.ServerLabel,
+            arguments,
+            mcpCall.Output,
+            hasTerminalResult,
+            failureMessage);
+    }
+
+    private static void AppendNativeMcpMessages(
+        List<ChatMessage> messages,
+        string callId,
+        string toolName,
+        string serverLabel,
+        IDictionary<string, object?>? arguments,
+        string output,
+        bool hasTerminalResult,
+        string? failureMessage)
+    {
+        messages.Add(new ChatMessage(
+            ChatRole.Assistant,
+            [new McpServerToolCallContent(callId, toolName, serverLabel)
+            {
+                Arguments = arguments,
+            }]));
+        if (hasTerminalResult)
+        {
+            AIContent result = failureMessage is null
+                ? new MeaiTextContent(output)
+                : new ErrorContent(failureMessage);
+            messages.Add(new ChatMessage(
+                ChatRole.Tool,
+                [new McpServerToolResultContent(callId)
+                {
+                    Outputs = [result],
+                }]));
+        }
+    }
+
+    private static string? GetMcpFailureMessage(OutputItemMcpToolCall mcpCall)
+    {
+        if (mcpCall.Status is not (MCPToolCallStatus.Failed or MCPToolCallStatus.Incomplete))
+        {
+            return null;
+        }
+
+        if (mcpCall.Error.TryGetValue("message", out BinaryData? errorData))
+        {
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(errorData);
+                if (document.RootElement.ValueKind == JsonValueKind.String
+                    && document.RootElement.GetString() is { Length: > 0 } message)
+                {
+                    return message;
+                }
+            }
+            catch (JsonException)
+            {
+                // Fall through to the status-based message for malformed provider errors.
+            }
+        }
+
+        return $"MCP tool call ended with status '{mcpCall.Status}'.";
     }
 
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Deserializing tool-call arguments from SDK input.")]
@@ -353,8 +554,17 @@ internal static class InputConverter
             OutputItemMessage msg => ConvertOutputItemMessageToChat(msg),
             OutputItemFunctionToolCall funcCall => ConvertOutputItemFunctionCall(funcCall),
             OutputItemFunctionToolCallOutput funcOutput => ConvertFunctionToolCallOutput(funcOutput),
-            OutputItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(approvalRequest.Id, approvalRequest.Name, approvalRequest.Arguments, stateBag),
-            OutputItemMcpApprovalResponseResource approvalResponse => ConvertMcpApprovalResponse(approvalResponse.ApprovalRequestId, approvalResponse.Approve, stateBag),
+            OutputItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(
+                approvalRequest.Id,
+                approvalRequest.ServerLabel,
+                approvalRequest.Name,
+                approvalRequest.Arguments,
+                stateBag),
+            OutputItemMcpApprovalResponseResource approvalResponse => ConvertMcpApprovalResponse(
+                approvalResponse.ApprovalRequestId,
+                approvalResponse.Approve,
+                stateBag,
+                recordDecision: false),
             OutputItemComputerToolCall computerCall => ComputerToolItemConverter.ToChatMessage(computerCall),
             OutputItemComputerToolCallOutput computerCallOutput => ComputerToolItemConverter.ToChatMessage(computerCallOutput),
             OutputItemReasoningItem => null,

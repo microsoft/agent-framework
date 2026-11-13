@@ -25,6 +25,13 @@ This sample deploys to Foundry **directly from source (code / ZIP upload)**: the
 | `.env.example` | Template for local configuration. |
 | `../../scripts/Add-LocalFrameworkFeed.ps1`, `../../scripts/add-local-framework-feed.sh` | Contributor-only helpers, see [Deploy your local framework changes](#deploy-your-local-framework-changes-contributors). |
 
+## Responses tool contract
+
+After consent and any required approval, the hosted container executes the Toolbox tool through MCP.
+Responses callers receive one completed `mcp_call` item with inline output rather than a
+`function_call` plus `function_call_output` pair. Approval-required Toolbox tools use
+`mcp_approval_request`, and delegated OAuth continues to use `oauth_consent_request`.
+
 ## Configuration
 
 Copy the template and fill in your project endpoint:

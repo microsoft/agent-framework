@@ -270,7 +270,7 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         // A resilient turn defers to recovery when the host shuts down; any other turn ends incomplete.
         bool isResilientTurn = this.ShouldPersistForResilience(request) || context.IsRecovery;
 
-        // Open the pre-registered Foundry toolboxes for this response when the toolbox service is available.
+        // Open pre-registered Foundry toolboxes when available and collect local MCP execution metadata.
         if (this._toolboxService is not null)
         {
             // Opening toolboxes waits on the network before the agent runs, so it observes shutdown itself rather
@@ -333,6 +333,8 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
             ConsentBlockingFunctionInvoker.EnsureInstalled(functionInvokingClient);
         }
 
+        IReadOnlyDictionary<string, LocalMcpExecutionContract> localMcpFunctions =
+            CreateLocalMcpFunctionContracts(agentOptions?.ChatOptions?.Tools, chatOptions.Tools);
         var options = new ChatClientAgentRunOptions(chatOptions);
 
         // We only use a volatile provider for the conversation history if the agent is a
@@ -396,6 +398,7 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
             agent.RunStreamingAsync(messages, session, options: options, cancellationToken: consentCts.Token),
             stream,
             session?.StateBag,
+            localMcpFunctions,
             cancellationToken: cancellationToken).GetAsyncEnumerator(cancellationToken);
         var pendingEvents = new Queue<ResponseStreamEvent>();
         try
@@ -743,6 +746,58 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
         var builder = stream.AddOutputItem<OAuthConsentRequestOutputItem>(item.Id);
         yield return builder.EmitAdded(item);
         yield return builder.EmitDone(item);
+    }
+
+    private static Dictionary<string, LocalMcpExecutionContract> CreateLocalMcpFunctionContracts(
+        params IEnumerable<AITool>?[] toolSets)
+    {
+        var contracts = new Dictionary<string, LocalMcpExecutionContract>(StringComparer.Ordinal);
+        var functions = new Dictionary<string, (AIFunction Function, LocalMcpExecutionContract? Contract)>(
+            StringComparer.Ordinal);
+        var observedTools = new HashSet<AITool>(ReferenceEqualityComparer.Instance);
+        foreach (var toolSet in toolSets)
+        {
+            if (toolSet is null)
+            {
+                continue;
+            }
+
+            foreach (var tool in toolSet)
+            {
+                if (!observedTools.Add(tool) || tool is not AIFunction function)
+                {
+                    continue;
+                }
+
+                LocalMcpExecutionContract? contract = function.GetService<LocalMcpExecutionContract>();
+                if (contract is not null)
+                {
+                    contract = contract with
+                    {
+                        RequiresApproval = function.GetService<ApprovalRequiredAIFunction>() is not null,
+                    };
+                }
+
+                if (functions.TryGetValue(function.Name, out var existing)
+                    && (existing.Contract is not null || contract is not null))
+                {
+                    throw new InvalidOperationException(
+                        $"Local MCP function name '{function.Name}' collides with another agent function.");
+                }
+
+                functions[function.Name] = (function, contract);
+            }
+        }
+
+        foreach (var (functionName, entry) in functions)
+        {
+            if (entry.Contract is not null)
+            {
+                contracts.Add(functionName, entry.Contract);
+            }
+        }
+
+        return contracts;
     }
 
     /// <summary>
