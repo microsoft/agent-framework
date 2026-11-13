@@ -251,12 +251,12 @@ class MontyExecuteCodeTool(FunctionTool):
     Hyperlight's ``/output`` flow.
 
     ``resource_limits`` is forwarded to Monty's ``ResourceLimits`` to cap CPU
-    time, memory, output size, recursion depth, and GC frequency. The legacy
-    ``max_duration_secs`` key is an alias for ``max_feed_duration_secs``, and
-    supplying both is an error. When neither key is present, guest execution is
-    limited to 30 seconds (``max_feed_duration_secs``, which excludes time spent
-    waiting on host tools). Set ``max_feed_duration_secs`` to another value, or to
-    ``None`` to remove the limit.
+    time, memory, output size, recursion depth, and GC frequency. When it sets
+    neither ``max_feed_duration_secs`` nor its legacy alias ``max_duration_secs``,
+    guest execution is limited to 30 seconds, not counting time spent waiting on
+    host tools. Set ``max_feed_duration_secs`` to another value, or to ``None`` to
+    remove the limit. ``max_duration_secs`` will be removed soon, because this
+    package is in beta.
 
     ``tool_description_format`` controls parameter documentation in both the
     description and instructions: ``"compact"`` (default) or ``"json"`` globally,
