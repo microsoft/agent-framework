@@ -71,7 +71,7 @@ def _parse_shell_result(result: Any) -> str | list[Content]:  # pyright: ignore[
     shell_result = result.shell_result
     return [
         Content.from_text(
-            result,
+            str(result),
             additional_properties={
                 "stdout": shell_result.stdout,
                 "stderr": shell_result.stderr,

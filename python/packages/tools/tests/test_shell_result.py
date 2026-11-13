@@ -1,6 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from pathlib import Path
+
+from agent_framework import AgentSession, Content, FileSessionStore, Message
+
 from agent_framework_tools.shell import ShellResult
+from agent_framework_tools.shell._types import _parse_shell_result, _shell_result_to_text
 
 
 def _make(
@@ -75,3 +80,30 @@ def test_format_combines_all_signals_in_order() -> None:
     assert lines[2] == "[output truncated]"
     assert lines[3] == "[command timed out]"
     assert lines[4] == "exit_code: 2"
+
+
+async def test_parsed_shell_result_round_trips_through_file_session_store(tmp_path: Path) -> None:
+    shell_result = _make(stdout="out", stderr="err", exit_code=2, truncated=True, timed_out=True)
+    parsed = _parse_shell_result(_shell_result_to_text(shell_result))
+    session = AgentSession()
+    session.state["history"] = {
+        "messages": [Message("tool", [Content.from_function_result("call_fixture", result=parsed)])]
+    }
+
+    store = FileSessionStore(tmp_path)
+    await store.set(session.session_id, session)
+    restored = await store.get(session.session_id)
+
+    assert restored is not None
+    restored_result = restored.state["history"]["messages"][0].contents[0]
+    assert restored_result.result == shell_result.format_for_model()
+    assert restored_result.items is not None
+    assert type(restored_result.items[0].text) is str
+    assert restored_result.items[0].text == shell_result.format_for_model()
+    assert restored_result.items[0].additional_properties == {
+        "stdout": "out",
+        "stderr": "err",
+        "exit_code": 2,
+        "truncated": True,
+        "timed_out": True,
+    }
