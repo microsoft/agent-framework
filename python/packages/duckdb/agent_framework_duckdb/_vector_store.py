@@ -196,8 +196,6 @@ def _create_client(
     env_file_encoding: str | None,
 ) -> _Client:
     if client is not None:
-        if any(value is not None for value in (connection_string, config, env_file_path, env_file_encoding)):
-            raise ValueError("client cannot be combined with connection_string, config, or .env options.")
         if not isinstance(client, duckdb.DuckDBPyConnection):
             raise TypeError("client must be a DuckDBPyConnection.")
         return _Client(None, client=client, config=None)
@@ -403,7 +401,8 @@ class DuckDBCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         Args:
             record_type: Registered typed model or ``dict`` with an explicit definition.
             connection_string: Persistent filename or DuckDB URI. Defaults to ``agent-framework.duckdb``.
-            client: Borrowed DuckDB connection; mutually exclusive with connection settings.
+            client: Borrowed DuckDB connection; takes precedence over all connection settings. When supplied,
+                ``connection_string``, ``config``, ``env_file_path``, and ``env_file_encoding`` are ignored.
             config: DuckDB connection settings, optionally wrapping secret values in ``SecretString``.
             definition: Explicit definition for dictionary records.
             collection_name: Table name, overriding the model definition.
@@ -720,7 +719,8 @@ class DuckDBStore(BaseVectorStore):
 
         Args:
             connection_string: On-disk filename or DuckDB URI; defaults to ``agent-framework.duckdb``.
-            client: Borrowed DuckDB connection; cannot be combined with other connection settings.
+            client: Borrowed DuckDB connection; takes precedence over all connection settings. When supplied,
+                ``connection_string``, ``config``, ``env_file_path``, and ``env_file_encoding`` are ignored.
             config: Additional DuckDB connection settings. Wrap credential values in ``SecretString``.
             embedding_generator: Default local embedding client for collections.
             env_file_path: Optional selected .env file for ``DUCKDB_CONNECTION_STRING``.
