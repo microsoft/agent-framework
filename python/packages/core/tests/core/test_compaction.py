@@ -45,11 +45,12 @@ from agent_framework._compaction import (
     _function_call_result_pairs,
     _select_summary_input_groups,
     _serialize_message,
+    _unambiguous_approval_pairs,
     append_compaction_message,
     extend_compaction_messages,
 )
 from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature, ExperimentalWarning
-from agent_framework._types import APPROVAL_REJECTION_RESULT_KEY, SKILL_CONTEXT_NAME_KEY
+from agent_framework._types import _APPROVAL_REJECTION_RESULT_KEY, SKILL_CONTEXT_NAME_KEY
 
 
 def _assistant_function_call(call_id: str) -> Message:
@@ -272,6 +273,79 @@ def test_group_annotations_pair_nonadjacent_function_result_by_call_id() -> None
     assert _group_index(messages[2]) == _group_index(messages[0])
     assert _group_has_reasoning(messages[2]) is True
     assert _group_id(messages[1]) != call_group
+
+
+def test_group_annotations_keep_approval_request_response_and_result_atomic() -> None:
+    function_call = Content.from_function_call(id="c1", call_id="c1", name="f", arguments="{}")
+    request = Content.from_function_approval_request(id="c1", function_call=function_call)
+    response = Content.from_function_approval_response(approved=True, id="c1", function_call=function_call)
+    messages = [
+        Message(role="assistant", contents=[function_call, request]),
+        Message(role="user", contents=[response]),
+        _tool_result("c1", "ok"),
+        Message(role="assistant", contents=["done"]),
+    ]
+
+    annotate_message_groups(messages)
+
+    approval_group = _group_id(messages[0])
+    assert approval_group is not None
+    assert _group_id(messages[1]) == approval_group
+    assert _group_id(messages[2]) == approval_group
+    assert _group_id(messages[3]) != approval_group
+
+
+def test_duplicate_approval_request_pairs_latest_occurrence_once() -> None:
+    first_call = Content.from_function_call(id="c1", call_id="c1", name="f", arguments="{}")
+    second_call = Content.from_function_call(id="c2", call_id="c2", name="f", arguments="{}")
+    batch = Message(
+        role="assistant",
+        contents=[
+            first_call,
+            second_call,
+            Content.from_function_approval_request(id="c1", function_call=first_call),
+            Content.from_function_approval_request(id="c2", function_call=second_call),
+        ],
+    )
+    first_response = Message(
+        role="user",
+        contents=[Content.from_function_approval_response(approved=True, id="c1", function_call=first_call)],
+    )
+    repeated_request = Message(
+        role="assistant",
+        contents=[Content.from_function_approval_request(id="c2", function_call=second_call)],
+    )
+    second_response = Message(
+        role="user",
+        contents=[Content.from_function_approval_response(approved=True, id="c2", function_call=second_call)],
+    )
+
+    assert _unambiguous_approval_pairs([batch, first_response, repeated_request, second_response]) == [
+        (0, 1),
+        (2, 3),
+    ]
+
+
+def test_group_annotations_link_separate_approval_request_to_original_call() -> None:
+    function_call = Content.from_function_call(id="c1", call_id="c1", name="f", arguments="{}")
+    request = Content.from_function_approval_request(id="c1", function_call=function_call)
+    response = Content.from_function_approval_response(approved=True, id="c1", function_call=function_call)
+    messages = [
+        Message(role="assistant", contents=[function_call]),
+        Message(role="assistant", contents=[request]),
+        Message(role="user", contents=[response]),
+        _tool_result("c1", "ok"),
+        Message(role="assistant", contents=["done"]),
+    ]
+
+    annotate_message_groups(messages)
+
+    approval_group = _group_id(messages[0])
+    assert approval_group is not None
+    assert _group_id(messages[1]) == approval_group
+    assert _group_id(messages[2]) == approval_group
+    assert _group_id(messages[3]) == approval_group
+    assert _group_id(messages[4]) != approval_group
 
 
 @pytest.mark.parametrize("screenshot", [Content.from_data(b"image", "image/png"), None])
@@ -1225,7 +1299,7 @@ async def test_agent_triggered_compaction_ignores_rejected_approval_result() -> 
     rejection_result = Content.from_function_result(
         call_id="compact-1",
         result="Error: Tool call invocation was rejected by user.",
-        additional_properties={APPROVAL_REJECTION_RESULT_KEY: True},
+        additional_properties={_APPROVAL_REJECTION_RESULT_KEY: True},
     )
     messages = [
         _assistant_named_function_call("compact-1", strategy.tool.name),
@@ -1264,7 +1338,7 @@ def test_completed_function_calls_correlates_reused_call_id_by_occurrence() -> N
                     id="occ-rejected",
                     call_id="shared",
                     result="Error: Tool call invocation was rejected by user.",
-                    additional_properties={APPROVAL_REJECTION_RESULT_KEY: True},
+                    additional_properties={_APPROVAL_REJECTION_RESULT_KEY: True},
                 ),
                 Content.from_function_result(
                     id="occ-approved",
@@ -1580,7 +1654,7 @@ async def test_unload_skills_compaction_preserves_reused_id_group_with_unresolve
         ({SKILL_CONTEXT_NAME_KEY: ""}, None),
         ({SKILL_CONTEXT_NAME_KEY: 123}, None),
         ({SKILL_CONTEXT_NAME_KEY: "pdf"}, "Load failed."),
-        ({SKILL_CONTEXT_NAME_KEY: "pdf", APPROVAL_REJECTION_RESULT_KEY: True}, None),
+        ({SKILL_CONTEXT_NAME_KEY: "pdf", _APPROVAL_REJECTION_RESULT_KEY: True}, None),
     ],
 )
 async def test_unload_skills_preserves_groups_without_successful_provenance(

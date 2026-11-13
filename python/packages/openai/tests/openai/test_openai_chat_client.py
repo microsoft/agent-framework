@@ -53,6 +53,7 @@ from agent_framework.exceptions import (
     ChatClientInvalidRequestException,
     SettingNotFoundError,
 )
+from agent_framework.security import SecureAgentConfig
 from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
 from openai.types.responses import (
     ResponseComputerToolCall,
@@ -2769,17 +2770,24 @@ def test_prepare_messages_uses_structured_local_shell_result() -> None:
     ]
 
 
-def test_prepared_local_shell_tool_survives_make_tools() -> None:
-    """Regression: the prepared shell tool must be a subscriptable dict.
-
-    The OpenAI SDK's ``_make_tools`` helper (used by the structured-output /
-    ``responses.parse``/``responses.stream`` path) indexes each tool with
-    ``tool["type"]``. A pydantic model is not subscriptable and previously
-    raised ``TypeError: 'FunctionShellTool' object is not subscriptable``.
-    """
-    from openai.resources.responses.responses import _make_tools
-
-    client = OpenAIChatClient(model="test-model", api_key="test-key")
+async def test_prepared_local_shell_tool_survives_structured_output_request() -> None:
+    """Keep local shell tools usable through the SDK's public structured-output API."""
+    handler = MagicMock(
+        return_value=_OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_shell",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "completed",
+                "output": [],
+                "parallel_tool_calls": False,
+                "tool_choice": "auto",
+                "tools": [],
+            },
+        )
+    )
 
     def local_exec(command: str) -> str:
         return command
@@ -2788,11 +2796,24 @@ def test_prepared_local_shell_tool_survives_make_tools() -> None:
         func=local_exec,
         approval_mode="never_require",
     )
-    response_tools = client._prepare_tools_for_openai([local_shell_tool])
+    async with AsyncOpenAI(
+        api_key="test-key",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handler)),
+    ) as sdk_client:
+        client = OpenAIChatClient(model="test-model", async_client=sdk_client)
+        response_tools = client._prepare_tools_for_openai([local_shell_tool])
+        assert response_tools is not None
+        assert isinstance(response_tools[0], dict)
 
-    # Must not raise TypeError (the bug); shell tool flows through unchanged.
-    made = cast("list[dict[str, Any]]", _make_tools(response_tools))  # type: ignore[arg-type]
-    assert {"type": "shell", "environment": {"type": "local"}} in made
+        await sdk_client.responses.parse(
+            model="test-model",
+            input="Run the shell tool.",
+            tools=response_tools,
+            text_format=OutputStruct,
+        )
+
+    payload = json.loads(handler.call_args.args[0].content)
+    assert payload["tools"] == [{"type": "shell", "environment": {"type": "local"}}]
 
 
 def test_get_shell_tool_reuses_function_tool_instance() -> None:
@@ -10972,6 +10993,35 @@ async def test_streaming_resume_with_tools_runs_the_tool_once() -> None:
     assert create.await_args is not None
     assert create.await_args.kwargs.get("previous_response_id") == "resp_bg"
     assert final.text == "Email sent."
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_fides_rejects_background_resume_without_authoritative_state(stream: bool) -> None:
+    """A background-response token is service continuation authority, not a fresh request."""
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def blocked_tool(value: str) -> str:
+        executions.append(value)
+        return "unexpected"
+
+    retrieve = AsyncMock()
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    agent = Agent(client=client, tools=[blocked_tool], context_providers=[SecureAgentConfig()])
+    session = agent.create_session()
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_bg"}}
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        pytest.raises(RuntimeError, match="authoritative FIDES context label"),
+    ):
+        if stream:
+            await agent.run("Resume", session=session, stream=True, options=options).get_final_response()
+        else:
+            await agent.run("Resume", session=session, options=options)
+
+    assert retrieve.await_count == 0
+    assert executions == []
 
 
 @pytest.mark.parametrize("stream", [False, True])

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import warnings
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,16 +21,21 @@ from agent_framework import (
     Content,
     ExperimentalFeature,
     FileHistoryProvider,
-    MemoryContextProvider,
-    MemoryFileStore,
-    MemoryIndexEntry,
-    MemoryStore,
-    MemoryTopicRecord,
+    MemoryContextProvider,  # ty: ignore[deprecated]
+    MemoryFileStore,  # ty: ignore[deprecated]
+    MemoryIndexEntry,  # ty: ignore[deprecated]
+    MemoryStore,  # ty: ignore[deprecated]
+    MemoryTopicRecord,  # ty: ignore[deprecated]
     Message,
 )
 from agent_framework import _filesystem as filesystem_module
 
 from .test_filesystem import COLLIDING_IDENTIFIERS
+
+pytestmark = pytest.mark.filterwarnings(
+    r"ignore:(MemoryContextProvider|MemoryFileStore|MemoryIndexEntry|MemoryStore|MemoryTopicRecord) "
+    r"is deprecated\.:DeprecationWarning"
+)
 
 
 def _no_store_options() -> ChatOptions:
@@ -96,6 +102,55 @@ class _MemoryHarnessClient:
         return ChatResponse(messages=[Message(role="assistant", contents=[self.default_text])])
 
 
+@pytest.mark.parametrize(
+    "memory_class",
+    [MemoryContextProvider, MemoryFileStore, MemoryIndexEntry, MemoryStore, MemoryTopicRecord],  # ty: ignore[deprecated]
+)
+def test_memory_harness_classes_have_deprecation_metadata(memory_class: type[object]) -> None:
+    message = getattr(memory_class, "__deprecated__", None)
+    assert isinstance(message, str)
+    assert memory_class.__name__ in message
+    assert "FileMemoryProvider" in message
+    assert "will be removed after December 31, 2026" in message
+    assert "will be removed after December 31, 2026" in (memory_class.__doc__ or "")
+
+
+def test_memory_harness_classes_warn_when_used(tmp_path: Path) -> None:
+    with pytest.warns(DeprecationWarning, match="MemoryIndexEntry.*after December 31, 2026.*FileMemoryProvider"):
+        MemoryIndexEntry("preferences", "preferences", "A summary", "2026-01-01")  # ty: ignore[deprecated]
+    with pytest.warns(DeprecationWarning, match="MemoryTopicRecord.*after December 31, 2026.*FileMemoryProvider"):
+        MemoryTopicRecord(topic="preferences", summary="A summary", memories=["A memory"], updated_at="2026-01-01")  # ty: ignore[deprecated]
+    with pytest.warns(DeprecationWarning, match="MemoryFileStore.*after December 31, 2026.*FileMemoryProvider"):
+        store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
+    with pytest.warns(DeprecationWarning, match="MemoryContextProvider.*after December 31, 2026.*FileMemoryProvider"):
+        MemoryContextProvider(store=store)  # ty: ignore[deprecated]
+
+
+def test_memory_store_warns_when_subclassed() -> None:
+    with pytest.warns(DeprecationWarning, match="MemoryStore.*after December 31, 2026.*FileMemoryProvider") as caught:
+
+        class CustomMemoryStore(MemoryStore):  # ty: ignore[deprecated]
+            pass
+
+    assert issubclass(CustomMemoryStore, MemoryStore)  # ty: ignore[deprecated]
+    warning = next(item for item in caught if issubclass(item.category, DeprecationWarning))
+    assert Path(warning.filename).resolve() == Path(__file__).resolve()
+    assert str(warning.message) == getattr(MemoryStore, "__deprecated__", None)  # ty: ignore[deprecated]
+
+
+def test_memory_file_store_subclass_warns_once() -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+
+        class CustomMemoryFileStore(MemoryFileStore):  # ty: ignore[deprecated]
+            pass
+
+    assert issubclass(CustomMemoryFileStore, MemoryFileStore)  # ty: ignore[deprecated]
+    deprecations = [item for item in caught if issubclass(item.category, DeprecationWarning)]
+    assert len(deprecations) == 1
+    assert "MemoryFileStore" in str(deprecations[0].message)
+
+
 def test_memory_index_entry_round_trips_and_trims_pointer_lines() -> None:
     """Memory index entries should preserve value equality and trim pointer lines."""
     raw_entry = {
@@ -107,9 +162,9 @@ def test_memory_index_entry_round_trips_and_trims_pointer_lines() -> None:
         "updated_at": "2026-04-21T10:00:00+00:00",
     }
 
-    entry = MemoryIndexEntry.from_dict(raw_entry)
+    entry = MemoryIndexEntry.from_dict(raw_entry)  # ty: ignore[deprecated]
 
-    assert entry == MemoryIndexEntry(**raw_entry)
+    assert entry == MemoryIndexEntry(**raw_entry)  # ty: ignore[deprecated]
     assert entry.to_dict() == raw_entry
     assert len(entry.to_pointer_line(max_length=80)) <= 80
     assert "MemoryIndexEntry(" in repr(entry)
@@ -126,10 +181,10 @@ def test_memory_topic_record_round_trips_through_dict_and_markdown() -> None:
         "session_ids": ["session-1", "session-2"],
     }
 
-    record = MemoryTopicRecord.from_dict(raw_record)
-    reparsed_record = MemoryTopicRecord.from_markdown(record.to_markdown())
+    record = MemoryTopicRecord.from_dict(raw_record)  # ty: ignore[deprecated]
+    reparsed_record = MemoryTopicRecord.from_markdown(record.to_markdown())  # ty: ignore[deprecated]
 
-    assert record == MemoryTopicRecord(**raw_record)  # type: ignore[arg-type]
+    assert record == MemoryTopicRecord(**raw_record)  # type: ignore[arg-type]  # ty: ignore[deprecated]
     assert record.to_dict() == raw_record
     assert reparsed_record == record
     assert "MemoryTopicRecord(" in repr(record)
@@ -147,10 +202,10 @@ def test_memory_topic_record_round_trips_through_dict_and_markdown() -> None:
 )
 def test_memory_file_store_preserves_metadata_like_summary_text(tmp_path: Path, summary: str) -> None:
     """Summary text must not replace metadata when a topic is reloaded from disk."""
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
-    record = MemoryTopicRecord(
+    record = MemoryTopicRecord(  # ty: ignore[deprecated]
         topic="preferences",
         summary=summary,
         memories=["Updated: the milestone moved.", "Sessions: retain previous notes."],
@@ -158,13 +213,13 @@ def test_memory_file_store_preserves_metadata_like_summary_text(tmp_path: Path, 
         session_ids=["session-1", "session-2"],
     )
 
-    assert MemoryTopicRecord.from_markdown(record.to_markdown()) == record
+    assert MemoryTopicRecord.from_markdown(record.to_markdown()) == record  # ty: ignore[deprecated]
     store.write_topic(session, record, source_id=DEFAULT_MEMORY_SOURCE_ID)
 
     assert store.get_topic(session, source_id=DEFAULT_MEMORY_SOURCE_ID, topic=record.slug) == record
     assert store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID) == [record]
     entries = store.rebuild_index(session, source_id=DEFAULT_MEMORY_SOURCE_ID, line_limit=200, line_length=150)
-    assert entries == [MemoryIndexEntry.from_topic_record(record)]
+    assert entries == [MemoryIndexEntry.from_topic_record(record)]  # ty: ignore[deprecated]
 
 
 @pytest.mark.parametrize("summary_line", ["Updated: the release date changed.", "Sessions: keep previous notes."])
@@ -181,7 +236,7 @@ def test_memory_topic_record_preserves_multiline_summary_metadata_text(summary_l
         "- Sessions: retain previous notes.\n"
     )
 
-    record = MemoryTopicRecord.from_markdown(markdown)
+    record = MemoryTopicRecord.from_markdown(markdown)  # ty: ignore[deprecated]
 
     assert record.summary == f"Keep the release notes. {summary_line}"
     assert record.updated_at == "2026-04-21T10:05:00+00:00"
@@ -191,7 +246,7 @@ def test_memory_topic_record_preserves_multiline_summary_metadata_text(summary_l
 
 async def test_memory_file_store_writes_topics_index_state_and_transcripts(tmp_path) -> None:
     """The file-backed memory store should manage topics, ``MEMORY.md``, state, and transcript search."""
-    store = MemoryFileStore(
+    store = MemoryFileStore(  # ty: ignore[deprecated]
         tmp_path,
         kind="memories",
         owner_prefix="user_",
@@ -203,14 +258,14 @@ async def test_memory_file_store_writes_topics_index_state_and_transcripts(tmp_p
     session.state["owner_id"] = "alice"
     updated_at = datetime(2026, 4, 21, tzinfo=timezone.utc).replace(microsecond=0).isoformat()
 
-    preferences_record = MemoryTopicRecord(
+    preferences_record = MemoryTopicRecord(  # ty: ignore[deprecated]
         topic="preferences",
         summary="Prefers concise answers.",
         memories=["Prefers concise answers.", "Prefers aisle seats."],
         updated_at=updated_at,
         session_ids=["session-1"],
     )
-    travel_record = MemoryTopicRecord(
+    travel_record = MemoryTopicRecord(  # ty: ignore[deprecated]
         topic="travel",
         summary="Planning a Norway trip.",
         memories=["Visit Oslo in June."],
@@ -280,7 +335,7 @@ def test_memory_file_store_quarantines_corrupt_state_file(tmp_path: Path) -> Non
     the session store's quarantine convention and the next write recreates a
     clean one.
     """
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
     store.write_state(
@@ -313,7 +368,7 @@ def test_memory_file_store_quarantines_corrupt_state_file(tmp_path: Path) -> Non
 
 def test_memory_file_store_quarantines_non_utf8_state_file(tmp_path: Path) -> None:
     """Non-text bytes follow the same quarantine path as malformed JSON."""
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
     state_path = store._get_state_path(session, source_id=DEFAULT_MEMORY_SOURCE_ID)
@@ -351,7 +406,7 @@ def test_memory_file_store_does_not_quarantine_a_valid_replacement(tmp_path: Pat
             raise json.JSONDecodeError("corrupt", document, 0)
         return real_loads(text)
 
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id", loads=racing_loads)
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id", loads=racing_loads)  # ty: ignore[deprecated]
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
     state_path.append(store._get_state_path(session, source_id=DEFAULT_MEMORY_SOURCE_ID))
@@ -363,7 +418,7 @@ def test_memory_file_store_does_not_quarantine_a_valid_replacement(tmp_path: Pat
     assert not list(state_path[0].parent.glob(".state.json.*.corrupt"))
 
 
-async def _write_transcript(store: MemoryFileStore, session: AgentSession, session_id: str, text: str) -> None:
+async def _write_transcript(store: MemoryFileStore, session: AgentSession, session_id: str, text: str) -> None:  # ty: ignore[deprecated]
     """Append a one-message transcript for ``session_id`` through the real write path."""
     provider = FileHistoryProvider(store.get_transcripts_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID))
     await provider.save_messages(session_id, [Message(role="user", contents=[text])])
@@ -373,7 +428,7 @@ async def test_search_transcripts_finds_session_stored_under_digest_stem(tmp_pat
     """A session ID too long to encode is stored under an irreversible digest stem but stays findable."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "user-1"
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
     long_session_id = "a/" + "a" * 108
 
     await _write_transcript(store, session, "short-id", "Short session transcript.")
@@ -404,7 +459,7 @@ async def test_search_transcripts_isolates_colliding_session_ids(tmp_path) -> No
     """Session IDs that normalize alike must each retrieve only their own transcript."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "user-1"
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
 
     for index, candidate in enumerate(COLLIDING_IDENTIFIERS):
         await _write_transcript(store, session, candidate, f"Transcript {index}.")
@@ -421,7 +476,7 @@ async def test_search_transcripts_returns_nothing_for_unknown_session(tmp_path) 
     """Filtering by a session that never wrote a transcript should return no results."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "user-1"
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
     await _write_transcript(store, session, "known-id", "Known transcript.")
 
     assert (
@@ -436,23 +491,19 @@ async def test_search_transcripts_non_positive_limit_returns_nothing(tmp_path) -
     """A non-positive limit must return no results, not a single row."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "user-1"
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
     await _write_transcript(store, session, "session-1", "Matching transcript.")
 
-    assert store.search_transcripts(
-        session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="transcript", limit=0
-    ) == []
-    assert store.search_transcripts(
-        session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="transcript", limit=-1
-    ) == []
+    assert store.search_transcripts(session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="transcript", limit=0) == []
+    assert store.search_transcripts(session, source_id=DEFAULT_MEMORY_SOURCE_ID, query="transcript", limit=-1) == []
 
 
 def test_memory_file_store_rejects_owner_path_traversal(tmp_path) -> None:
     """Owner IDs with path traversal segments should not escape ``base_path``."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "../escape"
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
-    record = MemoryTopicRecord(
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
+    record = MemoryTopicRecord(  # ty: ignore[deprecated]
         topic="preferences",
         summary="Prefers concise answers.",
         memories=["Prefers concise answers."],
@@ -469,7 +520,7 @@ async def test_memory_file_store_namespaces_topics_state_and_transcripts_by_sour
     """Providers sharing one file store should not collide when they use different source IDs."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
-    store = MemoryFileStore(
+    store = MemoryFileStore(  # ty: ignore[deprecated]
         tmp_path,
         owner_state_key="owner_id",
         dumps=lambda value: json.dumps(value, separators=(",", ":"), sort_keys=True),
@@ -479,7 +530,7 @@ async def test_memory_file_store_namespaces_topics_state_and_transcripts_by_sour
 
     store.write_topic(
         session,
-        MemoryTopicRecord(
+        MemoryTopicRecord(  # ty: ignore[deprecated]
             topic="preferences",
             summary="Source A summary.",
             memories=["Source A memory."],
@@ -489,7 +540,7 @@ async def test_memory_file_store_namespaces_topics_state_and_transcripts_by_sour
     )
     store.write_topic(
         session,
-        MemoryTopicRecord(
+        MemoryTopicRecord(  # ty: ignore[deprecated]
             topic="preferences",
             summary="Source B summary.",
             memories=["Source B memory."],
@@ -527,10 +578,10 @@ async def test_memory_context_provider_does_not_rewrite_unchanged_index(tmp_path
     """A second before-run pass with unchanged memories should preserve ``MEMORY.md`` mtime."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
     agent = Agent(
         client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
-        context_providers=[MemoryContextProvider(store=store)],
+        context_providers=[MemoryContextProvider(store=store)],  # ty: ignore[deprecated]
         default_options=_no_store_options(),
     )
 
@@ -553,7 +604,7 @@ async def test_memory_context_provider_tools_and_automation(tmp_path) -> None:
     """The memory provider should expose tools and automate extraction plus consolidation."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
-    store = MemoryFileStore(
+    store = MemoryFileStore(  # ty: ignore[deprecated]
         tmp_path,
         kind="memories",
         owner_prefix="user_",
@@ -561,7 +612,7 @@ async def test_memory_context_provider_tools_and_automation(tmp_path) -> None:
         dumps=lambda value: json.dumps(value, separators=(",", ":"), sort_keys=True),
         loads=json.loads,
     )
-    provider = MemoryContextProvider(
+    provider = MemoryContextProvider(  # ty: ignore[deprecated]
         store=store,
         consolidation_min_sessions=1,
         consolidation_interval=timedelta(0),
@@ -613,7 +664,7 @@ async def test_memory_context_provider_injects_recent_turns(tmp_path) -> None:
     """The memory provider should inject only the configured recent transcript turns."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
-    store = MemoryFileStore(
+    store = MemoryFileStore(  # ty: ignore[deprecated]
         tmp_path,
         kind="memories",
         owner_prefix="user_",
@@ -621,7 +672,7 @@ async def test_memory_context_provider_injects_recent_turns(tmp_path) -> None:
         dumps=lambda value: json.dumps(value, separators=(",", ":"), sort_keys=True),
         loads=json.loads,
     )
-    provider = MemoryContextProvider(store=store, recent_turns=2)
+    provider = MemoryContextProvider(store=store, recent_turns=2)  # ty: ignore[deprecated]
     provider_state = store.export_provider_state(session)
     await provider.save_messages(
         session.session_id,
@@ -662,7 +713,7 @@ async def test_memory_context_provider_recent_turns_can_skip_tool_call_groups(tm
     """Recent-turn loading should follow compaction grouping and optionally skip tool-call groups."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
-    store = MemoryFileStore(
+    store = MemoryFileStore(  # ty: ignore[deprecated]
         tmp_path,
         kind="memories",
         owner_prefix="user_",
@@ -671,7 +722,7 @@ async def test_memory_context_provider_recent_turns_can_skip_tool_call_groups(tm
         loads=json.loads,
     )
     provider_state = store.export_provider_state(session)
-    await MemoryContextProvider(store=store).save_messages(
+    await MemoryContextProvider(store=store).save_messages(  # ty: ignore[deprecated]
         session.session_id,
         [
             Message(role="user", contents=["First question"]),
@@ -693,12 +744,12 @@ async def test_memory_context_provider_recent_turns_can_skip_tool_call_groups(tm
     )
     with_tools_agent = Agent(
         client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
-        context_providers=[MemoryContextProvider(store=store, recent_turns=2, load_tool_turns=True)],
+        context_providers=[MemoryContextProvider(store=store, recent_turns=2, load_tool_turns=True)],  # ty: ignore[deprecated]
         default_options=_no_store_options(),
     )
     without_tools_agent = Agent(
         client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
-        context_providers=[MemoryContextProvider(store=store, recent_turns=2, load_tool_turns=False)],
+        context_providers=[MemoryContextProvider(store=store, recent_turns=2, load_tool_turns=False)],  # ty: ignore[deprecated]
         default_options=_no_store_options(),
     )
 
@@ -743,7 +794,7 @@ async def test_memory_context_provider_marks_cross_session_origins(tmp_path) -> 
     """
     session = AgentSession(session_id="session-current")
     session.state["owner_id"] = "alice"
-    store = MemoryFileStore(
+    store = MemoryFileStore(  # ty: ignore[deprecated]
         tmp_path,
         owner_state_key="owner_id",
         dumps=lambda value: json.dumps(value, separators=(",", ":"), sort_keys=True),
@@ -752,7 +803,7 @@ async def test_memory_context_provider_marks_cross_session_origins(tmp_path) -> 
     updated_at = datetime(2026, 4, 21, tzinfo=timezone.utc).replace(microsecond=0).isoformat()
     store.write_topic(
         session,
-        MemoryTopicRecord(
+        MemoryTopicRecord(  # ty: ignore[deprecated]
             topic="travel preferences",
             summary="Loves Oslo trips.",
             memories=["Prefers Oslo in summer."],
@@ -764,7 +815,7 @@ async def test_memory_context_provider_marks_cross_session_origins(tmp_path) -> 
 
     agent = Agent(
         client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
-        context_providers=[MemoryContextProvider(store=store)],
+        context_providers=[MemoryContextProvider(store=store)],  # ty: ignore[deprecated]
         default_options=_no_store_options(),
     )
 
@@ -785,7 +836,7 @@ async def test_memory_context_provider_omits_origin_when_only_current_session(tm
     """When all contributing topics are from the current session, attribution must NOT advertise an origin."""
     session = AgentSession(session_id="session-current")
     session.state["owner_id"] = "alice"
-    store = MemoryFileStore(
+    store = MemoryFileStore(  # ty: ignore[deprecated]
         tmp_path,
         owner_state_key="owner_id",
         dumps=lambda value: json.dumps(value, separators=(",", ":"), sort_keys=True),
@@ -794,7 +845,7 @@ async def test_memory_context_provider_omits_origin_when_only_current_session(tm
     updated_at = datetime(2026, 4, 21, tzinfo=timezone.utc).replace(microsecond=0).isoformat()
     store.write_topic(
         session,
-        MemoryTopicRecord(
+        MemoryTopicRecord(  # ty: ignore[deprecated]
             topic="travel preferences",
             summary="Loves Oslo trips.",
             memories=["Prefers Oslo in summer."],
@@ -806,7 +857,7 @@ async def test_memory_context_provider_omits_origin_when_only_current_session(tm
 
     agent = Agent(
         client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
-        context_providers=[MemoryContextProvider(store=store)],
+        context_providers=[MemoryContextProvider(store=store)],  # ty: ignore[deprecated]
         default_options=_no_store_options(),
     )
 
@@ -827,7 +878,7 @@ async def test_memory_context_provider_uses_explicit_consolidation_client(tmp_pa
     """The memory provider should use the explicit consolidation client when one is configured."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
-    store = MemoryFileStore(
+    store = MemoryFileStore(  # ty: ignore[deprecated]
         tmp_path,
         kind="memories",
         owner_prefix="user_",
@@ -842,7 +893,7 @@ async def test_memory_context_provider_uses_explicit_consolidation_client(tmp_pa
             "memories": ["Visit Oslo in June."],
         }
     )
-    provider = MemoryContextProvider(
+    provider = MemoryContextProvider(  # ty: ignore[deprecated]
         store=store,
         consolidation_client=consolidation_client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     )
@@ -875,8 +926,8 @@ async def test_memory_context_provider_preserves_concurrent_writes_to_same_topic
     """Concurrent writes to one topic should preserve every memory line."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
-    provider = MemoryContextProvider(store=store)
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
+    provider = MemoryContextProvider(store=store)  # ty: ignore[deprecated]
     agent = Agent(client=_MemoryHarnessClient(), context_providers=[provider], default_options=_no_store_options())  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
@@ -930,14 +981,14 @@ class _GatedMemoryClient:
         return ChatResponse(messages=[Message(role="assistant", contents=["Assistant reply."])])
 
 
-def _gated_consolidation_setup(tmp_path: Path, client: _GatedMemoryClient) -> tuple[MemoryFileStore, Agent]:
+def _gated_consolidation_setup(tmp_path: Path, client: _GatedMemoryClient) -> tuple[MemoryFileStore, Agent]:  # ty: ignore[deprecated]
     """Seed an Old topic and one pending session so the next finished session triggers consolidation."""
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
-    provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))  # ty: ignore[deprecated]
     seed_session = _owned_session("session-a")
     store.write_topic(
         seed_session,
-        MemoryTopicRecord(
+        MemoryTopicRecord(  # ty: ignore[deprecated]
             topic="Old",
             summary="Old summary.",
             memories=["Old fact"],
@@ -961,7 +1012,7 @@ def _owned_session(session_id: str) -> AgentSession:
     return session
 
 
-def _pending_sessions(store: MemoryFileStore) -> list[str]:
+def _pending_sessions(store: MemoryFileStore) -> list[str]:  # ty: ignore[deprecated]
     pending: list[str] = store.read_state(_owned_session("reader"), source_id=DEFAULT_MEMORY_SOURCE_ID)[
         "sessions_since_consolidation"
     ]
@@ -1064,12 +1115,12 @@ async def test_automatic_consolidation_keeps_overlapping_turn_of_covered_session
     topic and register itself while a pass that snapshotted ``session-1`` as pending is still running.
     """
     client = _OrderedConsolidationClient(extraction_marker="Later turn")
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
-    provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))  # ty: ignore[deprecated]
     seed_session = _owned_session("session-a")
     store.write_topic(
         seed_session,
-        MemoryTopicRecord(
+        MemoryTopicRecord(  # ty: ignore[deprecated]
             topic="Old",
             summary="Old summary.",
             memories=["Old fact"],
@@ -1114,7 +1165,7 @@ class _RegisteringConsolidationClient:
 
     additional_properties: dict[str, Any]
 
-    def __init__(self, store: MemoryFileStore, session: AgentSession, session_id: str) -> None:
+    def __init__(self, store: MemoryFileStore, session: AgentSession, session_id: str) -> None:  # ty: ignore[deprecated]
         self.additional_properties = {}
         self.store = store
         self.session = session
@@ -1145,9 +1196,9 @@ async def test_memory_consolidation_retires_only_turns_in_its_snapshot(tmp_path:
     ``session-a`` is pending without a turn id, like state written before turn ids were recorded.
     """
     session = _owned_session("session-2")
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
     client = _RegisteringConsolidationClient(store, session, later_session_id)
-    provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))  # ty: ignore[deprecated]
     store.write_state(
         session,
         {
@@ -1159,7 +1210,7 @@ async def test_memory_consolidation_retires_only_turns_in_its_snapshot(tmp_path:
     )
     store.write_topic(
         session,
-        MemoryTopicRecord(
+        MemoryTopicRecord(  # ty: ignore[deprecated]
             topic="Old",
             summary="Old summary.",
             memories=["Old fact"],
@@ -1184,32 +1235,35 @@ async def test_memory_consolidation_retires_only_turns_in_its_snapshot(tmp_path:
     }
 
 
-class _LegacyStateMemoryStore(MemoryFileStore):
-    """Custom store that persists only the maintenance fields that existed before ``pending_turn_ids``."""
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", message=r"MemoryFileStore is deprecated\.", category=DeprecationWarning)
 
-    def __init__(self, base_path: Path, *, state: dict[str, Any]) -> None:
-        super().__init__(base_path, owner_state_key="owner_id")
-        self.state = state
+    class _LegacyStateMemoryStore(MemoryFileStore):  # ty: ignore[deprecated]
+        """Custom store that persists only the maintenance fields that existed before ``pending_turn_ids``."""
 
-    def read_state(self, session: AgentSession, *, source_id: str) -> dict[str, Any]:
-        del session, source_id
-        return {
-            "last_consolidated_at": self.state["last_consolidated_at"],
-            "sessions_since_consolidation": list(self.state["sessions_since_consolidation"]),
-        }
+        def __init__(self, base_path: Path, *, state: dict[str, Any]) -> None:
+            super().__init__(base_path, owner_state_key="owner_id")
+            self.state = state
 
-    def write_state(self, session: AgentSession, state: Mapping[str, Any], *, source_id: str) -> None:
-        del session, source_id
-        self.state = {
-            "last_consolidated_at": state["last_consolidated_at"],
-            "sessions_since_consolidation": list(state["sessions_since_consolidation"]),
-        }
+        def read_state(self, session: AgentSession, *, source_id: str) -> dict[str, Any]:
+            del session, source_id
+            return {
+                "last_consolidated_at": self.state["last_consolidated_at"],
+                "sessions_since_consolidation": list(self.state["sessions_since_consolidation"]),
+            }
+
+        def write_state(self, session: AgentSession, state: Mapping[str, Any], *, source_id: str) -> None:
+            del session, source_id
+            self.state = {
+                "last_consolidated_at": state["last_consolidated_at"],
+                "sessions_since_consolidation": list(state["sessions_since_consolidation"]),
+            }
 
 
 async def test_memory_provider_accepts_custom_store_state_without_turn_ids(tmp_path: Path) -> None:
     """A custom store returning state without ``pending_turn_ids`` still registers finished turns."""
     store = _LegacyStateMemoryStore(tmp_path, state={"last_consolidated_at": None, "sessions_since_consolidation": []})
-    provider = MemoryContextProvider(store=store, consolidation_min_sessions=10)
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=10)  # ty: ignore[deprecated]
     client = _MemoryHarnessClient(extraction_payload={"memories": []})
     agent = Agent(client=client, context_providers=[provider], default_options=_no_store_options())  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
@@ -1226,10 +1280,10 @@ async def test_memory_consolidation_accepts_custom_store_state_without_turn_ids(
     store = _LegacyStateMemoryStore(
         tmp_path, state={"last_consolidated_at": None, "sessions_since_consolidation": ["session-a", "session-b"]}
     )
-    provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=2, consolidation_interval=timedelta(0))  # ty: ignore[deprecated]
     store.write_topic(
         session,
-        MemoryTopicRecord(
+        MemoryTopicRecord(  # ty: ignore[deprecated]
             topic="Old",
             summary="Old summary.",
             memories=["Old fact"],
@@ -1269,9 +1323,9 @@ class _TwoTopicExtractionClient:
         return ChatResponse(messages=[Message(role="assistant", contents=["Assistant reply."])])
 
 
-def _two_topic_setup(tmp_path: Path) -> tuple[MemoryFileStore, MemoryContextProvider, Agent]:
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
-    provider = MemoryContextProvider(store=store, consolidation_min_sessions=10)
+def _two_topic_setup(tmp_path: Path) -> tuple[MemoryFileStore, MemoryContextProvider, Agent]:  # ty: ignore[deprecated]
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
+    provider = MemoryContextProvider(store=store, consolidation_min_sessions=10)  # ty: ignore[deprecated]
     agent = Agent(client=_TwoTopicExtractionClient(), context_providers=[provider], default_options=_no_store_options())  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     return store, provider, agent
 
@@ -1286,7 +1340,7 @@ async def test_memory_session_stays_pending_when_extraction_fails_after_a_topic_
         original_write_topic = store.write_topic
         written_topics: list[str] = []
 
-        def write_topic(session: AgentSession, record: MemoryTopicRecord, **kwargs: Any) -> None:
+        def write_topic(session: AgentSession, record: MemoryTopicRecord, **kwargs: Any) -> None:  # ty: ignore[deprecated]
             if written_topics:
                 raise OSError("disk full")
             written_topics.append(record.topic)
@@ -1296,7 +1350,7 @@ async def test_memory_session_stays_pending_when_extraction_fails_after_a_topic_
     else:
         original_rebuild_index = store.rebuild_index
 
-        def rebuild_index(session: AgentSession, **kwargs: Any) -> list[MemoryIndexEntry]:
+        def rebuild_index(session: AgentSession, **kwargs: Any) -> list[MemoryIndexEntry]:  # ty: ignore[deprecated]
             # ``before_run`` also rebuilds the index; fail only the rebuild after extraction wrote topics.
             if store.list_topics(session, source_id=DEFAULT_MEMORY_SOURCE_ID):
                 raise OSError("disk full")
@@ -1320,7 +1374,7 @@ async def test_memory_session_stays_pending_when_extraction_is_cancelled_after_a
     original_merge_memory = provider._merge_memory  # pyright: ignore[reportPrivateUsage]
     second_merge_started = asyncio.Event()
 
-    async def merge_memory(**kwargs: Any) -> MemoryTopicRecord:
+    async def merge_memory(**kwargs: Any) -> MemoryTopicRecord:  # ty: ignore[deprecated]
         if kwargs["topic"] == "Second":
             second_merge_started.set()
             await asyncio.Event().wait()
@@ -1342,17 +1396,17 @@ async def test_memory_session_stays_pending_when_extraction_is_cancelled_after_a
 
 def test_memory_harness_classes_are_marked_experimental() -> None:
     """Memory harness public classes should expose HARNESS experimental metadata."""
-    assert MemoryIndexEntry.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert MemoryTopicRecord.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert MemoryStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert MemoryFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert MemoryContextProvider.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    assert ".. warning:: Experimental" in MemoryContextProvider.__doc__  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert MemoryIndexEntry.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute, deprecated]
+    assert MemoryTopicRecord.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute, deprecated]
+    assert MemoryStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute, deprecated]
+    assert MemoryFileStore.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute, deprecated]
+    assert MemoryContextProvider.__feature_id__ == ExperimentalFeature.HARNESS.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute, deprecated]
+    assert ".. warning:: Experimental" in MemoryContextProvider.__doc__  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator, deprecated]
 
 
 def test_memory_topic_record_round_trips_when_text_contains_section_markers() -> None:
     """Embedded ``## Summary``/``## Memories`` markers must not be re-interpreted as headings."""
-    record = MemoryTopicRecord(
+    record = MemoryTopicRecord(  # ty: ignore[deprecated]
         topic="weird",
         summary="Multi line summary.\n## Summary\nstill summary",
         memories=[
@@ -1364,7 +1418,7 @@ def test_memory_topic_record_round_trips_when_text_contains_section_markers() ->
         session_ids=["session-1"],
     )
 
-    reparsed = MemoryTopicRecord.from_markdown(record.to_markdown())
+    reparsed = MemoryTopicRecord.from_markdown(record.to_markdown())  # ty: ignore[deprecated]
 
     assert reparsed.summary == record.summary
     assert reparsed.memories == record.memories
@@ -1372,10 +1426,10 @@ def test_memory_topic_record_round_trips_when_text_contains_section_markers() ->
 
 async def test_memory_file_store_atomic_write_preserves_prior_topic_on_failure(tmp_path, monkeypatch) -> None:
     """If ``os.replace`` fails mid-write, the previous topic file must remain intact."""
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
-    original = MemoryTopicRecord(
+    original = MemoryTopicRecord(  # ty: ignore[deprecated]
         topic="preferences",
         summary="Prefers concise answers.",
         memories=["Prefers concise answers."],
@@ -1393,7 +1447,7 @@ async def test_memory_file_store_atomic_write_preserves_prior_topic_on_failure(t
     with pytest.raises(OSError, match="simulated disk-full"):
         store.write_topic(
             session,
-            MemoryTopicRecord(
+            MemoryTopicRecord(  # ty: ignore[deprecated]
                 topic="preferences",
                 summary="Updated.",
                 memories=["Updated."],
@@ -1415,7 +1469,7 @@ async def test_memory_file_store_atomic_write_preserves_prior_topic_on_failure(t
 
 async def test_memory_file_store_does_not_mkdir_on_pure_read_paths(tmp_path) -> None:
     """List/read calls on a never-written session should not create any directories."""
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
 
@@ -1477,9 +1531,9 @@ async def test_memory_consolidation_transient_failure_preserves_state(tmp_path) 
     """A transient consolidation failure must not advance the maintenance window."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
     raising_client = _RaisingMemoryClient()
-    provider = MemoryContextProvider(store=store, consolidation_client=raising_client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    provider = MemoryContextProvider(store=store, consolidation_client=raising_client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type, deprecated]
     pre_state = {
         "last_consolidated_at": "2026-04-20T09:00:00+00:00",
         "sessions_since_consolidation": ["queued-session"],
@@ -1488,7 +1542,7 @@ async def test_memory_consolidation_transient_failure_preserves_state(tmp_path) 
     store.write_state(session, pre_state, source_id=DEFAULT_MEMORY_SOURCE_ID)
     store.write_topic(
         session,
-        MemoryTopicRecord(
+        MemoryTopicRecord(  # ty: ignore[deprecated]
             topic="preferences",
             summary="Prefers concise answers.",
             memories=["Prefers concise answers."],
@@ -1516,8 +1570,8 @@ async def test_memory_extraction_propagates_programmer_errors(tmp_path) -> None:
     """Non-transient errors from the chat client must surface so misconfigurations fail loudly."""
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
-    provider = MemoryContextProvider(store=store)
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
+    provider = MemoryContextProvider(store=store)  # ty: ignore[deprecated]
     bad_client = _ProgrammerErrorMemoryClient()
 
     from agent_framework import AgentResponse
@@ -1566,7 +1620,7 @@ def test_memory_file_store_derives_distinct_roots_for_colliding_owner_ids(tmp_pa
     same injectivity contract. Owner IDs that trip the independent traversal
     guard are rejected outright rather than merged.
     """
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
     roots: dict[str, Path] = {}
     rejected: set[str] = set()
     for owner_id in COLLIDING_IDENTIFIERS:
@@ -1587,7 +1641,7 @@ def test_memory_file_store_derives_distinct_roots_for_colliding_owner_ids(tmp_pa
 
 def test_memory_file_store_encodes_non_ascii_owner_ids(tmp_path) -> None:
     """NFC and NFD spellings of one word must not share a directory."""
-    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_state_key="owner_id")  # ty: ignore[deprecated]
     roots: list[Path] = []
     for owner_id in ("caf\u00e9", "cafe\u0301"):
         session = AgentSession(session_id="session-1")
@@ -1601,7 +1655,7 @@ def test_memory_file_store_encodes_non_ascii_owner_ids(tmp_path) -> None:
 
 def test_memory_file_store_uses_literal_folders_for_safe_identifiers(tmp_path) -> None:
     """Safe identifiers are readable on disk rather than opaque encoded segments."""
-    store = MemoryFileStore(tmp_path, owner_prefix="user_", owner_state_key="owner_id")
+    store = MemoryFileStore(tmp_path, owner_prefix="user_", owner_state_key="owner_id")  # ty: ignore[deprecated]
     session = AgentSession(session_id="session-1")
     session.state["owner_id"] = "alice"
 

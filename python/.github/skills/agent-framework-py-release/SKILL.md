@@ -478,8 +478,9 @@ The push output includes a `Create a pull request for '<branch>' on GitHub by vi
 ### 10. Maintainer handoff: tag and existing draft (only when authorized)
 
 After the reviewed bump PR merges, the maintainer selects the exact merged commit and creates the **one** overall
-tag matching its `python/.github/release-<fulltag>.json`. The maintainer creates a GitHub **draft** release for that tag, with the
-human-written title, complete release notes, and intended prerelease flag. Do not use a published release as the
+tag matching its `python/.github/release-<fulltag>.json`. The maintainer creates a GitHub **draft** release for that tag.
+The release title must exactly match the full tag name, including the `python-` prefix (for example, `python-1.26.0`).
+Include complete release notes and the intended prerelease flag. Do not use a published release as the
 trigger and do not create per-package tags. Release notes must be complete **before ESRP approval**; do not edit
 the draft, tag, or selected source while a release run is in progress.
 

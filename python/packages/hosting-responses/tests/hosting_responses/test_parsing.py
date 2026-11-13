@@ -157,6 +157,44 @@ class TestMessagesFromResponsesInput:
         assert content.additional_properties["openai"]["content_type"] == "input_file"
         assert content.additional_properties["openai_content_type"] == "input_file"
 
+    @pytest.mark.parametrize(
+        "file_data",
+        ["data:application/pdf;base64,JVBERi0xLjQK", "JVBERi0xLjQK"],
+        ids=["data_uri", "plain_base64"],
+    )
+    def test_input_file_via_file_data(self, file_data: str) -> None:
+        msgs = messages_from_responses_input([{"type": "input_file", "file_data": file_data, "filename": "report.pdf"}])
+        content = msgs[0].contents[0]
+        assert content.type == "data"
+        assert content.media_type == "application/pdf"
+        assert content.uri == "data:application/pdf;base64,JVBERi0xLjQK"
+        assert content.name == "report.pdf"
+        assert content.additional_properties["openai_content_type"] == "input_file"
+
+    @pytest.mark.parametrize("filename", [None, "data.unknownext"])
+    def test_input_file_plain_base64_without_known_type_is_octet_stream(self, filename: str | None) -> None:
+        item: dict[str, Any] = {"type": "input_file", "file_data": "JVBERi0xLjQK"}
+        if filename is not None:
+            item["filename"] = filename
+        content = messages_from_responses_input([item])[0].contents[0]
+        assert content.media_type == "application/octet-stream"
+
+    @pytest.mark.parametrize(
+        "file_data",
+        [
+            "",
+            123,
+            "data:application/pdf;base64",
+            "data:text/plain,hello%20world",
+            "data:application/pdf;base64,!!!!",
+            "!!!!",
+            "A",
+        ],
+    )
+    def test_input_file_with_invalid_file_data_raises(self, file_data: object) -> None:
+        with pytest.raises(ValueError, match="file_data"):
+            messages_from_responses_input([{"type": "input_file", "file_data": file_data}])
+
     def test_input_file_missing_anchor_raises(self) -> None:
         with pytest.raises(ValueError, match="input_file"):
             messages_from_responses_input([{"type": "input_file"}])

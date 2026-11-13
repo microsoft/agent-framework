@@ -787,6 +787,19 @@ def test_parse_contents_from_a2a_with_hosted_file_uri() -> None:
     assert contents[0].media_type == ""  # Converted None to empty string
 
 
+def test_parse_contents_from_a2a_raw_part_without_media_type_round_trips() -> None:
+    """A raw part without media_type becomes a valid data URI that can be sent back to an A2A agent."""
+
+    agent = A2AAgent(client=MagicMock(), http_client=None)
+
+    contents = agent._parse_contents_from_a2a([Part(raw=b"%PDF-1.7", filename="report.pdf")])  # noqa: SLF001
+
+    assert contents[0].type == "data"
+    assert contents[0].media_type == "application/octet-stream"
+    result = agent._prepare_message_for_a2a(Message(role="user", contents=contents))  # noqa: SLF001
+    assert result.parts[0].raw == b"%PDF-1.7"
+
+
 def test_auth_interceptor_parameter() -> None:
     """Test that auth_interceptor parameter is accepted without errors."""
     # Create a mock auth interceptor

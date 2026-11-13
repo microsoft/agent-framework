@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
@@ -64,19 +65,25 @@ internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
         List<string> storingAgents = [];
         var checkedAgents = 0;
 
-        foreach (var agent in this.ResolveAgents())
+        // Agents may be registered as scoped or transient, so they are resolved from a scope that is
+        // disposed once the check is done, the same way the response handler resolves them per run.
+        AsyncServiceScope serviceScope = this._serviceProvider.CreateAsyncScope();
+        await using (serviceScope.ConfigureAwait(false))
         {
-            if (agent.GetService<ChatClientAgent>() is not { } chatClientAgent)
+            foreach (var agent in ServiceCollectionExtensions.ResolveRegisteredAgents(serviceScope.ServiceProvider))
             {
-                // Hosting only reaches the store setting through ChatClientAgent's chat options, so any
-                // other agent runs untouched and there is nothing to report.
-                continue;
-            }
+                if (agent.GetService<ChatClientAgent>() is not { } chatClientAgent)
+                {
+                    // Hosting only reaches the store setting through ChatClientAgent's chat options, so any
+                    // other agent runs untouched and there is nothing to report.
+                    continue;
+                }
 
-            checkedAgents++;
-            if (await this.StoresItsOwnResponsesAsync(agent, cancellationToken).ConfigureAwait(false))
-            {
-                storingAgents.Add(agent.Name ?? agent.Id);
+                checkedAgents++;
+                if (await this.StoresItsOwnResponsesAsync(agent, cancellationToken).ConfigureAwait(false))
+                {
+                    storingAgents.Add(agent.Name ?? agent.Id);
+                }
             }
         }
 
@@ -153,11 +160,6 @@ internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
 
         return probe.StoredOutputEnabled is true;
     }
-
-    /// <summary>
-    /// Every agent this container can serve: the ones registered under a name, plus the default.
-    /// </summary>
-    private List<AIAgent> ResolveAgents() => ServiceCollectionExtensions.ResolveRegisteredAgents(this._serviceProvider);
 
     [LoggerMessage(LogLevel.Debug, "Could not probe the stored output setting for agent '{AgentName}'.", EventId = 0)]
     private static partial void LogStoredOutputProbeFailed(

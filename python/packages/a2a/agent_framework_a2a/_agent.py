@@ -1347,7 +1347,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     contents.append(
                         Content.from_data(
                             data=part.raw,
-                            media_type=part.media_type or "",
+                            # media_type is optional in A2A; "data:;base64,..." would not parse later.
+                            media_type=part.media_type or "application/octet-stream",
                             additional_properties=part_metadata,
                             raw_representation=part,
                         )

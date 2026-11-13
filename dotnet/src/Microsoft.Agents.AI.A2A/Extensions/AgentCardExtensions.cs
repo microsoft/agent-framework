@@ -26,10 +26,10 @@ namespace A2A;
 /// and dispose it as an <see cref="IDisposable"/>.
 /// </para>
 /// </remarks>
-public static class A2AAgentCardExtensions
+public static class AgentCardExtensions
 {
     /// <summary>
-    /// Retrieves an instance of <see cref="AIAgent"/> for an existing A2A agent.
+    /// Retrieves an instance of <see cref="A2AAgent"/> for an existing A2A agent.
     /// </summary>
     /// <remarks>
     /// This method can be used to access A2A agents that support the
@@ -43,8 +43,8 @@ public static class A2AAgentCardExtensions
     /// When not provided, defaults to preferring HTTP+JSON first, with JSON-RPC as fallback.
     /// </param>
     /// <param name="loggerFactory">The logger factory for enabling logging within the agent.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
-    public static AIAgent AsAIAgent(this AgentCard card, HttpClient? httpClient = null, A2AClientOptions? options = null, ILoggerFactory? loggerFactory = null)
+    /// <returns>An <see cref="A2AAgent"/> instance backed by the A2A agent.</returns>
+    public static A2AAgent AsAIAgent(this AgentCard card, HttpClient? httpClient = null, A2AClientOptions? options = null, ILoggerFactory? loggerFactory = null)
     {
         var a2aClient = A2AClientFactory.Create(card, httpClient, options);
 
@@ -52,7 +52,7 @@ public static class A2AAgentCardExtensions
     }
 
     /// <summary>
-    /// Retrieves an instance of <see cref="AIAgent"/> for an existing A2A agent.
+    /// Retrieves an instance of <see cref="A2AAgent"/> for an existing A2A agent.
     /// </summary>
     /// <remarks>
     /// This method can be used to access A2A agents that support the
@@ -71,8 +71,8 @@ public static class A2AAgentCardExtensions
     /// When not provided, defaults to preferring HTTP+JSON first, with JSON-RPC as fallback.
     /// </param>
     /// <param name="loggerFactory">The logger factory for enabling logging within the agent.</param>
-    /// <returns>An <see cref="AIAgent"/> instance backed by the A2A agent.</returns>
-    public static AIAgent AsAIAgent(this AgentCard card, A2AAgentOptions agentOptions, HttpClient? httpClient = null, A2AClientOptions? clientOptions = null, ILoggerFactory? loggerFactory = null)
+    /// <returns>An <see cref="A2AAgent"/> instance backed by the A2A agent.</returns>
+    public static A2AAgent AsAIAgent(this AgentCard card, A2AAgentOptions agentOptions, HttpClient? httpClient = null, A2AClientOptions? clientOptions = null, ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(card);
         _ = Throw.IfNull(agentOptions);
