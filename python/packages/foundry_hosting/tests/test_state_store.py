@@ -349,6 +349,56 @@ async def test_get_latest_breaks_ties_between_unsuperseded_checkpoints_by_id(
     assert latest.checkpoint_id == "leaf-b"
 
 
+@pytest.mark.parametrize(
+    ("parent_timestamp", "child_timestamp"),
+    [
+        ("2026-01-01T00:00:00", "2026-01-02T00:00:00+00:00"),
+        ("2026-01-01T00:00:00+00:00", "2026-01-02T00:00:00"),
+        ("2026-01-01T00:00:00", "2026-01-01T00:00:00+00:00"),
+    ],
+)
+@pytest.mark.parametrize("reverse_save_order", [False, True])
+async def test_get_latest_accepts_mixed_naive_and_aware_timestamps_after_save(
+    parent_timestamp: str, child_timestamp: str, reverse_save_order: bool
+) -> None:
+    """Naive timestamps use UTC when selecting saved checkpoints, including lineage ties."""
+    store = _store()
+    saved: dict[str, Any] = {}
+
+    async def set_item(key: str, value: Any, *, call_id: str) -> None:
+        saved[key] = value
+
+    async def get_item(key: str, *, call_id: str) -> SimpleNamespace:
+        return SimpleNamespace(value=saved[key])
+
+    store.set_item.side_effect = set_item
+    store.get_item.side_effect = get_item
+    checkpoints = [
+        _checkpoint("parent", timestamp=parent_timestamp),
+        _checkpoint("child", timestamp=child_timestamp, previous_checkpoint_id="parent"),
+    ]
+    if reverse_save_order:
+        checkpoints.reverse()
+    store.list_keys.return_value = SimpleNamespace(
+        keys=[SimpleNamespace(key=checkpoint.checkpoint_id) for checkpoint in checkpoints],
+        has_more=False,
+        last_id=None,
+    )
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ):
+        storage = FoundryCheckpointStore("context-1", _platform_context())
+        for checkpoint in checkpoints:
+            await storage.save(checkpoint)
+        latest = await storage.get_latest(workflow_name="workflow")
+
+    assert latest is not None
+    assert latest.checkpoint_id == "child"
+    assert saved["parent"]["timestamp"] == parent_timestamp
+    assert saved["child"]["timestamp"] == child_timestamp
+
+
 async def test_get_latest_returns_none_when_no_checkpoints_exist(monkeypatch: pytest.MonkeyPatch) -> None:
     storage = FoundryCheckpointStore("context-1", _platform_context())
     monkeypatch.setattr(storage, "list_checkpoints", AsyncMock(return_value=[]))

@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
 
 import hashlib
 import json
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Generic, Protocol, TypeVar
 
 from agent_framework import (
@@ -34,6 +35,12 @@ def _encoded_checkpoint_hash(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _parse_checkpoint_timestamp(timestamp: str) -> datetime:
+    """Treat naive checkpoint timestamps as UTC when comparing checkpoints."""
+    parsed = datetime.fromisoformat(timestamp)
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+
+
 def _select_latest_checkpoint(checkpoints: list[WorkflowCheckpoint]) -> WorkflowCheckpoint:
     """Return the latest checkpoint, resolving timestamp ties through the lineage chain.
 
@@ -44,8 +51,8 @@ def _select_latest_checkpoint(checkpoints: list[WorkflowCheckpoint]) -> Workflow
     If several unsuperseded candidates remain, the one with the greatest ``checkpoint_id``
     is returned, so the choice among them is stable too.
     """
-    newest_timestamp = max(datetime.fromisoformat(cp.timestamp) for cp in checkpoints)
-    candidates = [cp for cp in checkpoints if datetime.fromisoformat(cp.timestamp) == newest_timestamp]
+    newest_timestamp = max(_parse_checkpoint_timestamp(cp.timestamp) for cp in checkpoints)
+    candidates = [cp for cp in checkpoints if _parse_checkpoint_timestamp(cp.timestamp) == newest_timestamp]
     superseded_ids = {cp.previous_checkpoint_id for cp in candidates}
     leaves = [cp for cp in candidates if cp.checkpoint_id not in superseded_ids]
     return max(leaves or candidates, key=lambda cp: cp.checkpoint_id)
