@@ -1204,6 +1204,50 @@ class TestRedisHistoryProviderGetMessages:
         messages = await provider.get_messages("s1")
         assert messages == []
 
+    async def test_skips_malformed_entries(self, mock_redis_client: MagicMock):
+        msg = Message(role="user", contents=["Hello"])
+        mock_redis_client.lrange = AsyncMock(
+            return_value=[
+                "",
+                "not-json",
+                "null",  # valid JSON, but deserializes to None
+                "[]",  # valid JSON, but deserializes to a list
+                "{}",  # valid JSON, but missing the required "role" field
+                json.dumps(msg.to_dict()),
+            ]
+        )
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379", application_id="test-app")
+
+        messages = await provider.get_messages("s1")
+        assert len(messages) == 1
+        assert messages[0].text == "Hello"
+
+    async def test_malformed_entries_do_not_leak_payload_in_logs(
+        self, mock_redis_client: MagicMock, caplog: pytest.LogCaptureFixture
+    ):
+        # A payload whose ``type`` field carries a private value must not be echoed
+        # into the skip warning: ``Message.from_dict`` embeds ``type`` in mismatch
+        # errors, and logging ``str(exc)`` would copy it into application logs.
+        sensitive = "secret-internal-token"
+        mock_redis_client.lrange = AsyncMock(
+            return_value=[json.dumps({"type": sensitive, "role": "unknown"})]
+        )
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379", application_id="test-app")
+
+        with caplog.at_level("WARNING", logger="agent_framework_redis._history_provider"):
+            messages = await provider.get_messages("s1")
+
+        assert messages == []
+        warning_text = "\n".join(r.message for r in caplog.records)
+        assert "Skipping malformed Redis history entry" in warning_text
+        assert sensitive not in warning_text
+
     async def test_returns_messages_when_lrange_is_synchronous(self, mock_redis_client: MagicMock):
         """redis-py types several commands as returning a value or an awaitable; handle both."""
         msg = Message(role="user", contents=["Hello"])

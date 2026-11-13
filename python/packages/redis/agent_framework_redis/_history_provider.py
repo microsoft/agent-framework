@@ -9,6 +9,7 @@ This module provides ``RedisHistoryProvider``, built on the new
 from __future__ import annotations
 
 import json
+import logging
 import warnings
 from collections.abc import Awaitable, Sequence
 from copy import copy
@@ -29,6 +30,8 @@ from redis.credentials import CredentialProvider
 from redis.exceptions import WatchError
 
 from ._feature_usage import FeatureIndex
+
+logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
@@ -371,7 +374,18 @@ class RedisHistoryProvider(HistoryProvider):
         redis_messages = cast("list[str]", await _redis_result(cast("Any", self._redis_client).lrange(key, 0, -1)))
         messages: list[Message] = []
         for serialized in redis_messages:
-            messages.append(Message.from_dict(self._deserialize_json(serialized)))
+            try:
+                payload = self._deserialize_json(serialized)
+                if not isinstance(payload, dict):
+                    raise ValueError(f"Expected a JSON object, got {type(payload).__name__}")
+                messages.append(Message.from_dict(payload))
+            except (ValueError, TypeError, AttributeError, json.JSONDecodeError) as exc:
+                # Log the exception class, not its message: ``Message.from_dict``
+                # embeds the payload's ``type`` value in mismatch errors, so logging
+                # ``str(exc)`` could copy untrusted history data into application logs.
+                logger.warning(
+                    "Skipping malformed Redis history entry (%s)", type(exc).__name__
+                )
         return messages
 
     async def save_messages(
