@@ -172,7 +172,7 @@ internal sealed class McpResponseLimitHandler(HttpMessageHandler innerHandler, i
 #endif
 
         private int GetReadCount(int count) =>
-            (int)Math.Min(count, Math.Min(81920L, isEventStream ? (long)limit + 1 : limit - this._bytesRead + 1));
+            (int)Math.Min(count, Math.Min(81920L, limit - this._bytesRead + 1));
 
         private void ValidateBytes(ReadOnlySpan<byte> buffer)
         {

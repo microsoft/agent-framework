@@ -225,9 +225,11 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ResponseLimits_UnknownLength_StopsReadingAtFirstExcessByteAsync(bool useEventStream)
+    [InlineData(false, 0)]
+    [InlineData(true, 0)]
+    [InlineData(false, 20)]
+    [InlineData(true, 20)]
+    public async Task ResponseLimits_UnknownLength_StopsReadingAtFirstExcessByteAsync(bool useEventStream, int initialReadCount)
     {
         // Arrange
         using MemoryStream source = new(Encoding.UTF8.GetBytes(new string('a', 500)));
@@ -237,14 +239,17 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
 
         // Act
 #if NET
+        int read = await limited.ReadAsync(buffer.AsMemory(0, initialReadCount), timeout.Token);
         await Assert.ThrowsAsync(useEventStream ? typeof(InvalidDataException) : typeof(HttpRequestException),
             () => limited.ReadAsync(buffer, timeout.Token).AsTask());
 #else
+        int read = await limited.ReadAsync(buffer, 0, initialReadCount, timeout.Token);
         await Assert.ThrowsAsync(useEventStream ? typeof(InvalidDataException) : typeof(HttpRequestException),
             () => limited.ReadAsync(buffer, 0, buffer.Length, timeout.Token));
 #endif
 
         // Assert
+        Assert.Equal(initialReadCount, read);
         Assert.Equal(33, source.Position);
     }
 
