@@ -77,6 +77,9 @@ the dependencies declared in the script:
 uv run --script --prerelease=allow main.py
 ```
 
+For deployment environment settings, see the
+[Python startup configuration](../../README.md#python-startup-configuration).
+
 Additional sample imports belong in inline script metadata, not a workspace,
 package or sample `pyproject.toml`. Before the coordinated hosting beta is
 published, use the current workspace's installed packages

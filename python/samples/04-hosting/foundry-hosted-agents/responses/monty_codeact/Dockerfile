@@ -1,5 +1,7 @@
 FROM python:3.12-slim
 
+ENV PYTHONNOUSERSITE=1
+
 # Bring in the `uv` binary from a pinned Astral image. Update this tag intentionally;
 # `latest` would make rebuilds non-deterministic.
 COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /uvx /usr/local/bin/

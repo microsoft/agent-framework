@@ -16,3 +16,6 @@ template:
   protocols:
     - protocol: responses
       version: 2.0.0
+  environment_variables:
+    - name: PYTHONNOUSERSITE
+      value: "1"
