@@ -104,6 +104,180 @@ class TestPowerFxBuiltinFunctions:
         result = state.eval('=If(IsBlank(Workflow.Inputs.name), "World", Workflow.Inputs.name)')
         assert result == "Alice"
 
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            '=If(IsBlank(inputs.name), "World", inputs.name)',
+            '=If(IsBlank(Workflow.Inputs.name), "World", Workflow.Inputs.name)',
+            "=If(IsBlank(inputs.'name'), \"World\", inputs.'name')",
+            "=If(IsBlank(Workflow.Inputs.'name'), \"World\", Workflow.Inputs.'name')",
+            '=If(IsBlank(inputs . name), "World", inputs /* field */ . name)',
+            '=If(IsBlank(Workflow . Inputs . name), "World", Workflow // root\n.Inputs.name)',
+            '=$"{If(IsBlank(inputs.name), "World", inputs.name)}"',
+        ],
+    )
+    async def test_if_with_isblank_when_input_is_missing(self, mock_state, expression):
+        """Test that an input the caller did not supply is blank, so IsBlank defaults apply."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"other": 1})
+
+        assert state.eval(expression) == "World"
+        assert state.eval("=IsBlank(inputs.name)") is True
+        # The missing input is only bound for evaluation, not written to state.
+        assert "name" not in state.get_state_data()["Inputs"]
+
+    @pytest.mark.parametrize("inputs", [{"other": 1}, {"user": {"id": 1}}])
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            '=If(IsBlank(inputs.user.name), "World", inputs.user.name)',
+            '=If(IsBlank(Workflow.Inputs.user.name), "World", Workflow.Inputs.user.name)',
+        ],
+    )
+    async def test_if_with_isblank_when_nested_input_is_missing(self, mock_state, inputs, expression):
+        """Test that a missing nested input is blank whether or not its parent record was supplied."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize(inputs)
+
+        assert state.eval(expression) == "World"
+        assert state.get_state_data()["Inputs"] == inputs
+
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            '=If(IsBlank(inputs.user), "anonymous", "known: " & inputs.user.name)',
+            "=Sum(inputs.items, Value)",
+        ],
+    )
+    async def test_unbindable_missing_inputs_keep_undefined_fallback(self, mock_state, expression):
+        """Test that formulas the blank bindings cannot make valid still evaluate to ``None``."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"other": 1})
+
+        assert state.eval(expression) is None
+
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            "=inputs /* inputs.name */",
+            "=inputs // Workflow.Inputs.name",
+            '=If(Len("inputs.name") > 0, inputs, inputs)',
+            '=If(Len($"Workflow.Inputs.name") > 0, inputs, inputs)',
+        ],
+    )
+    async def test_input_references_in_comments_and_literals_are_not_bound(self, mock_state, expression):
+        """Test that input-like text in comments and string literals does not add blank inputs."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"other": 1})
+
+        assert state.eval(expression) == {"other": 1}
+
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [
+            ('=If(Local . inputs . name = "local", inputs, inputs)', {"other": 1}),
+            ('=If(Local./* member */inputs.name = "local", inputs, inputs)', {"other": 1}),
+            (
+                '=With({inputs: {name: "local"}}, {Chosen: inputs.name, Received: Workflow.Inputs})',
+                {"Chosen": "local", "Received": {"other": 1}},
+            ),
+        ],
+    )
+    async def test_member_names_and_local_bindings_are_not_workflow_inputs(self, mock_state, expression, expected):
+        """Test that ``inputs`` as a member name or a local binding does not add blank workflow inputs."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"other": 1})
+        state.set("Local.inputs", {"name": "local"})
+
+        assert state.eval(expression) == expected
+
+    async def test_custom_inputs_namespace_keeps_workflow_inputs(self, mock_state):
+        """Test that a custom ``inputs`` namespace does not replace the workflow inputs record."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"name": "Alice"})
+        state.set("inputs.other", 1)
+
+        assert state.eval("=Workflow.Inputs.name") == "Alice"
+        assert state.eval("=inputs.other") == 1
+        assert state.eval('=If(IsBlank(Workflow.Inputs.missing), "World", Workflow.Inputs.missing)') == "World"
+
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [
+            (
+                (
+                    '=With({inputs: {name: "local"}}, {Chosen: inputs.name, '
+                    'Default: If(IsBlank(Workflow.Inputs.missing), "World", Workflow.Inputs.missing), '
+                    "Received: Workflow.Inputs})"
+                ),
+                {"Chosen": "local", "Default": "World", "Received": {"other": 1, "missing": None}},
+            ),
+            (
+                (
+                    '=With({Workflow: {Inputs: {name: "local"}}}, {Chosen: Workflow.Inputs.name, '
+                    'Default: If(IsBlank(inputs.missing), "World", inputs.missing), Received: inputs})'
+                ),
+                {"Chosen": "local", "Default": "World", "Received": {"other": 1, "missing": None}},
+            ),
+            (
+                (
+                    '=With({inputs: {name: "local"}, prefix: "😀"}, {Chosen: inputs.name, '
+                    'Default: If(IsBlank(Workflow.Inputs.missing), "World", Workflow.Inputs.missing), '
+                    "Received: Workflow.Inputs})"
+                ),
+                {"Chosen": "local", "Default": "World", "Received": {"other": 1, "missing": None}},
+            ),
+            (
+                (
+                    '=With({name: "local"} As inputs, {Chosen: inputs.name, '
+                    'Default: If(IsBlank(Workflow.Inputs.missing), "World", Workflow.Inputs.missing), '
+                    "Received: Workflow.Inputs})"
+                ),
+                {"Chosen": "local", "Default": "World", "Received": {"other": 1, "missing": None}},
+            ),
+            (
+                (
+                    '=ForAll([{inputs: {name: "local"}}], {Chosen: inputs.name, '
+                    'Default: If(IsBlank(Workflow.Inputs.missing), "World", Workflow.Inputs.missing), '
+                    "Received: Workflow.Inputs})"
+                ),
+                [{"Chosen": "local", "Default": "World", "Received": {"other": 1, "missing": None}}],
+            ),
+            (
+                (
+                    '=With({inputs: {name: "local"}}, {Chosen: inputs.unknown, '
+                    'Default: If(IsBlank(Workflow.Inputs.missing), "World", Workflow.Inputs.missing), '
+                    "Received: Workflow.Inputs})"
+                ),
+                None,
+            ),
+        ],
+    )
+    async def test_local_bindings_do_not_add_global_fields_during_retry(self, mock_state, expression, expected):
+        """Only missing global input references may extend the workflow record on retry."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"other": 1})
+
+        assert state.eval(expression) == expected
+        assert state.get_state_data()["Inputs"] == {"other": 1}
+
+    @pytest.mark.parametrize(
+        "error_message",
+        [
+            "Name isn't valid. 'name' isn't recognized.",
+            "Power Fx failed compilation: Error 9999 - 10000 : Name isn't valid. 'name' isn't recognized.",
+        ],
+    )
+    async def test_unknown_diagnostic_format_keeps_undefined_fallback(self, mock_state, monkeypatch, error_message):
+        """Missing or invalid diagnostic locations must not introduce speculative input fields."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"other": 1})
+        evaluate = MagicMock(side_effect=[ValueError(error_message), "unexpected retry"])
+        monkeypatch.setattr(state, "_eval_powerfx", evaluate)
+
+        assert state.eval('=If(IsBlank(inputs.name), "World", inputs.name)') is None
+        evaluate.assert_called_once()
+
     async def test_not_function(self, mock_state):
         """Test Not function."""
         state = DeclarativeWorkflowState(mock_state)

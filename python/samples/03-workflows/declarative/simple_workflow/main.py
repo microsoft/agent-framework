@@ -25,6 +25,8 @@ async def main() -> None:
     # Run with a custom name
     print("\nRunning with custom name 'Alice':")
     result = await workflow.run({"name": "Alice"})
+    for output in result.get_outputs():
+        print(f"  Output: {output}")
     print("\n" + "-" * 40)
     print("Workflow completed!")
 
