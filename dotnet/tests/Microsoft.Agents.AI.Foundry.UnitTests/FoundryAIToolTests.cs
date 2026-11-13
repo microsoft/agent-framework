@@ -5,6 +5,7 @@ using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -68,6 +69,71 @@ public class FoundryAIToolTests
         using JsonDocument body = JsonDocument.Parse(requestBody!);
         JsonElement tool = Assert.Single(body.RootElement.GetProperty("tools").EnumerateArray());
         Assert.Equal("{\"type\":\"computer\"}", tool.GetRawText());
+    }
+
+    [Fact]
+    public async Task HostedImageGenerationTool_StreamingWithoutPartialImages_YieldsFinalImageAsync()
+    {
+        // Arrange
+        const string Output = """
+            event: response.created
+            data: {"type":"response.created","response":{"id":"resp_final","object":"response","created_at":1741892091,"status":"in_progress","model":"gpt-4o-2024-11-20","output":[]}}
+
+            event: response.output_item.added
+            data: {"type":"response.output_item.added","output_index":0,"item":{"type":"image_generation_call","id":"img_call_final","status":"in_progress"}}
+
+            event: response.image_generation_call.in_progress
+            data: {"type":"response.image_generation_call.in_progress","item_id":"img_call_final","output_index":0}
+
+            event: response.image_generation_call.generating
+            data: {"type":"response.image_generation_call.generating","item_id":"img_call_final","output_index":0}
+
+            event: response.output_item.done
+            data: {"type":"response.output_item.done","output_index":0,"item":{"type":"image_generation_call","id":"img_call_final","status":"completed","result":"RmluYWw="}}
+
+            event: response.completed
+            data: {"type":"response.completed","response":{"id":"resp_final","object":"response","created_at":1741892091,"status":"completed","model":"gpt-4o-2024-11-20","output":[{"type":"image_generation_call","id":"img_call_final","status":"completed","result":"RmluYWw="}],"usage":{"input_tokens":15,"output_tokens":0,"total_tokens":15}}}
+
+
+            """;
+
+        using var handler = new HttpHandlerAssert(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(Output, Encoding.UTF8, "text/event-stream"),
+        }));
+#pragma warning disable CA5399
+        using var httpClient = new HttpClient(handler);
+#pragma warning restore CA5399
+        IChatClient chatClient = new OpenAIClient(
+                new ApiKeyCredential("test-key"),
+                new OpenAIClientOptions { Transport = new HttpClientPipelineTransport(httpClient) })
+            .GetResponsesClient()
+            .AsIChatClient("gpt-4o");
+        var imageTool = new HostedImageGenerationTool
+        {
+            Options = new ImageGenerationOptions
+            {
+                ModelId = "gpt-image-1",
+                MediaType = "image/jpeg",
+            },
+        };
+        List<ChatResponseUpdate> updates = [];
+
+        // Act
+        await foreach (ChatResponseUpdate update in chatClient.GetStreamingResponseAsync(
+            "Generate an image.",
+            new ChatOptions { Tools = [imageTool] }))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        var result = Assert.Single(updates.SelectMany(update => update.Contents).OfType<ImageGenerationToolResultContent>());
+        Assert.Equal("img_call_final", result.CallId);
+        Assert.IsType<ImageGenerationCallResponseItem>(result.RawRepresentation);
+        var image = Assert.IsType<DataContent>(Assert.Single(result.Outputs!));
+        Assert.Equal("image/jpeg", image.MediaType);
+        Assert.Equal("Final", Encoding.UTF8.GetString(image.Data.ToArray()));
     }
 
     [Fact]
