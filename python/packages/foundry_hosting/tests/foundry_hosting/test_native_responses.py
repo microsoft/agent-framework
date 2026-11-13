@@ -1000,9 +1000,13 @@ async def test_real_sdk_background_cancel_drains_suspended_executor_and_blocks_c
         await asyncio.wait_for(stopped.wait(), timeout=2)
         result = await _poll(client, response_id)
     assert result["status"] == "cancelled"
-    record, _ = await FoundryWorkflowBindingStore(FoundryRequestScope("sandbox", None, None, False)).get_response(
-        response_id
-    )
+    binding_store = FoundryWorkflowBindingStore(FoundryRequestScope("sandbox", None, None, False))
+    # Executor shutdown can precede asynchronous persistence of the blocked binding.
+    for _ in range(150):
+        record, _ = await binding_store.get_response(response_id)
+        if record is not None and record.status == "blocked":
+            break
+        await asyncio.sleep(0.01)
     assert record is not None and record.status == "blocked"
 
 
