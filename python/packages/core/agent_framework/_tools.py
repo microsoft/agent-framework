@@ -6703,20 +6703,27 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
         # Dispatch to the shape-specific loop; both loops follow the same approval -> model -> execution phases.
         if not stream:
-            return self._get_response_with_function_invocation(
-                super_get_response=super_get_response,
-                messages=messages,
-                options=mutable_options,
-                request_kwargs=request_kwargs,
-                compaction_strategy=compaction_strategy,
-                tokenizer=tokenizer,
-                execute_function_calls=execute_function_calls,
-                invocation_session=invocation_session,
-                approval_session_is_authoritative=approval_session_is_authoritative,
-                budget_state=budget_state,
-                max_errors=max_errors,
-                middleware_pipeline=function_middleware_pipeline,
-            )
+
+            async def _run_non_streaming() -> ChatResponse[Any]:
+                try:
+                    return await self._get_response_with_function_invocation(
+                        super_get_response=super_get_response,
+                        messages=messages,
+                        options=mutable_options,
+                        request_kwargs=request_kwargs,
+                        compaction_strategy=compaction_strategy,
+                        tokenizer=tokenizer,
+                        execute_function_calls=execute_function_calls,
+                        invocation_session=invocation_session,
+                        approval_session_is_authoritative=approval_session_is_authoritative,
+                        budget_state=budget_state,
+                        max_errors=max_errors,
+                        middleware_pipeline=function_middleware_pipeline,
+                    )
+                finally:
+                    _clear_budget_state_from_session(invocation_session, budget_state)
+
+            return _run_non_streaming()
 
         response_format = mutable_options.get("response_format")
         invalidation_error: list[ResponseInvalidatedException] = []
@@ -6726,22 +6733,36 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 raise invalidation_error[0]
             return self._finalize_function_invocation_updates(updates, response_format=response_format)
 
+        async def _run_streaming() -> AsyncIterable[ChatResponseUpdate]:
+            updates: AsyncIterable[ChatResponseUpdate] | None = None
+            try:
+                updates = self._stream_response_with_function_invocation(
+                    super_get_response=super_get_response,
+                    messages=messages,
+                    options=mutable_options,
+                    request_kwargs=request_kwargs,
+                    compaction_strategy=compaction_strategy,
+                    tokenizer=tokenizer,
+                    execute_function_calls=execute_function_calls,
+                    invocation_session=invocation_session,
+                    approval_session_is_authoritative=approval_session_is_authoritative,
+                    budget_state=budget_state,
+                    max_errors=max_errors,
+                    middleware_pipeline=function_middleware_pipeline,
+                    invalidation_error=invalidation_error,
+                )
+                async for update in updates:
+                    yield update
+            finally:
+                try:
+                    close = getattr(updates, "aclose", None)
+                    if close is not None:
+                        await close()
+                finally:
+                    _clear_budget_state_from_session(invocation_session, budget_state)
+
         return ResponseStream(
-            self._stream_response_with_function_invocation(
-                super_get_response=super_get_response,
-                messages=messages,
-                options=mutable_options,
-                request_kwargs=request_kwargs,
-                compaction_strategy=compaction_strategy,
-                tokenizer=tokenizer,
-                execute_function_calls=execute_function_calls,
-                invocation_session=invocation_session,
-                approval_session_is_authoritative=approval_session_is_authoritative,
-                budget_state=budget_state,
-                max_errors=max_errors,
-                middleware_pipeline=function_middleware_pipeline,
-                invalidation_error=invalidation_error,
-            ),
+            _run_streaming(),
             finalizer=finalize_stream,
         )
 
