@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -42,6 +43,10 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// disables the client's independent timeout so longer workflow deadlines are honored.
 /// </para>
 /// <para>
+/// Response bodies are limited to 10 MiB after any decompression performed by the HTTP pipeline.
+/// Responses exceeding this limit throw <see cref="HttpRequestException"/> before string decoding.
+/// </para>
+/// <para>
 /// Redirects are handled explicitly so each destination is checked against the allowlist and workflow-supplied
 /// headers are not forwarded. Before sending, the pipeline must terminate in a supported HTTP transport with
 /// automatic redirects and cookies disabled. Unsupported transports are rejected. Application-owned delegating
@@ -51,6 +56,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
 {
     private const int MaxAutomaticRedirections = 50;
+    private const int MaxResponseBodySize = 10 * 1024 * 1024;
 
     private readonly AllowedHttpHosts _allowedHosts;
     private readonly IHttpMessageHandlerFactory _httpMessageHandlerFactory;
@@ -155,9 +161,14 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
                 continue;
             }
 
-            string? body = httpResponse.Content is null
-                ? null
-                : await ReadResponseBodyAsStringAsync(httpResponse.Content, effectiveToken).ConfigureAwait(false);
+            effectiveToken.ThrowIfCancellationRequested();
+            string? body = null;
+            if (httpResponse.Content is not null)
+            {
+                body = httpRequest.Method == HttpMethod.Head || httpResponse.StatusCode == HttpStatusCode.NotModified
+                    ? string.Empty
+                    : await ReadResponseBodyAsStringAsync(httpResponse.Content, effectiveToken).ConfigureAwait(false);
+            }
 
             Dictionary<string, IReadOnlyList<string>> headers = new(StringComparer.OrdinalIgnoreCase);
             AppendHeaders(headers, httpResponse.Headers);
@@ -180,27 +191,80 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
 
     private static async Task<string> ReadResponseBodyAsStringAsync(HttpContent content, CancellationToken cancellationToken)
     {
-#if NET
-        return await content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+#if NET9_0_OR_GREATER
+        await content.LoadIntoBufferAsync(MaxResponseBodySize, cancellationToken).ConfigureAwait(false);
 #else
-        Task<string> readTask = content.ReadAsStringAsync();
-        Task cancellationTask = Task.Delay(Timeout.Infinite, cancellationToken);
+        Task readTask = content.LoadIntoBufferAsync(MaxResponseBodySize);
+        using CancellationTokenSource cancellationWaitCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task cancellationTask = Task.Delay(Timeout.Infinite, cancellationWaitCts.Token);
         Task completedTask = await Task.WhenAny(readTask, cancellationTask).ConfigureAwait(false);
-        if (completedTask == readTask)
+        cancellationWaitCts.Cancel();
+        if (completedTask != readTask)
         {
-            return await readTask.ConfigureAwait(false);
+            content.Dispose();
+            _ = readTask.ContinueWith(
+                static task => _ = task.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new OperationCanceledException(cancellationToken);
         }
 
-        content.Dispose();
-        _ = readTask.ContinueWith(
-            static task => _ = task.Exception,
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-
+        await readTask.ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        throw new OperationCanceledException(cancellationToken);
 #endif
+
+        // Copying buffered content to a counting sink checks its actual size without another body allocation.
+        using ResponseBodySizeValidator validator = new();
+#if NET
+        await content.CopyToAsync(validator, cancellationToken).ConfigureAwait(false);
+#else
+        await content.CopyToAsync(validator).ConfigureAwait(false);
+#endif
+        cancellationToken.ThrowIfCancellationRequested();
+
+#if NET
+        string body = await content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+#else
+        string body = await content.ReadAsStringAsync().ConfigureAwait(false);
+#endif
+        cancellationToken.ThrowIfCancellationRequested();
+        return body;
+    }
+
+    private sealed class ResponseBodySizeValidator : Stream
+    {
+        private long _bytesWritten;
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (count > MaxResponseBodySize - this._bytesWritten)
+            {
+                throw new HttpRequestException($"The HTTP response body exceeds the maximum size of {MaxResponseBodySize} bytes.");
+            }
+
+            this._bytesWritten += count;
+        }
     }
 
     private static HttpRequestMessage BuildHttpRequestMessage(HttpRequestInfo request)
