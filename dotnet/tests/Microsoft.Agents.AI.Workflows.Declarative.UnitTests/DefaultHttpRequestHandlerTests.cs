@@ -1009,6 +1009,28 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData(1L)]
+    public async Task SendAsyncRejectsBufferedResponseBodyAboveLimitAsync(long? contentLength)
+    {
+        // Arrange
+        using SizedContent content = new((10 * 1024 * 1024) + 1);
+        await content.LoadIntoBufferAsync();
+        content.Headers.ContentLength = contentLength;
+        using HttpResponseMessage response = new(HttpStatusCode.OK) { Content = content };
+#pragma warning disable CA2025
+        using TestHttpMessageHandler messageHandler = new((_, _) => Task.FromResult(response));
+#pragma warning restore CA2025
+        DefaultHttpRequestHandler handler = new(["api.example.test"], CreateHttpMessageHandlerFactory(messageHandler).Object);
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(new HttpRequestInfo { Url = TestUrl }, TestContext.Current.CancellationToken);
+
+        // Assert
+        await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(10 * 1024 * 1024)]
     public async Task SendAsyncAcceptsResponseBodyWithinLimitAsync(int bodyLength)

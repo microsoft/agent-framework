@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -187,32 +188,69 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler
     {
 #if NET9_0_OR_GREATER
         await content.LoadIntoBufferAsync(MaxResponseBodySize, cancellationToken).ConfigureAwait(false);
-        return await content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 #else
         Task readTask = content.LoadIntoBufferAsync(MaxResponseBodySize);
         Task cancellationTask = Task.Delay(Timeout.Infinite, cancellationToken);
         Task completedTask = await Task.WhenAny(readTask, cancellationTask).ConfigureAwait(false);
-        if (completedTask == readTask)
+        if (completedTask != readTask)
         {
-            await readTask.ConfigureAwait(false);
+            content.Dispose();
+            _ = readTask.ContinueWith(
+                static task => _ = task.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+
             cancellationToken.ThrowIfCancellationRequested();
-#if NET
-            return await content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-#else
-            return await content.ReadAsStringAsync().ConfigureAwait(false);
-#endif
+            throw new OperationCanceledException(cancellationToken);
         }
 
-        content.Dispose();
-        _ = readTask.ContinueWith(
-            static task => _ = task.Exception,
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-
+        await readTask.ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
-        throw new OperationCanceledException(cancellationToken);
 #endif
+
+        // Copying buffered content to a counting sink checks its actual size without another body allocation.
+        using ResponseBodySizeValidator validator = new();
+#if NET
+        await content.CopyToAsync(validator, cancellationToken).ConfigureAwait(false);
+        return await content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+#else
+        await content.CopyToAsync(validator).ConfigureAwait(false);
+        return await content.ReadAsStringAsync().ConfigureAwait(false);
+#endif
+    }
+
+    private sealed class ResponseBodySizeValidator : Stream
+    {
+        private long _bytesWritten;
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (count > MaxResponseBodySize - this._bytesWritten)
+            {
+                throw new HttpRequestException($"The HTTP response body exceeds the maximum size of {MaxResponseBodySize} bytes.");
+            }
+
+            this._bytesWritten += count;
+        }
     }
 
     private static HttpRequestMessage BuildHttpRequestMessage(HttpRequestInfo request)
