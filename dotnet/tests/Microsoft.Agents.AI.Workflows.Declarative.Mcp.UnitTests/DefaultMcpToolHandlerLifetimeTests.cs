@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
@@ -27,6 +28,30 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests;
 /// </summary>
 public sealed class DefaultMcpToolHandlerLifetimeTests
 {
+    [Fact]
+    public async Task ResponseLimits_BodylessResponse_IsReturnedUnchangedAsync()
+    {
+        // Arrange
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://mcp.example/api");
+        using HttpResponseMessage response = new(HttpStatusCode.Accepted);
+        Mock<HttpMessageHandler> inner = new() { CallBase = true };
+        inner.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(response);
+        using McpResponseLimitHandler handler = new(inner.Object, 1024, 1024);
+        using HttpMessageInvoker client = new(handler);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        HttpResponseMessage result = await client.SendAsync(request, timeout.Token);
+
+        // Assert
+        Assert.Same(response, result);
+#if !NET
+        Assert.Null(result.Content);
+#endif
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
@@ -49,6 +74,11 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
 
         // Assert
         Assert.NotNull(error);
+        if (useEventStream)
+        {
+            Assert.IsType<InvalidDataException>(error);
+        }
+
         Assert.Contains("limit", error.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.False(error is OperationCanceledException);
         Assert.Equal(1, stub.Initializations);
@@ -181,11 +211,11 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         // Act
 #if NET
         int read = await limited.ReadAsync(buffer, timeout.Token);
-        HttpRequestException error = await Assert.ThrowsAsync<HttpRequestException>(
+        Exception error = await Assert.ThrowsAsync(useEventStream ? typeof(InvalidDataException) : typeof(HttpRequestException),
             () => limited.ReadAsync(buffer.AsMemory(0, 1), timeout.Token).AsTask());
 #else
         int read = await limited.ReadAsync(buffer, 0, buffer.Length, timeout.Token);
-        HttpRequestException error = await Assert.ThrowsAsync<HttpRequestException>(
+        Exception error = await Assert.ThrowsAsync(useEventStream ? typeof(InvalidDataException) : typeof(HttpRequestException),
             () => limited.ReadAsync(buffer, 0, 1, timeout.Token));
 #endif
 
@@ -207,9 +237,11 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
 
         // Act
 #if NET
-        await Assert.ThrowsAsync<HttpRequestException>(() => limited.ReadAsync(buffer, timeout.Token).AsTask());
+        await Assert.ThrowsAsync(useEventStream ? typeof(InvalidDataException) : typeof(HttpRequestException),
+            () => limited.ReadAsync(buffer, timeout.Token).AsTask());
 #else
-        await Assert.ThrowsAsync<HttpRequestException>(() => limited.ReadAsync(buffer, 0, buffer.Length, timeout.Token));
+        await Assert.ThrowsAsync(useEventStream ? typeof(InvalidDataException) : typeof(HttpRequestException),
+            () => limited.ReadAsync(buffer, 0, buffer.Length, timeout.Token));
 #endif
 
         // Assert
@@ -1353,12 +1385,10 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                         responseHeaders.Append($"{pair.Key}: {string.Join(", ", pair.Value)}\r\n");
                     }
 
-                    foreach (KeyValuePair<string, IEnumerable<string>> pair in response.Content.Headers)
+                    foreach (KeyValuePair<string, IEnumerable<string>> pair in response.Content.Headers.Where(
+                        header => !string.Equals(header.Key, "Content-Length", StringComparison.OrdinalIgnoreCase)))
                     {
-                        if (!string.Equals(pair.Key, "Content-Length", StringComparison.OrdinalIgnoreCase))
-                        {
-                            responseHeaders.Append($"{pair.Key}: {string.Join(", ", pair.Value)}\r\n");
-                        }
+                        responseHeaders.Append($"{pair.Key}: {string.Join(", ", pair.Value)}\r\n");
                     }
 
                     responseHeaders.Append($"Content-Length: {content.Length}\r\nConnection: close\r\n\r\n");

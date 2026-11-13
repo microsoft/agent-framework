@@ -22,15 +22,21 @@ internal sealed class McpResponseLimitHandler(HttpMessageHandler innerHandler, i
         HttpResponseMessage response = await this._inner.SendAsync(request, cancellationToken).ConfigureAwait(false);
         try
         {
+            HttpContent? content = response.Content;
+            if (content is null)
+            {
+                return response;
+            }
+
             bool isEventStream = response.IsSuccessStatusCode && string.Equals(
-                response.Content.Headers.ContentType?.MediaType, "text/event-stream", StringComparison.OrdinalIgnoreCase);
+                content.Headers.ContentType?.MediaType, "text/event-stream", StringComparison.OrdinalIgnoreCase);
             int limit = isEventStream ? maxSseEventBytes : maxResponseBodyBytes;
-            if (!isEventStream && response.Content.Headers.ContentLength > limit)
+            if (!isEventStream && content.Headers.ContentLength > limit)
             {
                 throw new HttpRequestException("The MCP response body exceeds the configured byte limit.");
             }
 
-            response.Content = new LimitedContent(response.Content, limit, isEventStream);
+            response.Content = new LimitedContent(content, limit, isEventStream);
             return response;
         }
         catch
@@ -234,9 +240,13 @@ internal sealed class McpResponseLimitHandler(HttpMessageHandler innerHandler, i
         {
             if (this._bytesRead > limit)
             {
-                throw new HttpRequestException(isEventStream
-                    ? "The MCP SSE event exceeds the configured byte limit."
-                    : "The MCP response body exceeds the configured byte limit.");
+                if (isEventStream)
+                {
+                    // The MCP transport treats HTTP and IO exceptions as resumable network failures.
+                    throw new InvalidDataException("The MCP SSE event exceeds the configured byte limit.");
+                }
+
+                throw new HttpRequestException("The MCP response body exceeds the configured byte limit.");
             }
         }
 
