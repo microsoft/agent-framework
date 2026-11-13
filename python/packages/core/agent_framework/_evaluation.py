@@ -58,6 +58,7 @@ from ._feature_stage import ExperimentalFeature, experimental
 from ._tools import FunctionTool, normalize_tools
 from ._types import (
     _EVALUATION_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
+    LOOP_INJECTED_MESSAGE_PROPERTY,
     AgentResponse,
     Message,
 )
@@ -158,11 +159,26 @@ class ExpectedToolCall:
     arguments: dict[str, Any] | None = None
 
 
+def _is_loop_injected(message: Message) -> bool:
+    """Whether ``message`` was injected by the agent loop instead of sent by the user.
+
+    ``AgentLoopMiddleware`` injects ``user``-role messages (nudges, progress summaries) between
+    iterations of a single agent run.  They are part of the agent's own transcript, so they must not
+    be treated as the start of a new conversation turn.
+    """
+    properties = message.additional_properties
+    return bool(properties and properties.get(LOOP_INJECTED_MESSAGE_PROPERTY))
+
+
 def _split_last_turn(conversation: list[Message]) -> tuple[list[Message], list[Message]]:
-    """Split at the last user message (default strategy)."""
+    """Split at the last user message (default strategy).
+
+    Loop-injected messages are skipped: in a loop-aggregated conversation they are nudges between
+    iterations of one run, not real user turns.
+    """
     last_user_idx = -1
     for i, msg in enumerate(conversation):
-        if msg.role == "user":
+        if msg.role == "user" and not _is_loop_injected(msg):
             last_user_idx = i
     if last_user_idx >= 0:
         return conversation[: last_user_idx + 1], conversation[last_user_idx + 1 :]
@@ -172,7 +188,7 @@ def _split_last_turn(conversation: list[Message]) -> tuple[list[Message], list[M
 def _split_full(conversation: list[Message]) -> tuple[list[Message], list[Message]]:
     """Split after the first user message (evaluates whole trajectory)."""
     for i, msg in enumerate(conversation):
-        if msg.role == "user":
+        if msg.role == "user" and not _is_loop_injected(msg):
             return conversation[: i + 1], conversation[i + 1 :]
     return [], list(conversation)
 
@@ -265,7 +281,8 @@ class EvalItem:
     ) -> list[EvalItem]:
         """Split a multi-turn conversation into one ``EvalItem`` per turn.
 
-        Each user message starts a new turn.  The resulting ``EvalItem``
+        Each user message starts a new turn.  Loop-injected messages (nudges between iterations of
+        one agent run) are not user turns and do not start a new item.  The resulting ``EvalItem``
         has cumulative context: ``query_messages`` contains the full
         conversation up to and including that user message, and
         ``response_messages`` contains the agent's actions up to the next
@@ -280,7 +297,7 @@ class EvalItem:
         Returns:
             A list of ``EvalItem`` instances, one per user turn.
         """
-        user_indices = [i for i, m in enumerate(conversation) if m.role == "user"]
+        user_indices = [i for i, m in enumerate(conversation) if m.role == "user" and not _is_loop_injected(m)]
         if not user_indices:
             return []
 
@@ -1100,12 +1117,24 @@ def keyword_check(*keywords: str, case_sensitive: bool = False) -> EvalCheck:
     return _check
 
 
+def _response_messages(item: EvalItem) -> list[Message]:
+    """Return the response side of ``item``'s conversation split.
+
+    These are the messages that produced ``item.response`` — the agent's
+    actions up to the next user message.  Tool checks inspect them so that a
+    tool call made in an earlier turn does not satisfy a later turn's check.
+    """
+    _, response_msgs = item.split_messages()
+    return response_msgs
+
+
 @experimental(feature_id=ExperimentalFeature.EVALS)
 def tool_called_check(*tool_names: str, mode: Literal["all", "any"] = "all") -> EvalCheck:
-    """Check that specific tools were called during the conversation.
+    """Check that specific tools were called in the response.
 
-    Inspects the conversation history for ``tool_calls`` entries matching
-    the expected tool names.
+    Inspects the response side of the conversation split for ``tool_calls``
+    entries matching the expected tool names.  A tool call made in an earlier
+    turn does not count towards a later turn's check.
 
     Args:
         *tool_names: Names of tools that should have been called.
@@ -1125,7 +1154,7 @@ def tool_called_check(*tool_names: str, mode: Literal["all", "any"] = "all") -> 
     def _check(item: EvalItem) -> CheckResult:
         expected = set(tool_names)
         called: set[str] = set()
-        for msg in item.conversation:
+        for msg in _response_messages(item):
             for c in msg.contents or []:
                 if c.type == "function_call" and c.name:
                     called.add(c.name)
@@ -1164,9 +1193,9 @@ def tool_called_check(*tool_names: str, mode: Literal["all", "any"] = "all") -> 
 
 
 def _extract_tool_calls(item: EvalItem) -> list[tuple[str, dict[str, Any] | None]]:
-    """Extract (name, arguments) pairs from the conversation's function calls."""
+    """Extract (name, arguments) pairs from the response's function calls."""
     calls: list[tuple[str, dict[str, Any] | None]] = []
-    for msg in item.conversation:
+    for msg in _response_messages(item):
         for c in msg.contents or []:
             if c.type == "function_call" and c.name:
                 args: dict[str, Any] | None = None
@@ -1194,8 +1223,9 @@ def tool_calls_present(item: EvalItem) -> CheckResult:
     """Check that all expected tool calls were made (unordered, extras OK).
 
     Uses ``item.expected_tool_calls`` — checks that every expected tool name
-    appears at least once in the conversation.  Does not check arguments or
-    ordering.  Extra (unexpected) tool calls are not penalized.
+    appears at least once in the response side of the conversation split.
+    Does not check arguments or ordering.  Extra (unexpected) tool calls are
+    not penalized.
 
     Example:
 
@@ -1235,10 +1265,10 @@ def tool_calls_present(item: EvalItem) -> CheckResult:
 def tool_call_args_match(item: EvalItem) -> CheckResult:
     """Check that expected tool calls match on name and arguments.
 
-    For each expected tool call, finds matching calls in the conversation
-    by name.  If ``ExpectedToolCall.arguments`` is provided, checks that
-    the actual arguments contain all expected key-value pairs (subset
-    match — extra actual arguments are OK).
+    For each expected tool call, finds matching calls in the response side of
+    the conversation split by name.  If ``ExpectedToolCall.arguments`` is
+    provided, checks that the actual arguments contain all expected key-value
+    pairs (subset match — extra actual arguments are OK).
 
     Example:
 

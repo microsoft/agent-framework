@@ -43,6 +43,7 @@ from agent_framework._harness._loop import (
     DEFAULT_NEXT_MESSAGE,
     AgentLoopMiddleware,
 )
+from agent_framework._types import LOOP_INJECTED_MESSAGE_PROPERTY
 
 from .conftest import MockBaseChatClient
 
@@ -1330,6 +1331,35 @@ async def test_streaming_injects_nudge_messages_as_user_updates() -> None:
     # The nudge that drives the second iteration is surfaced as a user update in the stream.
     user_texts = [u.text for u in updates if u.role == "user"]
     assert any(DEFAULT_NEXT_MESSAGE in text for text in user_texts)
+
+
+async def test_non_streaming_marks_loop_injected_messages() -> None:
+    client = RecordingChatClient(texts=["first answer", "second answer"])
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=2, inject_progress=False)],
+    )
+
+    response = await agent.run("start")
+
+    assert isinstance(response, AgentResponse)
+    injected = [m for m in response.messages if m.role == "user"]
+    assert len(injected) == 1
+    properties = injected[0].additional_properties or {}
+    assert properties[LOOP_INJECTED_MESSAGE_PROPERTY] is True
+
+
+async def test_streaming_marks_loop_injected_updates() -> None:
+    client = RecordingChatClient(texts=["first", "second"])
+    agent = Agent(client=client, middleware=[AgentLoopMiddleware(always_continue, max_iterations=2)])
+
+    stream = agent.run("go", stream=True)
+    updates = [update async for update in stream]
+    await stream.get_final_response()
+
+    user_updates = [u for u in updates if u.role == "user"]
+    assert user_updates
+    assert all((u.additional_properties or {})[LOOP_INJECTED_MESSAGE_PROPERTY] is True for u in user_updates)
 
 
 async def test_streaming_stops_at_max_iterations() -> None:
