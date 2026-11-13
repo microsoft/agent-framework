@@ -25,7 +25,8 @@ using Microsoft.Agents.AI.Hosting.OpenAI;
 var builder = WebApplication.CreateBuilder(args);
 
 // Register your agents
-builder.AddAIAgent("assistant", "You are a helpful assistant.");
+builder.AddAIAgent("assistant", "You are a helpful assistant.")
+    .WithInMemorySessionStore(withIsolation: false); // Single-user local development only.
 
 // Register DevUI services
 if (builder.Environment.IsDevelopment())
@@ -52,6 +53,36 @@ if (builder.Environment.IsDevelopment())
 app.Run();
 ```
 
+## Sessions across conversation turns
+
+DevUI sends each turn as a separate HTTP request. The conversation ID identifies
+the conversation, but preserving an agent's `AgentSession.StateBag` between those
+requests also requires a session store on that agent's registration. The usage
+example enables this with `WithInMemorySessionStore(withIsolation: false)` for
+single-user local development. The default `withIsolation: true` requires an
+`AgentIsolationKeyProvider`; configure that provider and endpoint authorization
+when serving multiple callers, as shown in the shared hosting guide below.
+
+This is separate from a `ChatHistoryProvider`: that provider reads and writes
+messages for the session it receives. Registering a custom history provider does
+not itself persist the enclosing session. Without an `AgentSessionStore`, the
+host creates a new agent session for the request, so a `ProviderSessionState<T>`
+initializer can run again even while DevUI is displaying the same conversation.
+`AddOpenAIConversations()` supplies the protocol's conversation storage; it does
+not replace the agent session store.
+
+Configure the store on the `IHostedAgentBuilder` returned by `AddAIAgent(...)`,
+including when that call uses a factory to create an agent with a custom
+`ChatHistoryProvider`. Keep using the same conversation in DevUI for follow-up
+turns; starting a new conversation should create separate session state.
+
+The in-memory store is useful for local development and loses state on restart.
+Use `WithSessionStore(...)` with a persistent implementation when sessions must
+survive restarts or be shared across service instances. Authorize access to stored
+sessions and configure caller isolation as described in the
+[shared hosting guide](../../samples/04-hosting/README.md); a conversation ID alone
+does not establish ownership.
+
 ## Function approvals
 
 Function approval requires an agent session store. The approval request and the user's
@@ -64,7 +95,7 @@ Configure a session store on every agent that exposes an
 
 ```csharp
 builder.AddAIAgent("assistant", "You are a helpful assistant.")
-    .WithInMemorySessionStore();
+    .WithInMemorySessionStore(withIsolation: false); // Single-user local development only.
 ```
 
 `WithInMemorySessionStore()` preserves approvals between requests but loses them
