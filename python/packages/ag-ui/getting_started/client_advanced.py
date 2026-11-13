@@ -100,7 +100,10 @@ async def non_streaming_example(client: AGUIChatClient, thread_id: str | None = 
 
     print("\nUser: What is 2 + 2?\n")
 
-    response = await client.get_response([Message(role="user", contents=["What is 2 + 2?"])], metadata=metadata)
+    response = await client.get_response(
+        [Message(role="user", contents=["What is 2 + 2?"])],
+        options={"metadata": metadata} if metadata else None,
+    )
 
     print(f"Assistant: {response.text}")
 
@@ -140,8 +143,7 @@ async def tool_example(client: AGUIChatClient, thread_id: str | None = None):
 
     response = await client.get_response(
         [Message(role="user", contents=["What's the weather in Seattle?"])],
-        tools=[get_weather, calculate],
-        metadata=metadata,
+        options={"tools": [get_weather, calculate], "metadata": metadata or {}},
     )
 
     print(f"Assistant: {response.text}")
@@ -196,8 +198,7 @@ async def conversation_example(client: AGUIChatClient):
     print("\nUser: Can you also tell me what 10 * 5 is?\n")
     response3 = await client.get_response(
         [Message(role="user", contents=["Can you also tell me what 10 * 5 is?"])],
-        options={"metadata": {"thread_id": thread_id}},
-        tools=[calculate],
+        options={"metadata": {"thread_id": thread_id}, "tools": [calculate]},
     )
     print(f"Assistant: {response3.text}")
 
