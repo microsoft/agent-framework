@@ -9,6 +9,11 @@
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
   <PropertyGroup>
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <PackageValidationBaselineVersion>1.28.0-preview.261106.1</PackageValidationBaselineVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
   </PropertyGroup>
