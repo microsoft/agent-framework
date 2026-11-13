@@ -306,7 +306,7 @@ public static class ServiceCollectionExtensions
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="host">The host application builder, or <see langword="null"/> for a service collection alone.</param>
-    /// <param name="agentSource">The registration of the <see cref="FoundryHostedAgentSource"/> that supplies the agent.</param>
+    /// <param name="agentSource">The registrations that supply and own the hosted agent.</param>
     /// <param name="agentSessionStore">The session store passed with the agent, if any.</param>
     /// <param name="configuredOptions">The hosting options to apply.</param>
     /// <param name="optionsSupplied">Whether the caller passed options, rather than leaving them to configuration.</param>
@@ -314,7 +314,7 @@ public static class ServiceCollectionExtensions
     internal static void AddFoundryResponsesCore(
         IServiceCollection services,
         IHostApplicationBuilder? host,
-        ServiceDescriptor agentSource,
+        IReadOnlyList<ServiceDescriptor> agentSource,
         AgentSessionStore? agentSessionStore,
         FoundryResponsesServerOptions configuredOptions,
         bool optionsSupplied)
@@ -325,7 +325,11 @@ public static class ServiceCollectionExtensions
                 "AddFoundryResponses has already been called for this service collection. A Foundry hosted agent container serves exactly one agent, so call AddFoundryResponses once, with that agent or a factory for it.");
         }
 
-        services.Add(agentSource);
+        foreach (ServiceDescriptor descriptor in agentSource)
+        {
+            services.Add(descriptor);
+        }
+
         AddResponsesServer(services, host, configuredOptions, optionsSupplied);
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
@@ -347,23 +351,37 @@ public static class ServiceCollectionExtensions
     /// Describes the source of an agent instance the caller owns. The instance registration is never
     /// disposed by the container, matching that the agent is not either.
     /// </summary>
-    internal static ServiceDescriptor DescribeAgentSource(AIAgent agent) =>
-        ServiceDescriptor.Singleton(new FoundryHostedAgentSource(agent));
+    internal static IReadOnlyList<ServiceDescriptor> DescribeAgentSource(AIAgent agent) =>
+        [ServiceDescriptor.Singleton(new FoundryHostedAgentSource(agent))];
 
     /// <summary>
     /// Describes the source of an agent created by <paramref name="agentFactory"/>. The source is created by
     /// the container, which disposes it, and with it a singleton agent, at shutdown.
     /// </summary>
-    internal static ServiceDescriptor DescribeAgentSource(Func<IServiceProvider, AIAgent> agentFactory, ServiceLifetime lifetime)
+    internal static IReadOnlyList<ServiceDescriptor> DescribeAgentSource(
+        Func<IServiceProvider, AIAgent> agentFactory,
+        ServiceLifetime lifetime)
     {
         _ = Throw.IfNull(agentFactory);
         FoundryHostedAgentSource.ValidateLifetime(lifetime);
 
-        return ServiceDescriptor.Singleton(serviceProvider => new FoundryHostedAgentSource(
+        ServiceDescriptor source = ServiceDescriptor.Singleton(serviceProvider => new FoundryHostedAgentSource(
             agentFactory,
             lifetime,
             serviceProvider,
             serviceProvider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value.RequireOpenTelemetryAgent));
+
+        if (lifetime != ServiceLifetime.Singleton)
+        {
+            return [source];
+        }
+
+        ServiceDescriptor owner = ServiceDescriptor.Singleton(serviceProvider =>
+            new FoundryHostedAgentSource.FoundryHostedSingletonAgentOwner(
+                agentFactory(serviceProvider)
+                    ?? throw new InvalidOperationException("The agent factory passed to AddFoundryResponses returned null.")));
+
+        return [owner, source];
     }
 
     /// <summary>

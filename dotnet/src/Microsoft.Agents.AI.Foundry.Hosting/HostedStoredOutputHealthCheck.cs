@@ -60,12 +60,6 @@ internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
     {
         _ = Throw.IfNull(context);
 
-        if (this._options.InferenceStoredOutputAllowed)
-        {
-            return HealthCheckResult.Healthy(
-                "The hosted agent backend storage usage was detected and inference stored output is explicitly allowed.");
-        }
-
         List<string> storingAgents = [];
         var checkedAgents = 0;
 
@@ -77,6 +71,12 @@ internal sealed partial class HostedStoredOutputHealthCheck : IHealthCheck
             FoundryHostedAgentSource.Lease agentLease = await this._agentSource.AcquireAsync(serviceScope.ServiceProvider).ConfigureAwait(false);
             await using (agentLease.ConfigureAwait(false))
             {
+                if (this._options.InferenceStoredOutputAllowed)
+                {
+                    return HealthCheckResult.Healthy(
+                        "The hosted agent backend storage usage was detected and inference stored output is explicitly allowed.");
+                }
+
                 AIAgent agent = agentLease.Agent;
 
                 // Hosting only reaches the store setting through ChatClientAgent's chat options, so any

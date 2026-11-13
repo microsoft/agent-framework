@@ -355,6 +355,31 @@ public sealed class FoundryAgentSessionStoreTests
     }
 
     [Fact]
+    public async Task DeleteSessionAsync_CancelledAfterFirstDelete_KeepsCurrentCopyReadableAsync()
+    {
+        // Arrange
+        using var cancellation = new CancellationTokenSource();
+        var backing = new FakeStateStore { AfterDelete = _ => cancellation.Cancel() };
+        var store = NewStore(backing);
+        var key = Key("conv-1", "user", "alice");
+        await store.SaveSessionAsync(
+            new FoundryHostingAgent(new TestAgent("{\"owner\":\"legacy\"}", name: "Concierge"), "key:Concierge"),
+            key,
+            new TestSession());
+        var agent = new TestAgent("{\"owner\":\"current\"}", name: "Concierge");
+        await store.SaveSessionAsync(agent, key, new TestSession());
+
+        // Act
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await store.DeleteSessionAsync(agent, key, cancellation.Token));
+        AgentSession? session = await store.GetSessionAsync(agent, key);
+
+        // Assert: the interrupted delete leaves the authoritative current state, not the legacy fallback.
+        Assert.NotNull(session);
+        Assert.Equal("current", agent.LastDeserialized!.Value.GetProperty("owner").GetString());
+    }
+
+    [Fact]
     public async Task DeleteSessionAsync_LegacyCopyOfAnotherUser_IsKeptAsync()
     {
         // Arrange
@@ -728,6 +753,8 @@ public sealed class FoundryAgentSessionStoreTests
     {
         private readonly ConcurrentDictionary<string, IDictionary<string, BinaryData>> _items = new(StringComparer.Ordinal);
 
+        public Action<string>? AfterDelete { get; init; }
+
         public IReadOnlyCollection<IDictionary<string, BinaryData>> Items => (IReadOnlyCollection<IDictionary<string, BinaryData>>)this._items.Values;
 
         public override string Name => FoundryAgentSessionStore.DefaultStoreName;
@@ -751,11 +778,14 @@ public sealed class FoundryAgentSessionStoreTests
 
         public override Task<DeletedStateStoreItem> DeleteItemAsync(string key, ETag ifMatch = default, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             if (!this._items.TryRemove(key, out _))
             {
                 throw new FoundryStorageNotFoundException("not found");
             }
 
+            this.AfterDelete?.Invoke(key);
             return Task.FromResult(AzureAIAgentServerCoreStorageModelFactory.DeletedStateStoreItem(id: key, deleted: true));
         }
     }

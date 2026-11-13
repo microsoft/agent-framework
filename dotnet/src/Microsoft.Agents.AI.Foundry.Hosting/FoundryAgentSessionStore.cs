@@ -212,20 +212,10 @@ internal sealed partial class FoundryAgentSessionStore : AgentSessionStore
         string agentIdentity = FoundryHostingAgent.GetSessionStorageIdentity(agent);
         FoundryStateStore store = await this.GetStoreAsync(cancellationToken).ConfigureAwait(false);
 
-        try
-        {
-            await DeleteItemAsync(store, agentIdentity, key, cancellationToken).ConfigureAwait(false);
-        }
-        catch (FoundryStorageNotFoundException ex)
-        {
-            // Nothing stored for this key, so deletion remains idempotent.
-            LogSessionNotFound(this._logger, key.SessionId, this.StoreName, ex);
-        }
-
         if (FoundryHostingAgent.GetLegacySessionStorageIdentity(agentIdentity) is { } legacyIdentity)
         {
-            // GetSessionAsync reads the legacy identity when nothing is saved under the current one, so a copy
-            // left there would bring a deleted session back on the next turn.
+            // Delete the fallback first. If cancellation interrupts the second delete, the authoritative
+            // current copy remains readable instead of the older fallback bringing the session back.
             try
             {
                 await DeleteItemAsync(store, legacyIdentity, key, cancellationToken).ConfigureAwait(false);
@@ -234,6 +224,16 @@ internal sealed partial class FoundryAgentSessionStore : AgentSessionStore
             {
                 // Most sessions never had a legacy copy, so its absence is the expected case and is not logged.
             }
+        }
+
+        try
+        {
+            await DeleteItemAsync(store, agentIdentity, key, cancellationToken).ConfigureAwait(false);
+        }
+        catch (FoundryStorageNotFoundException ex)
+        {
+            // Nothing stored for this key, so deletion remains idempotent.
+            LogSessionNotFound(this._logger, key.SessionId, this.StoreName, ex);
         }
     }
 

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.DependencyInjection;
@@ -195,14 +196,9 @@ internal sealed class FoundryHostedAgentSource : IAsyncDisposable, IDisposable
     /// </exception>
     public void Dispose()
     {
-        switch (this.TakeSingletonForDisposal())
+        if (this.TakeSingletonForDisposal() is { } singleton)
         {
-            case IDisposable disposable:
-                disposable.Dispose();
-                break;
-            case IAsyncDisposable asyncDisposable:
-                throw new InvalidOperationException(
-                    $"'{asyncDisposable.GetType()}' only implements IAsyncDisposable. Use DisposeAsync to dispose the service provider.");
+            DisposeAgent(singleton);
         }
     }
 
@@ -212,8 +208,16 @@ internal sealed class FoundryHostedAgentSource : IAsyncDisposable, IDisposable
         {
             ObjectDisposedException.ThrowIf(this._disposed, this);
 
+            // Resolve the DI-managed owner lazily. Its factory resolves the agent's dependencies before DI
+            // records the owner for disposal, so the owner disposes the agent while those dependencies are alive.
+            if (this._rootServices!.GetService<FoundryHostedSingletonAgentOwner>() is { } owner)
+            {
+                return owner.Agent;
+            }
+
             // A factory that throws is called again on the next request, as dependency injection does for a
-            // singleton, rather than having its failure cached for the life of the process.
+            // singleton, rather than having its failure cached for the life of the process. This fallback is for
+            // a source constructed directly rather than through AddFoundryResponses.
             return this._singleton ??= this.CreateAgent(this._rootServices!);
         }
     }
@@ -233,8 +237,19 @@ internal sealed class FoundryHostedAgentSource : IAsyncDisposable, IDisposable
         }
     }
 
-    private static async ValueTask DisposeAgentAsync(AIAgent agent)
+    internal static ValueTask DisposeAgentAsync(AIAgent agent) =>
+        DisposeAgentAsync(agent, new HashSet<AIAgent>(ReferenceEqualityComparer.Instance));
+
+    private static async ValueTask DisposeAgentAsync(AIAgent agent, HashSet<AIAgent> disposedAgents)
     {
+        if (!disposedAgents.Add(agent))
+        {
+            return;
+        }
+
+        OpenTelemetryAgent? telemetryAgent = agent.GetService<OpenTelemetryAgent>();
+        AIAgent? telemetryInnerAgent = telemetryAgent?.GetService(typeof(AIAgent), telemetryAgent) as AIAgent;
+
         switch (agent)
         {
             case IAsyncDisposable asyncDisposable:
@@ -243,6 +258,53 @@ internal sealed class FoundryHostedAgentSource : IAsyncDisposable, IDisposable
             case IDisposable disposable:
                 disposable.Dispose();
                 break;
+        }
+
+        if (telemetryAgent is not null && !ReferenceEquals(telemetryAgent, agent))
+        {
+            await DisposeAgentAsync(telemetryAgent, disposedAgents).ConfigureAwait(false);
+        }
+
+        if (telemetryInnerAgent is not null)
+        {
+            await DisposeAgentAsync(telemetryInnerAgent, disposedAgents).ConfigureAwait(false);
+        }
+    }
+
+    internal static void DisposeAgent(AIAgent agent)
+    {
+        var disposedAgents = new HashSet<AIAgent>(ReferenceEqualityComparer.Instance);
+        DisposeAgent(agent, disposedAgents);
+    }
+
+    private static void DisposeAgent(AIAgent agent, HashSet<AIAgent> disposedAgents)
+    {
+        if (!disposedAgents.Add(agent))
+        {
+            return;
+        }
+
+        OpenTelemetryAgent? telemetryAgent = agent.GetService<OpenTelemetryAgent>();
+        AIAgent? telemetryInnerAgent = telemetryAgent?.GetService(typeof(AIAgent), telemetryAgent) as AIAgent;
+
+        switch (agent)
+        {
+            case IDisposable disposable:
+                disposable.Dispose();
+                break;
+            case IAsyncDisposable asyncDisposable:
+                throw new InvalidOperationException(
+                    $"'{asyncDisposable.GetType()}' only implements IAsyncDisposable. Use DisposeAsync to dispose the service provider.");
+        }
+
+        if (telemetryAgent is not null && !ReferenceEquals(telemetryAgent, agent))
+        {
+            DisposeAgent(telemetryAgent, disposedAgents);
+        }
+
+        if (telemetryInnerAgent is not null)
+        {
+            DisposeAgent(telemetryInnerAgent, disposedAgents);
         }
     }
 
@@ -274,6 +336,45 @@ internal sealed class FoundryHostedAgentSource : IAsyncDisposable, IDisposable
 
             this._disposed = true;
             return DisposeAgentAsync(this.Agent);
+        }
+    }
+
+    /// <summary>
+    /// Owns the singleton agent created by a factory registered with dependency injection.
+    /// </summary>
+    internal sealed class FoundryHostedSingletonAgentOwner : IAsyncDisposable, IDisposable
+    {
+        private AIAgent? _agent;
+
+        internal FoundryHostedSingletonAgentOwner(AIAgent agent)
+        {
+            this._agent = Throw.IfNull(agent);
+        }
+
+        internal AIAgent Agent =>
+            this._agent ?? throw new ObjectDisposedException(nameof(FoundryHostedSingletonAgentOwner));
+
+        public async ValueTask DisposeAsync()
+        {
+            if (this.TakeAgent() is { } agent)
+            {
+                await DisposeAgentAsync(agent).ConfigureAwait(false);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (this.TakeAgent() is { } agent)
+            {
+                DisposeAgent(agent);
+            }
+        }
+
+        private AIAgent? TakeAgent()
+        {
+            AIAgent? agent = this._agent;
+            this._agent = null;
+            return agent;
         }
     }
 }

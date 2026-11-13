@@ -220,6 +220,37 @@ public sealed class FoundryAgentLifetimeTests
     }
 
     [Fact]
+    public async Task AddFoundryResponses_SingletonFactory_DisposesAgentBeforeItsDependencyAsync()
+    {
+        // Arrange
+        bool dependencyWasAliveDuringAgentDisposal = false;
+        var log = new AgentLifetimeLog();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<AgentSessionStore>(new TestAgentSessionStore());
+        services.AddSingleton<ScopedDependency>();
+        services.AddFoundryResponses(
+            sp =>
+            {
+                ScopedDependency dependency = sp.GetRequiredService<ScopedDependency>();
+                return new TrackingAgent(
+                    log,
+                    onDispose: () => dependencyWasAliveDuringAgentDisposal = !dependency.IsDisposed);
+            },
+            ServiceLifetime.Singleton);
+        ServiceProvider provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+        var handler = Assert.IsType<AgentFrameworkResponseHandler>(provider.GetRequiredService<ResponseHandler>());
+
+        // Act
+        await DrainAsync(handler);
+        await provider.DisposeAsync();
+
+        // Assert
+        Assert.True(dependencyWasAliveDuringAgentDisposal);
+        Assert.True(Assert.Single(log.Created).IsDisposed);
+    }
+
+    [Fact]
     public async Task CreateAsync_ScopedSessionStore_IsCreatedPerResponseAndDisposedAsync()
     {
         // Arrange
@@ -479,11 +510,12 @@ public sealed class FoundryAgentLifetimeTests
         // Arrange
         var services = new ServiceCollection();
         var store = new TestAgentSessionStore();
+        AgentSessionStore nullStore = null!;
         Func<IServiceProvider, AgentSessionStore> nullFactory = null!;
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => ((IServiceCollection)null!).AddFoundryAgentSessionStore(store));
-        Assert.Throws<ArgumentNullException>(() => services.AddFoundryAgentSessionStore(null!));
+        Assert.Throws<ArgumentNullException>(() => services.AddFoundryAgentSessionStore(nullStore));
         Assert.Throws<ArgumentNullException>(() => services.AddFoundryAgentSessionStore(nullFactory));
         Assert.Throws<ArgumentOutOfRangeException>(() => services.AddFoundryAgentSessionStore(_ => store, (ServiceLifetime)42));
         Assert.Throws<ArgumentNullException>(() => ((IHostApplicationBuilder)null!).AddFoundryAgentSessionStore(store));
@@ -808,7 +840,11 @@ public sealed class FoundryAgentLifetimeTests
 
         // Assert
         Assert.Equal(2, log.Created.Count);
-        Assert.All(log.Created, agent => Assert.Equal(1, agent.RunCount));
+        Assert.All(log.Created, agent =>
+        {
+            Assert.Equal(1, agent.RunCount);
+            Assert.Equal(1, agent.DisposeCount);
+        });
     }
 
     [Fact]
@@ -825,6 +861,29 @@ public sealed class FoundryAgentLifetimeTests
         HealthReport report = await provider.GetRequiredService<HealthCheckService>().CheckHealthAsync();
 
         // Assert: the container is not ready, and the agent the probe created was disposed.
+        HealthReportEntry entry = report.Entries["foundry-stored-output"];
+        Assert.Equal(HealthStatus.Unhealthy, entry.Status);
+        Assert.IsType<InvalidOperationException>(entry.Exception);
+        Assert.Equal(1, Assert.Single(log.Created).DisposeCount);
+    }
+
+    [Fact]
+    public async Task Readiness_StoredOutputAllowed_PerRunAgentWithoutOpenTelemetry_IsReportedUnhealthyAsync()
+    {
+        // Arrange
+        var log = new AgentLifetimeLog();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddFoundryResponses(
+            _ => new TrackingAgent(log),
+            ServiceLifetime.Scoped,
+            new FoundryResponsesServerOptions { InferenceStoredOutputAllowed = true });
+        await using ServiceProvider provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+
+        // Act
+        HealthReport report = await provider.GetRequiredService<HealthCheckService>().CheckHealthAsync();
+
+        // Assert: allowing stored output skips only that probe, not validation of the agent factory.
         HealthReportEntry entry = report.Entries["foundry-stored-output"];
         Assert.Equal(HealthStatus.Unhealthy, entry.Status);
         Assert.IsType<InvalidOperationException>(entry.Exception);
@@ -946,15 +1005,21 @@ public sealed class FoundryAgentLifetimeTests
     {
         private readonly AgentLifetimeLog _log;
         private readonly TaskCompletionSource? _gate;
+        private readonly Action? _onDispose;
         private readonly string? _name;
         private int _runCount;
         private int _disposeCount;
 
-        public TrackingAgent(AgentLifetimeLog log, TaskCompletionSource? gate = null, string? name = AgentName)
+        public TrackingAgent(
+            AgentLifetimeLog log,
+            TaskCompletionSource? gate = null,
+            string? name = AgentName,
+            Action? onDispose = null)
         {
             this._log = log;
             this._gate = gate;
             this._name = name;
+            this._onDispose = onDispose;
             log.Created.Enqueue(this);
         }
 
@@ -972,6 +1037,7 @@ public sealed class FoundryAgentLifetimeTests
 
         public ValueTask DisposeAsync()
         {
+            this._onDispose?.Invoke();
             Interlocked.Increment(ref this._disposeCount);
             this.IsDisposed = true;
             this.Disposed.TrySetResult();
