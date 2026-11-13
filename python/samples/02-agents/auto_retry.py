@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar, cast
 
 from agent_framework import Agent, ChatContext, ChatMiddleware, SupportsChatGetResponse, chat_middleware
+from agent_framework.exceptions import ChatClientException
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -24,7 +25,7 @@ from tenacity import (
     AsyncRetrying,
     before_sleep_log,
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -46,7 +47,7 @@ Approach 1 – Class decorator
     (streaming retry requires more delicate handling).
 
 Approach 2 – Chat middleware
-    Register middleware on the agent that catches RateLimitError raised inside
+    Register middleware on the agent that catches rate limit errors raised inside
     call_next() and retries the entire request pipeline. Two styles are shown:
     a) Class-based middleware (ChatMiddleware subclass)
     b) Function-based middleware (@chat_middleware decorator)
@@ -54,13 +55,23 @@ Approach 2 – Chat middleware
 Both approaches use the same tenacity primitives:
     - stop_after_attempt  – cap the total number of tries
     - wait_exponential    – exponential back-off between retries
-    - retry_if_exception_type(RateLimitError) – only retry on 429 errors
+    - retry_if_exception(is_rate_limit_error) – only retry on 429 errors
     - before_sleep_log    – log each retry attempt at WARNING level
+
+Chat clients raise ChatClientException and keep the provider's error on
+__cause__, so a 429 from the OpenAI SDK arrives as a ChatClientException whose
+__cause__ is openai.RateLimitError. is_rate_limit_error() checks for that.
 """
 
 logger = logging.getLogger(__name__)
 
 RETRY_ATTEMPTS = 3
+
+
+def is_rate_limit_error(exc: BaseException) -> bool:
+    """Return True when a chat client call failed with a rate limit (429) error."""
+    return isinstance(exc, ChatClientException) and isinstance(exc.__cause__, RateLimitError)
+
 
 # =============================================================================
 # Approach 1: Class decorator
@@ -87,7 +98,7 @@ def with_rate_limit_retry(*, retry_attempts: int = RETRY_ATTEMPTS) -> Callable[[
                 async for attempt in AsyncRetrying(
                     stop=stop_after_attempt(retry_attempts),
                     wait=wait_exponential(multiplier=1, min=4, max=10),
-                    retry=retry_if_exception_type(RateLimitError),
+                    retry=retry_if_exception(is_rate_limit_error),
                     reraise=True,
                     before_sleep=before_sleep_log(logger, logging.WARNING),
                 ):
@@ -117,7 +128,7 @@ class RateLimitRetryMiddleware(ChatMiddleware):
     """Chat middleware that retries a single model-call pipeline on rate limit errors.
 
     Register this middleware on an agent (or at the run level) to automatically
-    retry any chat-model call that raises RateLimitError. In tool-loop scenarios,
+    retry any chat-model call that fails with a rate limit error. In tool-loop scenarios,
     the middleware applies independently to each inner model call.
     """
 
@@ -134,7 +145,7 @@ class RateLimitRetryMiddleware(ChatMiddleware):
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(self.max_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry=retry_if_exception_type(RateLimitError),
+            retry=retry_if_exception(is_rate_limit_error),
             reraise=True,
             before_sleep=before_sleep_log(logger, logging.WARNING),
         ):
@@ -154,7 +165,7 @@ async def rate_limit_retry_middleware(
 ) -> None:
     """Function-based chat middleware that retries on rate limit errors.
 
-    Wrap call_next() with a tenacity @retry decorator so any RateLimitError
+    Wrap call_next() with a tenacity @retry decorator so any rate limit error
     raised during a single model call triggers an automatic retry with exponential
     back-off. In tool-loop scenarios, the middleware applies independently to
     each inner model call.
@@ -163,7 +174,7 @@ async def rate_limit_retry_middleware(
     @retry(
         stop=stop_after_attempt(RETRY_ATTEMPTS),
         wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry=retry_if_exception_type(RateLimitError),
+        retry=retry_if_exception(is_rate_limit_error),
         reraise=True,
         before_sleep=before_sleep_log(logger, logging.WARNING),
     )
