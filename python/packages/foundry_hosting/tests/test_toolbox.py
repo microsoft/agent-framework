@@ -18,6 +18,8 @@ import httpx2 as httpx
 import pytest
 from agent_framework import (
     Agent,
+    AgentSession,
+    Content,
     FunctionInvocationContext,
     MCPStreamableHTTPTool,
     Message,
@@ -26,6 +28,7 @@ from agent_framework import (
     SupportsAgentRun,
 )
 from agent_framework.exceptions import ToolException, ToolExecutionException
+from agent_framework.openai import OpenAIChatClient
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
     reset_request_context,
@@ -49,6 +52,9 @@ from .foundry_hosting.toolbox_approval_helpers import (  # pyrefly: ignore[missi
     ToolboxApprovalServer,
     toolbox_connection,
     toolbox_tool,
+)
+from .foundry_hosting.web_search_test_helpers import (  # pyrefly: ignore[missing-import] - pytest's importlib namespace
+    _ToolResultServer,
 )
 
 
@@ -384,6 +390,368 @@ def test_init_forwards_additional_tool_arguments_and_parent_kwargs() -> None:
     assert toolbox.description == "Sales tools"
     assert toolbox._global_extra_arg_names == {"tenant_id"}
     assert toolbox._tool_extra_arg_names == {"search": {"thread"}}
+
+
+@pytest.mark.parametrize(
+    "metadata_location", ["structured", "block", "resource", "block_and_structured", "resource_and_structured"]
+)
+async def test_web_search_preserves_prose_and_citation_metadata(metadata_location: str) -> None:
+    citation = {
+        "type": "url_citation",
+        "url": "https://example.test/source",
+        "title": "Source",
+        "start_index": 0,
+        "end_index": 4,
+    }
+    resource: dict[str, Any] = {"uri": "about:web-search", "text": "Mars is red."}
+    block: dict[str, Any] = {"type": "resource", "resource": resource}
+    if metadata_location.startswith("block"):
+        block["_meta"] = {"annotations": [citation]}
+    elif metadata_location.startswith("resource"):
+        resource["_meta"] = {"annotations": [citation]}
+    structured: dict[str, Any] = {"query": "Mars"}
+    if "structured" in metadata_location:
+        structured["annotations"] = [citation]
+    server = _ToolResultServer()
+    server.tools = [toolbox_tool("never")]
+    server.call_result = {"content": [block], "structuredContent": structured}
+    async with toolbox_connection(server) as toolbox:
+        result = await toolbox.call_tool("learn___microsoft_docs_search")
+
+    assert isinstance(result, list)
+    assert [item.text for item in result] == ["Mars is red.", json.dumps(structured)]
+    expected: dict[str, Any] = {
+        "type": "citation",
+        "url": "https://example.test/source",
+        "title": "Source",
+    }
+    if metadata_location != "structured":
+        expected["annotated_regions"] = [{"type": "text_span", "start_index": 0, "end_index": 4}]
+    citation_item = result[1] if metadata_location == "structured" else result[0]
+    assert citation_item.annotations == [expected]
+
+
+async def test_web_search_keeps_aggregate_citations_unbound_when_content_has_multiple_blocks() -> None:
+    server = _ToolResultServer()
+    server.tools = [toolbox_tool("never")]
+    server.call_result = {
+        "content": [{"type": "text", "text": "First"}, {"type": "text", "text": "Second"}],
+        "structuredContent": {
+            "annotations": [
+                {
+                    "type": "url_citation",
+                    "url": "https://example.test/source",
+                    "start_index": 0,
+                    "end_index": 5,
+                }
+            ]
+        },
+    }
+    async with toolbox_connection(server) as toolbox:
+        result = await toolbox.call_tool("learn___microsoft_docs_search")
+
+    assert isinstance(result, list)
+    assert [item.text for item in result] == ["First", "Second", json.dumps(server.call_result["structuredContent"])]
+    assert result[0].annotations is None
+    assert result[1].annotations is None
+    assert result[2].annotations == [{"type": "citation", "url": "https://example.test/source"}]
+
+
+async def test_web_search_keeps_block_citations_with_their_owning_text() -> None:
+    first = {"type": "url_citation", "url": "https://example.test/first", "start_index": 0, "end_index": 5}
+    second = {"type": "url_citation", "url": "https://example.test/second", "start_index": 0, "end_index": 6}
+    unbound = {"type": "url_citation", "url": "https://example.test/other", "start_index": 0, "end_index": 5}
+    server = _ToolResultServer()
+    server.tools = [toolbox_tool("never")]
+    server.call_result = {
+        "content": [
+            {"type": "text", "text": "First", "_meta": {"annotations": [first]}},
+            {"type": "text", "text": "Second", "_meta": {"annotations": [second]}},
+        ],
+        "structuredContent": {"annotations": [first, second, unbound]},
+    }
+    async with toolbox_connection(server) as toolbox:
+        result = await toolbox.call_tool("learn___microsoft_docs_search")
+
+    assert isinstance(result, list)
+    assert [item.text for item in result] == ["First", "Second", json.dumps(server.call_result["structuredContent"])]
+    assert result[0].annotations == [
+        {
+            "type": "citation",
+            "url": "https://example.test/first",
+            "annotated_regions": [{"type": "text_span", "start_index": 0, "end_index": 5}],
+        }
+    ]
+    assert result[1].annotations == [
+        {
+            "type": "citation",
+            "url": "https://example.test/second",
+            "annotated_regions": [{"type": "text_span", "start_index": 0, "end_index": 6}],
+        }
+    ]
+    assert result[2].annotations == [{"type": "citation", "url": "https://example.test/other"}]
+
+
+async def test_web_search_keeps_repeated_aggregate_citations_not_matched_to_a_block() -> None:
+    citation = {"type": "url_citation", "url": "https://example.test/source", "start_index": 0, "end_index": 5}
+    server = _ToolResultServer()
+    server.tools = [toolbox_tool("never")]
+    server.call_result = {
+        "content": [
+            {"type": "text", "text": "First", "_meta": {"annotations": [citation]}},
+            {"type": "text", "text": "Second"},
+        ],
+        "structuredContent": {"annotations": [citation, citation]},
+    }
+    async with toolbox_connection(server) as toolbox:
+        result = await toolbox.call_tool("learn___microsoft_docs_search")
+
+    assert isinstance(result, list)
+    assert result[0].annotations == [
+        {
+            "type": "citation",
+            "url": "https://example.test/source",
+            "annotated_regions": [{"type": "text_span", "start_index": 0, "end_index": 5}],
+        }
+    ]
+    assert result[1].annotations is None
+    assert result[2].annotations == [{"type": "citation", "url": "https://example.test/source"}]
+
+
+async def test_web_search_keeps_citations_on_non_text_blocks_without_a_span() -> None:
+    citation = {"type": "url_citation", "url": "https://example.test/image", "start_index": 0, "end_index": 5}
+    server = _ToolResultServer()
+    server.tools = [toolbox_tool("never")]
+    server.call_result = {
+        "content": [
+            {"type": "image", "data": "eA==", "mimeType": "image/png", "_meta": {"annotations": [citation]}},
+            {"type": "text", "text": "Search prose"},
+        ],
+        "structuredContent": {"annotations": [citation]},
+    }
+    async with toolbox_connection(server) as toolbox:
+        result = await toolbox.call_tool("learn___microsoft_docs_search")
+
+    assert isinstance(result, list)
+    assert result[0].type == "data"
+    assert result[0].annotations == [{"type": "citation", "url": "https://example.test/image"}]
+    assert result[1].text == "Search prose"
+    assert result[2].text == json.dumps(server.call_result["structuredContent"])
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "expected_region"),
+    [
+        (1, 3, {"type": "text_span", "start_index": 1, "end_index": 2}),
+        (2, 3, None),
+        (True, 3, None),
+        (-1, 3, None),
+        (1, 6, None),
+    ],
+)
+async def test_web_search_ignores_invalid_utf16_citation_spans(
+    start: Any, end: Any, expected_region: dict[str, Any] | None
+) -> None:
+    citation = {"type": "url_citation", "url": "https://example.test/source", "start_index": start, "end_index": end}
+    server = _ToolResultServer()
+    server.tools = [toolbox_tool("never")]
+    server.call_result = {
+        "content": [{"type": "text", "text": "A\U0001f30eBC", "_meta": {"annotations": [citation]}}],
+    }
+    async with toolbox_connection(server) as toolbox:
+        result = await toolbox.call_tool("learn___microsoft_docs_search")
+
+    assert isinstance(result, list)
+    assert result[0].annotations is not None
+    assert result[0].annotations[0].get("annotated_regions") == (
+        [expected_region] if expected_region is not None else None
+    )
+    if expected_region is not None:
+        assert result[0].text is not None
+        assert result[0].text[expected_region["start_index"] : expected_region["end_index"]] == "\U0001f30e"
+
+
+async def test_web_search_preserves_unrecognized_structured_entries() -> None:
+    unrecognized = [
+        {"type": "url_citation", "title": "missing URL"},
+        {"type": "url_citation", "url": "  "},
+        {"type": "other", "value": 7},
+        "invalid",
+    ]
+    server = _ToolResultServer()
+    server.tools = [toolbox_tool("never")]
+    server.call_result = {
+        "content": [{"type": "text", "text": "Search prose"}],
+        "structuredContent": {
+            "annotations": [{"type": "url_citation", "url": "https://example.test"}, *unrecognized],
+            "query": "Mars",
+        },
+    }
+    async with toolbox_connection(server) as toolbox:
+        result = await toolbox.call_tool("learn___microsoft_docs_search")
+
+    assert isinstance(result, list)
+    assert result[0].text == "Search prose"
+    assert result[1].text is not None
+    assert result[1].annotations == [{"type": "citation", "url": "https://example.test"}]
+    assert json.loads(result[1].text) == server.call_result["structuredContent"]
+
+
+@pytest.mark.parametrize("content", [[], [{"type": "text", "text": ""}]])
+async def test_web_search_without_prose_keeps_structured_result(content: list[dict[str, Any]]) -> None:
+    structured = {"annotations": [{"type": "url_citation", "url": "https://example.test"}]}
+    server = _ToolResultServer()
+    server.tools = [toolbox_tool("never")]
+    server.call_result = {"content": content, "structuredContent": structured}
+    async with toolbox_connection(server) as toolbox:
+        result = await toolbox.call_tool("learn___microsoft_docs_search")
+
+    assert isinstance(result, list)
+    assert result[0].text is not None
+    assert json.loads(result[0].text) == structured
+    assert result[0].annotations == [{"type": "citation", "url": "https://example.test"}]
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("content_first", ["Search prose"]),
+        ("content_only", ["Search prose"]),
+        ("structured_only", ['{"annotations": [{"type": "url_citation", "url": "https://example.test"}]}']),
+        ("both", ["Search prose", '{"annotations": [{"type": "url_citation", "url": "https://example.test"}]}']),
+    ],
+)
+async def test_other_mcp_content_modes_replace_citation_handling(mode: str, expected: list[str]) -> None:
+    server = _ToolResultServer()
+    server.tools = [toolbox_tool("never")]
+    server.call_result = {
+        "content": [{"type": "text", "text": "Search prose"}],
+        "structuredContent": {"annotations": [{"type": "url_citation", "url": "https://example.test"}]},
+    }
+    async with toolbox_connection(server, tool_result_content=mode) as toolbox:
+        result = await toolbox.call_tool("learn___microsoft_docs_search")
+
+    assert isinstance(result, list)
+    assert [item.text for item in result] == expected
+    assert all(item.annotations is None for item in result)
+
+
+async def test_custom_mcp_result_parser_overrides_toolbox_projection() -> None:
+    server = _ToolResultServer()
+    server.tools = [toolbox_tool("never")]
+    server.call_result = {
+        "content": [{"type": "text", "text": "Search prose"}],
+        "structuredContent": {"annotations": [{"type": "url_citation", "url": "https://example.test"}]},
+    }
+    async with toolbox_connection(server, parse_tool_results=lambda _: "Custom result") as toolbox:
+        assert await toolbox.call_tool("learn___microsoft_docs_search") == "Custom result"
+
+
+async def test_non_web_search_result_keeps_default_mcp_selection() -> None:
+    server = _ToolResultServer()
+    server.tools = [toolbox_tool("never")]
+    server.call_result = {
+        "content": [{"type": "text", "text": "Summary"}],
+        "structuredContent": {"value": 42},
+    }
+    async with toolbox_connection(server) as toolbox:
+        result = await toolbox.call_tool("learn___microsoft_docs_search")
+
+    assert isinstance(result, list)
+    assert [item.text for item in result] == ['{"value": 42}']
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_web_search_provenance_survives_function_invocation(stream: bool) -> None:
+    citation = {
+        "type": "url_citation",
+        "url": "https://example.test/source",
+        "start_index": 0,
+        "end_index": 4,
+    }
+    server = _ToolResultServer()
+    server.tools = [toolbox_tool("never")]
+    server.call_result = {
+        "content": [
+            {
+                "type": "resource",
+                "resource": {
+                    "uri": "about:web-search",
+                    "text": "Mars is red.",
+                    "_meta": {"annotations": [citation]},
+                },
+            }
+        ],
+        "structuredContent": {"annotations": [citation]},
+        "_meta": {"source": "server"},
+    }
+    client = ToolboxApprovalClient("learn___microsoft_docs_search")
+    async with toolbox_connection(server) as toolbox:
+        agent = Agent(client=client, tools=toolbox)
+        session = agent.create_session()
+        if stream:
+            response_stream = agent.run("Search", session=session, stream=True)
+            updates = [update async for update in response_stream]
+            response = await response_stream.get_final_response()
+            assert sum(content.type == "function_result" for update in updates for content in update.contents) == 1
+        else:
+            response = await agent.run("Search", session=session)
+
+        restored_session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        if stream:
+            continued_stream = agent.run("Continue", session=restored_session, stream=True)
+            _ = [update async for update in continued_stream]
+            await continued_stream.get_final_response()
+        else:
+            await agent.run("Continue", session=restored_session)
+
+    results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert len(results) == 1
+    assert results[0].call_id == "call-search"
+    assert results[0].items is not None
+    assert results[0].items[0].text == "Mars is red."
+    assert results[0].items[0].annotations == [
+        {
+            "type": "citation",
+            "url": "https://example.test/source",
+            "annotated_regions": [{"type": "text_span", "start_index": 0, "end_index": 4}],
+        }
+    ]
+    assert results[0].result == "Mars is red.\n" + json.dumps(server.call_result["structuredContent"])
+    model_results = [
+        content for message in client.calls[1] for content in message.contents if content.type == "function_result"
+    ]
+    assert len(model_results) == 1
+    assert model_results[0].call_id == "call-search"
+    assert model_results[0].items is not None
+    assert model_results[0].items[0].annotations == results[0].items[0].annotations
+    replayed = [content for message in client.calls[2] for content in message.contents]
+    assert sum(content.type == "function_call" and content.call_id == "call-search" for content in replayed) == 1
+    replayed_results = [content for content in replayed if content.type == "function_result"]
+    assert len(replayed_results) == 1
+    assert replayed_results[0].call_id == "call-search"
+    assert replayed_results[0].items is not None
+    assert replayed_results[0].items[0].annotations == results[0].items[0].annotations
+    provider = OpenAIChatClient(model="test-model", api_key="test-key")
+    try:
+        assert provider._prepare_content_for_openai("tool", model_results[0]) == {
+            "type": "function_call_output",
+            "call_id": "call-search",
+            "output": results[0].result,
+        }
+    finally:
+        await provider.client.close()
+    assert results[0].items[0].additional_properties["_meta"] == {"source": "server"}
+    restored = Content.from_dict(results[0].to_dict())
+    assert restored.items is not None
+    assert restored.items[0].annotations == results[0].items[0].annotations
+    host_payload = restored.additional_properties["_mcp_tool_result_host_payload"]
+    assert host_payload["content"] == server.call_result["content"]
+    assert host_payload["structuredContent"] == server.call_result["structuredContent"]
+    assert host_payload["_meta"] == {"source": "server"}
+    assert len(server.calls) == 1
 
 
 def test_toolbox_owns_feature_index_53() -> None:

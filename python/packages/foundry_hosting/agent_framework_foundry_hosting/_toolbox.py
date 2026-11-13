@@ -235,6 +235,13 @@ class FoundryToolbox(MCPStreamableHTTPTool):
     - forwards the platform per-request call-id (``x-agent-foundry-call-id``) so the
       Foundry MCP proxy can resolve the caller context server-side.
 
+    Web-search results with URL citation metadata use the core MCP ``structured_first``
+    handling: content blocks stay model-visible before the structured content, and the
+    citations become framework annotations. Aggregate citations without an identified
+    content block remain attached to the structured content without spans. Citation spans
+    refer to the search result, not a later assistant answer. Another ``tool_result_content``
+    mode or a custom ``parse_tool_results`` replaces this handling.
+
     Platform headers are resolved at each operation boundary before work crosses
     into the MCP connection's writer task. The complete effective header set is
     bound to the MCP session; when the caller context changes, the Toolbox

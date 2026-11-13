@@ -18,12 +18,14 @@ from collections.abc import (
     Awaitable,
     Callable,
     Generator,
+    Iterator,
     Mapping,
     Sequence,
 )
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
 from copy import copy
 from dataclasses import asdict, dataclass, is_dataclass
+from itertools import chain
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
 
@@ -152,6 +154,9 @@ _HOSTED_CONVERSATION_COMMITTED_KEY = "_foundry_conversation_committed"
 _HOSTED_PROVIDER_OUTPUT_COUNT_KEY = "_foundry_provider_output_count"
 _HOSTED_PROVIDER_USAGE_KEY = "_foundry_provider_usage"
 _PENDING_CONTAINER_FILE_CITATIONS_KEY = "_foundry_pending_container_file_citations"
+_PENDING_URL_CITATIONS_KEY = "_foundry_pending_url_citations"
+_MAX_PENDING_URL_CITATIONS = 100
+_MAX_PENDING_URL_CITATION_BYTES = 64 * 1024
 _CONTAINER_FILE_CITATIONS_KEY = "container_file_citations"
 _PUBLIC_STREAM_FAILURE_MESSAGE = "An internal server error occurred."
 
@@ -280,6 +285,30 @@ def _container_file_citations_from_function_result(content: Content) -> list[_Co
             )
 
     return citations
+
+
+def _url_citations_from_function_result(content: Content) -> Iterator[tuple[str, str]]:
+    """Yield web sources cited by a function result in their original order."""
+    candidates = chain(
+        content.annotations or [], chain.from_iterable(item.annotations or [] for item in content.items or [])
+    )
+    for annotation in candidates:
+        if not isinstance(annotation, Mapping):
+            continue
+        annotation_mapping = cast(Mapping[str, Any], annotation)
+        if annotation_mapping.get("type") != "citation" or annotation_mapping.get("file_id"):
+            continue
+        url = annotation_mapping.get("url")
+        if not isinstance(url, str):
+            continue
+        try:
+            scheme = urlparse(url).scheme.lower()
+        except ValueError:
+            continue
+        if scheme not in {"http", "https"}:
+            continue
+        title = annotation_mapping.get("title")
+        yield url, title if isinstance(title, str) else ""
 
 
 def _annotations_to_output_text(
@@ -1528,7 +1557,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # below so its partial output is not misreported as a failure.
                 return
 
-            for event in tracker.close():
+            for event in tracker.close(final_answer=True):
                 yield event
 
             if cancellation_signal.is_set() and context.client_cancelled:
@@ -1539,7 +1568,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # selecting the terminal event. Same ``client_cancelled`` gate as above.
                 return
 
-            tracker.discard_pending_container_file_citations()
+            tracker.discard_pending_citations()
             incomplete_reason = tracker.incomplete_reason
             if tracker.oauth_consent_requested or incomplete_reason is not None:
                 yield response_event_stream.emit_incomplete(reason=incomplete_reason, usage=tracker.usage)
@@ -1918,7 +1947,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                                 yield event
                         if context.shutdown.is_set() or cancellation_signal.is_set():
                             continue
-                        for event in tracker.close():
+                        # Unfinished provider outputs end at a function result, so text is still
+                        # active here only when it ends the finished answer.
+                        for event in tracker.close(final_answer=True):
                             yield event
                         private_metadata = _hosted_internal_metadata(response_event_stream)
                         private_metadata[_HOSTED_PROVIDER_OUTPUT_COUNT_KEY] = output_count
@@ -2411,14 +2442,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             def snapshot_response(
                 checkpoint_id: str | None,
+                *,
+                final_answer: bool = False,
             ) -> Generator[ResponseStreamEvent | ResponseCheckpointEvent]:
                 # Pair the response output emitted so far with the workflow checkpoint it corresponds
                 # to, so recovery from that checkpoint replays exactly the updates that came after it.
-                if checkpoint_id is None or checkpoint_id == _hosted_internal_metadata(response_event_stream).get(
-                    _LATEST_CHECKPOINT_ID_KEY
-                ):
+                if checkpoint_id is None:
                     return
-                yield from tracker.close()
+                previous_checkpoint_id = _hosted_internal_metadata(response_event_stream).get(_LATEST_CHECKPOINT_ID_KEY)
+                if checkpoint_id == previous_checkpoint_id and not final_answer:
+                    return
+                events = list(tracker.close(final_answer=final_answer))
+                if checkpoint_id == previous_checkpoint_id and not events:
+                    return
+                yield from events
                 _hosted_internal_metadata(response_event_stream)[_LATEST_CHECKPOINT_ID_KEY] = checkpoint_id
                 yield response_event_stream.checkpoint()
 
@@ -2452,7 +2489,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             elif self._resilient_background and not main_iter.signalled:
                 # The workflow ran to completion: pair its final checkpoint with the full output, so
                 # recovery after this point does not replay the last superstep.
-                for event in snapshot_response(await latest_checkpoint_id()):
+                for event in snapshot_response(await latest_checkpoint_id(), final_answer=True):
                     yield event
         except Exception as exc:
             _log_response_failure("workflow execution", context.response_id, exc)
@@ -2514,7 +2551,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 yield from tracker.close()
             except Exception as close_error:
                 _log_response_failure("failed tracker cleanup", response_id, close_error)
-            tracker.discard_pending_container_file_citations()
+            tracker.discard_pending_citations()
         if public_message is not None:
             message = public_message
         elif isinstance(ex, _PublicResponseFailure):
@@ -2576,6 +2613,8 @@ class _OutputItemTracker:
         self._outstanding_computer_calls: set[str] = set()
         self._oauth_consent_requests: set[tuple[str, str]] = set()
         self._pending_container_file_citations: dict[str, _ContainerFileCitation] = {}
+        self._pending_url_citations: dict[str, str] = {}
+        self._pending_url_citation_bytes = 0
         self._text_annotations: list[ResponsesAnnotation] = []
         self._message_text_annotations: dict[int, list[ResponsesAnnotation]] = {}
         # Set when an agent update reports the model stopped early (content filter, token
@@ -2615,6 +2654,25 @@ class _OutputItemTracker:
                     file_id=file_id,
                     filename=filename,
                 )
+        persisted_url_citations = _hosted_internal_metadata(stream).get(_PENDING_URL_CITATIONS_KEY)
+        if persisted_url_citations is not None:
+            if not isinstance(persisted_url_citations, Sequence) or isinstance(
+                persisted_url_citations, (str, bytes, bytearray)
+            ):
+                raise RuntimeError("The persisted URL citations are invalid.")
+            skipped_url_citation = False
+            for raw_url_citation in cast(Sequence[Any], persisted_url_citations):
+                if not isinstance(raw_url_citation, Mapping):
+                    raise RuntimeError("The persisted URL citations are invalid.")
+                url_citation = cast(Mapping[str, Any], raw_url_citation)
+                url = url_citation.get("url")
+                title = url_citation.get("title")
+                if not isinstance(url, str) or not url or not isinstance(title, str):
+                    raise RuntimeError("The persisted URL citations are invalid.")
+                skipped_url_citation |= not self._retain_pending_url_citation(url, title)
+            if skipped_url_citation:
+                logger.warning("Pending URL citations exceeded the hosted source limits; excess sources were skipped.")
+                self._persist_pending_url_citations()
         for item in stream.response.get("output", []):
             if not isinstance(item, Mapping):
                 continue
@@ -2810,6 +2868,15 @@ class _OutputItemTracker:
                 for citation in citations:
                     self._pending_container_file_citations[citation.filename] = citation
                 self._persist_pending_container_file_citations()
+            skipped_url_citation = False
+            had_url_citations = False
+            for url, title in _url_citations_from_function_result(content):
+                had_url_citations = True
+                skipped_url_citation |= not self._retain_pending_url_citation(url, title)
+            if skipped_url_citation:
+                logger.warning("Pending URL citations exceeded the hosted source limits; excess sources were skipped.")
+            if had_url_citations:
+                self._persist_pending_url_citations()
             async for event in self._stream.output_item_function_call_output(
                 content.call_id,  # type: ignore[arg-type]
                 _json_safe_to_str(content.result),
@@ -3063,14 +3130,21 @@ class _OutputItemTracker:
             # response stream isn't broken by one unsupported content item.
             logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
 
-    def close(self) -> Generator[ResponseStreamEvent]:
-        """Flush any remaining active builder without discarding recoverable state."""
-        yield from self._close()
+    def close(self, *, final_answer: bool = False) -> Generator[ResponseStreamEvent]:
+        """Flush any remaining active builder without discarding recoverable state.
 
-    def discard_pending_container_file_citations(self) -> None:
+        Set ``final_answer`` only when the active text ends the agent's answer, so pending tool-result
+        sources attach there instead of to interim text.
+        """
+        yield from self._close(attach_sources=final_answer)
+
+    def discard_pending_citations(self) -> None:
         """Discard unmatched citations immediately before a terminal response event."""
         self._pending_container_file_citations.clear()
         self._persist_pending_container_file_citations()
+        self._pending_url_citations.clear()
+        self._pending_url_citation_bytes = 0
+        self._persist_pending_url_citations()
 
     # -- Private open/close helpers --
 
@@ -3159,9 +3233,9 @@ class _OutputItemTracker:
         self._active_id = content.call_id or f"{content.server_name or 'default'}::{content.tool_name}"
         yield self._mcp_builder.emit_added()
 
-    def _close(self) -> Generator[ResponseStreamEvent]:
+    def _close(self, *, attach_sources: bool = False) -> Generator[ResponseStreamEvent]:
         if self._active_type in {"text", "refusal"}:
-            yield from self._close_message_content()
+            yield from self._close_message_content(attach_sources=attach_sources)
             if self._message_item is not None:
                 message_done = self._message_item.emit_done()
                 if self._message_text_annotations:
@@ -3219,13 +3293,18 @@ class _OutputItemTracker:
         self._active_message_id = None
         self._accumulated.clear()
 
-    def _close_message_content(self) -> Generator[ResponseStreamEvent]:
+    def _close_message_content(self, *, attach_sources: bool = False) -> Generator[ResponseStreamEvent]:
         accumulated = "".join(self._accumulated)
         if self._active_type == "text" and self._text_content is not None:
             annotations = list(self._text_annotations)
             for annotation in self._container_file_annotations_for_text(accumulated):
                 if annotation not in annotations:
                     annotations.append(annotation)
+            if attach_sources:
+                earlier_annotations = chain.from_iterable(self._message_text_annotations.values())
+                annotations.extend(
+                    self._source_url_annotations_for_text(accumulated, [*earlier_annotations, *annotations])
+                )
             yield self._text_content.emit_text_done(accumulated)
             for annotation in annotations:
                 yield self._text_content.emit_annotation_added(annotation)
@@ -3290,6 +3369,53 @@ class _OutputItemTracker:
         if annotations:
             self._persist_pending_container_file_citations()
         return annotations
+
+    def _source_url_annotations_for_text(
+        self,
+        text: str,
+        existing: Sequence[ResponsesAnnotation],
+    ) -> list[UrlCitationBody]:
+        """Cite pending tool-result sources at the end of the final answer text, without claiming a supported span."""
+        if not text or not self._pending_url_citations:
+            return []
+        cited_urls = {
+            cast(Mapping[str, Any], annotation).get("url")
+            for annotation in existing
+            if cast(Mapping[str, Any], annotation).get("type") == "url_citation"
+        }
+        end_index = len(text)
+        annotations = [
+            UrlCitationBody(type="url_citation", url=url, title=title, start_index=end_index, end_index=end_index)
+            for url, title in self._pending_url_citations.items()
+            if url not in cited_urls
+        ]
+        self._pending_url_citations.clear()
+        self._pending_url_citation_bytes = 0
+        self._persist_pending_url_citations()
+        return annotations
+
+    def _retain_pending_url_citation(self, url: str, title: str) -> bool:
+        if url in self._pending_url_citations:
+            return True
+        if (
+            len(self._pending_url_citations) >= _MAX_PENDING_URL_CITATIONS
+            or len(url) + len(title) > _MAX_PENDING_URL_CITATION_BYTES
+        ):
+            return False
+        size = len(url.encode("utf-8", errors="surrogatepass")) + len(title.encode("utf-8", errors="surrogatepass"))
+        if self._pending_url_citation_bytes + size > _MAX_PENDING_URL_CITATION_BYTES:
+            return False
+        self._pending_url_citations[url] = title
+        self._pending_url_citation_bytes += size
+        return True
+
+    def _persist_pending_url_citations(self) -> None:
+        if not self._pending_url_citations:
+            _hosted_internal_metadata(self._stream).pop(_PENDING_URL_CITATIONS_KEY, None)
+            return
+        _hosted_internal_metadata(self._stream)[_PENDING_URL_CITATIONS_KEY] = [
+            {"url": url, "title": title} for url, title in self._pending_url_citations.items()
+        ]
 
     def _persist_pending_container_file_citations(self) -> None:
         if not self._pending_container_file_citations:

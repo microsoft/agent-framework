@@ -504,7 +504,7 @@ class NativeResponsesWorkflow:
             buffered: list[WorkflowEvent[Any]] = []
             tracker = _OutputItemTracker(stream, self.allowed_origins)
 
-            async def flush(checkpoint_id: str | None) -> list[ResponseStreamEvent]:
+            async def flush(checkpoint_id: str | None, *, final_answer: bool = False) -> list[ResponseStreamEvent]:
                 nonlocal stream, tracker, aliases
                 checkpoint = await run.get_checkpoint(checkpoint_id) if run.stored else None
                 pending = checkpoint.pending_request_info_events if checkpoint is not None else {}
@@ -519,7 +519,10 @@ class NativeResponsesWorkflow:
                 events: list[ResponseStreamEvent] = []
                 for event in buffered:
                     events.extend(await _project(event, draft, next_tracker, approval_projection))
-                events.extend(next_tracker.close())
+                is_final_output = final_answer and bool(buffered) and buffered[-1].type == "output"
+                events.extend(next_tracker.close(final_answer=is_final_output))
+                if final_answer:
+                    next_tracker.discard_pending_citations()
                 _hosted_internal_metadata(draft)[_HOSTED_PROVIDER_USAGE_KEY] = next_tracker.usage_details
                 await run.stage(_snapshot(draft), approvals=next_aliases, checkpoint_id=checkpoint_id)
                 stream, tracker, aliases = draft, next_tracker, next_aliases
@@ -531,6 +534,8 @@ class NativeResponsesWorkflow:
 
             phase = "execution"
             if not run.has_completed_output:
+                pending_flush = False
+                pending_checkpoint: str | None = None
                 iterator = _SignalledIterator(
                     run.events(turn, client_kwargs=client_kwargs, function_invocation_kwargs=function_kwargs),
                     context.shutdown,
@@ -539,6 +544,18 @@ class NativeResponsesWorkflow:
                 )
                 async with aclosing(iterator):
                     async for event in iterator:
+                        if pending_flush and event.type in (
+                            "superstep_started",
+                            "request_info",
+                            "output",
+                            "intermediate",
+                            "data",
+                        ):
+                            for output_event in await flush(pending_checkpoint):
+                                yield wire(output_event)
+                            if resilient:
+                                yield stream.checkpoint()
+                            pending_flush = False
                         if event.type == "request_info" and event.request_id not in represented_pending:
                             if not self.resolver.is_factory:
                                 raise _WorkflowRequestError(
@@ -552,10 +569,8 @@ class NativeResponsesWorkflow:
                             if resilient:
                                 yield stream.checkpoint()
                         elif event.type == "superstep_completed":
-                            for output_event in await flush(iterator.stamp):
-                                yield wire(output_event)
-                            if resilient:
-                                yield stream.checkpoint()
+                            pending_checkpoint = iterator.stamp
+                            pending_flush = True
                 if iterator.signalled:
                     if context.shutdown.is_set() and resilient and run.snapshot is not None:
                         preserve_for_recovery = True
@@ -564,13 +579,19 @@ class NativeResponsesWorkflow:
                         await abort()
                         return
                     raise _WorkflowRequestError("The workflow stopped without a recoverable background pair.")
+                if pending_flush:
+                    for output_event in await flush(pending_checkpoint, final_answer=True):
+                        yield wire(output_event)
+                    if resilient:
+                        yield stream.checkpoint()
             if cancellation_signal.is_set():
                 await abort()
                 return
             phase = "final output persistence"
             if buffered:
-                for event in await flush(run.checkpoint_id):
+                for event in await flush(run.checkpoint_id, final_answer=True):
                     yield wire(event)
+            tracker.discard_pending_citations()
             terminal = (
                 stream.emit_incomplete(reason=tracker.incomplete_reason, usage=tracker.usage)
                 if tracker.oauth_consent_requested or tracker.incomplete_reason is not None

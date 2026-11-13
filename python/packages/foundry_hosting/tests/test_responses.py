@@ -120,6 +120,16 @@ from agent_framework_foundry_hosting._state_store import (
     FunctionApprovalStoreProvider,
 )
 
+from .foundry_hosting.web_search_test_helpers import (  # pyrefly: ignore[missing-import] - pytest's importlib namespace
+    _DOCS_SOURCE_URL,
+    _expected_source_citations,
+    _expected_url_citation,
+    _legacy_citation_workflow_agent,
+    _url_citation,
+    _web_search_citation_updates,
+    _web_search_result,
+)
+
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 _PRIVATE_ERROR_DETAIL = "test-token-value at /srv/private/tool.py"
 _SESSION_STORAGE_ERROR_DETAIL = "session-storage-secret at C:\\sensitive\\session_store.py"
@@ -244,37 +254,6 @@ def _expected_container_file_citation(
         "filename": filename,
         "start_index": start_index,
         "end_index": start_index + len(filename),
-    }
-
-
-def _url_citation(
-    *,
-    url: str = "https://www.python.org/downloads/release/python-31315/",
-    title: str = "Python 3.13.15",
-    start_index: int = 0,
-    end_index: int = 6,
-) -> Annotation:
-    return Annotation(
-        type="citation",
-        url=url,
-        title=title,
-        annotated_regions=[{"type": "text_span", "start_index": start_index, "end_index": end_index}],
-    )
-
-
-def _expected_url_citation(
-    *,
-    url: str = "https://www.python.org/downloads/release/python-31315/",
-    title: str = "Python 3.13.15",
-    start_index: int = 0,
-    end_index: int = 6,
-) -> dict[str, Any]:
-    return {
-        "type": "url_citation",
-        "url": url,
-        "title": title,
-        "start_index": start_index,
-        "end_index": end_index,
     }
 
 
@@ -2517,6 +2496,58 @@ class TestAgentSessionPersistence:
         assert output_done["item"] == message
         assert response.to_dict() == original_response
 
+    async def test_provider_background_attaches_tool_result_sources_to_final_answer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        answer = "Python 3.13.15 is out."
+        response = AgentResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_text("Let me search."),
+                        Content.from_function_call("call_1", "web_search", arguments={}),
+                    ],
+                ),
+                Message(role="tool", contents=[_web_search_result("call_1")]),
+                Message(role="assistant", contents=[Content.from_text(answer)]),
+            ],
+            finish_reason="stop",
+        )
+        agent = Agent(client=_ServiceStorageRecordingClient())
+
+        async def run(messages: Any = None, *, session: AgentSession, **kwargs: Any) -> AgentResponse:
+            del messages, kwargs
+            session.service_session_id = "private-service-conversation"
+            return response
+
+        monkeypatch.setattr(agent, "run", MagicMock(side_effect=run))
+        server = _make_server(
+            agent,
+            session_store=SessionStore(),
+            history_source="service",
+            background_source="provider",
+            options=ResponsesServerOptions(resilient_background=True),
+            response_store=FileResponseStore(storage_dir=tmp_path),
+        )
+        request = CreateResponse(input="hello", store=True, background=True)
+        context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [
+                event
+                async for event in server._handle_response(request, context, asyncio.Event())
+                if isinstance(event, Mapping)
+            ]
+
+        completed = next(event["response"] for event in events if event["type"] == "response.completed")
+        messages = [item for item in completed["output"] if item["type"] == "message"]
+        parts = [part for message in messages for part in message["content"] if part["type"] == "output_text"]
+        assert len(parts) == len(messages)
+        assert [part["text"] for part in parts] == ["Let me search.", answer]
+        assert parts[0]["annotations"] == []
+        assert parts[1]["annotations"] == _expected_source_citations(answer)
+
     async def test_provider_background_keeps_private_token_under_outer_response(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -4485,6 +4516,56 @@ class TestNonStreaming:
             _expected_file_citation(),
         ]
 
+    async def test_function_result_url_citations_wait_for_final_output_text(self) -> None:
+        answer = "Python 3.13.15 is out."
+        releases_url = "https://www.python.org/downloads/"
+        second_search = Content.from_function_result(
+            "call_2",
+            result=[
+                Content.from_text(
+                    "Release list.", annotations=[Annotation(type="citation", url=releases_url, title="Releases")]
+                )
+            ],
+        )
+        updates = [
+            *_web_search_citation_updates("Let me search more.")[:-1],
+            AgentResponseUpdate(
+                contents=[Content.from_text("Let me search more.")], role="assistant", message_id="msg_interim"
+            ),
+            AgentResponseUpdate(
+                contents=[Content.from_function_call("call_2", "web_search", arguments={})],
+                role="assistant",
+                message_id="msg_call_2",
+            ),
+            AgentResponseUpdate(contents=[second_search], role="tool", message_id="msg_result_2"),
+            AgentResponseUpdate(
+                contents=[Content.from_text(answer, annotations=[_url_citation()])],
+                role="assistant",
+                message_id="msg_answer",
+            ),
+        ]
+
+        resp = await _post(_make_server(_make_agent(stream_updates=updates)), stream=False)
+
+        assert resp.status_code == 200
+        output = resp.json()["output"]
+        assert [item["type"] for item in output] == [
+            "function_call",
+            "function_call_output",
+            "message",
+            "function_call",
+            "function_call_output",
+            "message",
+        ]
+        assert output[2]["content"][0]["annotations"] == []
+        assert output[5]["content"][0]["annotations"] == [
+            _expected_url_citation(),
+            _expected_url_citation(
+                url=_DOCS_SOURCE_URL, title="What's New", start_index=len(answer), end_index=len(answer)
+            ),
+            _expected_url_citation(url=releases_url, title="Releases", start_index=len(answer), end_index=len(answer)),
+        ]
+
     async def test_latest_pending_container_file_citation_replaces_same_filename(self) -> None:
         agent = _make_agent(
             stream_updates=[
@@ -5361,6 +5442,199 @@ class TestStreaming:
         completed = next(event["data"]["response"] for event in events if event["event"] == "response.completed")
         final_message = next(item for item in completed["output"] if item["type"] == "message")
         assert final_message["content"][0]["annotations"] == [expected_annotation]
+
+    async def test_function_result_url_citations_are_consistent_across_stream_events(self) -> None:
+        answer = "Python 3.13.15 is out."
+        resp = await _post(
+            _make_server(_make_agent(stream_updates=_web_search_citation_updates(answer))),
+            stream=True,
+        )
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        expected = _expected_source_citations(answer)
+        annotation_events = [event for event in events if event["event"] == "response.output_text.annotation.added"]
+        assert [event["data"]["annotation"] for event in annotation_events] == expected
+        content_done = next(event for event in events if event["event"] == "response.content_part.done")
+        assert content_done["data"]["part"]["annotations"] == expected
+        completed = next(event["data"]["response"] for event in events if event["event"] == "response.completed")
+        final_message = next(item for item in completed["output"] if item["type"] == "message")
+        assert final_message["content"][0]["annotations"] == expected
+
+    async def test_pending_url_citations_survive_recovery_and_are_discarded_at_completion(self) -> None:
+        stream = ResponseEventStream(response_id="resp_url_citations")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+        _ = [event async for event in tracker.handle(Content.from_function_call("call_1", "web_search", arguments={}))]
+        _ = [event async for event in tracker.handle(_web_search_result("call_1"))]
+        _ = list(tracker.close())
+        _ = stream.checkpoint()
+
+        recovered = _OutputItemTracker(stream)
+        interim = [event async for event in recovered.handle(Content.from_text("Checking."), message_id="msg_interim")]
+        interim.extend(recovered.close())
+        assert not any(event["type"] == "response.output_text.annotation.added" for event in interim)
+
+        events = [event async for event in recovered.handle(Content.from_text("Done."), message_id="msg_final")]
+        events.extend(recovered.close(final_answer=True))
+        annotations = [
+            event["annotation"] for event in events if event["type"] == "response.output_text.annotation.added"
+        ]
+        assert annotations == _expected_source_citations("Done.")
+
+        _ = [event async for event in recovered.handle(_web_search_result("call_2"))]
+        recovered.discard_pending_citations()
+        discarded = _OutputItemTracker(stream)
+        events = [event async for event in discarded.handle(Content.from_text("Later."), message_id="msg_later")]
+        events.extend(discarded.close(final_answer=True))
+        assert not any(event["type"] == "response.output_text.annotation.added" for event in events)
+
+    @pytest.mark.parametrize("final_already_cites", [False, True])
+    async def test_pending_sources_deduplicate_across_final_message_parts_only(self, final_already_cites: bool) -> None:
+        stream = ResponseEventStream(response_id="resp_multipart_citations")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+        _ = [event async for event in tracker.handle(Content.from_text("Interim", annotations=[_url_citation()]))]
+        _ = list(tracker.close())
+        _ = [event async for event in tracker.handle(_web_search_result("call_1"))]
+        update = AgentResponseUpdate(
+            contents=[
+                Content.from_text("First", annotations=[_url_citation()] if final_already_cites else None),
+                Content.from_text(" final"),
+            ],
+            role="assistant",
+            message_id="final",
+        )
+        events = [event async for event in tracker.handle_update(update, complete_message=True)]
+        events.extend(tracker.close(final_answer=True))
+
+        annotations = [
+            event["annotation"] for event in events if event["type"] == "response.output_text.annotation.added"
+        ]
+        expected = (
+            [
+                _expected_url_citation(),
+                _expected_url_citation(url=_DOCS_SOURCE_URL, title="What's New", start_index=6, end_index=6),
+            ]
+            if final_already_cites
+            else _expected_source_citations(" final")
+        )
+        assert annotations == expected
+        message = next(
+            event["item"]
+            for event in events
+            if event["type"] == "response.output_item.done" and event["item"]["type"] == "message"
+        )
+        parts = [part for part in message["content"] if part["type"] == "output_text"]
+        assert [part["annotations"] for part in parts] == (
+            [[expected[0]], [expected[1]]] if final_already_cites else [[], expected]
+        )
+
+    async def test_pending_source_limits_apply_across_results_and_recovery(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses._MAX_PENDING_URL_CITATIONS", 2)
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses._MAX_PENDING_URL_CITATION_BYTES", 64)
+        stream = ResponseEventStream(response_id="resp_source_limits")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+        first = Content.from_function_result(
+            "call_1",
+            result=[
+                Content.from_text(
+                    "Result",
+                    annotations=[
+                        Annotation(type="citation", url="https://example.test/1", title="A"),
+                        Annotation(type="citation", url="https://example.test/too-large", title="x" * 64),
+                    ],
+                )
+            ],
+        )
+        _ = [event async for event in tracker.handle(first)]
+        recovered = _OutputItemTracker(stream)
+        second = Content.from_function_result(
+            "call_2",
+            result=[
+                Content.from_text(
+                    "Result",
+                    annotations=[
+                        Annotation(type="citation", url="https://example.test/2", title="B"),
+                        Annotation(type="citation", url="https://example.test/3", title="C"),
+                    ],
+                )
+            ],
+        )
+        _ = [event async for event in recovered.handle(second)]
+        events = [event async for event in recovered.handle(Content.from_text("Done."), message_id="final")]
+        events.extend(recovered.close(final_answer=True))
+
+        annotations = [
+            event["annotation"]["url"]
+            for event in events
+            if event["type"] == "response.output_text.annotation.added"
+            and event["annotation"]["type"] == "url_citation"
+        ]
+        assert annotations == [
+            "https://example.test/1",
+            "https://example.test/2",
+        ]
+        assert "excess sources were skipped" in caplog.text
+
+    async def test_pending_source_byte_limit_counts_utf8_and_skips_oversized_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses._MAX_PENDING_URL_CITATION_BYTES", 33)
+        stream = ResponseEventStream(response_id="resp_source_bytes")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+        result = Content.from_function_result(
+            "call_1",
+            result=[
+                Content.from_text(
+                    "Result",
+                    annotations=[
+                        Annotation(type="citation", url="https://x", title="\U0001f30e" * 4),
+                        Annotation(type="citation", url="https://y"),
+                        Annotation(type="citation", url="http://z"),
+                    ],
+                )
+            ],
+        )
+        _ = [event async for event in tracker.handle(result)]
+        recovered = _OutputItemTracker(stream)
+        events = [event async for event in recovered.handle(Content.from_text("Done."), message_id="final")]
+        events.extend(recovered.close(final_answer=True))
+
+        assert [
+            event["annotation"]["url"]
+            for event in events
+            if event["type"] == "response.output_text.annotation.added"
+            and event["annotation"]["type"] == "url_citation"
+        ] == ["https://x", "http://z"]
+
+    async def test_recovery_bounds_previously_persisted_sources(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses._MAX_PENDING_URL_CITATIONS", 2)
+        stream = ResponseEventStream(response_id="resp_oversized_source_snapshot")
+        stream.emit_created()
+        stream.emit_in_progress()
+        _hosted_internal_metadata(stream)["_foundry_pending_url_citations"] = [
+            {"url": f"https://example.test/{index}", "title": str(index)} for index in range(3)
+        ]
+
+        recovered = _OutputItemTracker(stream)
+        events = [event async for event in recovered.handle(Content.from_text("Done."), message_id="final")]
+        events.extend(recovered.close(final_answer=True))
+
+        assert [
+            event["annotation"]["url"]
+            for event in events
+            if event["type"] == "response.output_text.annotation.added"
+            and event["annotation"]["type"] == "url_citation"
+        ] == ["https://example.test/0", "https://example.test/1"]
 
     async def test_pending_container_file_citation_survives_tracker_recovery(self) -> None:
         stream = ResponseEventStream(response_id="resp_container_file")
@@ -9755,7 +10029,11 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
         return ResponseStream(_iter(), finalizer=AgentResponse.from_updates)
 
 
-def _build_text_workflow_agent(text: str, *, finish_reason: FinishReasonLiteral | None = None) -> WorkflowAgent:
+def _build_text_workflow_agent(
+    text: str,
+    *,
+    finish_reason: FinishReasonLiteral | None = None,
+) -> WorkflowAgent:
     """Build a minimal ``WorkflowAgent`` whose inner agent emits a fixed text."""
 
     class _TextAgent(SupportsAgentRun):
@@ -10574,6 +10852,93 @@ class TestResilientBackgroundCheckpointing:
         assert final_text == "filtered by workflow"
         assert final_response["internal_metadata"][_INCOMPLETE_REASON_KEY] == "content_filter"
         assert final_response["status"] == "in_progress"
+
+    async def test_final_checkpoint_attaches_pending_tool_sources(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        workflow_agent = _build_text_workflow_agent("Final answer")
+        server = _make_server(
+            workflow_agent,
+            response_store=FileResponseStore(storage_dir=tmp_path),
+            options=ResponsesServerOptions(resilient_background=True),
+        )
+        checkpoint_storage = MagicMock()
+        checkpoint_storage.get_latest = AsyncMock(side_effect=[None, MagicMock(checkpoint_id="checkpoint-final")])
+        monkeypatch.setattr(
+            server._checkpoint_storage_provider, "get_store", MagicMock(return_value=checkpoint_storage)
+        )
+        monkeypatch.setattr(server._function_approval_storage_provider, "get_store", MagicMock(return_value=None))
+
+        async def no_updates() -> AsyncIterator[AgentResponseUpdate]:
+            if False:
+                yield AgentResponseUpdate(contents=[], role="assistant")
+
+        monkeypatch.setattr(workflow_agent, "run", MagicMock(return_value=no_updates()))
+        stream = ResponseEventStream(response_id="response-final-citations")
+        stream.emit_created()
+        stream.emit_in_progress()
+        tracker = _OutputItemTracker(stream)
+        _ = [event async for event in tracker.handle(_web_search_result("call_web_search"))]
+        _ = [event async for event in tracker.handle(Content.from_text("Final answer"), message_id="msg_final")]
+
+        request = CreateResponse(model="m", input="hi", background=True, stream=True, store=True)
+        context = ResponseContext(response_id="response-final-citations", mode_flags=MagicMock())
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [
+                event
+                async for event in server._handle_inner_workflow(
+                    request,
+                    context,
+                    stream,
+                    tracker,
+                    asyncio.Event(),
+                    workflow_agent,
+                )
+            ]
+
+        checkpoints = [event for event in events if isinstance(event, ResponseCheckpointEvent)]
+        assert len(checkpoints) == 1
+        final_message = next(item for item in checkpoints[0].response["output"] if item["type"] == "message")
+        final_content = cast(dict[str, Any], final_message["content"][0])
+        assert final_content["annotations"] == _expected_source_citations("Final answer")
+
+    async def test_workflow_completion_and_recovery_attach_tool_sources(self, tmp_path: Path) -> None:
+        request = CreateResponse(model="m", input="hi", background=True, stream=True, store=True)
+        store = FileResponseStore(storage_dir=tmp_path)
+        options = ResponsesServerOptions(resilient_background=True)
+        server = _make_server(_legacy_citation_workflow_agent(), response_store=store, options=options)
+        context = ResponseContext(response_id="response-citation-workflow", mode_flags=MagicMock())
+
+        snapshots: list[dict[str, Any]] = []
+        events: list[Any] = []
+        async for event in server._handle_response(request, context, asyncio.Event()):
+            if isinstance(event, ResponseCheckpointEvent):
+                snapshots.append(copy.deepcopy(dict(event.response)))
+            else:
+                events.append(event)
+
+        completed = next(event["response"] for event in events if event["type"] == "response.completed")
+        message = next(item for item in completed["output"] if item["type"] == "message")
+        assert message["content"][0]["annotations"] == _expected_source_citations("Final answer")
+        pending = next(
+            snapshot
+            for snapshot in snapshots
+            if snapshot.get("internal_metadata", {}).get("_foundry_pending_url_citations")
+        )
+
+        recovered_context = ResponseContext(response_id=context.response_id, mode_flags=MagicMock())
+        recovered_context.is_recovery = True
+        recovered_context.persisted_response = cast(ResponseObject, pending)
+        restarted = _make_server(_legacy_citation_workflow_agent(), response_store=store, options=options)
+        recovered_events = [
+            event
+            async for event in restarted._handle_response(request, recovered_context, asyncio.Event())
+            if isinstance(event, Mapping)
+        ]
+        recovered = next(event["response"] for event in recovered_events if event["type"] == "response.completed")
+        message = next(item for item in recovered["output"] if item["type"] == "message")
+        part = next(part for part in message["content"] if part["type"] == "output_text")
+        assert part["annotations"] == _expected_source_citations("Final answer")
 
 
 # endregion
