@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 _MISSING: Any = object()
 
 
-def _coerce_request_info_response(value: Any, response_type: type, request_id: str) -> Any:
+def _coerce_request_info_response(value: Any, response_type: type | types.UnionType, request_id: str) -> Any:
     """Convert and validate a response supplied for a pending request."""
     if response_type is Content and isinstance(value, str):
         value = Content.from_text(text=value)

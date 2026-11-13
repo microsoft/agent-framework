@@ -401,7 +401,9 @@ class WorkflowContext(Generic[OutT, W_OutT]):
             return
         await self._runner_context.add_event(event)
 
-    async def request_info(self, request_data: object, response_type: type, *, request_id: str | None = None) -> None:
+    async def request_info(
+        self, request_data: object, response_type: type | UnionType, *, request_id: str | None = None
+    ) -> None:
         """Request information from outside of the workflow.
 
         Calling this method will cause the workflow to emit a request_info event (type='request_info'), carrying the
@@ -419,9 +421,11 @@ class WorkflowContext(Generic[OutT, W_OutT]):
         """
         request_type: type = type(request_data)
         if not self._executor.is_request_supported(request_type, response_type):
+            # A union response_type (e.g. int | str) has no __name__; show its repr.
+            response_type_name = response_type.__name__ if isinstance(response_type, type) else str(response_type)
             logger.warning(
                 f"Executor '{self._executor_id}' requested info of type {request_type.__name__} "
-                f"with expected response type {response_type.__name__}, but no matching "
+                f"with expected response type {response_type_name}, but no matching "
                 "response handler is defined. The request will not be ignored but responses will "
                 "not be processed. Please define a response handler using the @response_handler decorator."
             )

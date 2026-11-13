@@ -51,7 +51,7 @@ import typing
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextvars import Context, ContextVar
 from copy import deepcopy
-from types import CodeType
+from types import CodeType, UnionType
 from typing import Any, Generic, Literal, TypeVar, cast, overload
 
 from .._agents import BaseAgent
@@ -562,7 +562,7 @@ class WorkflowInterrupted(asyncio.CancelledError):
     tasks. User code with ``except Exception:`` handlers does not intercept it.
     """
 
-    def __init__(self, request_id: str, request_data: Any, response_type: type) -> None:
+    def __init__(self, request_id: str, request_data: Any, response_type: type | UnionType) -> None:
         self.request_id = request_id
         self.request_data = request_data
         self.response_type = response_type
@@ -748,7 +748,7 @@ class RunContext:
     async def request_info(
         self,
         request_data: Any,
-        response_type: type,
+        response_type: type | UnionType,
         *,
         request_id: str | None = None,
     ) -> Any:

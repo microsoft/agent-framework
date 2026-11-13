@@ -30,7 +30,9 @@ logger = logging.getLogger(__name__)
 class RequestInfoMixin:
     """Mixin providing common functionality for request info handling."""
 
-    def is_request_supported(self, request_type: builtin_type[Any], response_type: builtin_type[Any]) -> bool:
+    def is_request_supported(
+        self, request_type: builtin_type[Any], response_type: builtin_type[Any] | UnionType
+    ) -> bool:
         """Check if the executor supports request of the given type and handling a response of the given type.
 
         Args:
