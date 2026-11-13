@@ -70,15 +70,10 @@ public sealed class JevDecisionClient : IDecisionClient
     {
         _ = Throw.IfNull(request);
 
-        // A caller that has Jev's own questions, such as JevChatClient, sends them unchanged, so JSON instructions and
-        // criteria keep their form; the decision questions with the same IDs then only correlate the answers.
-        IReadOnlyDictionary<string, JevQuestion>? jevQuestions = (options?.RawRepresentationFactory?.Invoke(this) as JevDecisionRequestOptions)?.Questions;
         var questions = new Dictionary<string, JevQuestion>(request.Questions.Count, StringComparer.Ordinal);
         foreach (DecisionQuestion question in request.Questions)
         {
-            questions[question.Id] = jevQuestions is not null && jevQuestions.TryGetValue(question.Id, out JevQuestion? jevQuestion)
-                ? jevQuestion
-                : JevDecisionMapping.ToJevQuestion(question);
+            questions[question.Id] = JevDecisionMapping.ToJevQuestion(question);
         }
 
         var jevRequest = new JevRequest { State = JevDecisionMapping.ToEntry(request.State), Questions = questions };

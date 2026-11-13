@@ -10,7 +10,7 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.TypeSafe;
 
 /// <summary>
-/// Serializer options and JSON schemas of the Jev contract types, shared by the Jev tool and chat client.
+/// Serializer options and JSON schemas of the Jev contract types, which the Jev tool uses.
 /// </summary>
 internal static class JevJsonUtilities
 {

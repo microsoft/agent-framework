@@ -75,30 +75,6 @@ internal static class JevDecisionMapping
         };
 
     /// <summary>
-    /// Converts a Jev question into the decision question that correlates its answer.
-    /// </summary>
-    /// <remarks>
-    /// JSON instructions and criteria become their JSON text, and an undescribed Choice label is described by the
-    /// label itself. The Jev question itself is what is sent (see <see cref="JevDecisionRequestOptions"/>), so these
-    /// texts never reach the API. Call <see cref="JevContractValidator.ValidateQuestions"/> first, so that invalid
-    /// questions fail with the Jev rule they break.
-    /// </remarks>
-    public static DecisionQuestion ToDecisionQuestion(string id, JevQuestion question) =>
-        question switch
-        {
-            JevNoulQuestion noul => ToBinaryQuestion(id, noul),
-            JevChoiceQuestion choice => new ChoiceDecisionQuestion(
-                id,
-                ToText(choice.Instructions),
-                [.. choice.Criteria.Select(criterion => new DecisionCandidate(criterion.Key, ToText(criterion.Value) ?? criterion.Key))]),
-            JevScoreQuestion score => new ScoreDecisionQuestion(
-                id,
-                ToText(score.Instructions),
-                [.. score.Criteria.Select((criterion, index) => new DecisionScoreLevel(ToKey(index), ToText(criterion) ?? ToKey(index)))]),
-            _ => throw new ArgumentException($"Question '{id}' is not a Jev Choice, Score, or Noul question.", nameof(question)),
-        };
-
-    /// <summary>
     /// Converts Jev's answer to a question into the decision answer.
     /// </summary>
     /// <exception cref="DecisionProtocolException">The answer is not a complete answer to the question.</exception>
@@ -133,41 +109,6 @@ internal static class JevDecisionMapping
             ? new UsageDetails { InputTokenCount = tokens.InputTokens, OutputTokenCount = tokens.OutputTokens, TotalTokenCount = tokens.InputTokens + tokens.OutputTokens }
             : null;
 
-    /// <summary>
-    /// Gets the Jev result of a decision response from <see cref="JevDecisionClient"/>, with only the answers that the
-    /// response holds.
-    /// </summary>
-    public static JevResult ToJevResult(DecisionResponse response)
-    {
-        if (response.RawRepresentation is not JevResult result)
-        {
-            throw new InvalidOperationException("The decision response does not come from Jev.");
-        }
-
-        var answers = new Dictionary<string, JevResponse>(response.Answers.Count, StringComparer.Ordinal);
-        foreach (DecisionAnswer answer in response.Answers)
-        {
-            answers[answer.QuestionId] = result.Answers[answer.QuestionId];
-        }
-
-        return new JevResult { Model = result.Model, Answers = answers, Usage = result.Usage };
-    }
-
-    private static BinaryDecisionQuestion ToBinaryQuestion(string id, JevNoulQuestion noul)
-    {
-        string? instructions = ToText(noul.Instructions);
-        string? trueDescription = ToText(noul.Criteria?.True);
-        string? falseDescription = ToText(noul.Criteria?.False);
-
-        // A Noul may describe only one outcome, but a Binary question needs instructions or both descriptions, so the
-        // one description also stands in for the instructions.
-        return new BinaryDecisionQuestion(
-            id,
-            instructions ?? (trueDescription is null || falseDescription is null ? trueDescription ?? falseDescription : null),
-            trueDescription,
-            falseDescription);
-    }
-
     private static Dictionary<string, JevEntry> ToCriteria(IReadOnlyList<DecisionCandidate> candidates)
     {
         var criteria = new Dictionary<string, JevEntry>(candidates.Count, StringComparer.Ordinal);
@@ -189,9 +130,6 @@ internal static class JevDecisionMapping
 
         return JevEntry.FromString(text);
     }
-
-    private static string? ToText(JevEntry? entry) =>
-        entry is { IsNull: false } value && value.ToString() is { } text && !string.IsNullOrWhiteSpace(text) ? text : null;
 
     private static string ToKey(int index) => index.ToString(CultureInfo.InvariantCulture);
 

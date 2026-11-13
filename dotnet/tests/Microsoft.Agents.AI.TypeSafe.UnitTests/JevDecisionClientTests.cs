@@ -3,7 +3,6 @@
 using System;
 using System.ClientModel;
 using System.ClientModel.Primitives;
-using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -25,10 +24,10 @@ public sealed class JevDecisionClientTests
     public async Task GetResponseAsync_DecisionQuestions_AreAskedAsJevQuestionsAsync()
     {
         // Arrange
-        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevChatTestData.Result(
-            JevChatTestData.Noul("refund", 0.95),
+        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevResultJson.Result(
+            JevResultJson.Noul("refund", 0.95),
             "\"department\":{\"type\":\"choice\",\"choice\":\"billing\",\"confidence\":0.8,\"probabilities\":{\"technical\":0.1,\"billing\":0.9}}",
-            JevChatTestData.Score("severity", 1.5, 3)));
+            JevResultJson.Score("severity", 1.5, 3)));
         using var httpClient = new HttpClient(handler);
         using JevDecisionClient client = CreateClient(httpClient);
         var request = new DecisionRequest(s_state, [
@@ -78,35 +77,10 @@ public sealed class JevDecisionClientTests
     }
 
     [Fact]
-    public async Task GetResponseAsync_JevQuestionsInRawOptions_AreSentUnchangedAsync()
-    {
-        // Arrange: JSON instructions and an undescribed label, which decision questions cannot carry as they are.
-        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevChatTestData.Result(JevChatTestData.Choice("duplicate", "yes", "yes", "no")));
-        using var httpClient = new HttpClient(handler);
-        using JevDecisionClient client = CreateClient(httpClient);
-        JsonElement instructions = JsonDocument.Parse("""{ "question": "Is the resume for the same person as `candidate`?", "candidate": { "name": "Ana" } }""").RootElement.Clone();
-        var jevQuestions = new Dictionary<string, JevQuestion>
-        {
-            ["duplicate"] = new JevChoiceQuestion { Instructions = (JevEntry)instructions, Criteria = new Dictionary<string, JevEntry> { ["yes"] = JevEntry.Null, ["no"] = "A different person" } },
-        };
-        DecisionQuestion question = JevDecisionMapping.ToDecisionQuestion("duplicate", jevQuestions["duplicate"]);
-        var options = new DecisionOptions { RawRepresentationFactory = _ => new JevDecisionRequestOptions { Questions = jevQuestions } };
-
-        // Act
-        DecisionResponse response = await client.GetResponseAsync(new DecisionRequest(s_state, [question]), options);
-
-        // Assert
-        JsonNode sent = JsonNode.Parse(Assert.Single(handler.Requests).Body)!["questions"]!["duplicate"]!;
-        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(instructions.GetRawText()), sent["instructions"]), sent.ToJsonString());
-        Assert.Null(sent["criteria"]!["yes"]);
-        Assert.Equal("yes", Assert.IsType<ChoiceDecisionAnswer>(Assert.Single(response.Answers)).SelectedCandidateId);
-    }
-
-    [Fact]
     public async Task GetResponseAsync_IncompleteDistribution_ThrowsDecisionProtocolExceptionAsync()
     {
         // Arrange: the answer leaves out a label, so its distribution is not complete.
-        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevChatTestData.Result(
+        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevResultJson.Result(
             "\"department\":{\"type\":\"choice\",\"choice\":\"billing\",\"confidence\":0.9,\"probabilities\":{\"billing\":1.0}}"));
         using var httpClient = new HttpClient(handler);
         using JevDecisionClient client = CreateClient(httpClient);
@@ -121,7 +95,7 @@ public sealed class JevDecisionClientTests
     public async Task GetResponseAsync_DistributionRoundedToTwoDecimals_IsAcceptedAsync()
     {
         // Arrange: Jev rounds to two decimals, so three even probabilities sum to 0.99 rather than 1.
-        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevChatTestData.Result(
+        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevResultJson.Result(
             "\"department\":{\"type\":\"choice\",\"choice\":\"billing\",\"confidence\":0.01,\"probabilities\":{\"billing\":0.33,\"technical\":0.33,\"sales\":0.33}}"));
         using var httpClient = new HttpClient(handler);
         using JevDecisionClient client = CreateClient(httpClient);
@@ -139,7 +113,7 @@ public sealed class JevDecisionClientTests
     public async Task GetResponseAsync_ValueWithinRoundingErrorOfItsBound_IsMovedOntoTheBoundAsync()
     {
         // Arrange
-        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevChatTestData.Result(JevChatTestData.Noul("refund", 1.0000001)));
+        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevResultJson.Result(JevResultJson.Noul("refund", 1.0000001)));
         using var httpClient = new HttpClient(handler);
         using JevDecisionClient client = CreateClient(httpClient);
 
@@ -168,7 +142,7 @@ public sealed class JevDecisionClientTests
     public async Task GetResponseAsync_ModelInOptions_WinsOverTheClientModelAsync()
     {
         // Arrange
-        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevChatTestData.Result(JevChatTestData.Noul("refund", 0.5)));
+        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevResultJson.Result(JevResultJson.Noul("refund", 0.5)));
         using var httpClient = new HttpClient(handler);
         using JevDecisionClient client = CreateClient(httpClient);
 
@@ -201,7 +175,7 @@ public sealed class JevDecisionClientTests
     public async Task Constructor_WithApiKeyAndOptions_SendsToTheConfiguredEndpointAsync()
     {
         // Arrange
-        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevChatTestData.Result(JevChatTestData.Noul("refund", 0.5)));
+        using var handler = new JevTestHttpHandler().Reply(HttpStatusCode.OK, JevResultJson.Result(JevResultJson.Noul("refund", 0.5)));
         using var httpClient = new HttpClient(handler);
         using var client = new JevDecisionClient(new ApiKeyCredential("test-key"), new JevDecisionClientOptions
         {
@@ -229,24 +203,9 @@ public sealed class JevDecisionClientTests
         Assert.Throws<ArgumentException>(() => new JevDecisionClient(new ApiKeyCredential("key"), new JevDecisionClientOptions { Endpoint = new Uri("/jev", UriKind.Relative) }));
     }
 
-    [Fact]
-    public void ToDecisionQuestion_NoulWithOneCriterion_UsesItAsTheInstructions()
+    internal static JevDecisionClient CreateClient(HttpClient httpClient)
     {
-        // Arrange: Jev accepts a Noul with only one outcome described, which a Binary question cannot express directly.
-        var noul = new JevNoulQuestion { Criteria = new JevNoulCriteria { True = "The customer is angry." } };
-
-        // Act
-        BinaryDecisionQuestion question = Assert.IsType<BinaryDecisionQuestion>(JevDecisionMapping.ToDecisionQuestion("angry", noul));
-
-        // Assert
-        Assert.Equal("The customer is angry.", question.Instructions);
-        Assert.Equal("The customer is angry.", question.TrueDescription);
-        Assert.Null(question.FalseDescription);
-    }
-
-    private static JevDecisionClient CreateClient(HttpClient httpClient)
-    {
-        var options = new JevChatClientOptions
+        var options = new JevDecisionClientOptions
         {
             Transport = new HttpClientPipelineTransport(httpClient),
             RetryPolicy = new JevRetryPolicy { RecordedWaitsForTests = [] },

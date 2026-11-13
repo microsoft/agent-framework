@@ -11,7 +11,6 @@
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
-    <InjectSharedDecisionChat>true</InjectSharedDecisionChat>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
@@ -19,7 +18,7 @@
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework - TypeSafe (Jev) integration</Title>
-    <Description>Provides an IDecisionClient, an IChatClient, and an AIFunction that let agents classify, route, score, and check content with Jev, the TypeSafe System One model.</Description>
+    <Description>Provides an IDecisionClient and an AIFunction that let agents classify, route, score, and check content with Jev, the TypeSafe System One model.</Description>
   </PropertyGroup>
 
   <ItemGroup>

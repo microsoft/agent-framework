@@ -92,32 +92,6 @@ internal static class AgentsSamples
 
         new SampleDefinition
         {
-            Name = "Agent_With_TypeSafe",
-            ProjectPath = "samples/02-agents/AgentProviders/typesafe/Agent_With_TypeSafe",
-            RequiredEnvironmentVariables = ["TYPESAFE_API_KEY"],
-            Inputs = ["Y"],
-            MustContain =
-            [
-                "Direct JevChatClient result:",
-                "Agent result:",
-                "Default questions result:",
-                "Function calling result:",
-                "better_city:",
-                "Tool approval:",
-                "issue_refund(plan: Pro)",
-            ],
-            ExpectedOutputDescription =
-            [
-                "The direct result should route the duplicate subscription charge to billing, and the agent result should route the failing checkout integration to technical with a high urgency probability.",
-                "The default questions result should route the invoice request to billing with a low urgency probability.",
-                "The function calling result should contain one weather line for Seattle and one for Amsterdam, with temperatures in Fahrenheit, followed by a better_city line that names one of the two cities.",
-                "The tool approval step should ask to approve issue_refund for the Pro plan and, after approval, show the refund result followed by a department line.",
-                "The output should not contain error messages or stack traces.",
-            ],
-        },
-
-        new SampleDefinition
-        {
             Name = "Agent_TypeSafe_Step01_LoopJudge",
             ProjectPath = "samples/02-agents/AgentProviders/typesafe/Agent_TypeSafe_Step01_LoopJudge",
             RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "TYPESAFE_API_KEY"],

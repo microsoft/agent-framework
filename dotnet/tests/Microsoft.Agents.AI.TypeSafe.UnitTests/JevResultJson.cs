@@ -1,38 +1,18 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 
 namespace Microsoft.Agents.AI.TypeSafe.UnitTests;
 
 /// <summary>
-/// Builds TypeSafe API responses and questions for the chat client tests.
+/// Builds TypeSafe API responses as JSON, one answer at a time.
 /// </summary>
-internal static class JevChatTestData
+internal static class JevResultJson
 {
-    public const string Route = "__af_tool__.route";
-
-    /// <summary>Two questions about a support ticket: a Choice and a Noul.</summary>
-    public static Dictionary<string, JevQuestion> Questions() => new()
-    {
-        ["department"] = new JevChoiceQuestion
-        {
-            Instructions = "Which team should handle the request?",
-            Criteria = new Dictionary<string, JevEntry> { ["billing"] = "Payments or refunds", ["technical"] = "Bugs or integrations" },
-        },
-        ["is_urgent"] = new JevNoulQuestion { Instructions = "Does the request need urgent attention?" },
-    };
-
-    /// <summary>The answers to <see cref="Questions"/>.</summary>
-    public static string[] UserAnswers(string department = "technical") =>
-        [Choice("department", department, "billing", "technical"), Noul("is_urgent", 0.9)];
-
     public static string Result(params string[] answers) =>
         "{\"model\":\"jev-test\",\"answers\":{" + string.Join(",", answers) + "},\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}";
-
-    public static string Result(IEnumerable<string> answers, params string[] more) => Result([.. answers, .. more]);
 
     public static string Choice(string id, string choice, params string[] labels)
     {
@@ -59,7 +39,4 @@ internal static class JevChatTestData
         }));
         return $"\"{id}\":{{\"type\":\"score\",\"score\":{score.ToString(CultureInfo.InvariantCulture)},\"confidence\":0.8,\"legend\":{{{legend}}},\"probabilities\":{{{probabilities}}}}}";
     }
-
-    /// <summary>A route answer that selects one of the route labels.</summary>
-    public static string RouteTo(string label, params string[] labels) => Choice(Route, label, labels);
 }

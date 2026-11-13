@@ -48,4 +48,4 @@ re-sync can break code that uses the types, which their `MEAI001` diagnostic all
    keep loading the types from `Microsoft.Extensions.AI.Abstractions`. Suppress any package validation difference
    between this copy and the shipped shape in `CompatibilitySuppressions.xml`.
 4. Fix any difference between this copy and the shipped API in the packages that use it, such as
-   `Microsoft.Agents.AI.TypeSafe`, the shared decision chat engine (`src/Shared/DecisionChat`), and the samples.
+   `Microsoft.Agents.AI.TypeSafe` and the samples.

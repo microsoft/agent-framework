@@ -24,8 +24,9 @@ calibrated probabilities. An agent's model writes the replies; Jev makes the fas
 4. The same tool is answered by a local keyword classifier instead of the TypeSafe API, through `UseClient` and the
    agent's services (see [Using another client](#using-another-client)).
 
-To use Jev as the agent's chat client instead, answering questions about the whole conversation, see
-[Agent with TypeSafe](../../AgentProviders/typesafe/Agent_With_TypeSafe/).
+When the application, rather than the model, decides the questions, give the agent a
+`DecisionDefinition<TResult>.AsAIFunction` tool over `JevDecisionClient` instead, as in
+[Decision tool](../../AgentProviders/typesafe/Agent_TypeSafe_Step02_DecisionTool/).
 
 ## Configuring the client
 
