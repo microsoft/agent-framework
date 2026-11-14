@@ -90,9 +90,9 @@ internal sealed class Program
     {
         string workflowYaml = File.ReadAllText("MathChat.yaml");
 
-#pragma warning disable AAIP001 // WorkflowAgentDefinition is experimental
+#pragma warning disable AAIP001, CS0618 // WorkflowAgentDefinition is experimental and marked obsolete by Azure.AI.Projects.Agents
         WorkflowAgentDefinition workflowAgentDefinition = WorkflowAgentDefinition.FromYaml(workflowYaml);
-#pragma warning restore AAIP001
+#pragma warning restore AAIP001, CS0618
 
         return
             await agentClient.CreateAgentAsync(

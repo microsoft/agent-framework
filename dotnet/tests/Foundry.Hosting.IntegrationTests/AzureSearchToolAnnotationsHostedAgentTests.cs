@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -35,9 +36,9 @@ public sealed class AzureSearchToolAnnotationsHostedAgentTests(
         StreamingResponseCompletedUpdate? completed = null;
 
         // Act
-        await foreach (StreamingResponseUpdate update in responses
-            .CreateResponseStreamingAsync(options, timeout.Token)
-            .WithCancellation(timeout.Token))
+        await using AsyncStreamingResult<StreamingResponseUpdate> stream =
+            await responses.CreateResponseStreamingAsync(options, timeout.Token);
+        await foreach (StreamingResponseUpdate update in stream.WithCancellation(timeout.Token))
         {
             switch (update)
             {

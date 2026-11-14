@@ -100,7 +100,7 @@ try
         {
             RawRepresentation = new ComputerCallOutputResponseItem(
                 computerCall.CallId,
-                output: ComputerCallOutput.CreateScreenshotOutput(screenshotImageFileId: fileId))
+                output: ComputerCallOutput.CreateComputerScreenshotOutput(screenshotImageFileId: fileId))
         };
 
         response = await agent.RunAsync([new ChatMessage(ChatRole.User, [callOutput])], session: session, options: runOptions);

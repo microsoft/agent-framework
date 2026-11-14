@@ -96,12 +96,22 @@ public static class FoundryAITool
     }
 
     /// <summary>
-    /// Creates an <see cref="AITool"/> for browser automation.
+    /// Creates an <see cref="AITool"/> for the generally available (GA) Browser Automation tool (<c>browser_automation</c>).
     /// </summary>
-    /// <param name="parameters">The browser automation configuration parameters.</param>
+    /// <remarks>
+    /// <para>
+    /// The Browser Automation tool lets the agent drive a cloud browser hosted by a Microsoft Playwright Workspace.
+    /// The <see cref="BrowserAutomationToolConnectionOptions"/> must reference the ID of a Browser Automation
+    /// project connection in the Microsoft Foundry project.
+    /// </para>
+    /// <para>
+    /// Responses can include a live view URL that grants access to the browser session. Treat it as sensitive.
+    /// </para>
+    /// </remarks>
+    /// <param name="parameters">The browser automation configuration parameters, including the Browser Automation project connection.</param>
     /// <returns>An <see cref="AITool"/> for browser automation.</returns>
     public static AITool CreateBrowserAutomationTool(BrowserAutomationToolOptions parameters)
-        => new BrowserAutomationPreviewTool(parameters).AsAITool();
+        => new BrowserAutomationTool(parameters).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for structured output capture.
@@ -147,7 +157,7 @@ public static class FoundryAITool
     [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
     public static AITool CreateComputerTool()
     {
-        // OpenAI .NET (2.13.0 and 2.14.0) has no factory for the GA tool: ResponseTool.CreateComputerTool always emits
+        // OpenAI .NET (2.13.0 through 2.15.0) has no factory for the GA tool: ResponseTool.CreateComputerTool always emits
         // computer_use_preview. Reading the GA wire shape yields an unknown-type ResponseTool that serializes back
         // exactly as {"type":"computer"}, so it can be sent today. Switch to the typed OpenAI API once it ships.
         ResponseTool tool = ModelReaderWriter.Read<ResponseTool>(s_gaComputerToolJson, ModelReaderWriterOptions.Json, OpenAIContext.Default)!;

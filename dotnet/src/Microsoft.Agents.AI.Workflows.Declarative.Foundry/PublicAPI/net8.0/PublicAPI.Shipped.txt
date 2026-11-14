@@ -1,0 +1,12 @@
+﻿#nullable enable
+Microsoft.Agents.AI.Workflows.Declarative.FoundryAgentProvider
+Microsoft.Agents.AI.Workflows.Declarative.FoundryAgentProvider.AIProjectClientOptions.get -> Azure.AI.Projects.AIProjectClientOptions?
+Microsoft.Agents.AI.Workflows.Declarative.FoundryAgentProvider.AIProjectClientOptions.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.FoundryAgentProvider.FoundryAgentProvider(System.Uri! projectEndpoint, Azure.Core.TokenCredential! projectCredentials) -> void
+Microsoft.Agents.AI.Workflows.Declarative.FoundryAgentProvider.OpenAIClientOptions.get -> Azure.AI.Extensions.OpenAI.ProjectOpenAIClientOptions?
+Microsoft.Agents.AI.Workflows.Declarative.FoundryAgentProvider.OpenAIClientOptions.init -> void
+override Microsoft.Agents.AI.Workflows.Declarative.FoundryAgentProvider.CreateConversationAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string!>!
+override Microsoft.Agents.AI.Workflows.Declarative.FoundryAgentProvider.CreateMessageAsync(string! conversationId, Microsoft.Extensions.AI.ChatMessage! conversationMessage, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.ChatMessage!>!
+override Microsoft.Agents.AI.Workflows.Declarative.FoundryAgentProvider.GetMessageAsync(string! conversationId, string! messageId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.ChatMessage!>!
+override Microsoft.Agents.AI.Workflows.Declarative.FoundryAgentProvider.GetMessagesAsync(string! conversationId, int? limit = null, string? after = null, string? before = null, bool newestFirst = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatMessage!>!
+override Microsoft.Agents.AI.Workflows.Declarative.FoundryAgentProvider.InvokeAgentAsync(string! agentId, string? agentVersion, string? conversationId, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>? messages, System.Collections.Generic.IDictionary<string!, object?>? inputArguments, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>!

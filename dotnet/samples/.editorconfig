@@ -14,4 +14,5 @@ dotnet_diagnostic.VSTHRD200.severity = none # Use Async suffix for async methods
 
 dotnet_diagnostic.MEAI001.severity = none   # [Experimental] APIs in Microsoft.Extensions.AI
 dotnet_diagnostic.OPENAI001.severity = none # [Experimental] APIs in OpenAI
+dotnet_diagnostic.AAIP002.severity = none   # [Experimental] APIs in Azure.AI.Extensions.OpenAI and Azure.AI.Projects
 dotnet_diagnostic.SKEXP0110.severity = none # [Experimental] APIs in Microsoft.SemanticKernel

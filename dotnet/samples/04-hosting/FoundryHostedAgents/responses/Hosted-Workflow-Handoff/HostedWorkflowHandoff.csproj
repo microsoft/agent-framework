@@ -25,7 +25,7 @@
     <PackageReference Include="Microsoft.Agents.AI.Hosting" Version="$(AgentFrameworkVersion)" />
     <!-- Published Agent Framework 1.27 resolves MEAI OpenAI 10.10.1, which returns 401 for
          hosted project-model calls. Remove this pin when the next framework release carries 10.11+. -->
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.11.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="11.1.0" />
     <PackageReference Include="DotNetEnv" Version="3.2.0" />
   </ItemGroup>
 
